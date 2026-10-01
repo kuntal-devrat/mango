@@ -93,6 +93,8 @@ fn arabic_forms(ch: char) -> Option<(char, char, char, char)> {
         '\u{06AF}' => Some(('\u{FB92}', '\u{FB93}', '\u{FB94}', '\u{FB95}')), // Gaf
         '\u{06A9}' => Some(('\u{FB8E}', '\u{FB8F}', '\u{FB90}', '\u{FB91}')), // Keheh
         '\u{06CC}' => Some(('\u{FBFC}', '\u{FBFD}', '\u{FBFE}', '\u{FBFF}')), // Farsi Yeh
+        // Tatweel / Kashida
+        '\u{0640}' => Some(('\u{0640}', '\u{0640}', '\u{0640}', '\u{0640}')),
         _ => None,
     }
 }
@@ -116,6 +118,7 @@ fn joins_left(ch: char) -> bool {
             | '\u{0638}'
             | '\u{0639}'
             | '\u{063A}'
+            | '\u{0640}'
             | '\u{0641}'
             | '\u{0642}'
             | '\u{0643}'
@@ -129,12 +132,13 @@ fn joins_left(ch: char) -> bool {
             | '\u{06AF}'
             | '\u{06A9}'
             | '\u{06CC}'
+            | '\u{200D}'
     )
 }
 
 /// Returns true if a character joins with the character on its right.
 fn joins_right(ch: char) -> bool {
-    arabic_forms(ch).is_some() && ch != '\u{0621}'
+    (arabic_forms(ch).is_some() && ch != '\u{0621}') || ch == '\u{200D}'
 }
 
 /// Shapes an Arabic string into Presentation Forms with Lam-Alef ligatures and Tashkeel preservation.
@@ -433,16 +437,27 @@ pub fn segment_thai_syllables(text: &str) -> Vec<String> {
 }
 
 /// Unified script shaping: applies Arabic, Devanagari, or Thai shaping as appropriate.
+/// Supports mixed-script text by piping through all applicable shapers.
 pub fn shape_complex_script(text: &str) -> String {
-    if text.chars().any(is_arabic_char) {
-        shape_arabic(text)
-    } else if text.chars().any(is_devanagari_char) {
-        shape_devanagari(text)
-    } else if text.chars().any(is_thai_char) {
-        shape_thai(text)
-    } else {
-        text.to_string()
+    let has_arabic = text.chars().any(is_arabic_char);
+    let has_devanagari = text.chars().any(is_devanagari_char);
+    let has_thai = text.chars().any(is_thai_char);
+
+    if !has_arabic && !has_devanagari && !has_thai {
+        return text.to_string();
     }
+
+    let mut current = text.to_string();
+    if has_arabic {
+        current = shape_arabic(&current);
+    }
+    if has_devanagari {
+        current = shape_devanagari(&current);
+    }
+    if has_thai {
+        current = shape_thai(&current);
+    }
+    current
 }
 
 #[cfg(test)]
@@ -461,6 +476,22 @@ mod tests {
         // Lam-Alef ligature "لا"
         let la = shape_arabic("لا");
         assert_eq!(la, "\u{FEFB}");
+    }
+
+    #[test]
+    fn test_arabic_tatweel_joining() {
+        // "بـاب": Baa + Tatweel + Alef + Baa -> Baa should take initial form, Tatweel passes through, Alef takes final form
+        let text = "\u{0628}\u{0640}\u{0627}\u{0628}";
+        let shaped = shape_arabic(text);
+        assert_eq!(shaped, "\u{FE91}\u{0640}\u{FE8E}\u{FE8F}");
+    }
+
+    #[test]
+    fn test_mixed_complex_script_shaping() {
+        // String containing both Arabic "باب" and Devanagari "कि"
+        let mixed = "باب क\u{093F}";
+        let shaped = shape_complex_script(mixed);
+        assert_eq!(shaped, "\u{FE91}\u{FE8E}\u{FE8F} \u{093F}\u{0915}");
     }
 
     #[test]

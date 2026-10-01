@@ -144,6 +144,7 @@ fn main() {
         browser.load_html(content, url.to_string());
     } else {
         browser.navigate(url);
+        browser.wait_for_navigation();
     }
 
     // Virtual time budget: drive animations and JS timers
@@ -159,9 +160,11 @@ fn main() {
 
     // Drain pending images so remote and data URI images are loaded and decoded
     let mut drained_batches = 0;
-    while browser.has_pending_image_fetches() && drained_batches < 40 {
+    while browser.has_pending_image_fetches() && drained_batches < 60 {
         drained_batches += 1;
-        browser.drain_pending_images();
+        if !browser.drain_pending_images() {
+            std::thread::sleep(std::time::Duration::from_millis(30));
+        }
     }
 
     if scroll_y > 0.0 {
@@ -278,7 +281,7 @@ fn probe(browser: &BrowserChrome, selector: &str) {
     println!("selector '{selector}' matched {} element(s)", matches.len());
 
     let mut index = 0usize;
-    walk_boxes(root, 0, &matches, &mut |depth, b, is_match| {
+    walk_boxes(root, 0, &matches, false, &mut |depth, b, is_match| {
         if !is_match {
             return;
         }
@@ -288,11 +291,13 @@ fn probe(browser: &BrowserChrome, selector: &str) {
         let indent = "  ".repeat(depth);
         let tag = b.tag_name.as_deref().unwrap_or(match &b.box_type {
             BoxType::TextNode(_) => "#text",
+            BoxType::AnonymousBlock => "#anon-block",
+            BoxType::InlineNode => "#inline",
             _ => "?",
         });
         let style = b.style.as_ref();
         println!(
-            "[{index}] {indent}<{tag}> border=({:.1}, {:.1}, {:.1}x{:.1}) content=({:.1}, {:.1}, {:.1}x{:.1}) pos={:?} display={:?} h={:?} w={:?} max_w={:?}",
+            "[{index}] {indent}<{tag}> border=({:.1}, {:.1}, {:.1}x{:.1}) content=({:.1}, {:.1}, {:.1}x{:.1}) pos={:?} display={:?} h={:?} w={:?} max_w={:?} float={:?} clear={:?}",
             border.x(),
             border.y(),
             border.width(),
@@ -306,8 +311,13 @@ fn probe(browser: &BrowserChrome, selector: &str) {
             style.map(|s| &s.height),
             style.map(|s| &s.width),
             style.map(|s| &s.max_width),
+            style.map(|s| s.float),
+            style.map(|s| s.clear),
         );
-        println!("      attrs: {:?}", b.attributes);
+        println!(
+            "      box_type: {:?}, attrs: {:?}",
+            b.box_type, b.attributes
+        );
         for child in &b.children {
             if let BoxType::TextNode(text) = &child.box_type
                 && !text.trim().is_empty()
@@ -360,15 +370,17 @@ fn walk_boxes(
     node: &LayoutBox,
     depth: usize,
     matches: &[NodeId],
+    is_inside: bool,
     visit: &mut impl FnMut(usize, &LayoutBox, bool),
 ) {
-    let is_match = node
+    let direct_match = node
         .node_id
         .map(|id| matches.contains(&id))
         .unwrap_or(false);
-    visit(depth, node, is_match);
+    let active = direct_match || is_inside;
+    visit(depth, node, active);
     for child in &node.children {
-        walk_boxes(child, depth + 1, matches, visit);
+        walk_boxes(child, depth + 1, matches, active, visit);
     }
 }
 

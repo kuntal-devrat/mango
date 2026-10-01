@@ -308,3 +308,93 @@ fn test_table_percentage_heights() {
     );
     assert!((table.dimensions.content.height() - 200.0).abs() < 5.0);
 }
+
+#[test]
+fn test_tfoot_rendered_after_tbody_even_if_first_in_markup() {
+    let html = r#"
+        <table style="border-collapse: separate; border-spacing: 0;">
+            <tfoot>
+                <tr><td id="foot">Footer Row</td></tr>
+            </tfoot>
+            <thead>
+                <tr><td id="head">Header Row</td></tr>
+            </thead>
+            <tbody>
+                <tr><td id="body">Body Row</td></tr>
+            </tbody>
+        </table>
+    "#;
+    let table = layout_html_table(html, "", 500.0, 500.0);
+
+    fn find_by_id<'a>(node: &'a mango_layout::box_tree::LayoutBox, id: &str) -> Option<&'a mango_layout::box_tree::LayoutBox> {
+        if node.attributes.iter().any(|(k, v)| k == "id" && v == id) {
+            return Some(node);
+        }
+        for child in &node.children {
+            if let Some(found) = find_by_id(child, id) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    let head_cell = find_by_id(&table, "head").expect("head cell");
+    let body_cell = find_by_id(&table, "body").expect("body cell");
+    let foot_cell = find_by_id(&table, "foot").expect("foot cell");
+
+    assert!(
+        head_cell.dimensions.content.y() < body_cell.dimensions.content.y(),
+        "Header (y={}) should be above body (y={})",
+        head_cell.dimensions.content.y(),
+        body_cell.dimensions.content.y()
+    );
+    assert!(
+        body_cell.dimensions.content.y() < foot_cell.dimensions.content.y(),
+        "Body (y={}) should be above footer (y={}) even though footer was first in HTML",
+        body_cell.dimensions.content.y(),
+        foot_cell.dimensions.content.y()
+    );
+}
+
+#[test]
+fn test_table_min_max_width_constraints() {
+    let html = r#"
+        <table style="min-width: 300px; max-width: 400px;">
+            <tr><td style="width: 50px;">A</td><td style="width: 50px;">B</td></tr>
+        </table>
+    "#;
+    let table = layout_html_table(html, "", 600.0, 600.0);
+    assert!(
+        table.dimensions.content.width() >= 300.0 - 0.1,
+        "Table width ({}) should satisfy min-width: 300px",
+        table.dimensions.content.width()
+    );
+
+    let html_max = r#"
+        <table style="width: 500px; max-width: 250px;">
+            <tr><td style="width: 50px;">A</td><td style="width: 50px;">B</td></tr>
+        </table>
+    "#;
+    let table_max = layout_html_table(html_max, "", 600.0, 600.0);
+    assert!(
+        table_max.dimensions.content.width() <= 250.0 + 0.1,
+        "Table width ({}) should satisfy max-width: 250px",
+        table_max.dimensions.content.width()
+    );
+}
+
+#[test]
+fn test_table_min_height_constraint() {
+    let html = r#"
+        <table style="min-height: 180px;">
+            <tr><td>Cell</td></tr>
+        </table>
+    "#;
+    let table = layout_html_table(html, "", 500.0, 500.0);
+    assert!(
+        table.dimensions.content.height() >= 180.0 - 0.1,
+        "Table height ({}) should satisfy min-height: 180px",
+        table.dimensions.content.height()
+    );
+}
+

@@ -113,12 +113,12 @@ fn serialize_svg_dom_recursive(doc: &Document, node_id: NodeId, out: &mut String
                 out.push_str(k);
                 out.push_str("=\"");
                 for ch in v.chars() {
-                    if ch == '"' {
-                        out.push_str("&quot;");
-                    } else if ch == '&' {
-                        out.push_str("&amp;");
-                    } else {
-                        out.push(ch);
+                    match ch {
+                        '"' => out.push_str("&quot;"),
+                        '&' => out.push_str("&amp;"),
+                        '<' => out.push_str("&lt;"),
+                        '>' => out.push_str("&gt;"),
+                        _ => out.push(ch),
                     }
                 }
                 out.push('"');
@@ -137,7 +137,14 @@ fn serialize_svg_dom_recursive(doc: &Document, node_id: NodeId, out: &mut String
             }
         }
         NodeData::Text(t) => {
-            out.push_str(t);
+            for ch in t.chars() {
+                match ch {
+                    '<' => out.push_str("&lt;"),
+                    '>' => out.push_str("&gt;"),
+                    '&' => out.push_str("&amp;"),
+                    _ => out.push(ch),
+                }
+            }
         }
         _ => {}
     }
@@ -235,6 +242,16 @@ impl CounterContext {
 fn format_counter_value(val: i32, style: &str) -> String {
     match style {
         "decimal" => val.to_string(),
+        "decimal-leading-zero" => {
+            if val >= 0 && val < 10 {
+                format!("0{}", val)
+            } else if val < 0 && val > -10 {
+                format!("-0{}", -val)
+            } else {
+                val.to_string()
+            }
+        }
+        "none" => String::new(),
         "lower-alpha" | "lower-latin" => {
             if val <= 0 {
                 return val.to_string();
@@ -344,6 +361,33 @@ pub fn build_style_tree_with_size(
     build_styled_node(doc, doc.root(), &author_index, None, &mut counter_ctx)
 }
 
+fn is_node_inline(
+    doc: &Document,
+    node_id: NodeId,
+    author_index: &RuleIndex,
+    parent_style: Option<&ComputedStyle>,
+) -> bool {
+    let Some(node) = doc.get(node_id) else {
+        return false;
+    };
+    match &node.data {
+        NodeData::Element(el) => {
+            if el.get_attribute("hidden").is_some()
+                || el.tag_name.eq_ignore_ascii_case("template")
+                || el.tag_name.eq_ignore_ascii_case("head")
+                || el.tag_name.eq_ignore_ascii_case("style")
+                || el.tag_name.eq_ignore_ascii_case("script")
+            {
+                return false;
+            }
+            let style = compute_style_with_index(node_id, doc, author_index, parent_style);
+            style.display != Display::None && style.display.is_inline_level()
+        }
+        NodeData::Text(t) => !t.chars().all(|c| c.is_ascii_whitespace()),
+        _ => false,
+    }
+}
+
 fn build_styled_node(
     doc: &Document,
     node_id: NodeId,
@@ -389,15 +433,22 @@ fn build_styled_node(
                 return None;
             }
 
-            // HTML5 Details disclosure: non-summary children of closed details are suppressed
+            // HTML5 Details disclosure: non-summary children of closed details are suppressed.
+            // Under HTML §4.11.1, only the first <summary> child represents the disclosure summary;
+            // any subsequent <summary> elements are normal children and suppressed when closed.
             if let Some(parent_id) = node.parent
                 && let Some(parent_node) = doc.get(parent_id)
                 && let NodeData::Element(parent_elem) = &parent_node.data
                 && parent_elem.tag_name.eq_ignore_ascii_case("details")
                 && parent_elem.get_attribute("open").is_none()
-                && !el.tag_name.eq_ignore_ascii_case("summary")
             {
-                return None;
+                let is_first_summary = el.tag_name.eq_ignore_ascii_case("summary")
+                    && doc.children(parent_id).find(|c| {
+                        matches!(&c.data, NodeData::Element(e) if e.tag_name.eq_ignore_ascii_case("summary"))
+                    }).map(|c| c.id) == Some(node_id);
+                if !is_first_summary {
+                    return None;
+                }
             }
 
             if el.tag_name.eq_ignore_ascii_case("template") {
@@ -427,6 +478,9 @@ fn build_styled_node(
                 && before_style.display != Display::None
                 && (before_style.content.is_some() || before_style.content_items.is_some())
             {
+                for action in &before_style.counter_reset {
+                    counter_ctx.reset(&action.name, action.value);
+                }
                 for action in &before_style.counter_increment {
                     counter_ctx.increment(&action.name, action.value);
                 }
@@ -475,6 +529,9 @@ fn build_styled_node(
                 && after_style.display != Display::None
                 && (after_style.content.is_some() || after_style.content_items.is_some())
             {
+                for action in &after_style.counter_reset {
+                    counter_ctx.reset(&action.name, action.value);
+                }
                 for action in &after_style.counter_increment {
                     counter_ctx.increment(&action.name, action.value);
                 }
@@ -618,9 +675,45 @@ fn build_styled_node(
 
             // In CSS, only ASCII whitespace (' ', '\t', '\n', '\r') collapses.
             // Non-breaking spaces (&nbsp; / U+00A0) and other Unicode spaces are content and must be preserved.
-            if !preserves_all_ws && text_to_use.chars().all(|c| c.is_ascii_whitespace()) {
-                // Ignore whitespace-only text if empty
-                return None;
+            let is_whitespace_only = text_to_use.chars().all(|c| c.is_ascii_whitespace());
+            if !preserves_all_ws && is_whitespace_only {
+                let parent_display = parent_style.map(|s| s.display);
+                let is_non_inline_container = matches!(
+                    parent_display,
+                    Some(
+                        Display::Flex
+                            | Display::InlineFlex
+                            | Display::Grid
+                            | Display::InlineGrid
+                            | Display::Table
+                            | Display::TableRow
+                            | Display::TableRowGroup
+                            | Display::TableHeaderGroup
+                            | Display::TableFooterGroup
+                    )
+                );
+                let should_keep = if text_to_use.is_empty() || is_non_inline_container {
+                    false
+                } else if parent_style.map(|s| s.display == Display::Inline).unwrap_or(false) {
+                    true
+                } else if let Some(parent_id) = node.parent {
+                    let siblings: Vec<_> = doc.children(parent_id).collect();
+                    if let Some(pos) = siblings.iter().position(|c| c.id == node_id) {
+                        let prev_inline = pos > 0
+                            && is_node_inline(doc, siblings[pos - 1].id, author_index, parent_style);
+                        let next_inline = pos + 1 < siblings.len()
+                            && is_node_inline(doc, siblings[pos + 1].id, author_index, parent_style);
+                        prev_inline && next_inline
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                if !should_keep {
+                    return None;
+                }
             }
 
             // Inherit parent style, forced to inline display
@@ -732,6 +825,9 @@ fn create_pseudo_styled_node(
 
     if !text_acc.is_empty() {
         parts.push(PseudoPart::Text(text_acc));
+    } else if parts.is_empty() {
+        // Synthesize empty text for pseudo-elements with empty content (e.g. content: ""; clearfix)
+        parts.push(PseudoPart::Text(String::new()));
     }
 
     if parts.is_empty() {
@@ -1104,6 +1200,59 @@ mod tests {
                 .any(|(k, v)| k == "src" && v == "icon.png")
         );
     }
+
+    #[test]
+    fn test_whitespace_preserved_between_inline_elements() {
+        let html = r#"
+            <!DOCTYPE html>
+            <html>
+                <body>
+                    <p><span>Hello</span> <span>World</span></p>
+                </body>
+            </html>
+        "#;
+        let doc = parse_html(html);
+        let style_tree = build_style_tree(&doc, &[]).expect("style tree exists");
+        let body = &style_tree.children[0];
+        let p = &body.children[0];
+
+        // Should have 3 children: <span>Hello</span>, " ", <span>World</span>
+        assert_eq!(p.children.len(), 3, "Inter-inline whitespace must be preserved");
+        assert_eq!(p.children[0].children[0].text.as_deref(), Some("Hello"));
+        assert_eq!(p.children[1].text.as_deref(), Some(" "));
+        assert_eq!(p.children[2].children[0].text.as_deref(), Some("World"));
+    }
+
+    #[test]
+    fn test_details_multiple_summaries_closed() {
+        let html = r#"
+            <!DOCTYPE html>
+            <html>
+                <body>
+                    <details>
+                        <summary>Summary 1</summary>
+                        <summary>Summary 2</summary>
+                        <p>Hidden body</p>
+                    </details>
+                </body>
+            </html>
+        "#;
+        let doc = parse_html(html);
+        let style_tree = build_style_tree(&doc, &[]).expect("style tree exists");
+        let body = &style_tree.children[0];
+        let details = &body.children[0];
+
+        // When closed, only the FIRST summary is shown
+        assert_eq!(details.children.len(), 1);
+        assert_eq!(details.children[0].children[0].text.as_deref(), Some("Summary 1"));
+    }
+
+    #[test]
+    fn test_format_counter_leading_zero_and_none() {
+        assert_eq!(format_counter_value(5, "decimal-leading-zero"), "05");
+        assert_eq!(format_counter_value(12, "decimal-leading-zero"), "12");
+        assert_eq!(format_counter_value(5, "none"), "");
+    }
 }
 
 use std::collections::HashSet;
@@ -1188,6 +1337,32 @@ impl StyleInvalidator {
     }
 }
 
+fn has_inherited_property_changed(old: &ComputedStyle, new: &ComputedStyle) -> bool {
+    old.color != new.color
+        || old.font_size != new.font_size
+        || old.font_family != new.font_family
+        || old.font_weight != new.font_weight
+        || old.font_style != new.font_style
+        || old.line_height != new.line_height
+        || old.text_align != new.text_align
+        || old.text_transform != new.text_transform
+        || old.letter_spacing != new.letter_spacing
+        || old.word_spacing != new.word_spacing
+        || old.text_indent != new.text_indent
+        || old.white_space != new.white_space
+        || old.visibility != new.visibility
+        || old.direction != new.direction
+        || old.writing_mode != new.writing_mode
+        || old.cursor != new.cursor
+        || old.word_break != new.word_break
+        || old.overflow_wrap != new.overflow_wrap
+        || old.hyphens != new.hyphens
+        || old.list_style_type != new.list_style_type
+        || old.list_style_position != new.list_style_position
+        || old.border_collapse != new.border_collapse
+        || old.border_spacing != new.border_spacing
+}
+
 fn update_styled_subtree(
     node: &mut StyledNode,
     doc: &Document,
@@ -1217,14 +1392,7 @@ fn update_styled_subtree(
                     .collect();
 
                 // Check if any inherited property changed
-                if old_style.color != node.style.color
-                    || old_style.font_size != node.style.font_size
-                    || old_style.font_family != node.style.font_family
-                    || old_style.font_weight != node.style.font_weight
-                    || old_style.line_height != node.style.line_height
-                    || old_style.text_align != node.style.text_align
-                    || old_style.visibility != node.style.visibility
-                {
+                if has_inherited_property_changed(&old_style, &node.style) {
                     this_node_changed_inherited = true;
                 }
                 recalculated_count += 1;

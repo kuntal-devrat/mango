@@ -208,6 +208,12 @@ async def capture_chrome(
             "Emulation.setEmulatedMedia",
             {"features": [{"name": "prefers-color-scheme", "value": "light"}]},
         )
+        await dt.send(
+            "Network.setUserAgentOverride",
+            {
+                "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
+            },
+        )
         await dt.send("Page.navigate", {"url": url})
         await dt.wait_for_event("Page.loadEventFired", timeout=45)
         await asyncio.sleep(1.0)  # images, fonts, first paint

@@ -77,7 +77,8 @@ impl ApplicationHandler for MangoApp {
         let pixel_buffer = PixelBuffer::new(window.clone());
 
         let size = window.inner_size();
-        let browser = BrowserChrome::new(size.width, size.height);
+        let mut browser = BrowserChrome::new(size.width, size.height);
+        browser.async_navigation = true;
 
         self.window = Some(window.clone());
         self.pixel_buffer = Some(pixel_buffer);
@@ -100,6 +101,11 @@ impl ApplicationHandler for MangoApp {
         self.last_frame = Some(now);
 
         if let Some(browser) = &mut self.browser {
+            // Check for completed background navigation
+            if browser.tick_navigation() {
+                needs_redraw = true;
+            }
+
             // Tick JS event loop (setTimeout/setInterval)
             if browser.tick_js() {
                 needs_redraw = true;
@@ -120,6 +126,7 @@ impl ApplicationHandler for MangoApp {
             if browser.has_pending_timers()
                 || browser.is_animating()
                 || browser.has_pending_image_fetches()
+                || browser.is_loading()
             {
                 event_loop.set_control_flow(ControlFlow::WaitUntil(
                     Instant::now() + Duration::from_millis(16),

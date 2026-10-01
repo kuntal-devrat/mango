@@ -78,6 +78,12 @@ pub use crate::form_handler::*;
 pub use crate::navigation::*;
 pub use crate::scroll::*;
 
+struct PendingNavigation {
+    target_url: Url,
+    rx: std::sync::mpsc::Receiver<Result<FetchedDocument, mango_net::NetworkError>>,
+    push_history: bool,
+}
+
 /// The browser chrome — manages tab bar, navigation toolbar, address bar, content area, and status bar.
 pub struct BrowserChrome {
     /// Current window dimensions.
@@ -184,6 +190,12 @@ pub struct BrowserChrome {
     active_dom_nodes: HashSet<mango_html::dom::NodeId>,
     /// Active smooth scrolling animation controller.
     pub smooth_scroll: Option<crate::scroll::SmoothScrollAnimation>,
+    /// Active asynchronous navigation task, if any.
+    pending_navigation: Option<PendingNavigation>,
+    /// Whether network navigations should proceed asynchronously (true in desktop UI, false in tests/headless).
+    pub async_navigation: bool,
+    /// Channel receiver for images decoded by background workers.
+    image_rx: Option<std::sync::mpsc::Receiver<String>>,
 }
 
 /// Pre-populates Wikipedia Vector 2022 appearance controls (Text size, Width, Color)
@@ -278,6 +290,9 @@ impl BrowserChrome {
             hovered_dom_nodes: HashSet::new(),
             active_dom_nodes: HashSet::new(),
             smooth_scroll: None,
+            pending_navigation: None,
+            async_navigation: false,
+            image_rx: None,
         };
 
         chrome.load_html_internal(initial_html, "about:welcome".to_string(), false);
@@ -667,6 +682,25 @@ impl BrowserChrome {
         content_type: Option<&str>,
     ) {
         preprocess_wikipedia_appearance_html(&mut html, &url);
+        let mut doc = parse_html(&html);
+        if let Some(enc) = encoding {
+            doc.character_set = enc.to_string();
+        }
+        if let Some(ct) = content_type {
+            doc.content_type = ct.to_string();
+        }
+        self.load_document_internal(doc, html, url, push_history, false);
+    }
+
+    /// Loads an already parsed Document into the browser without re-parsing HTML.
+    fn load_document_internal(
+        &mut self,
+        doc: Document,
+        html: String,
+        url: String,
+        push_history: bool,
+        skip_embedded_sheets_and_fonts: bool,
+    ) {
         self.current_html = html;
         self.address_text = url.clone();
         self.cursor_pos = self.address_text.len();
@@ -679,13 +713,6 @@ impl BrowserChrome {
         self.focused_initial_value = None;
         self.control_cursor_pos = 0;
 
-        let mut doc = parse_html(&self.current_html);
-        if let Some(enc) = encoding {
-            doc.character_set = enc.to_string();
-        }
-        if let Some(ct) = content_type {
-            doc.content_type = ct.to_string();
-        }
         self.cached_document = Some(doc.clone());
         if let Some(title) = extract_title(&doc) {
             self.page_title = title;
@@ -724,30 +751,32 @@ impl BrowserChrome {
         let embedded_sheets =
             mango_layout::extract_style_elements(self.cached_document.as_ref().unwrap());
         self.base_url = Url::parse(&url).ok();
-        if self.cached_stylesheets.is_empty()
-            && let Some(ref base) = self.base_url.clone()
-        {
-            let mut visited = std::collections::HashSet::new();
-            for sheet in &embedded_sheets {
-                for rule in &sheet.rules {
-                    if let mango_css::parser::Rule::Import(import_path) = rule {
-                        load_stylesheet_recursive(
-                            &self.loader,
-                            base,
-                            import_path,
-                            &mut visited,
-                            &mut self.cached_stylesheets,
-                        );
+        if !skip_embedded_sheets_and_fonts {
+            if self.cached_stylesheets.is_empty()
+                && let Some(ref base) = self.base_url.clone()
+            {
+                let mut visited = std::collections::HashSet::new();
+                for sheet in &embedded_sheets {
+                    for rule in &sheet.rules {
+                        if let mango_css::parser::Rule::Import(import_path) = rule {
+                            load_stylesheet_recursive(
+                                &self.loader,
+                                base,
+                                import_path,
+                                &mut visited,
+                                &mut self.cached_stylesheets,
+                            );
+                        }
                     }
                 }
             }
+            load_web_fonts(
+                &self.loader,
+                self.base_url.as_ref(),
+                &self.cached_stylesheets,
+            );
+            load_web_fonts(&self.loader, self.base_url.as_ref(), &embedded_sheets);
         }
-        load_web_fonts(
-            &self.loader,
-            self.base_url.as_ref(),
-            &self.cached_stylesheets,
-        );
-        load_web_fonts(&self.loader, self.base_url.as_ref(), &embedded_sheets);
 
         // Inject extension stylesheets (GAP-023)
         let (ext_css, ext_js) = self
@@ -3065,6 +3094,22 @@ impl BrowserChrome {
         self.status_text = format!("Loading {}...", parsed_url);
         self.is_loading = true;
 
+        if self.async_navigation {
+            let loader = self.loader.clone();
+            let target_url = parsed_url.clone();
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let res = loader.fetch_document(&target_url);
+                let _ = tx.send(res);
+            });
+            self.pending_navigation = Some(PendingNavigation {
+                target_url: parsed_url,
+                rx,
+                push_history,
+            });
+            return;
+        }
+
         match self.loader.fetch_document(&parsed_url) {
             Ok(doc_result) => {
                 self.is_loading = false;
@@ -3087,6 +3132,75 @@ impl BrowserChrome {
         self.persist_cookies();
     }
 
+    /// Polls background navigation. Returns true if a page navigation completed and UI needs redrawing.
+    pub fn tick_navigation(&mut self) -> bool {
+        let Some(pending) = self.pending_navigation.as_ref() else {
+            return false;
+        };
+
+        match pending.rx.try_recv() {
+            Ok(res) => {
+                let pending = self.pending_navigation.take().unwrap();
+                self.is_loading = false;
+                match res {
+                    Ok(doc_result) => {
+                        self.process_and_load_document(doc_result, pending.push_history);
+                    }
+                    Err(e) => {
+                        let err_msg = e.to_string();
+                        let err_html = error_page_html(&pending.target_url.as_str(), &err_msg);
+                        self.base_url = None;
+                        self.cached_stylesheets.clear();
+                        self.status_text = format!("Error: {}", err_msg);
+                        self.load_html_internal(
+                            err_html,
+                            pending.target_url.to_string(),
+                            pending.push_history,
+                        );
+                        self.address_focused = false;
+                    }
+                }
+                self.persist_cookies();
+                true
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => false,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.pending_navigation = None;
+                self.is_loading = false;
+                self.status_text = "Connection lost".to_string();
+                true
+            }
+        }
+    }
+
+    /// Synchronously waits for any pending asynchronous navigation to complete.
+    pub fn wait_for_navigation(&mut self) {
+        if let Some(pending) = self.pending_navigation.take() {
+            self.is_loading = false;
+            if let Ok(res) = pending.rx.recv() {
+                match res {
+                    Ok(doc_result) => {
+                        self.process_and_load_document(doc_result, pending.push_history);
+                    }
+                    Err(e) => {
+                        let err_msg = e.to_string();
+                        let err_html = error_page_html(&pending.target_url.as_str(), &err_msg);
+                        self.base_url = None;
+                        self.cached_stylesheets.clear();
+                        self.status_text = format!("Error: {}", err_msg);
+                        self.load_html_internal(
+                            err_html,
+                            pending.target_url.to_string(),
+                            pending.push_history,
+                        );
+                        self.address_focused = false;
+                    }
+                }
+                self.persist_cookies();
+            }
+        }
+    }
+
     /// Loads a fetched document into the browser, recursively fetching external stylesheets,
     /// web fonts, and images, and updating the page metadata and history.
     pub fn process_and_load_document(
@@ -3107,15 +3221,13 @@ impl BrowserChrome {
         let mut stylesheet_links = Vec::new();
         collect_stylesheet_links(&doc, doc.root(), &mut stylesheet_links);
         let mut visited_css = std::collections::HashSet::new();
-        for href in stylesheet_links {
-            load_stylesheet_recursive(
-                &self.loader,
-                &final_url,
-                &href,
-                &mut visited_css,
-                &mut self.cached_stylesheets,
-            );
-        }
+        load_stylesheets_parallel(
+            &self.loader,
+            &final_url,
+            &stylesheet_links,
+            &mut visited_css,
+            &mut self.cached_stylesheets,
+        );
 
         load_web_fonts(&self.loader, Some(&final_url), &self.cached_stylesheets);
 
@@ -3140,7 +3252,6 @@ impl BrowserChrome {
         }
         collect_stylesheet_images(&doc, &inline_sheets, &mut sheet_images);
         load_web_fonts(&self.loader, Some(&final_url), &inline_sheets);
-        load_web_fonts(&self.loader, Some(&final_url), &self.cached_stylesheets);
 
         // Interleave stylesheet images (CSS header logos, icons, masks) and
         // document images (hero images, img tags) so the top of both sets are fetched eagerly.
@@ -3155,16 +3266,75 @@ impl BrowserChrome {
         let mut seen = std::collections::HashSet::new();
         image_sources.retain(|src| seen.insert(src.clone()));
 
-        // Prefetch eagerly up-front so above-the-fold media is ready
-        // when the first frame paints, then queue the remainder to be
-        // drained a few per frame.
+        // Prefetch eagerly up-front in parallel so above-the-fold media is ready
         let eager_count = image_sources.len().min(EAGER_IMAGE_PREFETCH);
         let (eager, queued) = image_sources.split_at(eager_count);
-        for src in eager {
-            self.prefetch_image(&final_url, src);
+
+        let eager_to_fetch: Vec<String> = eager
+            .iter()
+            .filter(|src| get_cached_image(src).is_none())
+            .cloned()
+            .collect();
+
+        if !eager_to_fetch.is_empty() {
+            std::thread::scope(|s| {
+                for src in &eager_to_fetch {
+                    let loader = &self.loader;
+                    let base = &final_url;
+                    s.spawn(move || {
+                        if src.trim_start().starts_with("data:") {
+                            if let Some(decoded) = decode_data_uri(src) {
+                                cache_image(src, decoded);
+                            }
+                            return;
+                        }
+                        if let Ok(bytes) = loader.fetch_image_bytes(base, src)
+                            && let Some(decoded) = decode_image_bytes(&bytes)
+                        {
+                            cache_image(src, decoded.clone());
+                            if let Ok(resolved) = base.resolve(src) {
+                                cache_image(&resolved.as_str(), decoded);
+                            }
+                        }
+                    });
+                }
+            });
         }
+
+        // Spawn background worker for queued images to avoid any main-thread freeze
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.image_rx = Some(rx);
         self.image_fetch_base = Some(final_url.clone());
         self.pending_image_fetches = queued.to_vec();
+
+        if !queued.is_empty() {
+            let loader = self.loader.clone();
+            let base = final_url.clone();
+            let to_fetch = queued.to_vec();
+            std::thread::spawn(move || {
+                for src in to_fetch {
+                    if get_cached_image(&src).is_some() {
+                        continue;
+                    }
+                    if src.trim_start().starts_with("data:") {
+                        if let Some(decoded) = decode_data_uri(&src) {
+                            cache_image(&src, decoded);
+                            let _ = tx.send(src);
+                        }
+                        continue;
+                    }
+                    if let Ok(bytes) = loader.fetch_image_bytes(&base, &src)
+                        && let Some(decoded) = decode_image_bytes(&bytes)
+                    {
+                        cache_image(&src, decoded.clone());
+                        if let Ok(resolved) = base.resolve(&src) {
+                            cache_image(&resolved.as_str(), decoded);
+                        }
+                        let _ = tx.send(src);
+                    }
+                }
+            });
+        }
 
         self.status_text = format!(
             "Loaded {} ({} bytes, HTTP {})",
@@ -3183,12 +3353,12 @@ impl BrowserChrome {
             crate::devtools::ConsoleLevel::Info,
             format!("Navigated to {}", final_url),
         );
-        self.load_html_with_metadata(
+        self.load_document_internal(
+            doc,
             doc_result.html,
             final_url.to_string(),
             push_history,
-            Some(doc_result.encoding.name()),
-            Some(&doc_result.content_type),
+            true,
         );
         self.address_focused = false;
     }
@@ -3240,34 +3410,60 @@ impl BrowserChrome {
 
     /// True while background image prefetch work remains (OPT-009).
     pub fn has_pending_image_fetches(&self) -> bool {
-        !self.pending_image_fetches.is_empty()
+        self.image_rx.is_some() || !self.pending_image_fetches.is_empty()
     }
 
     /// Fetches a slice of the queued image backlog. Returns `true` when at
     /// least one newly cached image is available for painting.
     pub fn drain_pending_images(&mut self) -> bool {
-        if self.pending_image_fetches.is_empty() {
-            return false;
-        }
-        let Some(base) = self.image_fetch_base.clone() else {
-            self.pending_image_fetches.clear();
-            return false;
-        };
-        let take = IMAGE_PREFETCH_PER_FRAME.min(self.pending_image_fetches.len());
-        let batch: Vec<String> = self.pending_image_fetches.drain(..take).collect();
         let mut loaded_any = false;
-        for src in batch {
-            if get_cached_image(&src).is_none() {
-                self.prefetch_image(&base, &src);
+        let mut disconnected = false;
+        if let Some(ref rx) = self.image_rx {
+            loop {
+                match rx.try_recv() {
+                    Ok(src) => {
+                        loaded_any = true;
+                        if let Some(pos) = self.pending_image_fetches.iter().position(|s| s == &src)
+                        {
+                            self.pending_image_fetches.remove(pos);
+                        }
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        disconnected = true;
+                        break;
+                    }
+                }
             }
-            if get_cached_image(&src).is_some() {
-                loaded_any = true;
+            if disconnected {
+                self.image_rx = None;
+                self.pending_image_fetches.clear();
+            }
+        } else if !self.pending_image_fetches.is_empty() {
+            if let Some(base) = self.image_fetch_base.clone() {
+                let take = IMAGE_PREFETCH_PER_FRAME.min(self.pending_image_fetches.len());
+                let batch: Vec<String> = self.pending_image_fetches.drain(..take).collect();
+                for src in batch {
+                    if get_cached_image(&src).is_none() {
+                        self.prefetch_image(&base, &src);
+                    }
+                    if get_cached_image(&src).is_some() {
+                        loaded_any = true;
+                    }
+                }
+            } else {
+                self.pending_image_fetches.clear();
             }
         }
         if loaded_any {
             self.relayout();
         }
         loaded_any
+    }
+
+    /// Returns true if a navigation or page load is currently in progress.
+    pub fn is_loading(&self) -> bool {
+        self.is_loading
     }
 
     /// Sets the currently hovered DOM element, updating `data-mango-hover` in the active document.
@@ -5735,6 +5931,63 @@ fn collect_stylesheet_links(doc: &Document, node_id: NodeId, links: &mut Vec<Str
     }
 }
 
+fn load_stylesheets_parallel(
+    loader: &ResourceLoader,
+    base_url: &Url,
+    links: &[String],
+    visited: &mut std::collections::HashSet<String>,
+    out: &mut Vec<Stylesheet>,
+) {
+    if links.is_empty() {
+        return;
+    }
+    let mut to_fetch = Vec::new();
+    for href in links {
+        if let Ok(resolved) = base_url.resolve(href) {
+            let key = resolved.to_string();
+            if visited.insert(key) {
+                to_fetch.push((href.clone(), resolved));
+            }
+        }
+    }
+    if to_fetch.is_empty() {
+        return;
+    }
+
+    let results: Vec<Result<String, mango_net::NetworkError>> = std::thread::scope(|s| {
+        let handles: Vec<_> = to_fetch
+            .iter()
+            .map(|(href, _)| s.spawn(|| loader.fetch_stylesheet(base_url, href)))
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| {
+                h.join().unwrap_or_else(|_| {
+                    Err(mango_net::NetworkError::Other("thread join failed".into()))
+                })
+            })
+            .collect()
+    });
+
+    for ((_href, resolved), res) in to_fetch.into_iter().zip(results) {
+        match res {
+            Ok(css_text) => {
+                log::info!("Loaded external stylesheet: {}", resolved);
+                let sheet = parse_stylesheet(&css_text);
+                for rule in &sheet.rules {
+                    if let mango_css::parser::Rule::Import(import_path) = rule {
+                        load_stylesheet_recursive(loader, &resolved, import_path, visited, out);
+                    }
+                }
+                out.push(sheet);
+            }
+            Err(e) => {
+                log::warn!("Failed to fetch external stylesheet {}: {}", resolved, e);
+            }
+        }
+    }
+}
+
 fn load_stylesheet_recursive(
     loader: &ResourceLoader,
     base_url: &Url,
@@ -5772,6 +6025,25 @@ fn load_web_fonts(loader: &ResourceLoader, base_url: Option<&Url>, stylesheets: 
             if let mango_css::parser::Rule::FontFace(font_face) = rule {
                 font_faces.push(font_face);
             }
+        }
+    }
+
+    // Prefetch all unique remote font files in parallel
+    if let Some(base) = base_url {
+        let mut needed_urls: Vec<String> = Vec::new();
+        for face in &font_faces {
+            if !face.src_url.starts_with("data:") && !needed_urls.contains(&face.src_url) {
+                needed_urls.push(face.src_url.clone());
+            }
+        }
+        if !needed_urls.is_empty() {
+            std::thread::scope(|s| {
+                for url in &needed_urls {
+                    s.spawn(|| {
+                        let _ = loader.fetch_font_bytes(base, url);
+                    });
+                }
+            });
         }
     }
 

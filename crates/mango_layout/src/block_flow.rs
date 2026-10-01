@@ -4,13 +4,50 @@
 
 use mango_core::{EdgeSizes, Point, Rect};
 use mango_css::values::{
-    BoxSizing, BreakInside, Clear, ColumnSpan, Display, Float, Length, Position,
+    BoxSizing, BreakInside, Clear, ColumnSpan, Direction, Display, Float, Length, Overflow,
+    Position,
 };
 
 use crate::box_tree::LayoutBox;
 use crate::dimensions::Dimensions;
 use crate::float::FloatContext;
 use crate::inline_flow::layout_inline_children;
+
+/// Determines if a layout box establishes an independent Block Formatting Context (BFC)
+/// according to CSS 2.1 §9.4.1 and CSS Display 3.
+pub fn establishes_bfc(box_node: &LayoutBox) -> bool {
+    if matches!(box_node.box_type, crate::box_model::BoxType::InlineBlock) {
+        return true;
+    }
+    let Some(style) = &box_node.style else {
+        return false;
+    };
+    if style.float != Float::None {
+        return true;
+    }
+    if matches!(style.position, Position::Absolute | Position::Fixed) {
+        return true;
+    }
+    if matches!(
+        style.display,
+        Display::FlowRoot | Display::InlineBlock | Display::TableCell | Display::TableCaption
+    ) {
+        return true;
+    }
+    if matches!(
+        style.overflow_x,
+        Overflow::Hidden | Overflow::Scroll | Overflow::Auto
+    ) || matches!(
+        style.overflow_y,
+        Overflow::Hidden | Overflow::Scroll | Overflow::Auto
+    ) {
+        return true;
+    }
+    if style.column_count.is_some() || style.column_width.is_some() {
+        return true;
+    }
+    false
+}
 
 /// Recursively lays out a block container box in a block formatting context.
 pub fn layout_block(
@@ -55,12 +92,24 @@ pub fn layout_block(
             .height
             .to_px_with_viewport(font_size, root_font_size, cb_h, vp_h);
         if tentative_h > 0.0 {
-            box_node.dimensions.content.size.height = tentative_h;
+            let content_h = if style.box_sizing == BoxSizing::BorderBox {
+                let non_content_v = box_node.dimensions.padding.vertical()
+                    + box_node.dimensions.border.vertical();
+                (tentative_h - non_content_v).max(0.0)
+            } else {
+                tentative_h
+            };
+            box_node.dimensions.content.size.height = content_h;
         }
     }
 
     // 3. Lay out child boxes
-    layout_block_children(box_node, float_ctx);
+    if establishes_bfc(box_node) {
+        let mut bfc_float_ctx = FloatContext::new();
+        layout_block_children(box_node, &mut bfc_float_ctx);
+    } else {
+        layout_block_children(box_node, float_ctx);
+    }
 
     // 4. Calculate final height
     calculate_block_height(box_node, containing_block);
@@ -224,7 +273,7 @@ fn calculate_block_width(box_node: &mut LayoutBox, containing_block: &Dimensions
             } else {
                 *intrinsic_width
             }
-        } else if is_inline_level || is_floating {
+        } else if is_inline_level || is_floating || is_positioned {
             if let Some(ratio) = style.aspect_ratio
                 && ratio > 0.0
                 && style.height != Length::Auto
@@ -322,8 +371,11 @@ fn calculate_block_width(box_node: &mut LayoutBox, containing_block: &Dimensions
             margin_right = underflow.max(0.0);
         } else if is_width_auto && clamped_w == tentative_width {
             // Normal in-flow block with auto width expands to fill container, margin-right absorbs 0
+        } else if style.direction == Direction::Rtl {
+            // Over-constrained in RTL: margin-left absorbs underflow (CSS 2.1 §10.3.3)
+            margin_left += underflow;
         } else {
-            // Over-constrained: margin-right absorbs underflow
+            // Over-constrained in LTR: margin-right absorbs underflow (CSS 2.1 §10.3.3)
             margin_right += underflow;
         }
     }
@@ -923,8 +975,9 @@ pub fn collapse_margins(m1: f32, m2: f32) -> f32 {
 /// Chromium lets such text overflow, so including it here made every block with
 /// tight line-height a few pixels too tall and shifted the whole page below it.
 fn in_flow_block_children_bottom(box_node: &LayoutBox) -> Option<f32> {
-    let parent_has_bottom_strut =
-        box_node.dimensions.border.bottom > 0.0 || box_node.dimensions.padding.bottom > 0.0;
+    let parent_has_bottom_strut = box_node.dimensions.border.bottom > 0.0
+        || box_node.dimensions.padding.bottom > 0.0
+        || establishes_bfc(box_node);
 
     let mut bottom: Option<f32> = None;
     for child in &box_node.children {
@@ -1096,6 +1149,7 @@ fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut FloatContext)
         let mut in_flow_count = 0;
 
         let container_dims = box_node.dimensions;
+        let box_establishes_bfc = establishes_bfc(box_node);
 
         for child in box_node.children.iter_mut() {
             let child_pos = child
@@ -1104,7 +1158,9 @@ fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut FloatContext)
                 .map(|s| s.position)
                 .unwrap_or(Position::Static);
             if matches!(child_pos, Position::Absolute | Position::Fixed) {
-                // Absolutely/fixed positioned elements are out-of-flow; placed in second pass
+                // Absolutely/fixed positioned elements are out-of-flow; record static position before skipping
+                child.dimensions.content.origin.x = container_dims.content.x();
+                child.dimensions.content.origin.y = cursor_y;
                 continue;
             }
 
@@ -1126,8 +1182,9 @@ fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut FloatContext)
 
             // Margin collapsing with previous sibling (CSS 2.1 §8.3.1)
             let curr_margin_top = child.dimensions.margin.top;
-            let parent_has_top_strut =
-                container_dims.border.top > 0.0 || container_dims.padding.top > 0.0;
+            let parent_has_top_strut = container_dims.border.top > 0.0
+                || container_dims.padding.top > 0.0
+                || box_establishes_bfc;
             if in_flow_count > 0 {
                 let collapsed_margin = collapse_margins(prev_margin_bottom, curr_margin_top);
                 cursor_y += collapsed_margin;
@@ -1144,12 +1201,35 @@ fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut FloatContext)
             in_flow_count += 1;
 
             // Position child
-            let child_x = container_dims.content.x()
+            let child_establishes_bfc = establishes_bfc(child);
+            let mut child_x = container_dims.content.x()
                 + child.dimensions.margin.left
                 + child.dimensions.border.left
                 + child.dimensions.padding.left;
-            let child_y = cursor_y + child.dimensions.border.top + child.dimensions.padding.top;
 
+            if child_establishes_bfc {
+                let (min_x, max_x) = float_ctx.available_span(
+                    cursor_y,
+                    child.dimensions.margin_box().height().max(1.0),
+                    container_dims.content.x(),
+                    container_dims.content.width(),
+                );
+                let avail_w = max_x - min_x;
+                let child_box_w = child.dimensions.border_box().width()
+                    + child.dimensions.margin.left;
+                if child_box_w > avail_w
+                    && (min_x > container_dims.content.x() || max_x < container_dims.content.right())
+                {
+                    cursor_y = float_ctx.apply_clearance(cursor_y, Clear::Both);
+                } else if min_x > container_dims.content.x() {
+                    child_x = min_x
+                        + child.dimensions.margin.left
+                        + child.dimensions.border.left
+                        + child.dimensions.padding.left;
+                }
+            }
+
+            let child_y = cursor_y + child.dimensions.border.top + child.dimensions.padding.top;
             child.dimensions.content.origin = Point::new(child_x, child_y);
 
             // Lay out child recursively
@@ -1157,31 +1237,22 @@ fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut FloatContext)
             if child_disp == Some(Display::Table) || child.tag_name.as_deref() == Some("table") {
                 let mut child_cb = container_dims;
                 child_cb.content.origin.y = cursor_y - child.dimensions.margin.top;
-                crate::table_flow::layout_table(child, &child_cb, float_ctx);
-                layout_positioned_children(child, float_ctx);
+                let mut table_float_ctx = FloatContext::new();
+                crate::table_flow::layout_table(child, &child_cb, &mut table_float_ctx);
+                layout_positioned_children(child, &mut table_float_ctx);
             } else if matches!(child_disp, Some(Display::Flex) | Some(Display::InlineFlex)) {
-                crate::flex_flow::layout_flex(child, &container_dims, float_ctx);
+                let mut flex_float_ctx = FloatContext::new();
+                crate::flex_flow::layout_flex(child, &container_dims, &mut flex_float_ctx);
             } else if child_disp == Some(Display::Grid) || child_disp == Some(Display::InlineGrid) {
-                crate::grid_flow::layout_grid(child, &container_dims, float_ctx);
+                let mut grid_float_ctx = FloatContext::new();
+                crate::grid_flow::layout_grid(child, &container_dims, &mut grid_float_ctx);
+            } else if child_establishes_bfc {
+                let mut inner_float_ctx = FloatContext::new();
+                layout_block_children(child, &mut inner_float_ctx);
+                calculate_block_height(child, &container_dims);
+                center_button_children(child);
+                layout_positioned_children(child, &mut inner_float_ctx);
             } else {
-                if child.box_type == crate::box_model::BoxType::AnonymousBlock {
-                    let avail_h = if container_dims.content.height() > 0.0 {
-                        container_dims.content.height()
-                    } else if let Some(ps) = &box_node.style {
-                        match ps.height {
-                            Length::Px(px) => px,
-                            _ => match ps.max_height {
-                                Length::Px(px) => px,
-                                _ => 0.0,
-                            },
-                        }
-                    } else {
-                        0.0
-                    };
-                    if avail_h > 0.0 {
-                        child.dimensions.content.size.height = avail_h;
-                    }
-                }
                 layout_block_children(child, float_ctx);
                 calculate_block_height(child, &container_dims);
                 center_button_children(child);
@@ -1198,8 +1269,9 @@ fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut FloatContext)
             prev_margin_bottom = child.dimensions.margin.bottom;
         }
 
-        let parent_has_bottom_strut =
-            container_dims.border.bottom > 0.0 || container_dims.padding.bottom > 0.0;
+        let parent_has_bottom_strut = container_dims.border.bottom > 0.0
+            || container_dims.padding.bottom > 0.0
+            || box_establishes_bfc;
         if !parent_has_bottom_strut && in_flow_count > 0 {
             box_node.dimensions.margin.bottom =
                 collapse_margins(box_node.dimensions.margin.bottom, prev_margin_bottom);
@@ -1479,51 +1551,35 @@ fn layout_single_float(
 ) {
     let float_type = child.style.as_ref().map(|s| s.float).unwrap_or(Float::None);
     let clear = child.style.as_ref().map(|s| s.clear).unwrap_or(Clear::None);
-    let float_y = float_ctx.apply_clearance(cursor_y, clear);
+    let mut float_y = float_ctx.apply_clearance(cursor_y, clear);
 
-    // Calculate child horizontal dimensions (shrink-to-fit or explicit width)
+    // Calculate child horizontal and vertical dimensions (shrink-to-fit or explicit)
     calculate_block_width(child, container_dims);
+    calculate_block_height(child, container_dims);
 
     let margin_box_w = child.dimensions.margin_box().width();
-    let margin_box_h = child.dimensions.margin_box().height();
+    let margin_box_h = child.dimensions.margin_box().height().max(1.0);
 
-    let child_y = float_y
+    // Step down until the float fits horizontally or clears all active floats (CSS 2.1 §9.5.1 Rules 1-9)
+    let is_right = float_type == Float::Right;
+    let (margin_box_x, margin_box_y) = float_ctx.find_float_position(
+        is_right,
+        float_y,
+        margin_box_w,
+        margin_box_h,
+        container_dims.content.x(),
+        container_dims.content.width(),
+    );
+    float_y = margin_box_y;
+
+    let child_x = margin_box_x
+        + child.dimensions.margin.left
+        + child.dimensions.border.left
+        + child.dimensions.padding.left;
+    let child_y = margin_box_y
         + child.dimensions.margin.top
         + child.dimensions.border.top
         + child.dimensions.padding.top;
-
-    let child_x = match float_type {
-        Float::Left => {
-            let (min_x, _max_x) = float_ctx.available_span(
-                float_y,
-                margin_box_h,
-                container_dims.content.x(),
-                container_dims.content.width(),
-            );
-            min_x
-                + child.dimensions.margin.left
-                + child.dimensions.border.left
-                + child.dimensions.padding.left
-        }
-        Float::Right => {
-            let (_min_x, max_x) = float_ctx.available_span(
-                float_y,
-                margin_box_h,
-                container_dims.content.x(),
-                container_dims.content.width(),
-            );
-            max_x - margin_box_w
-                + child.dimensions.margin.left
-                + child.dimensions.border.left
-                + child.dimensions.padding.left
-        }
-        Float::None => {
-            container_dims.content.x()
-                + child.dimensions.margin.left
-                + child.dimensions.border.left
-                + child.dimensions.padding.left
-        }
-    };
 
     child.dimensions.content.origin = Point::new(child_x, child_y);
 
@@ -1615,7 +1671,7 @@ fn apply_relative_offset(box_node: &mut LayoutBox, containing_block: &Dimensions
         let ch = if containing_block.content.height() > 0.0 {
             containing_block.content.height()
         } else {
-            600.0
+            0.0
         };
 
         let dx = if style.left != Length::Auto {
@@ -1646,6 +1702,9 @@ fn layout_positioned_element(
     containing_block: &Dimensions,
     float_ctx: &mut FloatContext,
 ) {
+    let static_x = box_node.dimensions.content.origin.x;
+    let static_y = box_node.dimensions.content.origin.y;
+
     let style = box_node.style.clone().unwrap_or_default();
     let font_size = style.font_size;
     let (vp_w, vp_h) = mango_css::values::get_current_viewport();
@@ -1746,19 +1805,20 @@ fn layout_positioned_element(
     let is_margin_t_auto = style.margin_top == Length::Auto;
     let is_margin_b_auto = style.margin_bottom == Length::Auto;
 
+    // In CSS 2.1 §8.3, percentage margins are relative to containing block WIDTH (pad_w)
     let margin_t = if is_margin_t_auto {
         0.0
     } else {
         style
             .margin_top
-            .to_px_with_viewport(font_size, 16.0, pad_h, pad_h)
+            .to_px_with_viewport(font_size, 16.0, pad_w, pad_h)
     };
     let margin_b = if is_margin_b_auto {
         0.0
     } else {
         style
             .margin_bottom
-            .to_px_with_viewport(font_size, 16.0, pad_h, pad_h)
+            .to_px_with_viewport(font_size, 16.0, pad_w, pad_h)
     };
 
     // If both top and bottom are specified and height is auto, height expands to fill the span
@@ -1848,28 +1908,12 @@ fn layout_positioned_element(
         box_node.dimensions.margin.left = margin_l;
         box_node.dimensions.margin.right = margin_r;
         // Static position: hypothetical in-flow position inside containing block's content box (CSS 2.1 § 10.3.7)
-        containing_block.content.x() + margin_l
-    };
-
-    // 2. Vertical positioning (CSS 2.1 § 10.6.4)
-    let is_top_auto = style.top == Length::Auto;
-    let is_bottom_auto = style.bottom == Length::Auto;
-    let is_margin_t_auto = style.margin_top == Length::Auto;
-    let is_margin_b_auto = style.margin_bottom == Length::Auto;
-
-    let margin_t = if is_margin_t_auto {
-        0.0
-    } else {
-        style
-            .margin_top
-            .to_px_with_viewport(font_size, 16.0, pad_h, pad_h)
-    };
-    let margin_b = if is_margin_b_auto {
-        0.0
-    } else {
-        style
-            .margin_bottom
-            .to_px_with_viewport(font_size, 16.0, pad_h, pad_h)
+        let base_x = if static_x >= containing_block.content.x() {
+            static_x
+        } else {
+            containing_block.content.x()
+        };
+        base_x + margin_l
     };
 
     let border_box_y = if !is_top_auto && !is_bottom_auto {
@@ -1914,7 +1958,12 @@ fn layout_positioned_element(
         box_node.dimensions.margin.top = margin_t;
         box_node.dimensions.margin.bottom = margin_b;
         // Static position: hypothetical in-flow position inside containing block's content box (CSS 2.1 § 10.6.4)
-        containing_block.content.y() + margin_t
+        let base_y = if static_y >= containing_block.content.y() {
+            static_y
+        } else {
+            containing_block.content.y()
+        };
+        base_y + margin_t
     };
 
     // Calculate content box origin from border box origin
@@ -1930,6 +1979,7 @@ fn layout_positioned_element(
     // Recursively position out-of-flow positioned children inside this positioned box
     layout_positioned_children(box_node, float_ctx);
 }
+
 
 pub(crate) fn shift_descendants(box_node: &mut LayoutBox, dx: f32, dy: f32) {
     for child in &mut box_node.children {
@@ -2121,6 +2171,25 @@ fn calculate_block_height(box_node: &mut LayoutBox, containing_block: &Dimension
             .size
             .height
             .max(bottom - box_node.dimensions.content.y());
+    }
+
+    // In CSS 2.1 §10.6.7: Auto heights for BFC roots must enclose all floating descendants
+    if establishes_bfc(box_node) && style.height == Length::Auto {
+        fn find_deep_floats_bottom(node: &LayoutBox, current_max: &mut f32) {
+            for child in &node.children {
+                if child.style.as_ref().is_some_and(|s| s.float != Float::None) {
+                    *current_max = current_max.max(child.dimensions.margin_box().bottom());
+                } else if !establishes_bfc(child) {
+                    find_deep_floats_bottom(child, current_max);
+                }
+            }
+        }
+        let mut max_float_bottom = box_node.dimensions.content.y();
+        find_deep_floats_bottom(box_node, &mut max_float_bottom);
+        let needed_h = max_float_bottom - box_node.dimensions.content.y();
+        if needed_h > box_node.dimensions.content.size.height {
+            box_node.dimensions.content.size.height = needed_h;
+        }
     }
 
     // 1b. Apply aspect-ratio if height is auto and aspect_ratio is defined
@@ -2694,5 +2763,326 @@ mod tests {
             }
         }
         print_tree(&bt, 0);
+    }
+
+    #[test]
+    fn test_positioned_element_auto_width_shrink_to_fit() {
+        // B1: width: auto on absolute element must shrink to fit, not expand to container width
+        let mut root = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut containing_block = Dimensions::default();
+        containing_block.content = Rect::new(0.0, 0.0, 600.0, 400.0);
+
+        let mut abs_box = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut abs_style = ComputedStyle::default();
+        abs_style.position = Position::Absolute;
+        abs_style.display = Display::Block;
+        abs_style.width = Length::Auto;
+        abs_style.height = Length::Px(50.0);
+        abs_box.style = Some(abs_style);
+
+        let mut child = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut c_style = ComputedStyle::default();
+        c_style.display = Display::Block;
+        c_style.width = Length::Px(120.0);
+        c_style.height = Length::Px(30.0);
+        child.style = Some(c_style);
+        abs_box.children.push(child);
+
+        root.children.push(abs_box);
+
+        let mut float_ctx = FloatContext::new();
+        layout_block(&mut root, &containing_block, &mut float_ctx);
+
+        let abs_result = &root.children[0];
+        assert_eq!(abs_result.dimensions.content.width(), 120.0);
+    }
+
+    #[test]
+    fn test_positioned_element_percentage_margins() {
+        // B2: Percentage margins on positioned elements are relative to containing block WIDTH
+        let mut root = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut containing_block = Dimensions::default();
+        // Width 500, Height 200
+        containing_block.content = Rect::new(0.0, 0.0, 500.0, 200.0);
+
+        let mut abs_box = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut abs_style = ComputedStyle::default();
+        abs_style.position = Position::Absolute;
+        abs_style.display = Display::Block;
+        abs_style.width = Length::Px(100.0);
+        abs_style.height = Length::Px(100.0);
+        // 10% of width 500 = 50px
+        abs_style.margin_top = Length::Percent(10.0);
+        abs_style.margin_bottom = Length::Percent(10.0);
+        abs_style.margin_left = Length::Percent(10.0);
+        abs_style.margin_right = Length::Percent(10.0);
+        abs_box.style = Some(abs_style);
+
+        root.children.push(abs_box);
+
+        let mut float_ctx = FloatContext::new();
+        layout_block(&mut root, &containing_block, &mut float_ctx);
+
+        let abs_result = &root.children[0];
+        assert_eq!(abs_result.dimensions.margin.top, 50.0);
+        assert_eq!(abs_result.dimensions.margin.bottom, 50.0);
+        assert_eq!(abs_result.dimensions.margin.left, 50.0);
+        assert_eq!(abs_result.dimensions.margin.right, 50.0);
+    }
+
+    #[test]
+    fn test_positioned_element_static_position_after_block_sibling() {
+        // B3: Static position for auto top on absolute element takes sibling order into account
+        let mut root = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut containing_block = Dimensions::default();
+        containing_block.content = Rect::new(0.0, 0.0, 500.0, 500.0);
+
+        let mut sibling = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut s_style = ComputedStyle::default();
+        s_style.display = Display::Block;
+        s_style.width = Length::Px(500.0);
+        s_style.height = Length::Px(150.0);
+        sibling.style = Some(s_style);
+
+        let mut abs_box = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut abs_style = ComputedStyle::default();
+        abs_style.position = Position::Absolute;
+        abs_style.display = Display::Block;
+        abs_style.top = Length::Auto;
+        abs_style.left = Length::Auto;
+        abs_style.width = Length::Px(100.0);
+        abs_style.height = Length::Px(80.0);
+        abs_box.style = Some(abs_style);
+
+        root.children.push(sibling);
+        root.children.push(abs_box);
+
+        let mut float_ctx = FloatContext::new();
+        layout_block(&mut root, &containing_block, &mut float_ctx);
+
+        let abs_result = &root.children[1];
+        assert_eq!(abs_result.dimensions.content.y(), 150.0);
+    }
+
+    #[test]
+    fn test_float_downward_stepping_when_overflowing() {
+        // B4: Floats step downward past earlier floats if horizontal span is insufficient
+        let mut root = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut containing_block = Dimensions::default();
+        containing_block.content = Rect::new(0.0, 0.0, 500.0, 600.0);
+
+        let mut float1 = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut f1_style = ComputedStyle::default();
+        f1_style.float = Float::Right;
+        f1_style.width = Length::Px(300.0);
+        f1_style.height = Length::Px(100.0);
+        float1.style = Some(f1_style);
+
+        let mut float2 = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut f2_style = ComputedStyle::default();
+        f2_style.float = Float::Right;
+        f2_style.width = Length::Px(300.0);
+        f2_style.height = Length::Px(100.0);
+        float2.style = Some(f2_style);
+
+        root.children.push(float1);
+        root.children.push(float2);
+
+        let mut float_ctx = FloatContext::new();
+        layout_block(&mut root, &containing_block, &mut float_ctx);
+
+        let f1_res = &root.children[0];
+        let f2_res = &root.children[1];
+        assert_eq!(f1_res.dimensions.content.y(), 0.0);
+        // Float 2 cannot fit alongside float 1 (300 + 300 > 500), so it steps below float 1 (y = 100)
+        assert_eq!(f2_res.dimensions.content.y(), 100.0);
+    }
+
+    #[test]
+    fn test_tentative_height_border_box() {
+        // B5: Tentative height resolution deducts padding & borders for box-sizing: border-box
+        let mut root = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut containing_block = Dimensions::default();
+        containing_block.content = Rect::new(0.0, 0.0, 500.0, 500.0);
+
+        let mut parent = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut p_style = ComputedStyle::default();
+        p_style.display = Display::Block;
+        p_style.box_sizing = BoxSizing::BorderBox;
+        p_style.height = Length::Px(200.0);
+        p_style.padding_top = Length::Px(20.0);
+        p_style.padding_bottom = Length::Px(20.0);
+        p_style.border_top_width = 10.0;
+        p_style.border_bottom_width = 10.0;
+        parent.style = Some(p_style);
+
+        root.children.push(parent);
+
+        let mut float_ctx = FloatContext::new();
+        layout_block(&mut root, &containing_block, &mut float_ctx);
+
+        let p_res = &root.children[0];
+        // Content height: 200 - (20 + 20 + 10 + 10) = 140
+        assert_eq!(p_res.dimensions.content.height(), 140.0);
+        assert_eq!(p_res.dimensions.border_box().height(), 200.0);
+    }
+
+    #[test]
+    fn test_relative_offset_percentage_height_in_auto_container() {
+        // B6: Relative top: 50% in an auto-height container resolves to 0px, not magic 600px fallback
+        let mut root = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut containing_block = Dimensions::default();
+        containing_block.content = Rect::new(0.0, 0.0, 500.0, 0.0); // auto / indefinite height
+
+        let mut rel_box = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut r_style = ComputedStyle::default();
+        r_style.display = Display::Block;
+        r_style.position = Position::Relative;
+        r_style.top = Length::Percent(50.0);
+        r_style.width = Length::Px(200.0);
+        r_style.height = Length::Px(100.0);
+        rel_box.style = Some(r_style);
+
+        root.children.push(rel_box);
+
+        let mut float_ctx = FloatContext::new();
+        layout_block(&mut root, &containing_block, &mut float_ctx);
+
+        let rel_res = &root.children[0];
+        assert_eq!(rel_res.dimensions.content.y(), 0.0);
+    }
+
+    #[test]
+    fn test_bfc_root_margin_containment() {
+        // B7: BFC roots (overflow: hidden) do not collapse margins with in-flow children
+        let mut root = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut containing_block = Dimensions::default();
+        containing_block.content = Rect::new(0.0, 0.0, 500.0, 500.0);
+
+        let mut bfc_box = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut bfc_style = ComputedStyle::default();
+        bfc_style.display = Display::Block;
+        bfc_style.overflow_x = Overflow::Hidden;
+        bfc_style.overflow_y = Overflow::Hidden;
+        bfc_style.height = Length::Auto;
+        bfc_style.margin_top = Length::Px(10.0);
+        bfc_box.style = Some(bfc_style);
+
+        let mut child = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut c_style = ComputedStyle::default();
+        c_style.display = Display::Block;
+        c_style.height = Length::Px(80.0);
+        c_style.margin_top = Length::Px(30.0);
+        c_style.margin_bottom = Length::Px(20.0);
+        child.style = Some(c_style);
+
+        bfc_box.children.push(child);
+        root.children.push(bfc_box);
+
+        let mut float_ctx = FloatContext::new();
+        layout_block(&mut root, &containing_block, &mut float_ctx);
+
+        let bfc_res = &root.children[0];
+        let child_res = &bfc_res.children[0];
+        // Parent's margin-top stays 10 (not collapsed to 30)
+        assert_eq!(bfc_res.dimensions.margin.top, 10.0);
+        // Child's margin-top pushes it down from parent's content top
+        assert_eq!(child_res.dimensions.content.y(), bfc_res.dimensions.content.y() + 30.0);
+        // Parent's height encloses child's margin box: 80 + 30 + 20 = 130
+        assert_eq!(bfc_res.dimensions.content.height(), 130.0);
+    }
+
+    #[test]
+    fn test_bfc_root_auto_height_encloses_floats() {
+        // B8: BFC roots auto height encloses floating descendants per CSS 2.1 §10.6.7
+        let mut root = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut containing_block = Dimensions::default();
+        containing_block.content = Rect::new(0.0, 0.0, 500.0, 500.0);
+
+        let mut bfc_box = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut bfc_style = ComputedStyle::default();
+        bfc_style.display = Display::Block;
+        bfc_style.overflow_x = Overflow::Hidden;
+        bfc_style.overflow_y = Overflow::Hidden;
+        bfc_style.height = Length::Auto;
+        bfc_box.style = Some(bfc_style);
+
+        let mut float_child = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut f_style = ComputedStyle::default();
+        f_style.float = Float::Left;
+        f_style.width = Length::Px(150.0);
+        f_style.height = Length::Px(120.0);
+        float_child.style = Some(f_style);
+
+        bfc_box.children.push(float_child);
+        root.children.push(bfc_box);
+
+        let mut float_ctx = FloatContext::new();
+        layout_block(&mut root, &containing_block, &mut float_ctx);
+
+        let bfc_res = &root.children[0];
+        assert_eq!(bfc_res.dimensions.content.height(), 120.0);
+    }
+
+    #[test]
+    fn test_rtl_overconstrained_underflow_absorbs_left_margin() {
+        // G1: Over-constrained blocks in direction: rtl absorb underflow into margin-left
+        let mut root = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut containing_block = Dimensions::default();
+        containing_block.content = Rect::new(0.0, 0.0, 500.0, 500.0);
+
+        let mut block = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut style = ComputedStyle::default();
+        style.display = Display::Block;
+        style.direction = Direction::Rtl;
+        style.width = Length::Px(200.0);
+        style.margin_left = Length::Px(10.0);
+        style.margin_right = Length::Px(10.0);
+        block.style = Some(style);
+
+        root.children.push(block);
+
+        let mut float_ctx = FloatContext::new();
+        layout_block(&mut root, &containing_block, &mut float_ctx);
+
+        let res = &root.children[0];
+        // 500 - 200 - 10 - 10 = 280 underflow added to margin-left: 10 + 280 = 290
+        assert_eq!(res.dimensions.margin.left, 290.0);
+        assert_eq!(res.dimensions.margin.right, 10.0);
+    }
+
+    #[test]
+    fn test_bfc_child_float_avoidance() {
+        // G2: In-flow BFC child avoids active floats rather than overlapping
+        let mut root = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut containing_block = Dimensions::default();
+        containing_block.content = Rect::new(0.0, 0.0, 500.0, 500.0);
+
+        let mut float_left = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut f_style = ComputedStyle::default();
+        f_style.float = Float::Left;
+        f_style.width = Length::Px(150.0);
+        f_style.height = Length::Px(100.0);
+        float_left.style = Some(f_style);
+
+        let mut bfc_child = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut bfc_style = ComputedStyle::default();
+        bfc_style.display = Display::Block;
+        bfc_style.overflow_x = Overflow::Hidden;
+        bfc_style.overflow_y = Overflow::Hidden;
+        bfc_style.width = Length::Px(200.0);
+        bfc_style.height = Length::Px(80.0);
+        bfc_child.style = Some(bfc_style);
+
+        root.children.push(float_left);
+        root.children.push(bfc_child);
+
+        let mut float_ctx = FloatContext::new();
+        layout_block(&mut root, &containing_block, &mut float_ctx);
+
+        let bfc_res = &root.children[1];
+        // bfc_child starts to the right of float_left (x >= 150)
+        assert!(bfc_res.dimensions.content.x() >= 150.0);
+        assert_eq!(bfc_res.dimensions.content.y(), 0.0);
     }
 }

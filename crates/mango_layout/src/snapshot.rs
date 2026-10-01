@@ -16,7 +16,9 @@ use mango_render::display_list::DisplayList;
 use crate::block_flow::layout_block;
 use crate::box_tree::{FormControlHit, LayoutBox, build_box_tree};
 use crate::dimensions::Dimensions;
-use crate::display_list::{build_display_list, build_display_list_with_scroll};
+use crate::display_list::{
+    build_display_list, build_display_list_with_scroll, build_display_list_with_scroll_xy,
+};
 use crate::float::FloatContext;
 use crate::style_tree::{StyledNode, build_style_tree_with_size};
 
@@ -89,6 +91,11 @@ impl LayoutSnapshot {
         build_display_list_with_scroll(&self.root_box, scroll_y)
     }
 
+    /// Generates a display list with custom horizontal and vertical scroll offsets.
+    pub fn display_list_with_scroll_xy(&self, scroll_x: f32, scroll_y: f32) -> DisplayList {
+        build_display_list_with_scroll_xy(&self.root_box, scroll_x, scroll_y)
+    }
+
     /// Returns the total content dimensions computed during layout.
     pub fn content_size(&self) -> Size {
         Size::new(
@@ -112,18 +119,45 @@ impl LayoutSnapshot {
     /// Performs hit-testing against the frozen layout tree, returning the deepest hit DOM node.
     pub fn hit_test(&self, point: Point) -> Option<NodeId> {
         fn hit_test_box(b: &LayoutBox, p: Point) -> Option<NodeId> {
-            let rect = b.dimensions.border_box();
-            if !rect.contains(p) {
+            if !b.is_visible() {
                 return None;
             }
-            for child in b.children.iter().rev() {
-                if let Some(hit) = hit_test_box(child, p) {
-                    return Some(hit);
+            let border_box = b.dimensions.border_box();
+            if !border_box.contains(p) {
+                return None;
+            }
+            if b.is_scroll_container() {
+                if b.dimensions.padding_box().contains(p) {
+                    for child in b.children.iter().rev() {
+                        let child_pt = if child
+                            .style
+                            .as_ref()
+                            .is_some_and(|s| s.position == mango_css::values::Position::Fixed)
+                        {
+                            p
+                        } else {
+                            Point::new(p.x + b.scroll_offset_x, p.y + b.scroll_offset_y)
+                        };
+                        if let Some(hit) = hit_test_box(child, child_pt) {
+                            return Some(hit);
+                        }
+                    }
+                }
+            } else {
+                for child in b.children.iter().rev() {
+                    if let Some(hit) = hit_test_box(child, p) {
+                        return Some(hit);
+                    }
                 }
             }
             b.node_id
         }
         hit_test_box(&self.root_box, point)
+    }
+
+    /// Performs hit-testing taking into account a viewport vertical scroll offset.
+    pub fn hit_test_with_scroll(&self, point: Point, scroll_y: f32) -> Option<NodeId> {
+        self.hit_test(Point::new(point.x, point.y + scroll_y))
     }
 
     /// Performs hit-testing against hyperlinks in the layout tree.
@@ -206,5 +240,34 @@ mod tests {
         // Hit-test inside the box
         let hit = snapshot.hit_test(Point::new(50.0, 50.0));
         assert!(hit.is_some());
+    }
+
+    #[test]
+    fn test_snapshot_scroll_xy_and_hit_test_with_scroll() {
+        let html = r#"
+            <!DOCTYPE html>
+            <html>
+                <body style="margin: 0;">
+                    <div id="first" style="width: 200px; height: 100px; background-color: #eee;">Box 1</div>
+                    <div id="second" style="width: 200px; height: 100px; background-color: #ccc;">Box 2</div>
+                </body>
+            </html>
+        "#;
+        let doc = parse_html(html);
+        let viewport = Size::new(800.0, 600.0);
+        let snapshot = LayoutSnapshot::from_document(&doc, &[], viewport).unwrap();
+
+        // 2D scroll display list generates valid list
+        let dl = snapshot.display_list_with_scroll_xy(10.0, 50.0);
+        assert!(!dl.is_empty());
+
+        // Hit-test at (50, 50) without scroll hits Box 1
+        let hit_box1 = snapshot.hit_test(Point::new(50.0, 50.0));
+        assert!(hit_box1.is_some());
+
+        // Hit-test at (50, 50) when scrolled down by 100px hits Box 2 (at y=150 in document)
+        let hit_box2 = snapshot.hit_test_with_scroll(Point::new(50.0, 50.0), 100.0);
+        assert!(hit_box2.is_some());
+        assert_ne!(hit_box1, hit_box2);
     }
 }

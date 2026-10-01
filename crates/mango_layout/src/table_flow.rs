@@ -118,7 +118,7 @@ fn calculate_table_width(table_box: &mut LayoutBox, containing_block: &Dimension
         }
     }
 
-    let content_width = match style.width {
+    let mut content_width = match style.width {
         Length::Auto => {
             if let Some(w) = explicit_width {
                 match style.box_sizing {
@@ -137,6 +137,27 @@ fn calculate_table_width(table_box: &mut LayoutBox, containing_block: &Dimension
             }
         }
     };
+
+    let min_w = style
+        .min_width
+        .to_px_with_viewport(font_size, 16.0, container_width, container_height);
+    if min_w > 0.0 {
+        let min_content_w = match style.box_sizing {
+            BoxSizing::ContentBox => min_w,
+            BoxSizing::BorderBox => (min_w - total_non_content_h).max(0.0),
+        };
+        content_width = content_width.max(min_content_w);
+    }
+    let max_w = style
+        .max_width
+        .to_px_with_viewport(font_size, 16.0, container_width, container_height);
+    if max_w > 0.0 && style.max_width != Length::Auto {
+        let max_content_w = match style.box_sizing {
+            BoxSizing::ContentBox => max_w,
+            BoxSizing::BorderBox => (max_w - total_non_content_h).max(0.0),
+        };
+        content_width = content_width.min(max_content_w);
+    }
 
     if style.margin_left == Length::Auto && style.margin_right == Length::Auto {
         let remaining = (container_width - content_width - total_non_content_h).max(0.0);
@@ -402,8 +423,30 @@ pub(crate) fn measure_box_intrinsic_widths(
         let mut max_w = 0.0f32;
         let mut child_count = 0;
         for child in &node.children {
-            let (c_min, c_max) =
-                measure_box_intrinsic_widths(child, font_size, weight, family, memo);
+            let child_style = child.style.as_ref();
+            if child_style
+                .map(|s| {
+                    matches!(
+                        s.position,
+                        mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
+                    )
+                })
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            let explicit_w = child_style.and_then(|s| match s.flex_basis {
+                Length::Px(px) if px >= 0.0 => Some(px),
+                _ => match s.width {
+                    Length::Px(px) if px >= 0.0 => Some(px),
+                    _ => None,
+                },
+            });
+            let (c_min, c_max) = if let Some(w) = explicit_w {
+                (w, w)
+            } else {
+                measure_box_intrinsic_widths(child, font_size, weight, family, memo)
+            };
             if is_row {
                 min_w = min_w.max(c_min);
                 max_w += c_max;
@@ -505,7 +548,27 @@ pub(crate) fn measure_box_intrinsic_widths(
         return res;
     }
 
-    // 4. General container: max of child intrinsic widths
+    // 4. General container: check explicit width first, otherwise max of child intrinsic widths
+    if let Some(style) = &node.style {
+        match style.width {
+            Length::Px(px) if px >= 0.0 => {
+                let non_content_h = node.dimensions.padding.left
+                    + node.dimensions.padding.right
+                    + node.dimensions.border.left
+                    + node.dimensions.border.right;
+                let w = if style.box_sizing == mango_css::values::BoxSizing::BorderBox {
+                    (px - non_content_h).max(0.0)
+                } else {
+                    px
+                };
+                let res = (w + non_content_h, w + non_content_h);
+                memo.insert(key, res);
+                return res;
+            }
+            _ => {}
+        }
+    }
+
     let mut sum_min = 0.0f32;
     let mut sum_max = 0.0f32;
     for child in &node.children {
@@ -744,17 +807,36 @@ fn layout_table_contents(
     let mut row_refs: Vec<(Option<usize>, usize)> = Vec::new();
 
     if has_row_groups {
+        let mut thead_rows = Vec::new();
+        let mut tbody_rows = Vec::new();
+        let mut tfoot_rows = Vec::new();
+
         for (g_idx, group) in table_box.children.iter().enumerate() {
             if is_table_row_group(group) {
+                let is_head = group.tag_name.as_deref() == Some("thead")
+                    || group.style.as_ref().map(|s| s.display) == Some(Display::TableHeaderGroup);
+                let is_foot = group.tag_name.as_deref() == Some("tfoot")
+                    || group.style.as_ref().map(|s| s.display) == Some(Display::TableFooterGroup);
+
                 for (r_idx, row) in group.children.iter().enumerate() {
                     if is_table_row(row) {
-                        row_refs.push((Some(g_idx), r_idx));
+                        if is_head {
+                            thead_rows.push((Some(g_idx), r_idx));
+                        } else if is_foot {
+                            tfoot_rows.push((Some(g_idx), r_idx));
+                        } else {
+                            tbody_rows.push((Some(g_idx), r_idx));
+                        }
                     }
                 }
             } else if is_table_row(group) {
-                row_refs.push((None, g_idx));
+                tbody_rows.push((None, g_idx));
             }
         }
+
+        row_refs.extend(thead_rows);
+        row_refs.extend(tbody_rows);
+        row_refs.extend(tfoot_rows);
     } else {
         for (r_idx, row) in table_box.children.iter().enumerate() {
             if is_table_row(row) {
@@ -773,8 +855,20 @@ fn layout_table_contents(
             crate::block_flow::layout_block(caption, &caption_cb, &mut cap_float_ctx);
             current_y += caption.dimensions.margin_box().height();
         }
-        table_box.dimensions.content.size.height =
-            (current_y - table_box.dimensions.content.y()).max(10.0);
+        let raw_h = (current_y - table_box.dimensions.content.y()).max(10.0);
+        let font_size = style.font_size;
+        let (_, vp_h) = mango_css::get_current_viewport();
+        let min_h = style
+            .min_height
+            .to_px_with_viewport(font_size, 16.0, table_w, vp_h);
+        let mut final_h = raw_h.max(min_h);
+        let max_h = style
+            .max_height
+            .to_px_with_viewport(font_size, 16.0, table_w, vp_h);
+        if max_h > 0.0 && style.max_height != Length::Auto {
+            final_h = final_h.min(max_h);
+        }
+        table_box.dimensions.content.size.height = final_h;
         return;
     }
 
@@ -1111,6 +1205,17 @@ fn layout_table_contents(
     if actual_table_w > table_w {
         table_w = actual_table_w;
         table_box.dimensions.content.size.width = table_w;
+
+        // Re-layout top captions with updated table width
+        let mut re_y = table_box.dimensions.content.y();
+        for &cap_idx in &top_caption_indices {
+            let caption = &mut table_box.children[cap_idx];
+            let mut caption_cb = Dimensions::new(Rect::new(table_x, re_y, table_w, 10000.0));
+            caption_cb.content.size.width = table_w;
+            let mut cap_float_ctx = FloatContext::new();
+            crate::block_flow::layout_block(caption, &caption_cb, &mut cap_float_ctx);
+            re_y += caption.dimensions.margin_box().height();
+        }
     }
 
     // 5. Collapsed Border Resolution Model (CSS 2.1 §17.6.2)
@@ -1146,6 +1251,31 @@ fn layout_table_contents(
                 color: c,
                 precedence: 4,
             }
+        };
+
+        let table_border_top = BorderSide {
+            width: table_box.dimensions.border.top,
+            style: style.border_top_style,
+            color: style.border_top_color,
+            precedence: 1,
+        };
+        let table_border_bottom = BorderSide {
+            width: table_box.dimensions.border.bottom,
+            style: style.border_bottom_style,
+            color: style.border_bottom_color,
+            precedence: 1,
+        };
+        let table_border_left = BorderSide {
+            width: table_box.dimensions.border.left,
+            style: style.border_left_style,
+            color: style.border_left_color,
+            precedence: 1,
+        };
+        let table_border_right = BorderSide {
+            width: table_box.dimensions.border.right,
+            style: style.border_right_style,
+            color: style.border_right_color,
+            precedence: 1,
         };
 
         // Horizontal edges: between row r and row r+1 (size: (num_rows - 1) x num_cols)
@@ -1208,6 +1338,7 @@ fn layout_table_contents(
         // Apply collapsed borders:
         // Top edge of internal boundary stays on top cell bottom border; lower cell top border becomes 0.
         // Left edge of internal boundary stays on left cell right border; right cell left border becomes 0.
+        // Outer perimeter resolves with table box borders.
         for r in 0..num_rows {
             for c in 0..num_cols {
                 if let Some(cell_ref) = grid[r][c]
@@ -1231,6 +1362,15 @@ fn layout_table_contents(
                             s.border_bottom_style = resolved.style;
                             s.border_bottom_color = resolved.color;
                         }
+                    } else if table_border_bottom.width > 0.0 {
+                        let current = extract_cell_border(cell, "bottom");
+                        let resolved = resolve_border_conflict(current, table_border_bottom);
+                        cell.dimensions.border.bottom = resolved.width;
+                        if let Some(s) = cell.style.as_mut() {
+                            s.border_bottom_width = resolved.width;
+                            s.border_bottom_style = resolved.style;
+                            s.border_bottom_color = resolved.color;
+                        }
                     }
 
                     // Top border update: if not row 0, set top border to 0
@@ -1240,12 +1380,30 @@ fn layout_table_contents(
                             s.border_top_width = 0.0;
                             s.border_top_style = BorderStyle::None;
                         }
+                    } else if table_border_top.width > 0.0 {
+                        let current = extract_cell_border(cell, "top");
+                        let resolved = resolve_border_conflict(current, table_border_top);
+                        cell.dimensions.border.top = resolved.width;
+                        if let Some(s) = cell.style.as_mut() {
+                            s.border_top_width = resolved.width;
+                            s.border_top_style = resolved.style;
+                            s.border_top_color = resolved.color;
+                        }
                     }
 
                     // Right border update
                     let right_boundary_c = cell_ref.start_col + cell_ref.col_span - 1;
                     if right_boundary_c < num_cols.saturating_sub(1) {
                         let resolved = vert_edges[cell_ref.start_row][right_boundary_c];
+                        cell.dimensions.border.right = resolved.width;
+                        if let Some(s) = cell.style.as_mut() {
+                            s.border_right_width = resolved.width;
+                            s.border_right_style = resolved.style;
+                            s.border_right_color = resolved.color;
+                        }
+                    } else if table_border_right.width > 0.0 {
+                        let current = extract_cell_border(cell, "right");
+                        let resolved = resolve_border_conflict(current, table_border_right);
                         cell.dimensions.border.right = resolved.width;
                         if let Some(s) = cell.style.as_mut() {
                             s.border_right_width = resolved.width;
@@ -1260,6 +1418,15 @@ fn layout_table_contents(
                         if let Some(s) = cell.style.as_mut() {
                             s.border_left_width = 0.0;
                             s.border_left_style = BorderStyle::None;
+                        }
+                    } else if table_border_left.width > 0.0 {
+                        let current = extract_cell_border(cell, "left");
+                        let resolved = resolve_border_conflict(current, table_border_left);
+                        cell.dimensions.border.left = resolved.width;
+                        if let Some(s) = cell.style.as_mut() {
+                            s.border_left_width = resolved.width;
+                            s.border_left_style = resolved.style;
+                            s.border_left_color = resolved.color;
                         }
                     }
                 }
@@ -1511,10 +1678,17 @@ fn layout_table_contents(
             &mut table_box.children[cell_ref.row_idx].children[cell_ref.cell_idx]
         };
 
-        cell.dimensions.content.origin.x =
-            cell_x + cell.dimensions.padding.left + cell.dimensions.border.left;
-        cell.dimensions.content.origin.y =
-            cell_y + cell.dimensions.padding.top + cell.dimensions.border.top;
+        let old_x = cell.dimensions.content.origin.x;
+        let old_y = cell.dimensions.content.origin.y;
+
+        let new_x = cell_x + cell.dimensions.padding.left + cell.dimensions.border.left;
+        let new_y = cell_y + cell.dimensions.padding.top + cell.dimensions.border.top;
+
+        let dx = new_x - old_x;
+        let dy = new_y - old_y;
+
+        cell.dimensions.content.origin.x = new_x;
+        cell.dimensions.content.origin.y = new_y;
         cell.dimensions.content.size.width = (cell_w
             - cell.dimensions.padding.left
             - cell.dimensions.padding.right
@@ -1533,6 +1707,7 @@ fn layout_table_contents(
         cell.dimensions.content.size.height = allocated_h.max(1.0);
 
         // Vertical alignment inside table cell
+        let mut va_dy = 0.0;
         if extra_h > 0.5 {
             let va = cell
                 .style
@@ -1540,17 +1715,17 @@ fn layout_table_contents(
                 .map(|s| s.vertical_align)
                 .unwrap_or(VerticalAlign::Middle);
 
-            let dy = match va {
+            va_dy = match va {
                 VerticalAlign::Top => 0.0,
                 VerticalAlign::Middle => extra_h / 2.0,
                 VerticalAlign::Bottom => extra_h,
                 VerticalAlign::Baseline => 0.0,
                 _ => 0.0,
             };
+        }
 
-            if dy > 0.0 {
-                crate::block_flow::shift_descendants(cell, 0.0, dy);
-            }
+        if dx.abs() > 0.001 || (dy + va_dy).abs() > 0.001 {
+            crate::block_flow::shift_descendants(cell, dx, dy + va_dy);
         }
     }
 
@@ -1566,6 +1741,18 @@ fn layout_table_contents(
         current_y += caption.dimensions.margin_box().height();
     }
 
-    table_box.dimensions.content.size.height =
-        (current_y - table_box.dimensions.content.y()).max(10.0);
+    let raw_h = (current_y - table_box.dimensions.content.y()).max(10.0);
+    let font_size = style.font_size;
+    let (_, vp_h) = mango_css::get_current_viewport();
+    let min_h = style
+        .min_height
+        .to_px_with_viewport(font_size, 16.0, table_w, vp_h);
+    let mut final_h = raw_h.max(min_h);
+    let max_h = style
+        .max_height
+        .to_px_with_viewport(font_size, 16.0, table_w, vp_h);
+    if max_h > 0.0 && style.max_height != Length::Auto {
+        final_h = final_h.min(max_h);
+    }
+    table_box.dimensions.content.size.height = final_h;
 }

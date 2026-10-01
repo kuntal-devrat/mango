@@ -19,6 +19,7 @@ enum InlineAtomKind {
     LineBreak,
     WordBreakOpportunity,
     SoftHyphen,
+    Spacing,
 }
 
 /// An atomic inline fragment (a word, a whitespace gap, or an inline element box).
@@ -38,7 +39,8 @@ impl InlineAtom {
             InlineAtomKind::AtomicBox(_)
             | InlineAtomKind::LineBreak
             | InlineAtomKind::WordBreakOpportunity
-            | InlineAtomKind::SoftHyphen => false,
+            | InlineAtomKind::SoftHyphen
+            | InlineAtomKind::Spacing => false,
         }
     }
 }
@@ -425,12 +427,29 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
     let mut positioned_boxes = Vec::new();
     let mut current_y = container_y;
 
+    let is_container_rtl = container
+        .style
+        .as_ref()
+        .map(|s| s.direction == mango_css::values::Direction::Rtl)
+        .unwrap_or(false);
+
     let text_indent = container
         .style
         .as_ref()
         .map(|s| s.text_indent.to_px(s.font_size, 16.0, container_width))
         .unwrap_or(0.0);
     let mut is_first_line = true;
+
+    let get_line_x_and_width = |min_x: f32, max_x: f32, is_first: bool| -> (f32, f32) {
+        let line_indent = if is_first { text_indent } else { 0.0 };
+        let avail_w = (max_x - min_x - line_indent).max(0.0);
+        let start_x = if is_container_rtl {
+            min_x
+        } else {
+            min_x + line_indent
+        };
+        (start_x, avail_w)
+    };
 
     let max_lines = container
         .style
@@ -454,17 +473,17 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
 
     while let Some(atom) = atom_queue.pop_front() {
         if matches!(atom.kind, InlineAtomKind::LineBreak) {
-            let line_indent = if is_first_line { text_indent } else { 0.0 };
             let (min_x, max_x) =
                 float_ctx.available_span(current_y, atom.height, container_x, container_width);
-            let available_width = (max_x - min_x - line_indent).max(0.0);
+            let (line_x, available_width) = get_line_x_and_width(min_x, max_x, is_first_line);
             let line_h = finalize_line(
                 &line_atoms,
-                min_x + line_indent,
+                line_x,
                 available_width,
                 current_y,
                 text_align,
                 &mut positioned_boxes,
+                true,
             );
             current_y += line_h.max(atom.height);
             is_first_line = false;
@@ -485,10 +504,26 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
         }
 
         let atom_height = atom.height;
-        let line_indent = if is_first_line { text_indent } else { 0.0 };
-        let (min_x, max_x) =
+        let (mut min_x, mut max_x) =
             float_ctx.available_span(current_y, atom_height, container_x, container_width);
-        let available_width = (max_x - min_x - line_indent).max(0.0);
+        let (mut line_x, mut available_width) = get_line_x_and_width(min_x, max_x, is_first_line);
+
+        // CSS 2.1 §9.5: If a line box is too small to contain any content due to floats, shift downward
+        if line_atoms.is_empty()
+            && (available_width <= 0.0
+                || (atom.width > available_width && float_ctx.has_floats_at(current_y, atom_height)))
+        {
+            if let Some(next_y) = float_ctx.next_vertical_opportunity(current_y) {
+                current_y = next_y;
+                let (new_min, new_max) =
+                    float_ctx.available_span(current_y, atom_height, container_x, container_width);
+                min_x = new_min;
+                max_x = new_max;
+                let (lx, aw) = get_line_x_and_width(min_x, max_x, is_first_line);
+                line_x = lx;
+                available_width = aw;
+            }
+        }
 
         let is_pre = matches!(
             atom.style.white_space,
@@ -570,11 +605,12 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
                 line_atoms.push(hyphen_atom);
                 let line_h = finalize_line(
                     &line_atoms,
-                    min_x + line_indent,
+                    line_x,
                     available_width,
                     current_y,
                     text_align,
                     &mut positioned_boxes,
+                    false,
                 );
                 current_y += line_h;
                 is_first_line = false;
@@ -590,6 +626,21 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
                         && !t.ends_with('…')
                     {
                         t.push('…');
+                        if let Some(st) = &last_box.style {
+                            let font_size = st.font_size;
+                            let weight = font_weight_for(st);
+                            let family = font_family_for(st);
+                            let letter_spacing_px =
+                                st.letter_spacing.to_px(font_size, 16.0, container_width);
+                            last_box.dimensions.content.size.width =
+                                measure_text_width_with_style_and_spacing(
+                                    t,
+                                    font_size,
+                                    weight,
+                                    family,
+                                    letter_spacing_px,
+                                );
+                        }
                     }
                     break;
                 }
@@ -635,6 +686,18 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
                         && !text.ends_with('-')
                     {
                         text.push('-');
+                        let font_size = prev.style.font_size;
+                        let weight = font_weight_for(&prev.style);
+                        let family = font_family_for(&prev.style);
+                        let letter_spacing_px =
+                            prev.style.letter_spacing.to_px(font_size, 16.0, container_width);
+                        prev.width = measure_text_width_with_style_and_spacing(
+                            text,
+                            font_size,
+                            weight,
+                            family,
+                            letter_spacing_px,
+                        );
                     }
                 }
             }
@@ -642,11 +705,12 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
             // Line break
             let line_h = finalize_line(
                 &line_atoms,
-                min_x + line_indent,
+                line_x,
                 available_width,
                 current_y,
                 text_align,
                 &mut positioned_boxes,
+                false,
             );
             current_y += line_h;
             is_first_line = false;
@@ -662,6 +726,21 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
                     && !t.ends_with('…')
                 {
                     t.push('…');
+                    if let Some(st) = &last_box.style {
+                        let font_size = st.font_size;
+                        let weight = font_weight_for(st);
+                        let family = font_family_for(st);
+                        let letter_spacing_px =
+                            st.letter_spacing.to_px(font_size, 16.0, container_width);
+                        last_box.dimensions.content.size.width =
+                            measure_text_width_with_style_and_spacing(
+                                t,
+                                font_size,
+                                weight,
+                                family,
+                                letter_spacing_px,
+                            );
+                    }
                 }
                 break;
             }
@@ -676,19 +755,19 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
     }
 
     if !line_atoms.is_empty() && max_lines.is_none_or(|max| line_count < max) {
-        let line_indent = if is_first_line { text_indent } else { 0.0 };
         let line_height = line_atoms.iter().map(|a| a.height).fold(0.0f32, f32::max);
         let (min_x, max_x) =
             float_ctx.available_span(current_y, line_height, container_x, container_width);
-        let available_width = (max_x - min_x - line_indent).max(0.0);
+        let (line_x, available_width) = get_line_x_and_width(min_x, max_x, is_first_line);
 
         let line_h = finalize_line(
             &line_atoms,
-            min_x + line_indent,
+            line_x,
             available_width,
             current_y,
             text_align,
             &mut positioned_boxes,
+            true,
         );
         current_y += line_h;
     }
@@ -819,6 +898,9 @@ fn layout_vertical_inline_children(
                 atomic_box.dimensions.content.origin = Point::new(0.0, cur_y);
                 cur_line_boxes.push(*atomic_box);
                 cur_y += adv;
+            }
+            InlineAtomKind::Spacing => {
+                cur_y += atom.width;
             }
             _ => {}
         }
@@ -1209,8 +1291,49 @@ fn collect_inline_atoms(
         }
 
         BoxType::InlineNode => {
+            let font_size = style.font_size;
+            let root_font_size = style.root_font_size;
+            let (vp_w, _) = mango_css::get_current_viewport();
+            let lead_spacing = style
+                .margin_left
+                .to_px_with_viewport(font_size, root_font_size, container_width, vp_w)
+                .max(0.0)
+                + style.border_left_width.max(0.0)
+                + style
+                    .padding_left
+                    .to_px_with_viewport(font_size, root_font_size, container_width, vp_w)
+                    .max(0.0);
+            if lead_spacing > 0.0 {
+                out.push(InlineAtom {
+                    kind: InlineAtomKind::Spacing,
+                    style: style.clone(),
+                    width: lead_spacing,
+                    height: 0.0,
+                    link_target: current_link.map(|s| s.to_string()),
+                });
+            }
+
             for child in &box_node.children {
                 collect_inline_atoms(child, out, current_link, container_width, container_height);
+            }
+
+            let trail_spacing = style
+                .padding_right
+                .to_px_with_viewport(font_size, root_font_size, container_width, vp_w)
+                .max(0.0)
+                + style.border_right_width.max(0.0)
+                + style
+                    .margin_right
+                    .to_px_with_viewport(font_size, root_font_size, container_width, vp_w)
+                    .max(0.0);
+            if trail_spacing > 0.0 {
+                out.push(InlineAtom {
+                    kind: InlineAtomKind::Spacing,
+                    style: style.clone(),
+                    width: trail_spacing,
+                    height: 0.0,
+                    link_target: current_link.map(|s| s.to_string()),
+                });
             }
         }
 
@@ -1410,6 +1533,7 @@ fn finalize_line(
     line_y: f32,
     text_align: TextAlign,
     out: &mut Vec<LayoutBox>,
+    is_last_line: bool,
 ) -> f32 {
     if line_atoms.is_empty() {
         return 16.0;
@@ -1426,8 +1550,14 @@ fn finalize_line(
         line_atoms
     };
 
+    let atoms_for_metrics = if effective_atoms.is_empty() {
+        line_atoms
+    } else {
+        effective_atoms
+    };
+
     let line_content_width: f32 = effective_atoms.iter().map(|a| a.width).sum();
-    let min_line_height = effective_atoms
+    let min_line_height = atoms_for_metrics
         .iter()
         .map(|a| a.height)
         .fold(0.0f32, f32::max);
@@ -1436,7 +1566,7 @@ fn finalize_line(
     let mut max_above = 0.0f32;
     let mut max_below = 0.0f32;
 
-    for atom in effective_atoms {
+    for atom in atoms_for_metrics {
         match &atom.kind {
             InlineAtomKind::Text { .. } => {
                 let family = font_family_for(&atom.style);
@@ -1496,28 +1626,31 @@ fn finalize_line(
     let baseline_from_line_top = max_above;
     let actual_line_height = (max_above + max_below).max(min_line_height).max(1.0);
 
-    let is_rtl = effective_atoms
+    let is_rtl = atoms_for_metrics
         .first()
         .map(|a| a.style.direction == mango_css::values::Direction::Rtl)
         .unwrap_or(false);
 
+    let mut space_expansion = 0.0f32;
+    if text_align == TextAlign::Justify && !is_last_line {
+        let free_space = (available_width - line_content_width).max(0.0);
+        let space_count = effective_atoms.iter().filter(|a| a.is_space()).count();
+        if space_count > 0 && free_space > 0.0 {
+            space_expansion = free_space / space_count as f32;
+        }
+    }
+
     let offset_x = match text_align {
-        TextAlign::Left => {
-            if is_rtl {
-                (available_width - line_content_width).max(0.0)
-            } else {
-                0.0
-            }
-        }
+        TextAlign::Left => 0.0,
         TextAlign::Center => ((available_width - line_content_width) / 2.0).max(0.0),
-        TextAlign::Right => {
-            if is_rtl {
-                0.0
-            } else {
+        TextAlign::Right => (available_width - line_content_width).max(0.0),
+        TextAlign::Justify => {
+            if is_last_line && is_rtl {
                 (available_width - line_content_width).max(0.0)
+            } else {
+                0.0
             }
         }
-        TextAlign::Justify => 0.0, // Fallback to left for simple rasterizer
     };
 
     // Merge contiguous text atoms on this line that share identical style and link target.
@@ -1585,6 +1718,12 @@ fn finalize_line(
     };
 
     for atom in effective_atoms {
+        let atom_w = if atom.is_space() {
+            atom.width + space_expansion
+        } else {
+            atom.width
+        };
+
         match &atom.kind {
             InlineAtomKind::Text { text, .. } => {
                 let can_merge = if let Some(last_run) = runs.last_mut() {
@@ -1606,7 +1745,7 @@ fn finalize_line(
                 if can_merge {
                     let last_run = runs.last_mut().unwrap();
                     last_run.text.push_str(text);
-                    last_run.width += atom.width;
+                    last_run.width += atom_w;
                 } else {
                     let family = font_family_for(&atom.style);
                     let weight = font_weight_for(&atom.style);
@@ -1618,14 +1757,14 @@ fn finalize_line(
                     runs.push(MergedRun {
                         text: text.clone(),
                         start_x: cursor_x,
-                        width: atom.width,
+                        width: atom_w,
                         link_target: atom.link_target.clone(),
                         ascent,
                         descent,
                         style: atom.style.clone(),
                     });
                 }
-                cursor_x += atom.width;
+                cursor_x += atom_w;
             }
             InlineAtomKind::AtomicBox(atomic_box) => {
                 flush_text_runs(&mut runs, out);
@@ -1689,6 +1828,10 @@ fn finalize_line(
                 }
 
                 out.push(placed);
+                cursor_x += atom.width;
+            }
+            InlineAtomKind::Spacing => {
+                flush_text_runs(&mut runs, out);
                 cursor_x += atom.width;
             }
             InlineAtomKind::LineBreak => {
@@ -2464,6 +2607,129 @@ mod tests {
         assert!(
             shaped_mixed.contains('\u{FEFC}'),
             "Mixed text must contain shaped Arabic ligature"
+        );
+    }
+
+    #[test]
+    fn test_text_align_justify_space_expansion() {
+        let mut container = LayoutBox::new(BoxType::BlockNode, None);
+        container.dimensions.content = Rect::new(0.0, 0.0, 200.0, 0.0);
+        let mut style = ComputedStyle::default();
+        style.font_size = 16.0;
+        style.text_align = TextAlign::Justify;
+        container.style = Some(style.clone());
+
+        // "Hello world from mango browser engine" - long enough to wrap across 2 lines
+        let text = LayoutBox::new(
+            BoxType::TextNode("Hello world from mango browser engine".to_string()),
+            Some(style),
+        );
+        container.children.push(text);
+
+        let mut float_ctx = FloatContext::new();
+        layout_inline_children(&mut container, &mut float_ctx);
+
+        assert!(
+            container.children.len() >= 2,
+            "Expected multiple lines, got {}",
+            container.children.len()
+        );
+        // The first line should be justified: start at 0.0 and span the full container width
+        let first_line = &container.children[0];
+        assert_eq!(first_line.dimensions.content.origin.x, 0.0);
+        let first_line_w = first_line.dimensions.content.width();
+        assert!(
+            (first_line_w - 200.0).abs() < 5.0,
+            "First line of justified text should span ~200px, got {}",
+            first_line_w
+        );
+    }
+
+    #[test]
+    fn test_inline_node_horizontal_spacing() {
+        let mut container = LayoutBox::new(BoxType::BlockNode, None);
+        container.dimensions.content = Rect::new(0.0, 0.0, 400.0, 0.0);
+        let mut cont_style = ComputedStyle::default();
+        cont_style.font_size = 16.0;
+        container.style = Some(cont_style.clone());
+
+        // Inline span with margin-left: 20px, padding-left: 10px
+        let mut span_style = ComputedStyle::default();
+        span_style.font_size = 16.0;
+        span_style.margin_left = mango_css::values::Length::Px(20.0);
+        span_style.padding_left = mango_css::values::Length::Px(10.0);
+
+        let mut span = LayoutBox::new(BoxType::InlineNode, Some(span_style));
+        let text = LayoutBox::new(
+            BoxType::TextNode("Inside Span".to_string()),
+            Some(cont_style.clone()),
+        );
+        span.children.push(text);
+        container.children.push(span);
+
+        let mut float_ctx = FloatContext::new();
+        layout_inline_children(&mut container, &mut float_ctx);
+
+        assert!(!container.children.is_empty());
+        let child_x = container.children[0].dimensions.content.origin.x;
+        assert!(
+            (child_x - 30.0).abs() < 0.1,
+            "Text inside span should be shifted by 30px (margin + padding), got {}",
+            child_x
+        );
+    }
+
+    #[test]
+    fn test_whitespace_only_line_height_not_collapsed() {
+        let mut container = LayoutBox::new(BoxType::BlockNode, None);
+        container.dimensions.content = Rect::new(0.0, 0.0, 400.0, 0.0);
+        let mut style = ComputedStyle::default();
+        style.font_size = 20.0;
+        style.white_space = mango_css::values::WhiteSpace::Pre;
+        container.style = Some(style.clone());
+
+        // TextNode containing only a space
+        let text = LayoutBox::new(BoxType::TextNode("   ".to_string()), Some(style));
+        container.children.push(text);
+
+        let mut float_ctx = FloatContext::new();
+        let h = layout_inline_children(&mut container, &mut float_ctx);
+
+        // Height should be based on font metrics (~24px for 20px font), not collapsed to 1.0px
+        assert!(
+            h >= 16.0,
+            "Whitespace line should retain font line-height, got {}",
+            h
+        );
+    }
+
+    #[test]
+    fn test_rtl_text_indent_start_edge() {
+        let mut container = LayoutBox::new(BoxType::BlockNode, None);
+        container.dimensions.content = Rect::new(0.0, 0.0, 300.0, 0.0);
+        let mut style = ComputedStyle::default();
+        style.font_size = 16.0;
+        style.direction = mango_css::values::Direction::Rtl;
+        style.text_indent = mango_css::values::Length::Px(40.0);
+        container.style = Some(style.clone());
+
+        let text = LayoutBox::new(
+            BoxType::TextNode("مرحبا".to_string()),
+            Some(style),
+        );
+        container.children.push(text);
+
+        let mut float_ctx = FloatContext::new();
+        layout_inline_children(&mut container, &mut float_ctx);
+
+        assert_eq!(container.children.len(), 1);
+        let child = &container.children[0];
+        let child_right = child.dimensions.content.origin.x + child.dimensions.content.width();
+        // In 300px container with 40px text-indent in RTL, right edge should be at 300 - 40 = 260px
+        assert!(
+            (child_right - 260.0).abs() < 1.0,
+            "RTL text with text-indent: 40px should end at 260px, got {}",
+            child_right
         );
     }
 }

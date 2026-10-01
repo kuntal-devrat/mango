@@ -120,6 +120,9 @@ impl AreaShape {
                 bottom,
             } => x >= *left && x <= *right && y >= *top && y <= *bottom,
             AreaShape::Circle { cx, cy, r } => {
+                if *r <= 0.0 {
+                    return false;
+                }
                 let dx = x - cx;
                 let dy = y - cy;
                 dx * dx + dy * dy <= r * r
@@ -262,7 +265,7 @@ impl LayoutBox {
         }
     }
 
-    /// Returns true if this box acts as a scroll container (PRD 8.1).
+    /// Returns true if this box acts as a scroll container (PRD 8.1 / CSS Overflow 3 §3).
     pub fn is_scroll_container(&self) -> bool {
         if let Some(s) = &self.style {
             matches!(
@@ -277,24 +280,82 @@ impl LayoutBox {
         }
     }
 
+    /// Returns true if this box can be scrolled interactively by the user via mouse wheel or scrollbars.
+    #[inline]
+    pub fn is_user_scrollable(&self) -> bool {
+        if !self.is_scroll_container() {
+            return false;
+        }
+        let (max_x, max_y) = self.max_scroll();
+        max_x > 0.0 || max_y > 0.0
+    }
+
+    /// Returns true if this box is visible according to CSS `visibility`.
+    /// Note: boxes with `visibility: hidden` occupy layout space but do not receive pointer hits or paint.
+    #[inline]
+    pub fn is_visible(&self) -> bool {
+        self.style
+            .as_ref()
+            .map_or(true, |s| s.visibility != mango_css::values::Visibility::Hidden)
+    }
+
+    /// Returns the intrinsic size `(width, height)` of this box if it is a replaced or media element.
+    #[inline]
+    pub fn intrinsic_size(&self) -> Option<(f32, f32)> {
+        self.box_type.intrinsic_size()
+    }
+
+    /// Returns the intrinsic aspect ratio `(width / height)` of this box if applicable.
+    #[inline]
+    pub fn intrinsic_aspect_ratio(&self) -> Option<f32> {
+        self.box_type.intrinsic_aspect_ratio()
+    }
+
     /// Computes the bounding extent of all in-flow child boxes relative to content box origin.
+    ///
+    /// Implements CSS Overflow 3 §3.2: includes in-flow descendants and positioned
+    /// descendants whose containing block is this scroll container.
     pub fn scrollable_extent(&self) -> (f32, f32) {
         let mut max_x = self.dimensions.content.width();
         let mut max_y = self.dimensions.content.height();
         let content_origin_x = self.dimensions.content.x();
         let content_origin_y = self.dimensions.content.y();
 
+        let self_is_cb = self
+            .style
+            .as_ref()
+            .is_some_and(|s| s.position != mango_css::values::Position::Static);
+
         for child in &self.children {
-            let is_out_of_flow = child.style.as_ref().is_some_and(|s| {
-                matches!(
-                    s.position,
-                    mango_css::values::Position::Fixed | mango_css::values::Position::Absolute
-                )
-            });
-            if !is_out_of_flow {
-                let mb = child.dimensions.margin_box();
-                max_x = max_x.max(mb.right() - content_origin_x);
-                max_y = max_y.max(mb.bottom() - content_origin_y);
+            let is_fixed = child
+                .style
+                .as_ref()
+                .is_some_and(|s| s.position == mango_css::values::Position::Fixed);
+            let is_absolute = child
+                .style
+                .as_ref()
+                .is_some_and(|s| s.position == mango_css::values::Position::Absolute);
+
+            if is_fixed || (is_absolute && !self_is_cb) {
+                continue;
+            }
+
+            let mb = child.dimensions.margin_box();
+            max_x = max_x.max(mb.right() - content_origin_x);
+            max_y = max_y.max(mb.bottom() - content_origin_y);
+
+            // If child has visible overflow, its overflowing contents expand this container's scroll extent
+            let clips = child.is_scroll_container()
+                || child.style.as_ref().is_some_and(|s| {
+                    s.overflow_x != mango_css::values::Overflow::Visible
+                        || s.overflow_y != mango_css::values::Overflow::Visible
+                });
+            if !clips && !child.children.is_empty() {
+                let (c_ext_x, c_ext_y) = child.scrollable_extent();
+                let child_content_x = child.dimensions.content.x();
+                let child_content_y = child.dimensions.content.y();
+                max_x = max_x.max((child_content_x + c_ext_x) - content_origin_x);
+                max_y = max_y.max((child_content_y + c_ext_y) - content_origin_y);
             }
         }
         (max_x, max_y)
@@ -327,8 +388,23 @@ impl LayoutBox {
             return None;
         }
 
+        let (query_x, query_y) = if self.is_scroll_container() {
+            (x + self.scroll_offset_x, y + self.scroll_offset_y)
+        } else {
+            (x, y)
+        };
+
         for child in self.children.iter().rev() {
-            if let Some(found) = child.find_scrollable_container_at(x, y) {
+            let (child_x, child_y) = if child
+                .style
+                .as_ref()
+                .is_some_and(|s| s.position == mango_css::values::Position::Fixed)
+            {
+                (x, y)
+            } else {
+                (query_x, query_y)
+            };
+            if let Some(found) = child.find_scrollable_container_at(child_x, child_y) {
                 return Some(found);
             }
         }
@@ -356,9 +432,24 @@ impl LayoutBox {
             return (delta_x, delta_y);
         }
 
+        let (query_x, query_y) = if self.is_scroll_container() {
+            (x + self.scroll_offset_x, y + self.scroll_offset_y)
+        } else {
+            (x, y)
+        };
+
         // Recurse into children first (innermost container gets first opportunity)
         for child in self.children.iter_mut().rev() {
-            let (rem_x, rem_y) = child.dispatch_nested_scroll(x, y, delta_x, delta_y);
+            let (child_x, child_y) = if child
+                .style
+                .as_ref()
+                .is_some_and(|s| s.position == mango_css::values::Position::Fixed)
+            {
+                (x, y)
+            } else {
+                (query_x, query_y)
+            };
+            let (rem_x, rem_y) = child.dispatch_nested_scroll(child_x, child_y, delta_x, delta_y);
             delta_x = rem_x;
             delta_y = rem_y;
             if delta_x == 0.0 && delta_y == 0.0 {
@@ -382,6 +473,11 @@ impl LayoutBox {
             s.clear = mango_css::values::Clear::None;
             s.float = mango_css::values::Float::None;
             s.position = mango_css::values::Position::Static;
+            s.overflow_x = mango_css::values::Overflow::Visible;
+            s.overflow_y = mango_css::values::Overflow::Visible;
+            s.z_index = None;
+            s.transform = mango_css::values::Transform::default();
+            s.opacity = 1.0;
             s.margin_top = mango_css::values::Length::Px(0.0);
             s.margin_right = mango_css::values::Length::Px(0.0);
             s.margin_bottom = mango_css::values::Length::Px(0.0);
@@ -434,12 +530,34 @@ impl LayoutBox {
 
     /// Hit-tests a point against this layout box and its descendants, returning the deepest matching DOM NodeId.
     pub fn hit_test(&self, point: mango_core::Point) -> Option<mango_html::dom::NodeId> {
-        for child in self.children.iter().rev() {
-            if let Some(hit) = child.hit_test(point) {
-                return Some(hit);
+        if self.is_scroll_container() {
+            if self.dimensions.padding_box().contains(point) {
+                for child in self.children.iter().rev() {
+                    let child_pt = if child
+                        .style
+                        .as_ref()
+                        .is_some_and(|s| s.position == mango_css::values::Position::Fixed)
+                    {
+                        point
+                    } else {
+                        mango_core::Point::new(
+                            point.x + self.scroll_offset_x,
+                            point.y + self.scroll_offset_y,
+                        )
+                    };
+                    if let Some(hit) = child.hit_test(child_pt) {
+                        return Some(hit);
+                    }
+                }
+            }
+        } else {
+            for child in self.children.iter().rev() {
+                if let Some(hit) = child.hit_test(point) {
+                    return Some(hit);
+                }
             }
         }
-        if self.dimensions.border_box().contains(point) {
+        if self.is_visible() && self.dimensions.border_box().contains(point) {
             return self.node_id;
         }
         None
@@ -447,14 +565,36 @@ impl LayoutBox {
 
     /// Hit-tests a point against this layout box and its descendants, returning the target link URL if clicked.
     pub fn hit_test_link(&self, point: mango_core::Point) -> Option<&str> {
-        // Check children in reverse order (top-most in stacking order)
-        for child in self.children.iter().rev() {
-            if let Some(target) = child.hit_test_link(point) {
-                return Some(target);
+        if self.is_scroll_container() {
+            if self.dimensions.padding_box().contains(point) {
+                for child in self.children.iter().rev() {
+                    let child_pt = if child
+                        .style
+                        .as_ref()
+                        .is_some_and(|s| s.position == mango_css::values::Position::Fixed)
+                    {
+                        point
+                    } else {
+                        mango_core::Point::new(
+                            point.x + self.scroll_offset_x,
+                            point.y + self.scroll_offset_y,
+                        )
+                    };
+                    if let Some(target) = child.hit_test_link(child_pt) {
+                        return Some(target);
+                    }
+                }
+            }
+        } else {
+            // Check children in reverse order (top-most in stacking order)
+            for child in self.children.iter().rev() {
+                if let Some(target) = child.hit_test_link(point) {
+                    return Some(target);
+                }
             }
         }
         let border_box = self.dimensions.border_box();
-        if border_box.contains(point) {
+        if self.is_visible() && border_box.contains(point) {
             if !self.map_areas.is_empty() {
                 let rel_x = point.x - self.dimensions.content.x();
                 let rel_y = point.y - self.dimensions.content.y();
@@ -473,13 +613,36 @@ impl LayoutBox {
 
     /// Hit-tests a point against this layout box and its descendants for interactive form elements.
     pub fn hit_test_form_control(&self, point: mango_core::Point) -> Option<FormControlHit> {
-        for child in self.children.iter().rev() {
-            if let Some(hit) = child.hit_test_form_control(point) {
-                return Some(hit);
+        if self.is_scroll_container() {
+            if self.dimensions.padding_box().contains(point) {
+                for child in self.children.iter().rev() {
+                    let child_pt = if child
+                        .style
+                        .as_ref()
+                        .is_some_and(|s| s.position == mango_css::values::Position::Fixed)
+                    {
+                        point
+                    } else {
+                        mango_core::Point::new(
+                            point.x + self.scroll_offset_x,
+                            point.y + self.scroll_offset_y,
+                        )
+                    };
+                    if let Some(hit) = child.hit_test_form_control(child_pt) {
+                        return Some(hit);
+                    }
+                }
+            }
+        } else {
+            for child in self.children.iter().rev() {
+                if let Some(hit) = child.hit_test_form_control(point) {
+                    return Some(hit);
+                }
             }
         }
         let border_box = self.dimensions.border_box();
-        if border_box.contains(point)
+        if self.is_visible()
+            && border_box.contains(point)
             && let Some(ref tag) = self.tag_name
         {
             let tag_lower = tag.to_ascii_lowercase();
@@ -503,14 +666,18 @@ impl LayoutBox {
                         "text"
                     })
                     .to_ascii_lowercase();
-                let click_offset_x = (point.x - self.dimensions.content.x() - 4.0).max(0.0);
+                let click_offset_x = (point.x - self.dimensions.content.x()).max(0.0);
+                let checked = self.get_attribute("checked").is_some()
+                    || self
+                        .get_attribute("data-mango-checked")
+                        .is_some_and(|v| v.eq_ignore_ascii_case("true") || v == "1");
                 return Some(FormControlHit {
                     node_id: self.node_id,
                     tag_name: tag_lower,
                     form_type,
                     name: self.get_attribute("name").unwrap_or("").to_string(),
                     value: self.get_attribute("value").unwrap_or("").to_string(),
-                    checked: self.get_attribute("checked").is_some(),
+                    checked,
                     click_offset_x,
                 });
             }
@@ -520,10 +687,35 @@ impl LayoutBox {
 
     /// Hit-tests a point against this layout box and its descendants for interactive media (<video> and <audio>) elements.
     pub fn hit_test_media_control(&self, point: mango_core::Point) -> Option<MediaControlHit> {
-        for child in self.children.iter().rev() {
-            if let Some(hit) = child.hit_test_media_control(point) {
-                return Some(hit);
+        if self.is_scroll_container() {
+            if self.dimensions.padding_box().contains(point) {
+                for child in self.children.iter().rev() {
+                    let child_pt = if child
+                        .style
+                        .as_ref()
+                        .is_some_and(|s| s.position == mango_css::values::Position::Fixed)
+                    {
+                        point
+                    } else {
+                        mango_core::Point::new(
+                            point.x + self.scroll_offset_x,
+                            point.y + self.scroll_offset_y,
+                        )
+                    };
+                    if let Some(hit) = child.hit_test_media_control(child_pt) {
+                        return Some(hit);
+                    }
+                }
             }
+        } else {
+            for child in self.children.iter().rev() {
+                if let Some(hit) = child.hit_test_media_control(point) {
+                    return Some(hit);
+                }
+            }
+        }
+        if !self.is_visible() {
+            return None;
         }
         let border_box = self.dimensions.border_box();
         if !border_box.contains(point) {
@@ -908,6 +1100,13 @@ pub fn build_box_tree(styled_node: &StyledNode) -> LayoutBox {
             let mut final_children = Vec::new();
             let mut current_anonymous: Option<LayoutBox> = None;
 
+            let is_ignorable_whitespace_box = |b: &LayoutBox| -> bool {
+                match &b.box_type {
+                    BoxType::TextNode(t) => t.chars().all(|ch| ch.is_ascii_whitespace()),
+                    _ => false,
+                }
+            };
+
             for child in raw_children {
                 if child.is_inline() {
                     let anon = current_anonymous.get_or_insert_with(|| {
@@ -916,12 +1115,9 @@ pub fn build_box_tree(styled_node: &StyledNode) -> LayoutBox {
                     anon.children.push(child);
                 } else {
                     if let Some(anon) = current_anonymous.take() {
-                        let is_all_empty = anon.children.iter().all(|c| {
-                            c.text()
-                                .map(|t| t.chars().all(|ch| ch.is_ascii_whitespace()))
-                                .unwrap_or(false)
-                        });
-                        if !is_all_empty {
+                        let is_all_whitespace = anon.children.is_empty()
+                            || anon.children.iter().all(is_ignorable_whitespace_box);
+                        if !is_all_whitespace {
                             final_children.push(anon);
                         }
                     }
@@ -930,12 +1126,9 @@ pub fn build_box_tree(styled_node: &StyledNode) -> LayoutBox {
             }
 
             if let Some(anon) = current_anonymous.take() {
-                let is_all_empty = anon.children.iter().all(|c| {
-                    c.text()
-                        .map(|t| t.chars().all(|ch| ch.is_ascii_whitespace()))
-                        .unwrap_or(false)
-                });
-                if !is_all_empty {
+                let is_all_whitespace = anon.children.is_empty()
+                    || anon.children.iter().all(is_ignorable_whitespace_box);
+                if !is_all_whitespace {
                     final_children.push(anon);
                 }
             }
@@ -1008,6 +1201,19 @@ pub fn parse_srcset_candidates(srcset: &str) -> Vec<&str> {
     list
 }
 
+/// Robust, whitespace-tolerant HTML/SVG dimension attribute parser (OPT-002).
+/// Parses pixel strings like `"300"`, `"300px"`, `"  300 PX "` into non-negative floats.
+#[inline]
+pub(crate) fn parse_dimension_attr(val: &str) -> Option<f32> {
+    let s = val.trim();
+    let s = if s.to_ascii_lowercase().ends_with("px") {
+        &s[..s.len() - 2].trim_end()
+    } else {
+        s
+    };
+    s.parse::<f32>().ok().filter(|&v| v >= 0.0)
+}
+
 /// Builds a [`ReplacedElement`](BoxType::ReplacedElement) for `<img>` elements.
 ///
 /// Reads `src`, `width`, and `height` attributes. Supports `data:` URIs for inline images.
@@ -1023,11 +1229,11 @@ fn build_replaced_element(styled_node: &StyledNode) -> LayoutBox {
     // Parse explicit width/height: prefer CSS style if px, otherwise HTML attributes
     let explicit_w: Option<f32> = match styled_node.style.width {
         mango_css::values::Length::Px(px) if px > 0.0 => Some(px),
-        _ => get_attr("width").and_then(|v| v.trim_end_matches("px").parse().ok()),
+        _ => get_attr("width").and_then(parse_dimension_attr),
     };
     let explicit_h: Option<f32> = match styled_node.style.height {
         mango_css::values::Length::Px(px) if px > 0.0 => Some(px),
-        _ => get_attr("height").and_then(|v| v.trim_end_matches("px").parse().ok()),
+        _ => get_attr("height").and_then(parse_dimension_attr),
     };
 
     // Helper to try decoding data URI or getting from cache (including with https: prefix)
@@ -1054,14 +1260,21 @@ fn build_replaced_element(styled_node: &StyledNode) -> LayoutBox {
     // 1. First priority (GAP-019): check <picture> / <source> responsive image candidates
     let mut decoded = None;
     if let Some(pic_sources) = get_attr("_mango_picture_sources") {
+        let (vp_w, vp_h) = mango_css::get_current_viewport();
+        let (vp_w, vp_h) = if vp_w > 0.0 && vp_h > 0.0 {
+            (vp_w, vp_h)
+        } else {
+            (800.0, 600.0)
+        };
+
         for line in pic_sources.lines() {
             let mut parts = line.split('\t');
             let srcset = parts.next().unwrap_or("");
             let media = parts.next().unwrap_or("");
             let mime = parts.next().unwrap_or("");
 
-            // Check media query against viewport
-            if !media.is_empty() && !mango_css::matches_media_query_size(media, 800.0, 600.0) {
+            // Check media query against active viewport
+            if !media.is_empty() && !mango_css::matches_media_query_size(media, vp_w, vp_h) {
                 continue;
             }
             // Check MIME type
@@ -1190,11 +1403,11 @@ fn build_embed_element(styled_node: &StyledNode) -> LayoutBox {
 
     let explicit_w: Option<f32> = match styled_node.style.width {
         mango_css::values::Length::Px(px) if px > 0.0 => Some(px),
-        _ => get_attr("width").and_then(|v| v.trim_end_matches("px").parse().ok()),
+        _ => get_attr("width").and_then(parse_dimension_attr),
     };
     let explicit_h: Option<f32> = match styled_node.style.height {
         mango_css::values::Length::Px(px) if px > 0.0 => Some(px),
-        _ => get_attr("height").and_then(|v| v.trim_end_matches("px").parse().ok()),
+        _ => get_attr("height").and_then(parse_dimension_attr),
     };
 
     let w = explicit_w.unwrap_or(300.0).max(1.0);
@@ -1257,11 +1470,11 @@ fn try_build_object_element(styled_node: &StyledNode) -> Option<LayoutBox> {
 
     let explicit_w: Option<f32> = match styled_node.style.width {
         mango_css::values::Length::Px(px) if px > 0.0 => Some(px),
-        _ => get_attr("width").and_then(|v| v.trim_end_matches("px").parse().ok()),
+        _ => get_attr("width").and_then(parse_dimension_attr),
     };
     let explicit_h: Option<f32> = match styled_node.style.height {
         mango_css::values::Length::Px(px) if px > 0.0 => Some(px),
-        _ => get_attr("height").and_then(|v| v.trim_end_matches("px").parse().ok()),
+        _ => get_attr("height").and_then(parse_dimension_attr),
     };
 
     let natural_w = img.width as f32;
@@ -1321,12 +1534,12 @@ fn build_svg_replaced_element(styled_node: &StyledNode) -> LayoutBox {
 
     let explicit_w: Option<f32> = match styled_node.style.width {
         mango_css::values::Length::Px(px) if px > 0.0 => Some(px),
-        _ => get_attr("width").and_then(|v| v.trim_end_matches("px").parse().ok()),
+        _ => get_attr("width").and_then(parse_dimension_attr),
     };
 
     let explicit_h: Option<f32> = match styled_node.style.height {
         mango_css::values::Length::Px(px) if px > 0.0 => Some(px),
-        _ => get_attr("height").and_then(|v| v.trim_end_matches("px").parse().ok()),
+        _ => get_attr("height").and_then(parse_dimension_attr),
     };
 
     let aspect_ratio = if let Some(css_ratio) = styled_node.style.aspect_ratio.filter(|&r| r > 0.0)
@@ -1413,12 +1626,12 @@ fn serialize_svg_recursive(node: &StyledNode, out: &mut String) {
             out.push_str(k);
             out.push_str("=\"");
             for ch in v.chars() {
-                if ch == '"' {
-                    out.push_str("&quot;");
-                } else if ch == '&' {
-                    out.push_str("&amp;");
-                } else {
-                    out.push(ch);
+                match ch {
+                    '"' => out.push_str("&quot;"),
+                    '&' => out.push_str("&amp;"),
+                    '<' => out.push_str("&lt;"),
+                    '>' => out.push_str("&gt;"),
+                    _ => out.push(ch),
                 }
             }
             out.push('"');
@@ -1429,7 +1642,14 @@ fn serialize_svg_recursive(node: &StyledNode, out: &mut String) {
         } else {
             out.push('>');
             if let Some(ref t) = node.text {
-                out.push_str(t);
+                for ch in t.chars() {
+                    match ch {
+                        '<' => out.push_str("&lt;"),
+                        '>' => out.push_str("&gt;"),
+                        '&' => out.push_str("&amp;"),
+                        _ => out.push(ch),
+                    }
+                }
             }
             for child in &node.children {
                 serialize_svg_recursive(child, out);
@@ -1466,13 +1686,13 @@ pub fn build_iframe_element(styled_node: &StyledNode) -> LayoutBox {
     let mut intrinsic_height = 150.0f32;
 
     if let Some(w_attr) = get_attr("width")
-        && let Ok(w) = w_attr.trim_end_matches("px").parse::<f32>()
+        && let Some(w) = parse_dimension_attr(w_attr)
         && w > 0.0
     {
         intrinsic_width = w;
     }
     if let Some(h_attr) = get_attr("height")
-        && let Ok(h) = h_attr.trim_end_matches("px").parse::<f32>()
+        && let Some(h) = parse_dimension_attr(h_attr)
         && h > 0.0
     {
         intrinsic_height = h;
@@ -1705,13 +1925,13 @@ pub fn build_video_element(styled_node: &StyledNode) -> LayoutBox {
     };
 
     if let Some(w_attr) = get_attr("width")
-        && let Ok(w) = w_attr.trim_end_matches("px").parse::<f32>()
+        && let Some(w) = parse_dimension_attr(w_attr)
         && w > 0.0
     {
         intrinsic_width = w;
     }
     if let Some(h_attr) = get_attr("height")
-        && let Ok(h) = h_attr.trim_end_matches("px").parse::<f32>()
+        && let Some(h) = parse_dimension_attr(h_attr)
         && h > 0.0
     {
         intrinsic_height = h;
@@ -1874,16 +2094,16 @@ pub fn build_canvas_element(styled_node: &StyledNode) -> LayoutBox {
     let mut height = 150u32;
 
     if let Some(w_attr) = get_attr("width")
-        && let Ok(w) = w_attr.trim_end_matches("px").parse::<u32>()
-        && w > 0
+        && let Some(w) = parse_dimension_attr(w_attr)
+        && w > 0.0
     {
-        width = w;
+        width = w as u32;
     }
     if let Some(h_attr) = get_attr("height")
-        && let Ok(h) = h_attr.trim_end_matches("px").parse::<u32>()
-        && h > 0
+        && let Some(h) = parse_dimension_attr(h_attr)
+        && h > 0.0
     {
-        height = h;
+        height = h as u32;
     }
 
     let node_idx = styled_node.node_id.map(|id| id.raw() as usize);
@@ -2316,5 +2536,220 @@ mod tests {
             300.0,
             "Auto height in block layout should preserve viewBox 2:1 ratio"
         );
+    }
+
+    #[test]
+    fn test_anonymous_block_style_isolation() {
+        let mut parent_style = ComputedStyle::default();
+        parent_style.display = Display::Block;
+        parent_style.overflow_x = mango_css::values::Overflow::Scroll;
+        parent_style.overflow_y = mango_css::values::Overflow::Auto;
+        parent_style.z_index = Some(999);
+        parent_style.opacity = 0.5;
+
+        let anon = LayoutBox::new_anonymous_block(Some(parent_style));
+        assert_eq!(anon.box_type, BoxType::AnonymousBlock);
+        assert!(!anon.is_scroll_container(), "Anonymous block must not establish a scroll container");
+        let style = anon.style.as_ref().unwrap();
+        assert_eq!(style.overflow_x, mango_css::values::Overflow::Visible);
+        assert_eq!(style.overflow_y, mango_css::values::Overflow::Visible);
+        assert_eq!(style.z_index, None);
+        assert_eq!(style.opacity, 1.0);
+        assert!(style.transform.is_identity());
+    }
+
+    #[test]
+    fn test_scroll_container_hit_testing_with_offsets() {
+        let mut container_style = ComputedStyle::default();
+        container_style.display = Display::Block;
+        container_style.overflow_y = mango_css::values::Overflow::Scroll;
+        let mut container = LayoutBox::new(BoxType::BlockNode, Some(container_style));
+        container.dimensions.content = mango_core::Rect::new(0.0, 0.0, 300.0, 200.0);
+        container.dimensions.padding.top = 0.0;
+        container.dimensions.padding.bottom = 0.0;
+        container.dimensions.padding.left = 0.0;
+        container.dimensions.padding.right = 0.0;
+
+        let mut child_style = ComputedStyle::default();
+        child_style.display = Display::Block;
+        let mut child = LayoutBox::new(BoxType::BlockNode, Some(child_style));
+        child.node_id = Some(NodeId::from_raw(42));
+        // Child is at y = 100..150
+        child.dimensions.content = mango_core::Rect::new(10.0, 100.0, 200.0, 50.0);
+        child.link_target = Some("https://example.com/item".to_string());
+        container.children.push(child);
+
+        // Without scroll: clicking at (50, 120) hits child
+        assert_eq!(container.hit_test(mango_core::Point::new(50.0, 120.0)), Some(NodeId::from_raw(42)));
+        assert_eq!(container.hit_test_link(mango_core::Point::new(50.0, 120.0)), Some("https://example.com/item"));
+
+        // Now scroll down by 50px: child visually appears at y = 50..100
+        container.scroll_offset_y = 50.0;
+
+        // Screen click at (50, 70) should hit the scrolled child (70 + 50 = 120 in child coordinates)
+        assert_eq!(container.hit_test(mango_core::Point::new(50.0, 70.0)), Some(NodeId::from_raw(42)));
+        assert_eq!(container.hit_test_link(mango_core::Point::new(50.0, 70.0)), Some("https://example.com/item"));
+
+        // Screen click at (50, 120) now misses the child (120 + 50 = 170, beyond child bottom 150)
+        assert_eq!(container.hit_test_link(mango_core::Point::new(50.0, 120.0)), None);
+
+        // Screen click outside padding box (e.g. y = 250) is clipped and returns None
+        assert_eq!(container.hit_test(mango_core::Point::new(50.0, 250.0)), None);
+    }
+
+    #[test]
+    fn test_hit_testing_visibility_hidden_exclusion() {
+        let mut style = ComputedStyle::default();
+        style.display = Display::Block;
+        style.visibility = mango_css::values::Visibility::Hidden;
+
+        let mut hidden_box = LayoutBox::new(BoxType::BlockNode, Some(style));
+        hidden_box.node_id = Some(NodeId::from_raw(10));
+        hidden_box.dimensions.content = mango_core::Rect::new(0.0, 0.0, 100.0, 100.0);
+        hidden_box.link_target = Some("https://example.com/hidden".to_string());
+
+        assert!(!hidden_box.is_visible());
+        assert_eq!(hidden_box.hit_test(mango_core::Point::new(50.0, 50.0)), None);
+        assert_eq!(hidden_box.hit_test_link(mango_core::Point::new(50.0, 50.0)), None);
+
+        // But a visible child inside a hidden parent DOES receive hits
+        let mut child_style = ComputedStyle::default();
+        child_style.display = Display::Block;
+        child_style.visibility = mango_css::values::Visibility::Visible;
+        let mut visible_child = LayoutBox::new(BoxType::BlockNode, Some(child_style));
+        visible_child.node_id = Some(NodeId::from_raw(20));
+        visible_child.dimensions.content = mango_core::Rect::new(10.0, 10.0, 50.0, 50.0);
+        visible_child.link_target = Some("https://example.com/visible-child".to_string());
+        hidden_box.children.push(visible_child);
+
+        assert_eq!(hidden_box.hit_test(mango_core::Point::new(25.0, 25.0)), Some(NodeId::from_raw(20)));
+        assert_eq!(hidden_box.hit_test_link(mango_core::Point::new(25.0, 25.0)), Some("https://example.com/visible-child"));
+        // Outside the child but inside hidden parent still returns None
+        assert_eq!(hidden_box.hit_test(mango_core::Point::new(80.0, 80.0)), None);
+    }
+
+    #[test]
+    fn test_image_map_circle_zero_radius() {
+        let zero_circle = AreaShape::Circle {
+            cx: 50.0,
+            cy: 50.0,
+            r: 0.0,
+        };
+        assert!(!zero_circle.contains_point(50.0, 50.0), "Zero radius circle area must have no effect");
+
+        let neg_circle = AreaShape::Circle {
+            cx: 50.0,
+            cy: 50.0,
+            r: -5.0,
+        };
+        assert!(!neg_circle.contains_point(50.0, 50.0), "Negative radius circle area must have no effect");
+
+        let valid_circle = AreaShape::Circle {
+            cx: 50.0,
+            cy: 50.0,
+            r: 10.0,
+        };
+        assert!(valid_circle.contains_point(50.0, 50.0));
+        assert!(valid_circle.contains_point(58.0, 50.0));
+        assert!(!valid_circle.contains_point(65.0, 50.0));
+    }
+
+    #[test]
+    fn test_scrollable_extent_containing_block_and_visible_overflow() {
+        let mut rel_parent_style = ComputedStyle::default();
+        rel_parent_style.display = Display::Block;
+        rel_parent_style.position = mango_css::values::Position::Relative;
+
+        let mut rel_parent = LayoutBox::new(BoxType::BlockNode, Some(rel_parent_style));
+        rel_parent.dimensions.content = mango_core::Rect::new(0.0, 0.0, 200.0, 200.0);
+
+        // Absolute child whose containing block is rel_parent
+        let mut abs_style = ComputedStyle::default();
+        abs_style.display = Display::Block;
+        abs_style.position = mango_css::values::Position::Absolute;
+        let mut abs_child = LayoutBox::new(BoxType::BlockNode, Some(abs_style));
+        // Positioned out at (250, 300) with size 100x100
+        abs_child.dimensions.content = mango_core::Rect::new(250.0, 300.0, 100.0, 100.0);
+        rel_parent.children.push(abs_child);
+
+        let (ext_x, ext_y) = rel_parent.scrollable_extent();
+        assert_eq!(ext_x, 350.0, "Absolute child must contribute to containing block scrollable extent");
+        assert_eq!(ext_y, 400.0);
+
+        // Non-containing block parent (Static) must NOT include absolute child
+        let mut static_parent_style = ComputedStyle::default();
+        static_parent_style.display = Display::Block;
+        static_parent_style.position = mango_css::values::Position::Static;
+        let mut static_parent = LayoutBox::new(BoxType::BlockNode, Some(static_parent_style));
+        static_parent.dimensions.content = mango_core::Rect::new(0.0, 0.0, 200.0, 200.0);
+        static_parent.children = rel_parent.children.clone();
+
+        let (stat_x, stat_y) = static_parent.scrollable_extent();
+        assert_eq!(stat_x, 200.0);
+        assert_eq!(stat_y, 200.0);
+    }
+
+    #[test]
+    fn test_picture_source_dynamic_viewport() {
+        let mut style = ComputedStyle::default();
+        style.display = Display::Inline;
+
+        let mut img_node = StyledNode::new(None, style);
+        img_node.tag_name = Some("img".to_string());
+        let data_url = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==";
+        let sources_attr = format!("{data_url}\t(max-width: 500px)\timage/png");
+        img_node.attributes.push(("_mango_picture_sources".to_string(), sources_attr));
+        img_node.attributes.push(("src".to_string(), "http://example.com/fallback.jpg".to_string()));
+
+        // Under 350px viewport: source matches
+        mango_css::set_current_viewport(350.0, 600.0);
+        let box1 = build_box_tree(&img_node);
+        assert!(box1.is_replaced());
+        assert_eq!(box1.intrinsic_size(), Some((1.0, 1.0)));
+
+        // Under 800px viewport: source fails (max-width: 500px), falls back
+        mango_css::set_current_viewport(800.0, 600.0);
+        let box2 = build_box_tree(&img_node);
+        assert!(box2.is_replaced());
+
+        // Restore viewport
+        mango_css::set_current_viewport(800.0, 600.0);
+    }
+
+    #[test]
+    fn test_form_control_dynamic_checked_and_click_offset() {
+        let mut style = ComputedStyle::default();
+        style.display = Display::InlineBlock;
+
+        let mut input_box = LayoutBox::new(BoxType::InlineBlock, Some(style));
+        input_box.node_id = Some(NodeId::from_raw(99));
+        input_box.tag_name = Some("input".to_string());
+        input_box.dimensions.content = mango_core::Rect::new(20.0, 30.0, 100.0, 25.0);
+        input_box.attributes.push(("type".to_string(), "checkbox".to_string()));
+        input_box.attributes.push(("data-mango-checked".to_string(), "true".to_string()));
+
+        let hit = input_box.hit_test_form_control(mango_core::Point::new(35.0, 40.0));
+        assert!(hit.is_some());
+        let hit = hit.unwrap();
+        assert_eq!(hit.node_id, Some(NodeId::from_raw(99)));
+        assert_eq!(hit.form_type, "checkbox");
+        assert!(hit.checked, "data-mango-checked='true' must be recognized as checked");
+        assert_eq!(hit.click_offset_x, 15.0, "Click offset must accurately measure from content x (35 - 20 = 15)");
+    }
+
+    #[test]
+    fn test_svg_xml_escaping_special_characters() {
+        let mut svg_node = StyledNode::new(None, ComputedStyle::default());
+        svg_node.tag_name = Some("svg".to_string());
+        svg_node.attributes.push(("data-label".to_string(), "test <tag> & \"quotes\"".to_string()));
+
+        let mut text_node = StyledNode::new(None, ComputedStyle::default());
+        text_node.tag_name = Some("text".to_string());
+        text_node.text = Some("A < B & C > D".to_string());
+        svg_node.children.push(text_node);
+
+        let xml = serialize_svg_styled_node(&svg_node);
+        assert!(xml.contains("data-label=\"test &lt;tag&gt; &amp; &quot;quotes&quot;\""));
+        assert!(xml.contains("<text>A &lt; B &amp; C &gt; D</text>"));
     }
 }

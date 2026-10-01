@@ -17,20 +17,42 @@ pub fn build_display_list(root: &LayoutBox) -> DisplayList {
 /// Generates a [`DisplayList`] with a given vertical scroll offset,
 /// properly offsetting `position: sticky` and `position: fixed` elements.
 pub fn build_display_list_with_scroll(root: &LayoutBox, scroll_y: f32) -> DisplayList {
+    build_display_list_with_scroll_xy(root, 0.0, scroll_y)
+}
+
+/// Generates a [`DisplayList`] with horizontal and vertical scroll offsets,
+/// properly offsetting `position: sticky` and `position: fixed` elements.
+pub fn build_display_list_with_scroll_xy(
+    root: &LayoutBox,
+    scroll_x: f32,
+    scroll_y: f32,
+) -> DisplayList {
     let mut list = DisplayList::new();
+    let mut init_offset_x = 0.0;
     let mut init_offset_y = 0.0;
     if let Some(s) = &root.style
         && s.position == mango_css::values::Position::Fixed
     {
+        init_offset_x = scroll_x;
         init_offset_y = scroll_y;
     }
-    render_layout_box(root, &mut list, 1.0, 0.0, init_offset_y, scroll_y, None);
+    render_layout_box(
+        root,
+        &mut list,
+        1.0,
+        init_offset_x,
+        init_offset_y,
+        scroll_x,
+        scroll_y,
+        None,
+    );
     list
 }
 
-/// A cached display list record with dirty-tracking and scroll offset (OPT-005).
+/// A cached display list record with dirty-tracking and scroll offsets (OPT-005).
 #[derive(Debug, Clone, Default)]
 pub struct DisplayListCache {
+    cached_scroll_x: Option<f32>,
     cached_scroll_y: Option<f32>,
     cached_list: Option<DisplayList>,
     dirty_rects: Vec<Rect>,
@@ -43,14 +65,26 @@ impl DisplayListCache {
 
     /// Returns the cached display list if valid, or builds and caches it (OPT-005).
     pub fn get_or_build(&mut self, root: &LayoutBox, scroll_y: f32) -> DisplayList {
+        self.get_or_build_xy(root, 0.0, scroll_y)
+    }
+
+    /// Returns the cached display list for horizontal and vertical scroll offsets.
+    pub fn get_or_build_xy(
+        &mut self,
+        root: &LayoutBox,
+        scroll_x: f32,
+        scroll_y: f32,
+    ) -> DisplayList {
         if !root.is_dirty
+            && self.cached_scroll_x == Some(scroll_x)
             && self.cached_scroll_y == Some(scroll_y)
             && let Some(ref list) = self.cached_list
         {
             return list.clone();
         }
 
-        let list = build_display_list_with_scroll(root, scroll_y);
+        let list = build_display_list_with_scroll_xy(root, scroll_x, scroll_y);
+        self.cached_scroll_x = Some(scroll_x);
         self.cached_scroll_y = Some(scroll_y);
         self.cached_list = Some(list.clone());
         self.dirty_rects.clear();
@@ -90,6 +124,16 @@ impl DisplayListCache {
         new_list: DisplayList,
         scroll_y: f32,
     ) -> mango_render::DisplayListDiff {
+        self.update_and_diff_xy(new_list, 0.0, scroll_y)
+    }
+
+    /// Updates the cached display list with horizontal and vertical scroll offsets and computes the diff.
+    pub fn update_and_diff_xy(
+        &mut self,
+        new_list: DisplayList,
+        scroll_x: f32,
+        scroll_y: f32,
+    ) -> mango_render::DisplayListDiff {
         let diff = if let Some(ref old_list) = self.cached_list {
             old_list.diff(&new_list)
         } else {
@@ -101,6 +145,7 @@ impl DisplayListCache {
             self.dirty_rects.push(damage);
         }
 
+        self.cached_scroll_x = Some(scroll_x);
         self.cached_scroll_y = Some(scroll_y);
         self.cached_list = Some(new_list);
         diff
@@ -203,6 +248,7 @@ fn render_layout_box(
     parent_opacity: f32,
     offset_x: f32,
     offset_y: f32,
+    scroll_x: f32,
     scroll_y: f32,
     containing_block_rect: Option<Rect>,
 ) {
@@ -286,6 +332,7 @@ fn render_layout_box(
         parent_opacity,
         offset_x,
         offset_y,
+        scroll_x,
         scroll_y,
         containing_block_rect,
     );
@@ -310,6 +357,7 @@ fn render_layout_box_inner(
     parent_opacity: f32,
     offset_x: f32,
     offset_y: f32,
+    scroll_x: f32,
     scroll_y: f32,
     _containing_block_rect: Option<Rect>,
 ) {
@@ -481,6 +529,7 @@ fn render_layout_box_inner(
                                 layer.repeat,
                                 layer.attachment,
                                 s.background_blend_mode,
+                                scroll_x,
                                 scroll_y,
                                 list,
                             );
@@ -528,6 +577,7 @@ fn render_layout_box_inner(
                                 s.background_repeat,
                                 s.background_attachment,
                                 s.background_blend_mode,
+                                scroll_x,
                                 scroll_y,
                                 list,
                             );
@@ -677,31 +727,150 @@ fn render_layout_box_inner(
                     left: box_node.dimensions.border.left,
                 };
 
-                if widths.top > 0.0
+                let has_borders = widths.top > 0.0
                     || widths.right > 0.0
                     || widths.bottom > 0.0
-                    || widths.left > 0.0
-                {
-                    let border_color = if widths.top > 0.0 {
-                        apply_opacity(s.border_top_color, opacity)
-                    } else if widths.bottom > 0.0 {
-                        apply_opacity(s.border_bottom_color, opacity)
-                    } else if widths.left > 0.0 {
-                        apply_opacity(s.border_left_color, opacity)
-                    } else {
-                        apply_opacity(s.border_right_color, opacity)
-                    };
-                    let border_radii = if s.has_border_radius() {
-                        s.border_radius()
-                    } else {
-                        [0.0; 4]
-                    };
-                    list.push(DisplayCommand::DrawBorder {
-                        rect: border_box,
-                        color: border_color,
-                        widths,
-                        radii: border_radii,
-                    });
+                    || widths.left > 0.0;
+
+                if has_borders {
+                    let mut painted_border_image = false;
+                    if let Some(bi) = &s.border_image
+                        && let Some(src) = &bi.source
+                        && let Some(img) = lookup_image_cached(src)
+                    {
+                        let img_w = img.width as f32;
+                        let img_h = img.height as f32;
+                        let slice_top = match bi.slice[0] {
+                            mango_css::values::Length::Percent(p) => img_h * p / 100.0,
+                            mango_css::values::Length::Px(px) => px,
+                            _ => img_h,
+                        };
+                        let slice_right = match bi.slice[1] {
+                            mango_css::values::Length::Percent(p) => img_w * p / 100.0,
+                            mango_css::values::Length::Px(px) => px,
+                            _ => img_w,
+                        };
+                        let slice_bottom = match bi.slice[2] {
+                            mango_css::values::Length::Percent(p) => img_h * p / 100.0,
+                            mango_css::values::Length::Px(px) => px,
+                            _ => img_h,
+                        };
+                        let slice_left = match bi.slice[3] {
+                            mango_css::values::Length::Percent(p) => img_w * p / 100.0,
+                            mango_css::values::Length::Px(px) => px,
+                            _ => img_w,
+                        };
+
+                        list.push(DisplayCommand::DrawBorderImage {
+                            rect: border_box,
+                            pixels: img.pixels,
+                            img_width: img.width,
+                            img_height: img.height,
+                            slice: [slice_top, slice_right, slice_bottom, slice_left],
+                            widths,
+                            repeat_h: bi.repeat_h,
+                            repeat_v: bi.repeat_v,
+                            fill: bi.fill,
+                        });
+                        painted_border_image = true;
+                    }
+
+                    if !painted_border_image {
+                        let s_top_color = apply_opacity(s.border_top_color, opacity);
+                        let s_right_color = apply_opacity(s.border_right_color, opacity);
+                        let s_bottom_color = apply_opacity(s.border_bottom_color, opacity);
+                        let s_left_color = apply_opacity(s.border_left_color, opacity);
+
+                        let has_radii = s.has_border_radius();
+                        let same_colors = s_top_color == s_right_color
+                            && s_top_color == s_bottom_color
+                            && s_top_color == s_left_color;
+
+                        if has_radii || same_colors {
+                            let border_color = if widths.top > 0.0 {
+                                s_top_color
+                            } else if widths.bottom > 0.0 {
+                                s_bottom_color
+                            } else if widths.left > 0.0 {
+                                s_left_color
+                            } else {
+                                s_right_color
+                            };
+                            let border_radii = if has_radii {
+                                s.border_radius()
+                            } else {
+                                [0.0; 4]
+                            };
+                            list.push(DisplayCommand::DrawBorder {
+                                rect: border_box,
+                                color: border_color,
+                                widths,
+                                radii: border_radii,
+                            });
+                        } else {
+                            // Rectangular borders with distinct side colors: emit per-side DrawBorder
+                            if widths.top > 0.0
+                                && s.border_top_style != mango_css::values::BorderStyle::None
+                            {
+                                list.push(DisplayCommand::DrawBorder {
+                                    rect: border_box,
+                                    color: s_top_color,
+                                    widths: BorderWidths {
+                                        top: widths.top,
+                                        right: 0.0,
+                                        bottom: 0.0,
+                                        left: 0.0,
+                                    },
+                                    radii: [0.0; 4],
+                                });
+                            }
+                            if widths.right > 0.0
+                                && s.border_right_style != mango_css::values::BorderStyle::None
+                            {
+                                list.push(DisplayCommand::DrawBorder {
+                                    rect: border_box,
+                                    color: s_right_color,
+                                    widths: BorderWidths {
+                                        top: 0.0,
+                                        right: widths.right,
+                                        bottom: 0.0,
+                                        left: 0.0,
+                                    },
+                                    radii: [0.0; 4],
+                                });
+                            }
+                            if widths.bottom > 0.0
+                                && s.border_bottom_style != mango_css::values::BorderStyle::None
+                            {
+                                list.push(DisplayCommand::DrawBorder {
+                                    rect: border_box,
+                                    color: s_bottom_color,
+                                    widths: BorderWidths {
+                                        top: 0.0,
+                                        right: 0.0,
+                                        bottom: widths.bottom,
+                                        left: 0.0,
+                                    },
+                                    radii: [0.0; 4],
+                                });
+                            }
+                            if widths.left > 0.0
+                                && s.border_left_style != mango_css::values::BorderStyle::None
+                            {
+                                list.push(DisplayCommand::DrawBorder {
+                                    rect: border_box,
+                                    color: s_left_color,
+                                    widths: BorderWidths {
+                                        top: 0.0,
+                                        right: 0.0,
+                                        bottom: 0.0,
+                                        left: widths.left,
+                                    },
+                                    radii: [0.0; 4],
+                                });
+                            }
+                        }
+                    }
                 }
 
                 // 2b. Paint Outline (on border box + outline-offset, does not affect layout geometry)
@@ -865,7 +1034,40 @@ fn render_layout_box_inner(
                     ),
                 });
             }
-            if s.writing_mode == mango_css::values::WritingMode::VerticalRl
+            let is_clip_text = s.background_clip == mango_css::values::BackgroundClip::Text;
+            let text_gradient = if is_clip_text {
+                s.background_gradient.as_ref().or_else(|| {
+                    s.background_layers.iter().find_map(|l| l.gradient.as_deref())
+                })
+            } else {
+                None
+            };
+
+            if let Some(grad) = text_gradient {
+                let mut resolved_grad = grad.clone();
+                resolved_grad.resolve_current_color(s.color);
+                list.push(DisplayCommand::DrawTextWithGradient {
+                    text: text.clone(),
+                    x: content_x,
+                    y: content_y,
+                    gradient: Box::new(resolved_grad),
+                    gradient_rect: border_box,
+                    font_size: s.font_size,
+                    weight: if is_bold {
+                        mango_render::FontWeight::Bold
+                    } else {
+                        mango_render::FontWeight::Regular
+                    },
+                    family,
+                    style: style_font,
+                    decoration,
+                    letter_spacing: s.letter_spacing.to_px(
+                        s.font_size,
+                        16.0,
+                        box_node.dimensions.content.width(),
+                    ),
+                });
+            } else if s.writing_mode == mango_css::values::WritingMode::VerticalRl
                 || s.writing_mode == mango_css::values::WritingMode::VerticalLr
             {
                 let glyph_advance = s.font_size * 1.1;
@@ -1365,6 +1567,7 @@ fn render_layout_box_inner(
                     child_offset_x += box_node.scroll_offset_x;
                     child_offset_y += box_node.scroll_offset_y;
                 }
+                child_offset_x += scroll_x;
                 child_offset_y += scroll_y;
             } else if cs.position == mango_css::values::Position::Sticky {
                 let is_container = box_node.is_scroll_container();
@@ -1373,7 +1576,7 @@ fn render_layout_box_inner(
                 } else {
                     let w = current_cb.map(|r| r.width()).unwrap_or(800.0);
                     let h = current_cb.map(|r| r.height()).unwrap_or(600.0);
-                    (0.0, scroll_y, w, h)
+                    (scroll_x, scroll_y, w, h)
                 };
 
                 let in_flow_x = child.dimensions.border_box().x() + child_offset_x;
@@ -1436,9 +1639,18 @@ fn render_layout_box_inner(
             }
         }
 
-        let has_transform = style.is_some_and(|s| !s.transform.is_identity());
+        let traps_fixed = style.is_some_and(|s| {
+            !s.transform.is_identity()
+                || !s.filter.is_empty()
+                || !s.backdrop_filter.is_empty()
+                || matches!(
+                    s.contain,
+                    mango_css::values::Contain::Paint | mango_css::values::Contain::Strict
+                )
+                || s.will_change
+        });
         let is_fixed_escaped = clip_rect.is_some()
-            && !has_transform
+            && !traps_fixed
             && child
                 .style
                 .as_ref()
@@ -1454,6 +1666,7 @@ fn render_layout_box_inner(
             opacity,
             child_offset_x,
             child_offset_y,
+            scroll_x,
             scroll_y,
             current_cb,
         );
@@ -1475,68 +1688,98 @@ fn render_layout_box_inner(
         && pad_box.width() > 10.0
         && pad_box.height() > 10.0
     {
-        let (content_w, content_h) = box_node.scrollable_extent();
-        let pad_w = pad_box.width();
-        let pad_h = pad_box.height();
+        let scrollbar_width = style.map(|s| s.scrollbar_width).unwrap_or_default();
+        if scrollbar_width != mango_css::values::ScrollbarWidth::None {
+            let (track_thickness, thumb_inset) = match scrollbar_width {
+                mango_css::values::ScrollbarWidth::Thin => (4.0f32, 0.5f32),
+                _ => (6.0f32, 1.0f32),
+            };
+            let (custom_thumb, custom_track) = style
+                .and_then(|s| s.scrollbar_color)
+                .map(|(th, tr)| {
+                    (
+                        Some(apply_opacity(th, opacity)),
+                        Some(apply_opacity(tr, opacity)),
+                    )
+                })
+                .unwrap_or((None, None));
 
-        // Vertical scrollbar
-        let has_v_scroll = if let Some(s) = style {
-            s.overflow_y == mango_css::values::Overflow::Scroll
-                || (s.overflow_y == mango_css::values::Overflow::Auto && content_h > pad_h)
-        } else {
-            false
-        };
-        if has_v_scroll && pad_h > 20.0 {
-            let track_w = 6.0f32;
-            let track_x = pad_box.right() - track_w;
-            let track_y = pad_box.y();
-            let track_h = pad_h;
+            let track_color = custom_track.unwrap_or(Color::rgba(0, 0, 0, 20));
+            let thumb_color = custom_thumb.unwrap_or(Color::rgba(100, 100, 100, 150));
 
-            list.push(DisplayCommand::FillRect {
-                rect: Rect::new(track_x, track_y, track_w, track_h),
-                color: Color::rgba(0, 0, 0, 20),
-            });
+            let (content_w, content_h) = box_node.scrollable_extent();
+            let pad_w = pad_box.width();
+            let pad_h = pad_box.height();
 
-            let thumb_h = ((pad_h / content_h) * pad_h).clamp(16.0, pad_h);
-            let max_scroll = (content_h - pad_h).max(1.0);
-            let scroll_ratio = (box_node.scroll_offset_y / max_scroll).clamp(0.0, 1.0);
-            let thumb_y = track_y + scroll_ratio * (track_h - thumb_h);
+            // Vertical scrollbar
+            let has_v_scroll = if let Some(s) = style {
+                s.overflow_y == mango_css::values::Overflow::Scroll
+                    || (s.overflow_y == mango_css::values::Overflow::Auto && content_h > pad_h)
+            } else {
+                false
+            };
+            if has_v_scroll && pad_h > 20.0 {
+                let track_w = track_thickness;
+                let track_x = pad_box.right() - track_w;
+                let track_y = pad_box.y();
+                let track_h = pad_h;
 
-            list.push(DisplayCommand::FillRoundedRect {
-                rect: Rect::new(track_x + 1.0, thumb_y, track_w - 2.0, thumb_h),
-                color: Color::rgba(100, 100, 100, 150),
-                radii: [2.0; 4],
-            });
-        }
+                list.push(DisplayCommand::FillRect {
+                    rect: Rect::new(track_x, track_y, track_w, track_h),
+                    color: track_color,
+                });
 
-        // Horizontal scrollbar
-        let has_h_scroll = if let Some(s) = style {
-            s.overflow_x == mango_css::values::Overflow::Scroll
-                || (s.overflow_x == mango_css::values::Overflow::Auto && content_w > pad_w)
-        } else {
-            false
-        };
-        if has_h_scroll && pad_w > 20.0 {
-            let track_h = 6.0f32;
-            let track_y = pad_box.bottom() - track_h;
-            let track_x = pad_box.x();
-            let track_w = pad_w - if has_v_scroll { 6.0 } else { 0.0 };
+                let thumb_h = ((pad_h / content_h) * pad_h).clamp(16.0, pad_h);
+                let max_scroll = (content_h - pad_h).max(1.0);
+                let scroll_ratio = (box_node.scroll_offset_y / max_scroll).clamp(0.0, 1.0);
+                let thumb_y = track_y + scroll_ratio * (track_h - thumb_h);
 
-            list.push(DisplayCommand::FillRect {
-                rect: Rect::new(track_x, track_y, track_w, track_h),
-                color: Color::rgba(0, 0, 0, 20),
-            });
+                list.push(DisplayCommand::FillRoundedRect {
+                    rect: Rect::new(
+                        track_x + thumb_inset,
+                        thumb_y,
+                        track_w - thumb_inset * 2.0,
+                        thumb_h,
+                    ),
+                    color: thumb_color,
+                    radii: [thumb_inset * 2.0; 4],
+                });
+            }
 
-            let thumb_w = ((pad_w / content_w) * pad_w).clamp(16.0, track_w);
-            let max_scroll = (content_w - pad_w).max(1.0);
-            let scroll_ratio = (box_node.scroll_offset_x / max_scroll).clamp(0.0, 1.0);
-            let thumb_x = track_x + scroll_ratio * (track_w - thumb_w);
+            // Horizontal scrollbar
+            let has_h_scroll = if let Some(s) = style {
+                s.overflow_x == mango_css::values::Overflow::Scroll
+                    || (s.overflow_x == mango_css::values::Overflow::Auto && content_w > pad_w)
+            } else {
+                false
+            };
+            if has_h_scroll && pad_w > 20.0 {
+                let track_h = track_thickness;
+                let track_y = pad_box.bottom() - track_h;
+                let track_x = pad_box.x();
+                let track_w = pad_w - if has_v_scroll { track_thickness } else { 0.0 };
 
-            list.push(DisplayCommand::FillRoundedRect {
-                rect: Rect::new(thumb_x, track_y + 1.0, thumb_w, track_h - 2.0),
-                color: Color::rgba(100, 100, 100, 150),
-                radii: [2.0; 4],
-            });
+                list.push(DisplayCommand::FillRect {
+                    rect: Rect::new(track_x, track_y, track_w, track_h),
+                    color: track_color,
+                });
+
+                let thumb_w = ((pad_w / content_w) * pad_w).clamp(16.0, track_w);
+                let max_scroll = (content_w - pad_w).max(1.0);
+                let scroll_ratio = (box_node.scroll_offset_x / max_scroll).clamp(0.0, 1.0);
+                let thumb_x = track_x + scroll_ratio * (track_w - thumb_w);
+
+                list.push(DisplayCommand::FillRoundedRect {
+                    rect: Rect::new(
+                        thumb_x,
+                        track_y + thumb_inset,
+                        thumb_w,
+                        track_h - thumb_inset * 2.0,
+                    ),
+                    color: thumb_color,
+                    radii: [thumb_inset * 2.0; 4],
+                });
+            }
         }
     }
 }
@@ -2418,13 +2661,15 @@ fn render_number_spinners(content: Rect, opacity: f32, list: &mut DisplayList) {
 /// Paint layer priority according to CSS 2.1 Appendix E.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum PaintLayer {
-    /// Positioned children with negative z-index
+    /// Positioned children with negative z-index (CSS 2.1 App E layer 2)
     NegativeZ(i32),
-    /// Normal flow children (blocks, inlines, floats with position: static)
+    /// Normal flow children (blocks, inlines with position: static) (CSS 2.1 App E layer 3)
     NormalFlow,
-    /// Positioned children with z-index: auto or z-index: 0
+    /// Non-positioned floats (CSS 2.1 App E layer 4)
+    Float,
+    /// Positioned children with z-index: auto or z-index: 0 (CSS 2.1 App E layer 6)
     ZeroOrAutoZ,
-    /// Positioned children with positive z-index
+    /// Positioned children with positive z-index (CSS 2.1 App E layer 7)
     PositiveZ(i32),
 }
 
@@ -2434,10 +2679,16 @@ fn paint_layer_of(box_node: &LayoutBox) -> PaintLayer {
             || s.opacity < 1.0
             || !s.transform.is_identity()
             || !s.filter.is_empty()
+            || !s.backdrop_filter.is_empty()
             || s.isolation == mango_css::values::Isolation::Isolate
             || s.mix_blend_mode != mango_css::values::BlendMode::Normal
             || s.clip_path != mango_css::values::ClipPath::None
-            || s.mask_image.is_some();
+            || s.mask_image.is_some()
+            || matches!(
+                s.contain,
+                mango_css::values::Contain::Paint | mango_css::values::Contain::Strict
+            )
+            || s.will_change;
 
         if creates_stacking_context {
             match s.z_index {
@@ -2445,6 +2696,8 @@ fn paint_layer_of(box_node: &LayoutBox) -> PaintLayer {
                 Some(z) if z > 0 => PaintLayer::PositiveZ(z),
                 _ => PaintLayer::ZeroOrAutoZ,
             }
+        } else if s.float != mango_css::values::Float::None {
+            PaintLayer::Float
         } else {
             PaintLayer::NormalFlow
         }
@@ -2883,6 +3136,7 @@ fn paint_background_image_layer(
     bg_repeat: mango_css::values::BackgroundRepeat,
     bg_attachment: mango_css::values::BackgroundAttachment,
     blend_mode: mango_css::values::BlendMode,
+    scroll_x: f32,
     scroll_y: f32,
     list: &mut DisplayList,
 ) {
@@ -2957,7 +3211,7 @@ fn paint_background_image_layer(
         let resized = img.resize(target_w as u32, target_h as u32);
 
         let base_x = if bg_attachment == mango_css::values::BackgroundAttachment::Fixed {
-            0.0
+            scroll_x
         } else {
             target_rect.x()
         };
@@ -2989,7 +3243,12 @@ fn paint_background_image_layer(
                 });
             }
             mango_css::values::BackgroundRepeat::RepeatX => {
-                let mut cur_x = origin_x;
+                list.push(DisplayCommand::PushClip { rect: target_rect });
+                let mut start_x = origin_x;
+                while start_x > target_rect.x() {
+                    start_x -= target_w;
+                }
+                let mut cur_x = start_x;
                 let max_x = target_rect.right();
                 let mut count = 0;
                 while cur_x < max_x && count < 64 {
@@ -3003,9 +3262,15 @@ fn paint_background_image_layer(
                     cur_x += target_w;
                     count += 1;
                 }
+                list.push(DisplayCommand::PopClip);
             }
             mango_css::values::BackgroundRepeat::RepeatY => {
-                let mut cur_y = origin_y;
+                list.push(DisplayCommand::PushClip { rect: target_rect });
+                let mut start_y = origin_y;
+                while start_y > target_rect.y() {
+                    start_y -= target_h;
+                }
+                let mut cur_y = start_y;
                 let max_y = target_rect.bottom();
                 let mut count = 0;
                 while cur_y < max_y && count < 64 {
@@ -3019,14 +3284,24 @@ fn paint_background_image_layer(
                     cur_y += target_h;
                     count += 1;
                 }
+                list.push(DisplayCommand::PopClip);
             }
             mango_css::values::BackgroundRepeat::Repeat => {
-                let mut cur_y = origin_y;
+                list.push(DisplayCommand::PushClip { rect: target_rect });
+                let mut start_y = origin_y;
+                while start_y > target_rect.y() {
+                    start_y -= target_h;
+                }
+                let mut start_x = origin_x;
+                while start_x > target_rect.x() {
+                    start_x -= target_w;
+                }
+                let mut cur_y = start_y;
                 let max_y = target_rect.bottom();
                 let max_x = target_rect.right();
                 let mut total_tiles = 0;
                 while cur_y < max_y && total_tiles < 128 {
-                    let mut cur_x = origin_x;
+                    let mut cur_x = start_x;
                     while cur_x < max_x && total_tiles < 128 {
                         list.push(DisplayCommand::DrawImage {
                             x: cur_x,
@@ -3040,6 +3315,7 @@ fn paint_background_image_layer(
                     }
                     cur_y += target_h;
                 }
+                list.push(DisplayCommand::PopClip);
             }
         }
     }
@@ -4487,4 +4763,359 @@ mod tests {
             assert!((y - 20.0).abs() < 1.0, "fill: y should be 20, got {y}");
         }
     }
+
+    #[test]
+    fn test_multicolor_borders_split_per_side() {
+        let mut style = ComputedStyle::default();
+        style.border_top_width = 2.0;
+        style.border_bottom_width = 4.0;
+        style.border_top_color = Color::RED;
+        style.border_bottom_color = Color::BLUE;
+        style.border_top_style = mango_css::values::BorderStyle::Solid;
+        style.border_bottom_style = mango_css::values::BorderStyle::Solid;
+
+        let mut b = LayoutBox::new(BoxType::BlockNode, Some(style));
+        b.dimensions.content = Rect::new(0.0, 0.0, 100.0, 50.0);
+        b.dimensions.border.top = 2.0;
+        b.dimensions.border.bottom = 4.0;
+
+        let dl = build_display_list(&b);
+        let border_cmds: Vec<_> = dl
+            .iter()
+            .filter(|c| matches!(c, DisplayCommand::DrawBorder { .. }))
+            .collect();
+        assert_eq!(
+            border_cmds.len(),
+            2,
+            "Should emit 2 DrawBorder commands for distinct side colors"
+        );
+        if let DisplayCommand::DrawBorder { color, widths, .. } = border_cmds[0] {
+            assert_eq!(*color, Color::RED);
+            assert_eq!(widths.top, 2.0);
+            assert_eq!(widths.bottom, 0.0);
+        }
+        if let DisplayCommand::DrawBorder { color, widths, .. } = border_cmds[1] {
+            assert_eq!(*color, Color::BLUE);
+            assert_eq!(widths.top, 0.0);
+            assert_eq!(widths.bottom, 4.0);
+        }
+    }
+
+    #[test]
+    fn test_scrollbar_width_none_and_custom_color() {
+        use mango_css::values::{Overflow, ScrollbarWidth};
+
+        let make_container =
+            |sb_width: ScrollbarWidth, sb_color: Option<(Color, Color)>| -> LayoutBox {
+                let mut style = ComputedStyle::default();
+                style.overflow_y = Overflow::Scroll;
+                style.scrollbar_width = sb_width;
+                style.scrollbar_color = sb_color;
+                let mut b = LayoutBox::new(BoxType::BlockNode, Some(style));
+                b.dimensions.content = Rect::new(0.0, 0.0, 100.0, 100.0);
+                b.dimensions.padding.bottom = 0.0;
+                // Add a child taller than the container to ensure scrollable extent
+                let mut child = LayoutBox::new(BoxType::BlockNode, None);
+                child.dimensions.content = Rect::new(0.0, 0.0, 100.0, 300.0);
+                b.children.push(child);
+                b
+            };
+
+        // None: no scrollbars
+        let b_none = make_container(ScrollbarWidth::None, None);
+        let dl_none = build_display_list(&b_none);
+        let has_scrollbar = dl_none
+            .iter()
+            .any(|c| matches!(c, DisplayCommand::FillRoundedRect { .. }));
+        assert!(!has_scrollbar, "scrollbar-width: none must suppress scrollbar");
+
+        // Custom colors: thumb = red, track = blue
+        let b_custom = make_container(ScrollbarWidth::Auto, Some((Color::RED, Color::BLUE)));
+        let dl_custom = build_display_list(&b_custom);
+        let track_cmd = dl_custom.iter().find(|c| {
+            matches!(c, DisplayCommand::FillRect { color, .. } if *color == Color::BLUE)
+        });
+        assert!(
+            track_cmd.is_some(),
+            "Custom track color (blue) should be emitted"
+        );
+        let thumb_cmd = dl_custom.iter().find(|c| {
+            matches!(c, DisplayCommand::FillRoundedRect { color, .. } if *color == Color::RED)
+        });
+        assert!(
+            thumb_cmd.is_some(),
+            "Custom thumb color (red) should be emitted"
+        );
+
+        // Thin: track_thickness is 4.0
+        let b_thin = make_container(ScrollbarWidth::Thin, None);
+        let dl_thin = build_display_list(&b_thin);
+        let thin_track = dl_thin.iter().find_map(|c| {
+            if let DisplayCommand::FillRect { rect, .. } = c {
+                if rect.width() == 4.0 {
+                    Some(rect.width())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        });
+        assert_eq!(
+            thin_track,
+            Some(4.0),
+            "scrollbar-width: thin should use 4px track width"
+        );
+    }
+
+    #[test]
+    fn test_fixed_element_trapped_by_filter_or_contain() {
+        use mango_css::values::{Contain, Overflow, Position};
+
+        // Container with overflow: hidden and contain: paint
+        let mut parent_style = ComputedStyle::default();
+        parent_style.overflow_x = Overflow::Hidden;
+        parent_style.overflow_y = Overflow::Hidden;
+        parent_style.contain = Contain::Paint;
+        let mut parent = LayoutBox::new(BoxType::BlockNode, Some(parent_style));
+        parent.dimensions.content = Rect::new(0.0, 0.0, 200.0, 200.0);
+
+        let mut fixed_style = ComputedStyle::default();
+        fixed_style.position = Position::Fixed;
+        let mut fixed_child = LayoutBox::new(BoxType::BlockNode, Some(fixed_style));
+        fixed_child.dimensions.content = Rect::new(10.0, 10.0, 50.0, 50.0);
+        parent.children.push(fixed_child);
+
+        let dl = build_display_list(&parent);
+        // Under contain: paint, the fixed child is trapped inside parent's clip.
+        // There should be exactly 1 PushClip and 1 PopClip for the container, not extra PopClip/PushClip around child.
+        let push_clips = dl
+            .iter()
+            .filter(|c| matches!(c, DisplayCommand::PushClip { .. }))
+            .count();
+        let pop_clips = dl
+            .iter()
+            .filter(|c| matches!(c, DisplayCommand::PopClip))
+            .count();
+        assert_eq!(
+            push_clips, 1,
+            "Child must remain clipped; exactly 1 PushClip"
+        );
+        assert_eq!(
+            pop_clips, 1,
+            "Child must remain clipped; exactly 1 PopClip"
+        );
+    }
+
+    #[test]
+    fn test_stacking_context_floats_and_backdrop_filter() {
+        use mango_css::values::{Float, Position};
+
+        let mut parent = LayoutBox::new(BoxType::BlockNode, None);
+        parent.dimensions.content = Rect::new(0.0, 0.0, 400.0, 400.0);
+
+        // Child 1: Positioned with z-index: auto (ZeroOrAutoZ)
+        let mut pos_style = ComputedStyle::default();
+        pos_style.position = Position::Relative;
+        pos_style.background_color = Color::RED;
+        let mut pos_child = LayoutBox::new(BoxType::BlockNode, Some(pos_style));
+        pos_child.dimensions.content = Rect::new(0.0, 0.0, 50.0, 50.0);
+
+        // Child 2: Static Float (Float layer)
+        let mut float_style = ComputedStyle::default();
+        float_style.position = Position::Static;
+        float_style.float = Float::Left;
+        float_style.background_color = Color::BLUE;
+        let mut float_child = LayoutBox::new(BoxType::BlockNode, Some(float_style));
+        float_child.dimensions.content = Rect::new(50.0, 0.0, 50.0, 50.0);
+
+        // Child 3: In-flow normal box (NormalFlow layer)
+        let mut normal_style = ComputedStyle::default();
+        normal_style.background_color = Color::GREEN;
+        let mut normal_child = LayoutBox::new(BoxType::BlockNode, Some(normal_style));
+        normal_child.dimensions.content = Rect::new(100.0, 0.0, 50.0, 50.0);
+
+        // Add in reverse order: Pos, Float, Normal
+        parent.children.push(pos_child);
+        parent.children.push(float_child);
+        parent.children.push(normal_child);
+
+        let dl = build_display_list(&parent);
+        // In CSS 2.1 App E:
+        // NormalFlow (GREEN) < Float (BLUE) < Positioned ZeroOrAutoZ (RED)
+        let green_pos = dl
+            .iter()
+            .position(
+                |c| matches!(c, DisplayCommand::FillRect { color, .. } if *color == Color::GREEN),
+            )
+            .expect("green rendered");
+        let blue_pos = dl
+            .iter()
+            .position(
+                |c| matches!(c, DisplayCommand::FillRect { color, .. } if *color == Color::BLUE),
+            )
+            .expect("blue rendered");
+        let red_pos = dl
+            .iter()
+            .position(
+                |c| matches!(c, DisplayCommand::FillRect { color, .. } if *color == Color::RED),
+            )
+            .expect("red rendered");
+
+        assert!(
+            green_pos < blue_pos,
+            "NormalFlow must paint before Float: green={green_pos}, blue={blue_pos}"
+        );
+        assert!(
+            blue_pos < red_pos,
+            "Float must paint before Positioned: blue={blue_pos}, red={red_pos}"
+        );
+    }
+
+    #[test]
+    fn test_background_clip_text_emits_gradient_text() {
+        use mango_css::values::{BackgroundClip, ColorStop, Gradient};
+
+        let mut style = ComputedStyle::default();
+        style.background_clip = BackgroundClip::Text;
+        style.color = Color::BLACK;
+        style.font_size = 20.0;
+        style.background_gradient = Some(Gradient::Linear {
+            angle_deg: 90.0,
+            stops: vec![
+                ColorStop::new(Color::RED, None, None),
+                ColorStop::new(Color::BLUE, None, None),
+            ],
+            repeating: false,
+        });
+
+        let mut text_box =
+            LayoutBox::new(BoxType::TextNode("Hello Gradient".to_string()), Some(style));
+        text_box.dimensions.content = Rect::new(10.0, 10.0, 100.0, 20.0);
+
+        let dl = build_display_list(&text_box);
+        let grad_text = dl
+            .iter()
+            .find(|c| matches!(c, DisplayCommand::DrawTextWithGradient { .. }));
+        assert!(
+            grad_text.is_some(),
+            "background-clip: text with gradient must emit DrawTextWithGradient"
+        );
+        if let Some(DisplayCommand::DrawTextWithGradient { text, .. }) = grad_text {
+            assert_eq!(text, "Hello Gradient");
+        }
+    }
+
+    #[test]
+    fn test_border_image_display_command() {
+        use mango_css::values::{BorderImage, BorderImageRepeat, Length};
+        use mango_render::image_decode::{cache_image, DecodedImage};
+
+        let dummy_img = DecodedImage {
+            width: 30,
+            height: 30,
+            pixels: vec![0xFF00FF00; 30 * 30],
+        };
+        cache_image("border.png", dummy_img);
+
+        let mut style = ComputedStyle::default();
+        style.border_image = Some(BorderImage {
+            source: Some("border.png".to_string()),
+            gradient: None,
+            slice: [
+                Length::Px(10.0),
+                Length::Px(10.0),
+                Length::Px(10.0),
+                Length::Px(10.0),
+            ],
+            width: [Length::Px(5.0); 4],
+            outset: [Length::Px(0.0); 4],
+            repeat_h: BorderImageRepeat::Stretch,
+            repeat_v: BorderImageRepeat::Stretch,
+            fill: false,
+        });
+        let mut b = LayoutBox::new(BoxType::BlockNode, Some(style));
+        b.dimensions.content = Rect::new(0.0, 0.0, 100.0, 100.0);
+        b.dimensions.border.top = 5.0;
+        b.dimensions.border.right = 5.0;
+        b.dimensions.border.bottom = 5.0;
+        b.dimensions.border.left = 5.0;
+
+        let dl = build_display_list(&b);
+        let bi_cmd = dl
+            .iter()
+            .find(|c| matches!(c, DisplayCommand::DrawBorderImage { .. }));
+        assert!(
+            bi_cmd.is_some(),
+            "DrawBorderImage must be emitted when border-image source is present"
+        );
+        if let Some(DisplayCommand::DrawBorderImage { slice, widths, .. }) = bi_cmd {
+            assert_eq!(*slice, [10.0, 10.0, 10.0, 10.0]);
+            assert_eq!(widths.top, 5.0);
+        }
+    }
+
+    #[test]
+    fn test_build_display_list_with_scroll_xy() {
+        use mango_css::values::Position;
+
+        let mut root = LayoutBox::new(BoxType::BlockNode, None);
+        root.dimensions.content = Rect::new(0.0, 0.0, 500.0, 500.0);
+
+        // Child with position: fixed
+        let mut fixed_style = ComputedStyle::default();
+        fixed_style.position = Position::Fixed;
+        fixed_style.background_color = Color::RED;
+        let mut fixed_child = LayoutBox::new(BoxType::BlockNode, Some(fixed_style));
+        fixed_child.dimensions.content = Rect::new(20.0, 30.0, 50.0, 50.0);
+        root.children.push(fixed_child);
+
+        // In-flow child
+        let mut inflow_style = ComputedStyle::default();
+        inflow_style.background_color = Color::BLUE;
+        let mut inflow_child = LayoutBox::new(BoxType::BlockNode, Some(inflow_style));
+        inflow_child.dimensions.content = Rect::new(20.0, 30.0, 50.0, 50.0);
+        root.children.push(inflow_child);
+
+        // When scroll_x = 100.0 and scroll_y = 200.0:
+        // Fixed child moves with the viewport (+100.0, +200.0) -> x=120, y=230
+        // In-flow child stays at document coordinates (x=20, y=30)
+        let dl = build_display_list_with_scroll_xy(&root, 100.0, 200.0);
+
+        let fixed_rect = dl
+            .iter()
+            .find_map(|c| {
+                if let DisplayCommand::FillRect { rect, color } = c {
+                    if *color == Color::RED {
+                        Some(*rect)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .expect("fixed child FillRect");
+
+        let inflow_rect = dl
+            .iter()
+            .find_map(|c| {
+                if let DisplayCommand::FillRect { rect, color } = c {
+                    if *color == Color::BLUE {
+                        Some(*rect)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .expect("inflow child FillRect");
+
+        assert_eq!(fixed_rect.x(), 120.0);
+        assert_eq!(fixed_rect.y(), 230.0);
+        assert_eq!(inflow_rect.x(), 20.0);
+        assert_eq!(inflow_rect.y(), 30.0);
+    }
 }
+

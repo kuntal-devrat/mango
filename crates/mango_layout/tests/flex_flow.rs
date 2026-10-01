@@ -340,3 +340,240 @@ fn test_flex_line_wrapping_with_gaps_and_align_content() {
     assert_eq!(container.children[0].dimensions.content.y(), 32.5);
     assert_eq!(container.children[2].dimensions.content.y(), 137.5);
 }
+
+#[test]
+fn test_flex_basis_zero_equal_distribution() {
+    // When flex: 1 (flex-basis: 0) is specified, items with different content length
+    // must receive strictly equal width distribution (B2 fix).
+    let html = r#"
+        <div class="container">
+            <div class="item">Short</div>
+            <div class="item">ExtremelyLongContentTextStringThatTakesALotOfSpace</div>
+        </div>
+    "#;
+    let css = r#"
+        .container {
+            display: flex;
+            width: 300px;
+        }
+        .item {
+            flex-grow: 1;
+            flex-shrink: 1;
+            flex-basis: 0px;
+            min-width: 0px;
+        }
+    "#;
+    let container = layout_html_flex(html, css, 400.0, 400.0);
+    // Both items must receive exactly 150px
+    assert_eq!(container.children[0].dimensions.content.width(), 150.0);
+    assert_eq!(container.children[1].dimensions.content.width(), 150.0);
+}
+
+#[test]
+fn test_flex_grow_max_width_constraint_and_redistribution() {
+    // When an item's growth violates max-width, it freezes at max-width and remaining
+    // free space is redistributed to other unfrozen items (B3 fix, CSS Flexbox §9.7).
+    let html = r#"
+        <div class="container">
+            <div class="item constrained">Item 1</div>
+            <div class="item unconstrained">Item 2</div>
+        </div>
+    "#;
+    let css = r#"
+        .container {
+            display: flex;
+            width: 300px;
+        }
+        .item {
+            flex-grow: 1;
+            flex-basis: 0px;
+            min-width: 0px;
+        }
+        .constrained {
+            max-width: 100px;
+        }
+    "#;
+    let container = layout_html_flex(html, css, 400.0, 400.0);
+    // Item 1 frozen at max-width 100px; remaining 200px redistributed to Item 2
+    assert_eq!(container.children[0].dimensions.content.width(), 100.0);
+    assert_eq!(container.children[1].dimensions.content.width(), 200.0);
+}
+
+#[test]
+fn test_flex_out_of_flow_children_ignored() {
+    // Absolute children must NOT participate as flex items and must not take flex space (B1 fix).
+    let html = r#"
+        <div class="container">
+            <div class="item">Item 1</div>
+            <div class="abs">Floating Note</div>
+            <div class="item">Item 2</div>
+        </div>
+    "#;
+    let css = r#"
+        .container {
+            display: flex;
+            position: relative;
+            width: 200px;
+            height: 100px;
+        }
+        .item {
+            flex-grow: 1;
+            flex-basis: 0px;
+            min-width: 0px;
+        }
+        .abs {
+            position: absolute;
+            top: 10px;
+            left: 20px;
+            width: 50px;
+            height: 30px;
+        }
+    "#;
+    let container = layout_html_flex(html, css, 400.0, 400.0);
+    // In-flow items receive 100px each
+    assert_eq!(container.children[0].dimensions.content.width(), 100.0);
+    assert_eq!(container.children[2].dimensions.content.width(), 100.0);
+
+    // Absolute child is placed at its specified coordinates
+    assert_eq!(container.children[1].dimensions.content.x(), 20.0);
+    assert_eq!(container.children[1].dimensions.content.y(), 10.0);
+    assert_eq!(container.children[1].dimensions.content.width(), 50.0);
+    assert_eq!(container.children[1].dimensions.content.height(), 30.0);
+}
+
+#[test]
+fn test_flex_row_reverse_and_column_reverse() {
+    // In row-reverse, main-start is the right edge. Item 1 is at main-start (right edge),
+    // and Item 2 is placed to its left (B4 fix).
+    let html = r#"
+        <div class="container">
+            <div class="item1">1</div>
+            <div class="item2">2</div>
+        </div>
+    "#;
+    let css = r#"
+        .container {
+            display: flex;
+            flex-direction: row-reverse;
+            width: 300px;
+        }
+        .item1 {
+            width: 60px;
+        }
+        .item2 {
+            width: 80px;
+        }
+    "#;
+    let container = layout_html_flex(html, css, 400.0, 400.0);
+    // Item 1 (first flex item in DOM) is packed at right edge: x = 300 - 60 = 240
+    assert_eq!(container.children[0].dimensions.content.x(), 240.0);
+    // Item 2 is placed to the left of Item 1: x = 240 - 80 = 160
+    assert_eq!(container.children[1].dimensions.content.x(), 160.0);
+}
+
+#[test]
+fn test_flex_baseline_alignment() {
+    // In row flex with align-items: baseline, text baselines of all items align (B5 fix).
+    let html = r#"
+        <div class="container">
+            <div class="small">Small</div>
+            <div class="large">Large</div>
+        </div>
+    "#;
+    let css = r#"
+        .container {
+            display: flex;
+            align-items: baseline;
+            width: 300px;
+        }
+        .small {
+            font-size: 10px;
+            width: 50px;
+        }
+        .large {
+            font-size: 30px;
+            width: 50px;
+        }
+    "#;
+    let container = layout_html_flex(html, css, 400.0, 400.0);
+    // Baseline ascent = font_size * 0.8:
+    // small: 10 * 0.8 = 8.0px
+    // large: 30 * 0.8 = 24.0px
+    // Max baseline ascent = 24.0px.
+    // small item must be pushed down by (24.0 - 8.0) = 16.0px so their baselines match!
+    assert_eq!(container.children[0].dimensions.content.y(), 16.0);
+    assert_eq!(container.children[1].dimensions.content.y(), 0.0);
+}
+
+#[test]
+fn test_flex_container_min_max_height() {
+    // Flex container final height clamps by min-height and max-height (G1 fix).
+    let html = r#"
+        <div class="container">
+            <div class="item">Content</div>
+        </div>
+    "#;
+    let css = r#"
+        .container {
+            display: flex;
+            min-height: 120px;
+            max-height: 200px;
+            width: 200px;
+        }
+        .item {
+            height: 40px;
+        }
+    "#;
+    let container = layout_html_flex(html, css, 400.0, 400.0);
+    assert_eq!(container.dimensions.content.height(), 120.0);
+}
+
+#[test]
+fn test_inline_flex_shrink_to_fit_width() {
+    // inline-flex container with auto width should shrink-to-fit its items (G2 fix).
+    let html = r#"
+        <div class="container">
+            <div class="item">A</div>
+            <div class="item">B</div>
+        </div>
+    "#;
+    let css = r#"
+        .container {
+            display: inline-flex;
+        }
+        .item {
+            width: 60px;
+            height: 30px;
+        }
+    "#;
+    let container = layout_html_flex(html, css, 500.0, 500.0);
+    // Content width should be sum of items (60 + 60 = 120px), not 500px containing block width!
+    assert_eq!(container.dimensions.content.width(), 120.0);
+}
+
+#[test]
+fn test_column_flex_align_items_shrink_to_fit() {
+    // In column flex with align-items: center, auto-width items should shrink-to-fit
+    // and not stretch to 100% container width (G3 fix).
+    let html = r#"
+        <div class="container">
+            <div class="item">Fixed</div>
+        </div>
+    "#;
+    let css = r#"
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 200px;
+        }
+        .item {
+            width: 80px;
+            height: 30px;
+        }
+    "#;
+    let container = layout_html_flex(html, css, 400.0, 400.0);
+    // Item width remains 80px and is centered horizontally at (200 - 80) / 2 = 60px
+    assert_eq!(container.children[0].dimensions.content.width(), 80.0);
+    assert_eq!(container.children[0].dimensions.content.x(), 60.0);
+}

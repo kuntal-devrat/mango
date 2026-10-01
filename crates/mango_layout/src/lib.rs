@@ -37,19 +37,29 @@ pub mod snapshot;
 pub mod style_tree;
 pub mod table_flow;
 
-pub use a11y::{A11yNode, A11yRole, A11yState, A11yTree};
+pub use a11y::{A11yNode, A11yRole, A11yState, A11yTree, CheckedState, PressedState};
+pub use bidi::{BidiRun, bidi_visual_runs};
 pub use block_flow::layout_block;
-pub use box_model::BoxType;
+pub use box_model::{
+    BoxArea, BoxType, Direction, IFrameSandbox, LogicalEdgeSizes, LogicalRect, MarginStrut,
+    OverflowModel, WritingMode, adjust_for_box_sizing, resolve_object_fit_rect,
+    resolve_replaced_size,
+};
 pub use box_tree::{FormControlHit, LayoutBox, MediaClickAction, MediaControlHit, build_box_tree};
 pub use dimensions::Dimensions;
 pub use display_list::{
     COLOR_SWATCHES, DisplayListCache, build_display_list, build_display_list_with_scroll,
+    build_display_list_with_scroll_xy,
 };
 pub use flex_flow::layout_flex;
 pub use float::FloatContext;
 pub use grid_flow::layout_grid;
 pub use inline_flow::{layout_inline_children, measure_text_width};
 pub use mango_render::{DiffOp, DisplayListDiff};
+pub use shaping::{
+    is_arabic_char, is_complex_char, is_devanagari_char, is_thai_char, segment_thai_syllables,
+    shape_arabic, shape_complex_script, shape_devanagari, shape_thai,
+};
 pub use snapshot::LayoutSnapshot;
 pub use style_tree::{
     StyleInvalidator, StyledNode, build_style_tree, build_style_tree_with_size,
@@ -81,6 +91,17 @@ where
 /// This is the fast path used for animation frames and nested-scroll updates: it
 /// skips style recomputation and box-tree construction entirely.
 pub fn relayout_box_tree(root: &mut LayoutBox, viewport: Size) -> DisplayList {
+    relayout_box_tree_with_scroll_xy(root, viewport, 0.0, 0.0)
+}
+
+/// Re-runs layout for an already-built box tree and regenerates its display list with
+/// custom horizontal and vertical scroll offsets.
+pub fn relayout_box_tree_with_scroll_xy(
+    root: &mut LayoutBox,
+    viewport: Size,
+    scroll_x: f32,
+    scroll_y: f32,
+) -> DisplayList {
     mango_css::set_current_viewport(viewport.width, viewport.height);
     let containing_block = Dimensions::new(Rect::new(0.0, 0.0, viewport.width, viewport.height));
     let mut float_ctx = FloatContext::new();
@@ -88,7 +109,7 @@ pub fn relayout_box_tree(root: &mut LayoutBox, viewport: Size) -> DisplayList {
 
     // Explicitly reset children before the traversal so that a re-layout of an
     // already laid-out tree does not accumulate stale offsets.
-    build_display_list(root)
+    build_display_list_with_scroll_xy(root, scroll_x, scroll_y)
 }
 
 /// Collects `(DOM node id, computed style)` pairs for every styled box in the tree.
@@ -129,6 +150,18 @@ pub fn layout_document(
     author_styles: &[&Stylesheet],
     viewport: Size,
 ) -> (LayoutBox, DisplayList) {
+    layout_document_with_scroll_xy(doc, author_styles, viewport, 0.0, 0.0)
+}
+
+/// Fully lays out an HTML DOM [`Document`], applying author stylesheets and inline styles,
+/// with explicit 2D horizontal and vertical scroll offsets applied to the resulting display list.
+pub fn layout_document_with_scroll_xy(
+    doc: &Document,
+    author_styles: &[&Stylesheet],
+    viewport: Size,
+    scroll_x: f32,
+    scroll_y: f32,
+) -> (LayoutBox, DisplayList) {
     mango_css::set_current_viewport(viewport.width, viewport.height);
     let Some(styled_root) =
         build_style_tree_with_size(doc, author_styles, viewport.width, viewport.height)
@@ -141,7 +174,7 @@ pub fn layout_document(
     let mut float_ctx = FloatContext::new();
 
     layout_block(&mut root_box, &containing_block, &mut float_ctx);
-    let display_list = build_display_list(&root_box);
+    let display_list = build_display_list_with_scroll_xy(&root_box, scroll_x, scroll_y);
 
     (root_box, display_list)
 }
@@ -186,5 +219,25 @@ mod tests {
         // background fills, borders, texts
         assert!(!display_list.is_empty());
         assert!(display_list.len() >= 4);
+    }
+
+    #[test]
+    fn test_layout_document_with_scroll_xy() {
+        let html = r#"
+            <!DOCTYPE html>
+            <html>
+                <body style="margin: 0;">
+                    <div style="width: 200px; height: 100px; background-color: #ff0000;">Box</div>
+                </body>
+            </html>
+        "#;
+        let doc = parse_html(html);
+        let viewport = Size::new(800.0, 600.0);
+
+        let (mut root, dl_scroll) = layout_document_with_scroll_xy(&doc, &[], viewport, 20.0, 40.0);
+        assert!(!dl_scroll.is_empty());
+
+        let dl_relayout = relayout_box_tree_with_scroll_xy(&mut root, viewport, 20.0, 40.0);
+        assert!(!dl_relayout.is_empty());
     }
 }
