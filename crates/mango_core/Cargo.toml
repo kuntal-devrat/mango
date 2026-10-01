@@ -1,0 +1,7 @@
+[package]
+name = "mango_core"
+version.workspace = true
+edition.workspace = true
+description = "Core types, string interning, and arena allocators for the Mango browser engine"
+
+[dependencies]

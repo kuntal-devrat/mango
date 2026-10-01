@@ -1,0 +1,11 @@
+[package]
+name = "mango_css"
+version.workspace = true
+edition.workspace = true
+description = "CSS tokenizer, parser, selector matching, and cascade for the Mango browser engine"
+
+[dependencies]
+mango_core.workspace = true
+mango_html.workspace = true
+log.workspace = true
+regex = "1.10"

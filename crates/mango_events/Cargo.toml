@@ -1,0 +1,8 @@
+[package]
+name = "mango_events"
+version.workspace = true
+edition.workspace = true
+description = "W3C DOM Events with capture/bubble phases for the Mango browser engine"
+
+[dependencies]
+mango_core.workspace = true

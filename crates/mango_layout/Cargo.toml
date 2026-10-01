@@ -1,0 +1,12 @@
+[package]
+name = "mango_layout"
+version.workspace = true
+edition.workspace = true
+description = "Layout engine: box model, block/inline flow, and positioning for Mango"
+
+[dependencies]
+mango_core.workspace = true
+mango_html.workspace = true
+mango_css.workspace = true
+mango_render.workspace = true
+log.workspace = true

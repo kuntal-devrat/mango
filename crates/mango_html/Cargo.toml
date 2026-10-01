@@ -1,0 +1,9 @@
+[package]
+name = "mango_html"
+version.workspace = true
+edition.workspace = true
+description = "HTML5 tokenizer and tree builder for the Mango browser engine"
+
+[dependencies]
+mango_core.workspace = true
+log.workspace = true

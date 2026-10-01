@@ -1,0 +1,25 @@
+# Rust / Cargo
+/target/
+**/*.rs.bk
+*.pdb
+
+# Environment & IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Scratch and Temporary debug artifacts
+/scratch/
+/.freebuff/
+*.log
+cookies.txt
+*.tmp
+*.dump
+
+# Local test outputs (keep assets/screenshots checked in)
+test_output/
+*.diff.png

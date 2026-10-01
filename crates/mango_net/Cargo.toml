@@ -1,0 +1,12 @@
+[package]
+name = "mango_net"
+version.workspace = true
+edition.workspace = true
+description = "Networking: HTTP client, TLS, DNS, and caching for Mango"
+
+[dependencies]
+mango_core.workspace = true
+tokio.workspace = true
+log.workspace = true
+ureq.workspace = true
+

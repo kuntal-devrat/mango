@@ -1,0 +1,14 @@
+[package]
+name = "mango_engine"
+version.workspace = true
+edition.workspace = true
+description = "Core browser engine orchestrating DOM, CSS, layout, events, and display list generation (ARCH-001)"
+
+[dependencies]
+mango_core.workspace = true
+mango_html.workspace = true
+mango_css.workspace = true
+mango_layout.workspace = true
+mango_render.workspace = true
+mango_events.workspace = true
+log.workspace = true

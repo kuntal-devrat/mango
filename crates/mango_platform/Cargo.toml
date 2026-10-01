@@ -1,0 +1,12 @@
+[package]
+name = "mango_platform"
+version.workspace = true
+edition.workspace = true
+description = "Window management, input handling, and platform abstractions for Mango browser"
+
+[dependencies]
+mango_core.workspace = true
+winit.workspace = true
+softbuffer.workspace = true
+arboard.workspace = true
+log.workspace = true

@@ -1,0 +1,14 @@
+[package]
+name = "mango_render"
+version.workspace = true
+edition.workspace = true
+description = "Display list generation and painting for the Mango browser engine"
+
+[dependencies]
+mango_core.workspace = true
+mango_css.workspace = true
+log.workspace = true
+fontdue.workspace = true
+image.workspace = true
+tiny-skia.workspace = true
+wuff.workspace = true

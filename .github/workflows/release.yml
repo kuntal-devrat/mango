@@ -1,0 +1,64 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  build-release:
+    name: Build Release (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bin_name: mango
+            headless_name: headless
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin_name: mango.exe
+            headless_name: headless.exe
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            bin_name: mango
+            headless_name: headless
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bin_name: mango
+            headless_name: headless
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux Dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libx11-dev libasound2-dev libfontconfig1-dev
+
+      - name: Build Binaries
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package Artifacts (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          tar -czvf mango-${{ matrix.target }}.tar.gz -C target/${{ matrix.target }}/release ${{ matrix.bin_name }} ${{ matrix.headless_name }}
+
+      - name: Package Artifacts (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          tar -czvf mango-${{ matrix.target }}.tar.gz -C target/${{ matrix.target }}/release ${{ matrix.bin_name }} ${{ matrix.headless_name }}
+
+      - name: Upload Release Artifacts
+        uses: softprops/action-gh-release@v2
+        with:
+          files: mango-${{ matrix.target }}.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

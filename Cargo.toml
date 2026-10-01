@@ -1,0 +1,100 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/mango_core",
+    "crates/mango_net",
+    "crates/mango_html",
+    "crates/mango_css",
+    "crates/mango_layout",
+    "crates/mango_render",
+    "crates/mango_js",
+    "crates/mango_platform",
+    "crates/mango_events",
+    "crates/mango_engine",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Mango Contributors"]
+license = "MIT"
+description = "An ultra-lightweight web browser built from scratch in pure Rust"
+
+[workspace.dependencies]
+# Shared across crates
+mango_core = { path = "crates/mango_core" }
+mango_net = { path = "crates/mango_net" }
+mango_html = { path = "crates/mango_html" }
+mango_css = { path = "crates/mango_css" }
+mango_layout = { path = "crates/mango_layout" }
+mango_render = { path = "crates/mango_render" }
+mango_js = { path = "crates/mango_js" }
+mango_platform = { path = "crates/mango_platform" }
+mango_events = { path = "crates/mango_events" }
+mango_engine = { path = "crates/mango_engine" }
+
+# External dependencies (pinned versions)
+winit = "0.30"
+softbuffer = "0.4"
+tiny-skia = "0.11"
+fontdue = "0.9"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+tokio = { version = "1", features = ["full"] }
+log = "0.4"
+env_logger = "0.11"
+ureq = { version = "3.4", default-features = false, features = ["rustls", "gzip", "brotli"] }
+arboard = "3.4"
+boa_engine = "0.22"
+boa_gc = "0.22"
+wuff = "0.2.9"
+
+[package]
+name = "mango-browser"
+version.workspace = true
+edition.workspace = true
+description.workspace = true
+license.workspace = true
+default-run = "mango"
+
+[lib]
+name = "mango_browser"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mango"
+path = "src/main.rs"
+
+[[bin]]
+name = "headless"
+path = "src/bin/headless.rs"
+
+[dependencies]
+mango_core.workspace = true
+mango_html.workspace = true
+mango_css.workspace = true
+mango_layout.workspace = true
+mango_render.workspace = true
+mango_platform.workspace = true
+mango_net.workspace = true
+mango_js.workspace = true
+mango_events.workspace = true
+mango_engine.workspace = true
+image.workspace = true
+log.workspace = true
+env_logger.workspace = true
+winit.workspace = true
+arboard.workspace = true
+fontdue.workspace = true
+
+[profile.release]
+opt-level = "z"     # Optimize for size
+lto = true          # Link-time optimization
+codegen-units = 1   # Single codegen unit for better optimization
+strip = true        # Strip symbols
+panic = "unwind"    # Safe panic recovery without process abort
+
+[profile.dev]
+debug = 1           # Line tables only: fast linking and reduces RAM usage by >60%
+
+[profile.test]
+debug = 1           # Prevents memory spikes during parallel test binary linking

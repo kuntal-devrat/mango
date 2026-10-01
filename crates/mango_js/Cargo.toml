@@ -1,0 +1,15 @@
+[package]
+name = "mango_js"
+version.workspace = true
+edition.workspace = true
+description = "JavaScript runtime powered by Boa engine with DOM bindings for Mango"
+
+[dependencies]
+mango_core.workspace = true
+mango_html.workspace = true
+mango_css.workspace = true
+mango_render.workspace = true
+mango_net.workspace = true
+log.workspace = true
+boa_engine.workspace = true
+boa_gc.workspace = true
