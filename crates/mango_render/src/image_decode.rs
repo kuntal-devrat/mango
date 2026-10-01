@@ -801,8 +801,8 @@ pub fn base64_decode(input: &str) -> Option<Vec<u8>> {
 pub fn base64_encode(input: &[u8]) -> String {
     const CHARSET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
-    let mut chunks = input.chunks_exact(3);
-    for chunk in chunks.by_ref() {
+    let (chunks, rem) = input.as_chunks::<3>();
+    for chunk in chunks {
         let b0 = chunk[0] as usize;
         let b1 = chunk[1] as usize;
         let b2 = chunk[2] as usize;
@@ -811,7 +811,6 @@ pub fn base64_encode(input: &[u8]) -> String {
         out.push(CHARSET[((b1 & 15) << 2) | (b2 >> 6)] as char);
         out.push(CHARSET[b2 & 63] as char);
     }
-    let rem = chunks.remainder();
     if rem.len() == 1 {
         let b0 = rem[0] as usize;
         out.push(CHARSET[b0 >> 2] as char);

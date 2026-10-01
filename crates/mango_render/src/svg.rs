@@ -1210,7 +1210,8 @@ fn parse_points(val: &str) -> Vec<(f32, f32)> {
         .collect();
 
     let mut pts = Vec::with_capacity(nums.len() / 2);
-    for chunk in nums.chunks_exact(2) {
+    let (chunks, _) = nums.as_chunks::<2>();
+    for chunk in chunks {
         pts.push((chunk[0], chunk[1]));
     }
     pts

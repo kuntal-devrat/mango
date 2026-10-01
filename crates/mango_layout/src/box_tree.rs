@@ -80,7 +80,8 @@ impl AreaShape {
             }
             "poly" | "polygon" => {
                 let mut points = Vec::new();
-                for chunk in coords.chunks_exact(2) {
+                let (chunks, _) = coords.as_chunks::<2>();
+                for chunk in chunks {
                     points.push((chunk[0], chunk[1]));
                 }
                 if points.len() >= 3 {

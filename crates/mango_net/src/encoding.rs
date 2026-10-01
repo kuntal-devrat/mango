@@ -391,8 +391,9 @@ pub fn decode_with(bytes: &[u8], encoding: Encoding) -> String {
 }
 
 fn decode_utf16(bytes: &[u8], little_endian: bool) -> String {
-    let mut units: Vec<u16> = bytes
-        .chunks_exact(2)
+    let (chunks, _) = bytes.as_chunks::<2>();
+    let mut units: Vec<u16> = chunks
+        .iter()
         .map(|pair| {
             if little_endian {
                 u16::from_le_bytes([pair[0], pair[1]])

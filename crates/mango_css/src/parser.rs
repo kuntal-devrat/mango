@@ -3944,7 +3944,8 @@ impl CssParser {
         }
 
         let mut pairs = Vec::new();
-        for chunk in strings.chunks_exact(2) {
+        let (chunks, _) = strings.as_chunks::<2>();
+        for chunk in chunks {
             pairs.push((chunk[0].clone(), chunk[1].clone()));
         }
         Some(Value::Quotes(pairs))
