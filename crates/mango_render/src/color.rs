@@ -145,4 +145,3 @@ pub fn parse_color(s: &str) -> Option<Color> {
 
     None
 }
-

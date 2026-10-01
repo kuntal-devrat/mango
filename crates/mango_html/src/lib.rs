@@ -17,4 +17,4 @@ pub mod tree_builder;
 pub use dom::{ChildrenIter, Document, ElementData, Node, NodeData, NodeId, QuirksMode};
 pub use entities::decode_entities;
 pub use tokenizer::{Token, Tokenizer};
-pub use tree_builder::{parse_html, InsertionMode, TreeBuilder};
+pub use tree_builder::{InsertionMode, TreeBuilder, parse_html};

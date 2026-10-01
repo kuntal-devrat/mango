@@ -239,7 +239,8 @@ pub fn resolve_named_entity(name: &str) -> Option<&'static str> {
 ///
 /// Replaces invalid code points with the Unicode replacement character `\u{FFFD}`.
 pub fn resolve_numeric_entity(raw: &str) -> Option<char> {
-    let (digits, radix) = if let Some(hex) = raw.strip_prefix('x').or_else(|| raw.strip_prefix('X')) {
+    let (digits, radix) = if let Some(hex) = raw.strip_prefix('x').or_else(|| raw.strip_prefix('X'))
+    {
         (hex, 16)
     } else {
         (raw, 10)
@@ -288,6 +289,9 @@ pub fn resolve_numeric_entity(raw: &str) -> Option<char> {
 /// Handles `&name;`, `&#123;`, and `&#x1F600;`. Unrecognized entities
 /// are left as-is.
 pub fn decode_entities(input: &str) -> String {
+    if !input.contains('&') {
+        return input.to_string();
+    }
     let mut result = String::with_capacity(input.len());
     let mut chars = input.char_indices().peekable();
 

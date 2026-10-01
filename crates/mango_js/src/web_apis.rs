@@ -96,7 +96,9 @@ pub fn save_local_storage_to_file(
 ) -> std::io::Result<()> {
     let map = match store.lock() {
         Ok(m) => m,
-        Err(_) => return Err(std::io::Error::new(std::io::ErrorKind::Other, "Lock poisoned")),
+        Err(_) => {
+            return Err(std::io::Error::other("Lock poisoned"));
+        }
     };
     let mut body = String::from("# Mango localStorage v1\n");
     for (key, value) in map.iter() {
@@ -115,14 +117,14 @@ pub fn save_local_storage_to_file(
             ));
         }
     }
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            let _ = std::fs::create_dir_all(parent);
-        }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        let _ = std::fs::create_dir_all(parent);
     }
     let tmp_path = path.with_extension("tmp");
     std::fs::write(&tmp_path, body)?;
-    if let Err(_) = std::fs::rename(&tmp_path, path) {
+    if std::fs::rename(&tmp_path, path).is_err() {
         let _ = std::fs::remove_file(path);
         std::fs::rename(&tmp_path, path)?;
     }
@@ -155,11 +157,19 @@ fn fill_secure_random(buf: &mut [u8]) {
 
 fn encode_base64_bytes(input: &[u8]) -> String {
     const B64_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity((input.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
     for chunk in input.chunks(3) {
         let b0 = chunk[0] as usize;
-        let b1 = if chunk.len() > 1 { chunk[1] as usize } else { 0 };
-        let b2 = if chunk.len() > 2 { chunk[2] as usize } else { 0 };
+        let b1 = if chunk.len() > 1 {
+            chunk[1] as usize
+        } else {
+            0
+        };
+        let b2 = if chunk.len() > 2 {
+            chunk[2] as usize
+        } else {
+            0
+        };
 
         out.push(B64_CHARS[b0 >> 2] as char);
         out.push(B64_CHARS[((b0 & 3) << 4) | (b1 >> 4)] as char);
@@ -291,6 +301,7 @@ pub fn register_web_apis(
 
 // ── Native Rust function registrations ───────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn register_native_fns(
     context: &mut Context,
     event_loop: SharedEventLoop,
@@ -349,7 +360,10 @@ fn register_native_fns(
 
     let st = status_text.clone();
     let alert_fn = native_fn!(move |_this, args, ctx| {
-        let msg = args.get_or_undefined(0).to_string(ctx)?.to_std_string_escaped();
+        let msg = args
+            .get_or_undefined(0)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         log::info!("[JS alert] {}", msg);
         *st.borrow_mut() = format!("Alert: {}", msg);
         Ok(JsValue::undefined())
@@ -359,7 +373,10 @@ fn register_native_fns(
 
     let nav_slot = pending_nav.clone();
     let navigate_fn = native_fn!(move |_this, args, ctx| {
-        let target = args.get_or_undefined(0).to_string(ctx)?.to_std_string_escaped();
+        let target = args
+            .get_or_undefined(0)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         if !target.is_empty() {
             log::info!("[JS navigation] Script requested navigate to: {}", target);
             *nav_slot.borrow_mut() = Some(target);
@@ -421,7 +438,10 @@ fn register_native_fns(
     let cj_fetch = cookie_jar.clone();
     let start_fetch_fn = native_fn!(move |_this, args, ctx| {
         let id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let url_str = args.get_or_undefined(1).to_string(ctx)?.to_std_string_escaped();
+        let url_str = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         let method_str = args
             .get_or_undefined(2)
             .to_string(ctx)
@@ -473,20 +493,29 @@ fn register_native_fns(
                     if mode_str == "cors" {
                         let headers_map: std::collections::HashMap<String, String> =
                             custom_headers.iter().cloned().collect();
-                        let is_simple = mango_net::security::is_cors_simple_request(&method_str, &headers_map);
+                        let is_simple =
+                            mango_net::security::is_cors_simple_request(&method_str, &headers_map);
                         if !is_simple {
                             // Perform OPTIONS preflight
                             let mut preflight_headers = Vec::new();
                             preflight_headers.push(("Origin".to_string(), origin_str.clone()));
-                            preflight_headers.push(("Access-Control-Request-Method".to_string(), method_str.clone()));
-                            let req_h_keys: Vec<String> = custom_headers.iter().map(|(k, _)| k.clone()).collect();
+                            preflight_headers.push((
+                                "Access-Control-Request-Method".to_string(),
+                                method_str.clone(),
+                            ));
+                            let req_h_keys: Vec<String> =
+                                custom_headers.iter().map(|(k, _)| k.clone()).collect();
                             if !req_h_keys.is_empty() {
-                                preflight_headers.push(("Access-Control-Request-Headers".to_string(), req_h_keys.join(", ")));
+                                preflight_headers.push((
+                                    "Access-Control-Request-Headers".to_string(),
+                                    req_h_keys.join(", "),
+                                ));
                             }
                             let preflight_resp = client
                                 .request("OPTIONS", &url, &preflight_headers, None)
                                 .map_err(|e| format!("CORS preflight request failed: {e}"))?;
-                            let header_refs: Vec<&str> = req_h_keys.iter().map(|s| s.as_str()).collect();
+                            let header_refs: Vec<&str> =
+                                req_h_keys.iter().map(|s| s.as_str()).collect();
                             mango_net::security::validate_cors_preflight(
                                 preflight_resp.status,
                                 &preflight_resp.headers,
@@ -512,9 +541,14 @@ fn register_native_fns(
                     .map_err(|e| e.to_string())?;
 
                 if is_cross_origin && mode_str == "cors" {
-                    let exposed = mango_net::security::validate_cors_response(&resp.headers, &origin_str, creds_bool)
-                        .map_err(|e| format!("CORS response validation failed: {e}"))?;
-                    resp.headers.retain(|k, _| exposed.contains(&k.to_ascii_lowercase()));
+                    let exposed = mango_net::security::validate_cors_response(
+                        &resp.headers,
+                        &origin_str,
+                        creds_bool,
+                    )
+                    .map_err(|e| format!("CORS response validation failed: {e}"))?;
+                    resp.headers
+                        .retain(|k, _| exposed.contains(&k.to_ascii_lowercase()));
                 }
 
                 Ok(resp)
@@ -528,8 +562,7 @@ fn register_native_fns(
                 .replace('\r', "\\r");
             let task_source = format!(
                 "if (typeof _mangoResolveFetch === 'function') _mangoResolveFetch({}, \"{}\");",
-                id,
-                escaped_for_js
+                id, escaped_for_js
             );
             if let Ok(mut q) = tasks.lock() {
                 q.push(task_source);
@@ -541,7 +574,10 @@ fn register_native_fns(
 
     let cj = cookie_jar.clone();
     let fetch_fn = native_fn!(move |_this, args, ctx| {
-        let url_str = args.get_or_undefined(0).to_string(ctx)?.to_std_string_escaped();
+        let url_str = args
+            .get_or_undefined(0)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         let method_str = args
             .get_or_undefined(1)
             .to_string(ctx)
@@ -577,8 +613,8 @@ fn register_native_fns(
         let mut custom_headers = parse_simple_headers_json(&headers_json);
 
         let result = (|| -> Result<mango_net::HttpResponse, String> {
-            let url = mango_net::url::Url::parse(&url_str)
-                .map_err(|e| format!("Invalid URL: {e}"))?;
+            let url =
+                mango_net::url::Url::parse(&url_str).map_err(|e| format!("Invalid URL: {e}"))?;
 
             let is_cross_origin = !origin_str.is_empty()
                 && !mango_net::security::is_same_origin(&origin_str, &url_str);
@@ -591,19 +627,28 @@ fn register_native_fns(
                 if mode_str == "cors" {
                     let headers_map: std::collections::HashMap<String, String> =
                         custom_headers.iter().cloned().collect();
-                    let is_simple = mango_net::security::is_cors_simple_request(&method_str, &headers_map);
+                    let is_simple =
+                        mango_net::security::is_cors_simple_request(&method_str, &headers_map);
                     if !is_simple {
                         let mut preflight_headers = Vec::new();
                         preflight_headers.push(("Origin".to_string(), origin_str.clone()));
-                        preflight_headers.push(("Access-Control-Request-Method".to_string(), method_str.clone()));
-                        let req_h_keys: Vec<String> = custom_headers.iter().map(|(k, _)| k.clone()).collect();
+                        preflight_headers.push((
+                            "Access-Control-Request-Method".to_string(),
+                            method_str.clone(),
+                        ));
+                        let req_h_keys: Vec<String> =
+                            custom_headers.iter().map(|(k, _)| k.clone()).collect();
                         if !req_h_keys.is_empty() {
-                            preflight_headers.push(("Access-Control-Request-Headers".to_string(), req_h_keys.join(", ")));
+                            preflight_headers.push((
+                                "Access-Control-Request-Headers".to_string(),
+                                req_h_keys.join(", "),
+                            ));
                         }
                         let preflight_resp = client
                             .request("OPTIONS", &url, &preflight_headers, None)
                             .map_err(|e| format!("CORS preflight request failed: {e}"))?;
-                        let header_refs: Vec<&str> = req_h_keys.iter().map(|s| s.as_str()).collect();
+                        let header_refs: Vec<&str> =
+                            req_h_keys.iter().map(|s| s.as_str()).collect();
                         mango_net::security::validate_cors_preflight(
                             preflight_resp.status,
                             &preflight_resp.headers,
@@ -628,9 +673,14 @@ fn register_native_fns(
                 .map_err(|e| e.to_string())?;
 
             if is_cross_origin && mode_str == "cors" {
-                let exposed = mango_net::security::validate_cors_response(&resp.headers, &origin_str, creds_bool)
-                    .map_err(|e| format!("CORS response validation failed: {e}"))?;
-                resp.headers.retain(|k, _| exposed.contains(&k.to_ascii_lowercase()));
+                let exposed = mango_net::security::validate_cors_response(
+                    &resp.headers,
+                    &origin_str,
+                    creds_bool,
+                )
+                .map_err(|e| format!("CORS response validation failed: {e}"))?;
+                resp.headers
+                    .retain(|k, _| exposed.contains(&k.to_ascii_lowercase()));
             }
 
             Ok(resp)
@@ -666,7 +716,10 @@ fn register_native_fns(
     let ls = local_storage.clone();
     let orig = page_origin.clone();
     let ls_get_fn = native_fn!(move |_this, args, ctx| {
-        let key = args.get_or_undefined(0).to_string(ctx)?.to_std_string_escaped();
+        let key = args
+            .get_or_undefined(0)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         let scoped_key = format!("{orig}\x1f{key}");
         let val = ls.lock().ok().and_then(|map| map.get(&scoped_key).cloned());
         match val {
@@ -678,8 +731,14 @@ fn register_native_fns(
     let ls = local_storage.clone();
     let orig = page_origin.clone();
     let ls_set_fn = native_fn!(move |_this, args, ctx| {
-        let key = args.get_or_undefined(0).to_string(ctx)?.to_std_string_escaped();
-        let val = args.get_or_undefined(1).to_string(ctx)?.to_std_string_escaped();
+        let key = args
+            .get_or_undefined(0)
+            .to_string(ctx)?
+            .to_std_string_escaped();
+        let val = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         let scoped_key = format!("{orig}\x1f{key}");
         if let Ok(mut map) = ls.lock() {
             map.insert(scoped_key, val);
@@ -690,7 +749,10 @@ fn register_native_fns(
     let ls = local_storage.clone();
     let orig = page_origin.clone();
     let ls_remove_fn = native_fn!(move |_this, args, ctx| {
-        let key = args.get_or_undefined(0).to_string(ctx)?.to_std_string_escaped();
+        let key = args
+            .get_or_undefined(0)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         let scoped_key = format!("{orig}\x1f{key}");
         if let Ok(mut map) = ls.lock() {
             map.remove(&scoped_key);
@@ -733,7 +795,10 @@ fn register_native_fns(
     let ss = session_storage.clone();
     let orig = page_origin.clone();
     let ss_get_fn = native_fn!(move |_this, args, ctx| {
-        let key = args.get_or_undefined(0).to_string(ctx)?.to_std_string_escaped();
+        let key = args
+            .get_or_undefined(0)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         let scoped_key = format!("{orig}\x1f{key}");
         let val = ss.lock().ok().and_then(|map| map.get(&scoped_key).cloned());
         match val {
@@ -745,8 +810,14 @@ fn register_native_fns(
     let ss = session_storage.clone();
     let orig = page_origin.clone();
     let ss_set_fn = native_fn!(move |_this, args, ctx| {
-        let key = args.get_or_undefined(0).to_string(ctx)?.to_std_string_escaped();
-        let val = args.get_or_undefined(1).to_string(ctx)?.to_std_string_escaped();
+        let key = args
+            .get_or_undefined(0)
+            .to_string(ctx)?
+            .to_std_string_escaped();
+        let val = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         let scoped_key = format!("{orig}\x1f{key}");
         if let Ok(mut map) = ss.lock() {
             map.insert(scoped_key, val);
@@ -757,7 +828,10 @@ fn register_native_fns(
     let ss = session_storage.clone();
     let orig = page_origin.clone();
     let ss_remove_fn = native_fn!(move |_this, args, ctx| {
-        let key = args.get_or_undefined(0).to_string(ctx)?.to_std_string_escaped();
+        let key = args
+            .get_or_undefined(0)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         let scoped_key = format!("{orig}\x1f{key}");
         if let Ok(mut map) = ss.lock() {
             map.remove(&scoped_key);
@@ -796,7 +870,10 @@ fn register_native_fns(
     let ls = local_storage.clone();
     let orig = page_origin.clone();
     let idb_load_fn = native_fn!(move |_this, args, ctx| {
-        let name = args.get_or_undefined(0).to_string(ctx)?.to_std_string_escaped();
+        let name = args
+            .get_or_undefined(0)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         let key = format!("{orig}\x1f__idb__{name}");
         let val = ls.lock().ok().and_then(|map| map.get(&key).cloned());
         match val {
@@ -808,8 +885,14 @@ fn register_native_fns(
     let ls = local_storage.clone();
     let orig = page_origin.clone();
     let idb_save_fn = native_fn!(move |_this, args, ctx| {
-        let name = args.get_or_undefined(0).to_string(ctx)?.to_std_string_escaped();
-        let json = args.get_or_undefined(1).to_string(ctx)?.to_std_string_escaped();
+        let name = args
+            .get_or_undefined(0)
+            .to_string(ctx)?
+            .to_std_string_escaped();
+        let json = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         let key = format!("{orig}\x1f__idb__{name}");
         if let Ok(mut map) = ls.lock() {
             map.insert(key, json);
@@ -820,7 +903,10 @@ fn register_native_fns(
     let ls = local_storage.clone();
     let orig = page_origin.clone();
     let idb_delete_fn = native_fn!(move |_this, args, ctx| {
-        let name = args.get_or_undefined(0).to_string(ctx)?.to_std_string_escaped();
+        let name = args
+            .get_or_undefined(0)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         let key = format!("{orig}\x1f__idb__{name}");
         if let Ok(mut map) = ls.lock() {
             map.remove(&key);
@@ -853,45 +939,47 @@ fn register_native_fns(
         .register_global_property(
             boa_engine::js_string!("innerWidth"),
             JsValue::from(vw as i32),
-            boa_engine::property::Attribute::WRITABLE | boa_engine::property::Attribute::CONFIGURABLE,
+            boa_engine::property::Attribute::WRITABLE
+                | boa_engine::property::Attribute::CONFIGURABLE,
         )
         .expect("register innerWidth");
     context
         .register_global_property(
             boa_engine::js_string!("innerHeight"),
             JsValue::from(vh as i32),
-            boa_engine::property::Attribute::WRITABLE | boa_engine::property::Attribute::CONFIGURABLE,
+            boa_engine::property::Attribute::WRITABLE
+                | boa_engine::property::Attribute::CONFIGURABLE,
         )
         .expect("register innerHeight");
 
     // ── Register all callables ────────────────────────────────────────────────
 
     let fns: &[(&str, usize, NativeFunction)] = &[
-        ("setTimeout",          2, set_timeout_fn),
-        ("setInterval",         2, set_interval_fn),
-        ("clearTimeout",        1, clear_timeout_fn),
-        ("clearInterval",       1, clear_interval_fn),
-        ("alert",               1, alert_fn),
-        ("_mangoNavigate",      1, navigate_fn),
+        ("setTimeout", 2, set_timeout_fn),
+        ("setInterval", 2, set_interval_fn),
+        ("clearTimeout", 1, clear_timeout_fn),
+        ("clearInterval", 1, clear_interval_fn),
+        ("alert", 1, alert_fn),
+        ("_mangoNavigate", 1, navigate_fn),
         ("_mangoScheduleTimer", 3, schedule_timer_fn),
-        ("_mangoCancelTimer",   1, cancel_timer_fn),
-        ("_mangoRandomBytes",   1, random_bytes_fn),
-        ("_mangoStartFetch",    8, start_fetch_fn),
-        ("_mangoFetch",         7, fetch_fn),
-        ("_mangoLsGet",         1, ls_get_fn),
-        ("_mangoLsSet",         2, ls_set_fn),
-        ("_mangoLsRemove",      1, ls_remove_fn),
-        ("_mangoLsClear",       0, ls_clear_fn),
-        ("_mangoLsKeys",        0, ls_keys_fn),
-        ("_mangoSsGet",         1, ss_get_fn),
-        ("_mangoSsSet",         2, ss_set_fn),
-        ("_mangoSsRemove",      1, ss_remove_fn),
-        ("_mangoSsClear",       0, ss_clear_fn),
-        ("_mangoSsKeys",        0, ss_keys_fn),
-        ("_mangoIdbLoad",       1, idb_load_fn),
-        ("_mangoIdbSave",       2, idb_save_fn),
-        ("_mangoIdbDelete",     1, idb_delete_fn),
-        ("_mangoIdbList",       0, idb_list_fn),
+        ("_mangoCancelTimer", 1, cancel_timer_fn),
+        ("_mangoRandomBytes", 1, random_bytes_fn),
+        ("_mangoStartFetch", 8, start_fetch_fn),
+        ("_mangoFetch", 7, fetch_fn),
+        ("_mangoLsGet", 1, ls_get_fn),
+        ("_mangoLsSet", 2, ls_set_fn),
+        ("_mangoLsRemove", 1, ls_remove_fn),
+        ("_mangoLsClear", 0, ls_clear_fn),
+        ("_mangoLsKeys", 0, ls_keys_fn),
+        ("_mangoSsGet", 1, ss_get_fn),
+        ("_mangoSsSet", 2, ss_set_fn),
+        ("_mangoSsRemove", 1, ss_remove_fn),
+        ("_mangoSsClear", 0, ss_clear_fn),
+        ("_mangoSsKeys", 0, ss_keys_fn),
+        ("_mangoIdbLoad", 1, idb_load_fn),
+        ("_mangoIdbSave", 2, idb_save_fn),
+        ("_mangoIdbDelete", 1, idb_delete_fn),
+        ("_mangoIdbList", 0, idb_list_fn),
     ];
 
     for (name, len, func) in fns.iter().cloned() {

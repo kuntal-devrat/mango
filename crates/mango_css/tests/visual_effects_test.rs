@@ -1,10 +1,10 @@
-use std::collections::HashMap;
-use mango_css::parser::{parse_declaration_list, parse_stylesheet, Rule};
+use mango_css::computed::ComputedStyle;
+use mango_css::parser::{Rule, parse_declaration_list, parse_stylesheet};
 use mango_css::properties::Declaration;
 use mango_css::values::{
     BlendMode, ClipPath, FilterFunction, Length, MaskMode, TransformFunction, Value,
 };
-use mango_css::computed::ComputedStyle;
+use std::collections::HashMap;
 
 fn apply_props(style: &mut ComputedStyle, decls: &[Declaration]) {
     let mut map = HashMap::new();
@@ -35,7 +35,10 @@ fn test_2d_transforms() {
         assert!(matches!(t.0[1], TransformFunction::Rotate(r) if (r - 45.0).abs() < 1e-4));
         assert!(matches!(t.0[2], TransformFunction::Scale(1.5, 2.0)));
         assert!(matches!(t.0[3], TransformFunction::Skew(10.0, 5.0)));
-        assert!(matches!(t.0[4], TransformFunction::Matrix(1.0, 0.0, 0.0, 1.0, 5.0, 5.0)));
+        assert!(matches!(
+            t.0[4],
+            TransformFunction::Matrix(1.0, 0.0, 0.0, 1.0, 5.0, 5.0)
+        ));
     } else {
         panic!("expected Value::Transform");
     }
@@ -51,12 +54,18 @@ fn test_3d_transforms() {
     let transform_decl = decls.iter().find(|d| d.name == "transform").unwrap();
     if let Value::Transform(t) = &transform_decl.value {
         assert_eq!(t.0.len(), 9);
-        assert!(matches!(t.0[0], TransformFunction::Translate3d(10.0, 20.0, 30.0)));
+        assert!(matches!(
+            t.0[0],
+            TransformFunction::Translate3d(10.0, 20.0, 30.0)
+        ));
         assert!(matches!(t.0[1], TransformFunction::TranslateZ(40.0)));
         assert!(matches!(t.0[2], TransformFunction::RotateX(30.0)));
         assert!(matches!(t.0[3], TransformFunction::RotateY(45.0)));
         assert!(matches!(t.0[4], TransformFunction::RotateZ(60.0)));
-        assert!(matches!(t.0[5], TransformFunction::Rotate3d(1.0, 0.0, 0.0, 90.0)));
+        assert!(matches!(
+            t.0[5],
+            TransformFunction::Rotate3d(1.0, 0.0, 0.0, 90.0)
+        ));
         assert!(matches!(t.0[6], TransformFunction::Scale3d(2.0, 3.0, 4.0)));
         assert!(matches!(t.0[7], TransformFunction::ScaleZ(5.0)));
         assert!(matches!(t.0[8], TransformFunction::Perspective(500.0)));
@@ -72,7 +81,7 @@ fn test_3d_transforms() {
 #[test]
 fn test_transform_origin_variations() {
     let mut style = ComputedStyle::default();
-    
+
     // 1 keyword: center
     let decls = parse_declaration_list("transform-origin: center;");
     apply_props(&mut style, &decls);
@@ -205,16 +214,26 @@ fn test_blend_modes() {
         let decls = parse_declaration_list(&css);
         let mut style = ComputedStyle::default();
         apply_props(&mut style, &decls);
-        assert_eq!(style.mix_blend_mode, expected, "Failed for mix-blend-mode: {}", name);
-        assert_eq!(style.background_blend_mode, expected, "Failed for background-blend-mode: {}", name);
+        assert_eq!(
+            style.mix_blend_mode, expected,
+            "Failed for mix-blend-mode: {}",
+            name
+        );
+        assert_eq!(
+            style.background_blend_mode, expected,
+            "Failed for background-blend-mode: {}",
+            name
+        );
     }
 }
 
 #[test]
 fn test_clip_paths() {
-    let decls = parse_declaration_list(r#"
+    let decls = parse_declaration_list(
+        r#"
         clip-path: polygon(0% 0%, 100% 0%, 50% 100%);
-    "#);
+    "#,
+    );
     let mut style = ComputedStyle::default();
     apply_props(&mut style, &decls);
     match &style.clip_path {
@@ -229,11 +248,20 @@ fn test_clip_paths() {
 
     let decls = parse_declaration_list("clip-path: circle(50px at center);");
     apply_props(&mut style, &decls);
-    assert!(matches!(style.clip_path, ClipPath::Circle { radius: Length::Px(50.0), .. }));
+    assert!(matches!(
+        style.clip_path,
+        ClipPath::Circle {
+            radius: Length::Px(50.0),
+            ..
+        }
+    ));
 
     let decls = parse_declaration_list("clip-path: inset(10px 20px 30px 40px round 5px);");
     apply_props(&mut style, &decls);
-    assert!(matches!(style.clip_path, ClipPath::Inset { round: Some(_), .. }));
+    assert!(matches!(
+        style.clip_path,
+        ClipPath::Inset { round: Some(_), .. }
+    ));
 }
 
 #[test]
@@ -256,5 +284,8 @@ fn test_mask_and_will_change() {
     let mut style = ComputedStyle::default();
     apply_props(&mut style, &decls);
     assert!(style.will_change);
-    assert_eq!(style.will_change_properties, vec!["transform", "opacity", "filter"]);
+    assert_eq!(
+        style.will_change_properties,
+        vec!["transform", "opacity", "filter"]
+    );
 }

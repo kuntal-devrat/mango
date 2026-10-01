@@ -115,7 +115,12 @@ impl DnsCache {
     }
 
     /// Resolves a hostname with a timeout limit to prevent indefinite hangs.
-    pub fn resolve_timeout(&self, host: &str, port: u16, timeout: Duration) -> Result<Vec<SocketAddr>, String> {
+    pub fn resolve_timeout(
+        &self,
+        host: &str,
+        port: u16,
+        timeout: Duration,
+    ) -> Result<Vec<SocketAddr>, String> {
         let cache_key = format!("{host}:{port}");
 
         if let Some(addrs) = self.get_cached(&cache_key) {
@@ -180,7 +185,10 @@ mod tests {
     fn test_resolve_localhost() {
         let cache = DnsCache::new();
         let addrs = cache.resolve("localhost", 80).unwrap();
-        assert!(!addrs.is_empty(), "localhost should resolve to at least one address");
+        assert!(
+            !addrs.is_empty(),
+            "localhost should resolve to at least one address"
+        );
         // Verify cache hit
         let cached = cache.resolve("localhost", 80).unwrap();
         assert_eq!(addrs, cached);
@@ -190,7 +198,10 @@ mod tests {
     async fn test_resolve_async_localhost() {
         let cache = DnsCache::new();
         let addrs = cache.resolve_async("localhost", 80).await.unwrap();
-        assert!(!addrs.is_empty(), "async localhost should resolve to at least one address");
+        assert!(
+            !addrs.is_empty(),
+            "async localhost should resolve to at least one address"
+        );
         let cached = cache.resolve_async("localhost", 80).await.unwrap();
         assert_eq!(addrs, cached);
     }
@@ -198,7 +209,9 @@ mod tests {
     #[test]
     fn test_resolve_timeout() {
         let cache = DnsCache::new();
-        let addrs = cache.resolve_timeout("localhost", 80, Duration::from_secs(2)).unwrap();
+        let addrs = cache
+            .resolve_timeout("localhost", 80, Duration::from_secs(2))
+            .unwrap();
         assert!(!addrs.is_empty());
     }
 }

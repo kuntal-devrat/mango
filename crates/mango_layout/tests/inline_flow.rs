@@ -1,18 +1,14 @@
+#![allow(clippy::field_reassign_with_default)]
+
 use mango_core::Rect;
 use mango_css::computed::ComputedStyle;
-use mango_css::values::{
-    Direction, Display, Hyphens, UnicodeBidi, WhiteSpace,
-};
-use mango_layout::bidi::{
-    mirror_char, reorder_bidi_text, resolve_base_direction,
-};
+use mango_css::values::{Direction, Display, Hyphens, UnicodeBidi, WhiteSpace};
+use mango_layout::bidi::{mirror_char, reorder_bidi_text, resolve_base_direction};
 use mango_layout::box_model::BoxType;
 use mango_layout::box_tree::LayoutBox;
 use mango_layout::float::FloatContext;
 use mango_layout::inline_flow::layout_inline_children;
-use mango_layout::shaping::{
-    segment_thai_syllables, shape_arabic, shape_devanagari, shape_thai,
-};
+use mango_layout::shaping::{segment_thai_syllables, shape_arabic, shape_devanagari, shape_thai};
 
 // =========================================================================
 // 8.2.1 Bidirectional Text (UAX#9 BiDi Algorithm)
@@ -21,11 +17,17 @@ use mango_layout::shaping::{
 #[test]
 fn test_bidi_uax9_algorithm_mixed_scripts_and_mirroring() {
     // 1. Base direction detection (returns true for RTL, false for LTR)
-    assert_eq!(resolve_base_direction("Hello World", false), false);
+    assert!(!resolve_base_direction("Hello World", false));
     // Arabic "مرحبا" (Marhaban)
-    assert_eq!(resolve_base_direction("\u{0645}\u{0631}\u{062D}\u{0628}\u{0627}", false), true);
+    assert!(resolve_base_direction(
+        "\u{0645}\u{0631}\u{062D}\u{0628}\u{0627}",
+        false
+    ));
     // Hebrew "שלום" (Shalom)
-    assert_eq!(resolve_base_direction("\u{05E9}\u{05DC}\u{05D5}\u{05DD}", false), true);
+    assert!(resolve_base_direction(
+        "\u{05E9}\u{05DC}\u{05D5}\u{05DD}",
+        false
+    ));
 
     // 2. Bracket and punctuation mirroring (Rule L4)
     assert_eq!(mirror_char('('), ')');
@@ -166,7 +168,10 @@ fn test_soft_hyphens_and_hyphenation_manual_and_auto() {
     style.font_size = 16.0;
 
     let text_with_shy = "super\u{00AD}cali\u{00AD}fragil\u{00AD}istic";
-    container.children.push(LayoutBox::new(BoxType::TextNode(text_with_shy.to_string()), Some(style.clone())));
+    container.children.push(LayoutBox::new(
+        BoxType::TextNode(text_with_shy.to_string()),
+        Some(style.clone()),
+    ));
 
     let mut float_ctx = FloatContext::new();
     layout_inline_children(&mut container, &mut float_ctx);
@@ -296,10 +301,9 @@ fn test_ruby_annotation_layout() {
     // <rp> ) </rp> (should be hidden in layout)
     let mut rp2_box = LayoutBox::new(BoxType::InlineNode, Some(ruby_style));
     rp2_box.tag_name = Some("rp".to_string());
-    rp2_box.children.push(LayoutBox::new(
-        BoxType::TextNode(")".to_string()),
-        None,
-    ));
+    rp2_box
+        .children
+        .push(LayoutBox::new(BoxType::TextNode(")".to_string()), None));
     ruby_box.children.push(rp2_box);
 
     container.children.push(ruby_box);
@@ -418,7 +422,8 @@ fn test_white_space_break_spaces_and_pre_wrap() {
     layout_inline_children(&mut pw_container, &mut float_ctx);
 
     assert_eq!(
-        pw_container.children.len(), 3,
+        pw_container.children.len(),
+        3,
         "pre-wrap must preserve explicit newline characters"
     );
     assert_eq!(pw_container.children[0].text(), Some("Line 1"));
@@ -443,7 +448,8 @@ fn test_white_space_break_spaces_and_pre_wrap() {
     layout_inline_children(&mut pl_container, &mut float_ctx);
 
     assert_eq!(
-        pl_container.children.len(), 2,
+        pl_container.children.len(),
+        2,
         "pre-line must preserve newlines into 2 lines"
     );
     assert_eq!(pl_container.children[0].text(), Some("Word1 Word2"));

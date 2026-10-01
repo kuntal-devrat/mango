@@ -1,3 +1,5 @@
+#![allow(clippy::field_reassign_with_default)]
+
 use mango_core::Rect;
 use mango_css::parser::parse_stylesheet;
 use mango_css::values::{Display, GridTrackSize, Length};
@@ -8,7 +10,12 @@ use mango_layout::float::FloatContext;
 use mango_layout::grid_flow::layout_grid;
 use mango_layout::style_tree::build_style_tree;
 
-fn layout_html_grid(html: &str, css: &str, cb_w: f32, cb_h: f32) -> mango_layout::box_tree::LayoutBox {
+fn layout_html_grid(
+    html: &str,
+    css: &str,
+    cb_w: f32,
+    cb_h: f32,
+) -> mango_layout::box_tree::LayoutBox {
     let doc = parse_html(html);
     let sheet = parse_stylesheet(css);
     let style_tree = build_style_tree(&doc, &[&sheet]).expect("failed to build style tree");
@@ -17,11 +24,13 @@ fn layout_html_grid(html: &str, css: &str, cb_w: f32, cb_h: f32) -> mango_layout
     let cb = Dimensions::new(Rect::new(0.0, 0.0, cb_w, cb_h));
     let mut float_ctx = FloatContext::new();
 
-    fn find_grid_mut<'a>(node: &'a mut mango_layout::box_tree::LayoutBox) -> Option<&'a mut mango_layout::box_tree::LayoutBox> {
-        if let Some(s) = &node.style {
-            if matches!(s.display, Display::Grid | Display::InlineGrid) {
-                return Some(node);
-            }
+    fn find_grid_mut(
+        node: &mut mango_layout::box_tree::LayoutBox,
+    ) -> Option<&mut mango_layout::box_tree::LayoutBox> {
+        if let Some(s) = &node.style
+            && matches!(s.display, Display::Grid | Display::InlineGrid)
+        {
+            return Some(node);
         }
         for child in &mut node.children {
             if let Some(g) = find_grid_mut(child) {
@@ -92,8 +101,16 @@ fn test_minmax_track_sizing() {
     let grid = layout_html_grid(html, css, 800.0, 800.0);
     let c1 = &grid.children[0];
     let c2 = &grid.children[1];
-    assert_eq!(c1.dimensions.content.width(), 300.0, "minmax track should grow to max 300px");
-    assert_eq!(c2.dimensions.content.width(), 300.0, "1fr should take remaining 300px");
+    assert_eq!(
+        c1.dimensions.content.width(),
+        300.0,
+        "minmax track should grow to max 300px"
+    );
+    assert_eq!(
+        c2.dimensions.content.width(),
+        300.0,
+        "1fr should take remaining 300px"
+    );
     assert_eq!(c2.dimensions.content.x(), 300.0);
 }
 
@@ -146,7 +163,8 @@ fn test_named_grid_lines_and_areas() {
 
 #[test]
 fn test_grid_item_placement_with_span() {
-    let html = r#"<div class="grid"><div class="hero">Hero</div><div class="card">Card</div></div>"#;
+    let html =
+        r#"<div class="grid"><div class="hero">Hero</div><div class="card">Card</div></div>"#;
     let css = r#"
         .grid {
             display: grid;
@@ -198,7 +216,10 @@ fn test_implicit_grid_tracks() {
 
     // Implicit tracks 2 and 3 are created as Auto tracks.
     // Item 2 starts at column line 4 (index 3).
-    assert_eq!(item2.dimensions.content.x() >= 200.0, true, "Item 2 placed after implicit columns");
+    assert!(
+        item2.dimensions.content.x() >= 200.0,
+        "Item 2 placed after implicit columns"
+    );
 }
 
 #[test]
@@ -234,7 +255,8 @@ fn test_grid_auto_flow_column_and_dense() {
 
 #[test]
 fn test_subgrid_track_resolution() {
-    let mut container = mango_layout::box_tree::LayoutBox::new(mango_layout::box_model::BoxType::BlockNode, None);
+    let mut container =
+        mango_layout::box_tree::LayoutBox::new(mango_layout::box_model::BoxType::BlockNode, None);
     let mut c_style = mango_css::ComputedStyle::default();
     c_style.display = Display::Grid;
     c_style.width = Length::Px(400.0);
@@ -244,12 +266,14 @@ fn test_subgrid_track_resolution() {
     ];
     container.style = Some(c_style);
 
-    let mut item1 = mango_layout::box_tree::LayoutBox::new(mango_layout::box_model::BoxType::BlockNode, None);
+    let mut item1 =
+        mango_layout::box_tree::LayoutBox::new(mango_layout::box_model::BoxType::BlockNode, None);
     let mut i1_style = mango_css::ComputedStyle::default();
     i1_style.height = Length::Px(80.0);
     item1.style = Some(i1_style);
 
-    let mut item2 = mango_layout::box_tree::LayoutBox::new(mango_layout::box_model::BoxType::BlockNode, None);
+    let mut item2 =
+        mango_layout::box_tree::LayoutBox::new(mango_layout::box_model::BoxType::BlockNode, None);
     let mut i2_style = mango_css::ComputedStyle::default();
     i2_style.height = Length::Px(80.0);
     item2.style = Some(i2_style);

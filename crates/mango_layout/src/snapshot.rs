@@ -14,11 +14,11 @@ use mango_html::dom::{Document, NodeId};
 use mango_render::display_list::DisplayList;
 
 use crate::block_flow::layout_block;
-use crate::box_tree::{build_box_tree, FormControlHit, LayoutBox};
+use crate::box_tree::{FormControlHit, LayoutBox, build_box_tree};
 use crate::dimensions::Dimensions;
 use crate::display_list::{build_display_list, build_display_list_with_scroll};
 use crate::float::FloatContext;
-use crate::style_tree::{build_style_tree_with_size, StyledNode};
+use crate::style_tree::{StyledNode, build_style_tree_with_size};
 
 /// A frozen, read-only layout tree snapshot for a given viewport (ARCH-003).
 ///
@@ -39,7 +39,8 @@ impl LayoutSnapshot {
     /// precomputes the display list and bounding rectangles, and freezes the tree.
     pub fn from_styled_tree(styled_root: &StyledNode, viewport: Size) -> Self {
         let mut root_box = build_box_tree(styled_root);
-        let containing_block = Dimensions::new(Rect::new(0.0, 0.0, viewport.width, viewport.height));
+        let containing_block =
+            Dimensions::new(Rect::new(0.0, 0.0, viewport.width, viewport.height));
         let mut float_ctx = FloatContext::new();
 
         layout_block(&mut root_box, &containing_block, &mut float_ctx);
@@ -63,7 +64,8 @@ impl LayoutSnapshot {
         author_styles: &[&mango_css::parser::Stylesheet],
         viewport: Size,
     ) -> Option<Self> {
-        let styled_root = build_style_tree_with_size(doc, author_styles, viewport.width, viewport.height)?;
+        let styled_root =
+            build_style_tree_with_size(doc, author_styles, viewport.width, viewport.height)?;
         Some(Self::from_styled_tree(&styled_root, viewport))
     }
 
@@ -102,7 +104,9 @@ impl LayoutSnapshot {
 
     /// Looks up the border-box bounds of a specific DOM node.
     pub fn get_node_rect(&self, node_id: NodeId) -> Option<Rect> {
-        self.box_rects.get(&node_id.raw()).map(|&[x, y, w, h]| Rect::new(x, y, w, h))
+        self.box_rects
+            .get(&node_id.raw())
+            .map(|&[x, y, w, h]| Rect::new(x, y, w, h))
     }
 
     /// Performs hit-testing against the frozen layout tree, returning the deepest hit DOM node.

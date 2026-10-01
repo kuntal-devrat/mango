@@ -12,7 +12,14 @@
 //! - **Float Layout**: Float positioning and clearance context.
 //! - **Display List**: Flattens positioned layout boxes into render commands.
 
-#![allow(clippy::field_reassign_with_default)]
+#![allow(
+    clippy::field_reassign_with_default,
+    clippy::needless_range_loop,
+    clippy::too_many_arguments,
+    clippy::large_enum_variant,
+    clippy::if_same_then_else,
+    clippy::manual_memcpy
+)]
 
 pub mod a11y;
 pub mod bidi;
@@ -33,16 +40,21 @@ pub mod table_flow;
 pub use a11y::{A11yNode, A11yRole, A11yState, A11yTree};
 pub use block_flow::layout_block;
 pub use box_model::BoxType;
-pub use box_tree::{build_box_tree, FormControlHit, LayoutBox, MediaClickAction, MediaControlHit};
+pub use box_tree::{FormControlHit, LayoutBox, MediaClickAction, MediaControlHit, build_box_tree};
 pub use dimensions::Dimensions;
-pub use display_list::{build_display_list, build_display_list_with_scroll, COLOR_SWATCHES, DisplayListCache};
-pub use mango_render::{DiffOp, DisplayListDiff};
+pub use display_list::{
+    COLOR_SWATCHES, DisplayListCache, build_display_list, build_display_list_with_scroll,
+};
 pub use flex_flow::layout_flex;
 pub use float::FloatContext;
 pub use grid_flow::layout_grid;
 pub use inline_flow::{layout_inline_children, measure_text_width};
+pub use mango_render::{DiffOp, DisplayListDiff};
 pub use snapshot::LayoutSnapshot;
-pub use style_tree::{build_style_tree, build_style_tree_with_size, extract_style_elements, StyleInvalidator, StyledNode};
+pub use style_tree::{
+    StyleInvalidator, StyledNode, build_style_tree, build_style_tree_with_size,
+    extract_style_elements,
+};
 pub use table_flow::layout_table;
 
 use mango_core::{Rect, Size};
@@ -96,10 +108,7 @@ pub fn collect_box_styles(
 ///
 /// Keyed by raw DOM node id so the JS runtime can answer `getBoundingClientRect()`,
 /// `offsetWidth`, and `elementFromPoint()` without depending on this crate.
-pub fn collect_box_rects(
-    root: &LayoutBox,
-    out: &mut std::collections::HashMap<u32, [f32; 4]>,
-) {
+pub fn collect_box_rects(root: &LayoutBox, out: &mut std::collections::HashMap<u32, [f32; 4]>) {
     if let Some(node_id) = root.node_id {
         let border = root.dimensions.border_box();
         out.insert(
@@ -121,11 +130,10 @@ pub fn layout_document(
     viewport: Size,
 ) -> (LayoutBox, DisplayList) {
     mango_css::set_current_viewport(viewport.width, viewport.height);
-    let Some(styled_root) = build_style_tree_with_size(doc, author_styles, viewport.width, viewport.height) else {
-        return (
-            LayoutBox::new(BoxType::BlockNode, None),
-            DisplayList::new(),
-        );
+    let Some(styled_root) =
+        build_style_tree_with_size(doc, author_styles, viewport.width, viewport.height)
+    else {
+        return (LayoutBox::new(BoxType::BlockNode, None), DisplayList::new());
     };
 
     let mut root_box = build_box_tree(&styled_root);

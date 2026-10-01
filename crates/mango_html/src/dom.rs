@@ -3,8 +3,8 @@
 //! Every node is owned by an [`Arena<Node>`] inside the [`Document`]. Nodes
 //! reference their parent, siblings, and children via lightweight [`NodeId`] handles.
 
-use std::collections::HashSet;
 use mango_core::{Arena, Id, InternedString, StringInterner};
+use std::collections::HashSet;
 
 /// Handle to a DOM node inside a [`Document`]'s arena.
 pub type NodeId = Id<Node>;
@@ -103,7 +103,11 @@ impl ElementData {
 
     /// Sets an attribute value by name (case-insensitive for HTML attributes).
     pub fn set_attribute(&mut self, name: &str, value: &str) {
-        if let Some((_, v)) = self.attributes.iter_mut().find(|(k, _)| k.eq_ignore_ascii_case(name)) {
+        if let Some((_, v)) = self
+            .attributes
+            .iter_mut()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+        {
             *v = value.to_string();
         } else {
             self.attributes.push((name.to_string(), value.to_string()));
@@ -112,7 +116,8 @@ impl ElementData {
 
     /// Removes an attribute by name (case-insensitive for HTML attributes).
     pub fn remove_attribute(&mut self, name: &str) {
-        self.attributes.retain(|(k, _)| !k.eq_ignore_ascii_case(name));
+        self.attributes
+            .retain(|(k, _)| !k.eq_ignore_ascii_case(name));
     }
 }
 
@@ -231,68 +236,80 @@ impl Document {
 
     /// Sets an attribute on an element, automatically marking the node dirty (ARCH-002).
     pub fn set_attribute(&mut self, node_id: NodeId, name: &str, value: &str) {
-        if let Some(node) = self.arena.get_mut(node_id) {
-            if let NodeData::Element(elem) = &mut node.data {
-                let lower = name.to_ascii_lowercase();
-                if let Some(pos) = elem.attributes.iter().position(|(k, _)| k.eq_ignore_ascii_case(&lower)) {
-                    elem.attributes[pos].1 = value.to_string();
-                } else {
-                    elem.attributes.push((lower, value.to_string()));
-                }
-                self.dirty_nodes.insert(node_id);
+        if let Some(node) = self.arena.get_mut(node_id)
+            && let NodeData::Element(elem) = &mut node.data
+        {
+            if let Some(pos) = elem
+                .attributes
+                .iter()
+                .position(|(k, _)| k.eq_ignore_ascii_case(name))
+            {
+                elem.attributes[pos].1 = value.to_string();
+            } else {
+                elem.attributes
+                    .push((name.to_ascii_lowercase(), value.to_string()));
             }
+            self.dirty_nodes.insert(node_id);
         }
     }
 
     /// Removes an attribute from an element, marking the node dirty (ARCH-002).
     pub fn remove_attribute(&mut self, node_id: NodeId, name: &str) {
-        if let Some(node) = self.arena.get_mut(node_id) {
-            if let NodeData::Element(elem) = &mut node.data {
-                elem.attributes.retain(|(k, _)| !k.eq_ignore_ascii_case(name));
-                self.dirty_nodes.insert(node_id);
-            }
+        if let Some(node) = self.arena.get_mut(node_id)
+            && let NodeData::Element(elem) = &mut node.data
+        {
+            elem.attributes
+                .retain(|(k, _)| !k.eq_ignore_ascii_case(name));
+            self.dirty_nodes.insert(node_id);
         }
     }
 
     /// Adds a CSS class to an element if not already present, marking the node dirty (ARCH-002).
     pub fn add_class(&mut self, node_id: NodeId, class_name: &str) {
-        if let Some(node) = self.arena.get_mut(node_id) {
-            if let NodeData::Element(elem) = &mut node.data {
-                let existing = elem.get_attribute("class").unwrap_or("").to_string();
-                let classes: Vec<&str> = existing.split_ascii_whitespace().collect();
-                if !classes.contains(&class_name) {
-                    let new_class = if existing.is_empty() {
-                        class_name.to_string()
-                    } else {
-                        format!("{existing} {class_name}")
-                    };
-                    if let Some(pos) = elem.attributes.iter().position(|(k, _)| k.eq_ignore_ascii_case("class")) {
-                        elem.attributes[pos].1 = new_class;
-                    } else {
-                        elem.attributes.push(("class".to_string(), new_class));
-                    }
-                    self.dirty_nodes.insert(node_id);
+        if let Some(node) = self.arena.get_mut(node_id)
+            && let NodeData::Element(elem) = &mut node.data
+        {
+            let existing = elem.get_attribute("class").unwrap_or("").to_string();
+            let classes: Vec<&str> = existing.split_ascii_whitespace().collect();
+            if !classes.contains(&class_name) {
+                let new_class = if existing.is_empty() {
+                    class_name.to_string()
+                } else {
+                    format!("{existing} {class_name}")
+                };
+                if let Some(pos) = elem
+                    .attributes
+                    .iter()
+                    .position(|(k, _)| k.eq_ignore_ascii_case("class"))
+                {
+                    elem.attributes[pos].1 = new_class;
+                } else {
+                    elem.attributes.push(("class".to_string(), new_class));
                 }
+                self.dirty_nodes.insert(node_id);
             }
         }
     }
 
     /// Removes a CSS class from an element, marking the node dirty (ARCH-002).
     pub fn remove_class(&mut self, node_id: NodeId, class_name: &str) {
-        if let Some(node) = self.arena.get_mut(node_id) {
-            if let NodeData::Element(elem) = &mut node.data {
-                if let Some(class_val) = elem.get_attribute("class") {
-                    let updated: Vec<&str> = class_val
-                        .split_ascii_whitespace()
-                        .filter(|&c| c != class_name)
-                        .collect();
-                    let new_class = updated.join(" ");
-                    if let Some(pos) = elem.attributes.iter().position(|(k, _)| k.eq_ignore_ascii_case("class")) {
-                        elem.attributes[pos].1 = new_class;
-                    }
-                    self.dirty_nodes.insert(node_id);
-                }
+        if let Some(node) = self.arena.get_mut(node_id)
+            && let NodeData::Element(elem) = &mut node.data
+            && let Some(class_val) = elem.get_attribute("class")
+        {
+            let updated: Vec<&str> = class_val
+                .split_ascii_whitespace()
+                .filter(|&c| c != class_name)
+                .collect();
+            let new_class = updated.join(" ");
+            if let Some(pos) = elem
+                .attributes
+                .iter()
+                .position(|(k, _)| k.eq_ignore_ascii_case("class"))
+            {
+                elem.attributes[pos].1 = new_class;
             }
+            self.dirty_nodes.insert(node_id);
         }
     }
 
@@ -345,11 +362,16 @@ impl Document {
     /// Creates an Element node in the document arena, automatically interning
     /// its tag name and attribute keys into the document's interner (OPT-002).
     pub fn create_element(&mut self, tag_name: &str, attributes: Vec<(String, String)>) -> NodeId {
-        let tag_atom = self.interner.intern(tag_name);
+        let lower_tag = if tag_name.bytes().all(|b| !b.is_ascii_uppercase()) {
+            tag_name.to_string()
+        } else {
+            tag_name.to_ascii_lowercase()
+        };
+        let tag_atom = self.interner.intern(&lower_tag);
         for (k, _) in &attributes {
             self.interner.intern(k);
         }
-        let template_contents = if tag_name.eq_ignore_ascii_case("template") {
+        let template_contents = if lower_tag == "template" {
             Some(self.create_fragment())
         } else {
             None
@@ -386,10 +408,10 @@ impl Document {
 
     /// Returns the template content `DocumentFragment` for a `<template>` node, if any.
     pub fn template_contents(&self, node_id: NodeId) -> Option<NodeId> {
-        if let Some(node) = self.get(node_id) {
-            if let NodeData::Element(el) = &node.data {
-                return el.template_contents;
-            }
+        if let Some(node) = self.get(node_id)
+            && let NodeData::Element(el) = &node.data
+        {
+            return el.template_contents;
         }
         None
     }
@@ -400,46 +422,49 @@ impl Document {
             return contents;
         }
         let frag = self.create_fragment();
-        if let Some(node) = self.get_mut(node_id) {
-            if let NodeData::Element(el) = &mut node.data {
-                el.template_contents = Some(frag);
-            }
+        if let Some(node) = self.get_mut(node_id)
+            && let NodeData::Element(el) = &mut node.data
+        {
+            el.template_contents = Some(frag);
         }
         frag
     }
 
     /// Sets the template content `DocumentFragment` for a `<template>` element.
     pub fn set_template_contents(&mut self, node_id: NodeId, contents: NodeId) {
-        if let Some(node) = self.get_mut(node_id) {
-            if let NodeData::Element(el) = &mut node.data {
-                el.template_contents = Some(contents);
-            }
+        if let Some(node) = self.get_mut(node_id)
+            && let NodeData::Element(el) = &mut node.data
+        {
+            el.template_contents = Some(contents);
         }
     }
 
     /// Returns `true` when the node is a `DocumentFragment`.
     pub fn is_document_fragment(&self, node_id: NodeId) -> bool {
-        matches!(self.get(node_id).map(|n| &n.data), Some(NodeData::DocumentFragment))
+        matches!(
+            self.get(node_id).map(|n| &n.data),
+            Some(NodeData::DocumentFragment)
+        )
     }
 
     /// Attaches a shadow root (as a DocumentFragment) to an element node.
     pub fn attach_shadow(&mut self, host_id: NodeId) -> Option<NodeId> {
         let shadow_fragment = self.create_fragment();
-        if let Some(host_node) = self.get_mut(host_id) {
-            if let NodeData::Element(el) = &mut host_node.data {
-                el.shadow_root = Some(shadow_fragment);
-                return Some(shadow_fragment);
-            }
+        if let Some(host_node) = self.get_mut(host_id)
+            && let NodeData::Element(el) = &mut host_node.data
+        {
+            el.shadow_root = Some(shadow_fragment);
+            return Some(shadow_fragment);
         }
         None
     }
 
     /// Returns the shadow root attached to an element node, if any.
     pub fn get_shadow_root(&self, host_id: NodeId) -> Option<NodeId> {
-        if let Some(node) = self.get(host_id) {
-            if let NodeData::Element(el) = &node.data {
-                return el.shadow_root;
-            }
+        if let Some(node) = self.get(host_id)
+            && let NodeData::Element(el) = &node.data
+        {
+            return el.shadow_root;
         }
         None
     }
@@ -513,7 +538,10 @@ impl Document {
 
         // Validate that parent can have children and child can be appended
         if let Some(p_node) = self.arena.get(parent) {
-            if matches!(p_node.data, NodeData::Text(_) | NodeData::Comment(_) | NodeData::DocumentType { .. }) {
+            if matches!(
+                p_node.data,
+                NodeData::Text(_) | NodeData::Comment(_) | NodeData::DocumentType { .. }
+            ) {
                 return;
             }
         } else {
@@ -521,7 +549,10 @@ impl Document {
         }
 
         if let Some(c_node) = self.arena.get(child) {
-            if matches!(c_node.data, NodeData::Document | NodeData::DocumentType { .. }) {
+            if matches!(
+                c_node.data,
+                NodeData::Document | NodeData::DocumentType { .. }
+            ) {
                 return;
             }
         } else {
@@ -540,7 +571,9 @@ impl Document {
         self.detach(child);
 
         let prev_last = {
-            let Some(p) = self.arena.get_mut(parent) else { return; };
+            let Some(p) = self.arena.get_mut(parent) else {
+                return;
+            };
             let old_last = p.last_child;
             p.last_child = Some(child);
             if p.first_child.is_none() {
@@ -550,9 +583,10 @@ impl Document {
         };
 
         if let Some(old_last) = prev_last
-            && let Some(prev) = self.arena.get_mut(old_last) {
-                prev.next_sibling = Some(child);
-            }
+            && let Some(prev) = self.arena.get_mut(old_last)
+        {
+            prev.next_sibling = Some(child);
+        }
 
         if let Some(c) = self.arena.get_mut(child) {
             c.parent = Some(parent);
@@ -573,7 +607,10 @@ impl Document {
         }
 
         if let Some(p_node) = self.arena.get(parent) {
-            if matches!(p_node.data, NodeData::Text(_) | NodeData::Comment(_) | NodeData::DocumentType { .. }) {
+            if matches!(
+                p_node.data,
+                NodeData::Text(_) | NodeData::Comment(_) | NodeData::DocumentType { .. }
+            ) {
                 return;
             }
         } else {
@@ -581,7 +618,10 @@ impl Document {
         }
 
         if let Some(c_node) = self.arena.get(child) {
-            if matches!(c_node.data, NodeData::Document | NodeData::DocumentType { .. }) {
+            if matches!(
+                c_node.data,
+                NodeData::Document | NodeData::DocumentType { .. }
+            ) {
                 return;
             }
         } else {
@@ -637,7 +677,12 @@ impl Document {
     ///
     /// Per the DOM spec, if `new_child` is a `DocumentFragment`, its children are inserted
     /// in place of `old_child`. Returns `old_child`.
-    pub fn replace_child(&mut self, parent: NodeId, new_child: NodeId, old_child: NodeId) -> NodeId {
+    pub fn replace_child(
+        &mut self,
+        parent: NodeId,
+        new_child: NodeId,
+        old_child: NodeId,
+    ) -> NodeId {
         if new_child == old_child {
             return old_child;
         }
@@ -675,24 +720,27 @@ impl Document {
         };
 
         if let Some(p) = parent
-            && let Some(p_node) = self.arena.get_mut(p) {
-                if p_node.first_child == Some(node) {
-                    p_node.first_child = next;
-                }
-                if p_node.last_child == Some(node) {
-                    p_node.last_child = prev;
-                }
+            && let Some(p_node) = self.arena.get_mut(p)
+        {
+            if p_node.first_child == Some(node) {
+                p_node.first_child = next;
             }
+            if p_node.last_child == Some(node) {
+                p_node.last_child = prev;
+            }
+        }
 
         if let Some(prev_id) = prev
-            && let Some(prev_node) = self.arena.get_mut(prev_id) {
-                prev_node.next_sibling = next;
-            }
+            && let Some(prev_node) = self.arena.get_mut(prev_id)
+        {
+            prev_node.next_sibling = next;
+        }
 
         if let Some(next_id) = next
-            && let Some(next_node) = self.arena.get_mut(next_id) {
-                next_node.prev_sibling = prev;
-            }
+            && let Some(next_node) = self.arena.get_mut(next_id)
+        {
+            next_node.prev_sibling = prev;
+        }
 
         if let Some(n) = self.arena.get_mut(node) {
             n.parent = None;
@@ -724,17 +772,15 @@ impl Document {
     /// Serializes only the children of `node_id` (used by `innerHTML`).
     pub fn serialize_children(&self, node_id: NodeId) -> String {
         let mut out = String::new();
-        if let Some(node) = self.arena.get(node_id) {
-            if let NodeData::Element(elem) = &node.data {
-                if elem.tag_name.eq_ignore_ascii_case("template") {
-                    if let Some(frag_id) = elem.template_contents {
-                        for child in self.children(frag_id) {
-                            self.serialize_node(child.id, &mut out);
-                        }
-                        return out;
-                    }
-                }
+        if let Some(node) = self.arena.get(node_id)
+            && let NodeData::Element(elem) = &node.data
+            && elem.tag_name.eq_ignore_ascii_case("template")
+            && let Some(frag_id) = elem.template_contents
+        {
+            for child in self.children(frag_id) {
+                self.serialize_node(child.id, &mut out);
             }
+            return out;
         }
         for child in self.children(node_id) {
             self.serialize_node(child.id, &mut out);
@@ -759,7 +805,9 @@ impl Document {
                 }
                 out.push('>');
                 if !crate::elements::is_void_element(&elem.tag_name) {
-                    if elem.tag_name.eq_ignore_ascii_case("template") && elem.template_contents.is_some() {
+                    if elem.tag_name.eq_ignore_ascii_case("template")
+                        && elem.template_contents.is_some()
+                    {
                         if let Some(frag_id) = elem.template_contents {
                             for child in self.children(frag_id) {
                                 self.serialize_node(child.id, out);
@@ -776,12 +824,19 @@ impl Document {
                 }
             }
             NodeData::Text(text) => {
-                let is_raw_text = node.parent
+                let is_raw_text = node
+                    .parent
                     .and_then(|p| self.arena.get(p))
                     .map(|pn| match &pn.data {
                         NodeData::Element(el) => matches!(
                             el.tag_name.to_ascii_lowercase().as_str(),
-                            "script" | "style" | "xmp" | "iframe" | "noembed" | "noframes" | "plaintext"
+                            "script"
+                                | "style"
+                                | "xmp"
+                                | "iframe"
+                                | "noembed"
+                                | "noframes"
+                                | "plaintext"
                         ),
                         _ => false,
                     })
@@ -797,7 +852,11 @@ impl Document {
                 out.push_str(comment);
                 out.push_str("-->");
             }
-            NodeData::DocumentType { name, public_id, system_id } => {
+            NodeData::DocumentType {
+                name,
+                public_id,
+                system_id,
+            } => {
                 out.push_str("<!DOCTYPE ");
                 out.push_str(name);
                 if !public_id.is_empty() {
@@ -851,9 +910,10 @@ impl Document {
     pub fn find_element_by_tag(&self, root: NodeId, tag: &str) -> Option<NodeId> {
         for child in self.children(root) {
             if let NodeData::Element(elem) = &child.data
-                && elem.tag_name.eq_ignore_ascii_case(tag) {
-                    return Some(child.id);
-                }
+                && elem.tag_name.eq_ignore_ascii_case(tag)
+            {
+                return Some(child.id);
+            }
             if let Some(found) = self.find_element_by_tag(child.id, tag) {
                 return Some(found);
             }
@@ -865,9 +925,10 @@ impl Document {
     pub fn find_element_by_id(&self, root: NodeId, id: &str) -> Option<NodeId> {
         for child in self.children(root) {
             if let NodeData::Element(elem) = &child.data
-                && elem.id() == Some(id) {
-                    return Some(child.id);
-                }
+                && elem.id() == Some(id)
+            {
+                return Some(child.id);
+            }
             if let Some(found) = self.find_element_by_id(child.id, id) {
                 return Some(found);
             }
@@ -890,7 +951,9 @@ impl Document {
         match &node.data {
             NodeData::Document => out.push_str(&format!("{pad}#document\n")),
             NodeData::DocumentFragment => out.push_str(&format!("{pad}#document-fragment\n")),
-            NodeData::DocumentType { name, .. } => out.push_str(&format!("{pad}<!DOCTYPE {name}>\n")),
+            NodeData::DocumentType { name, .. } => {
+                out.push_str(&format!("{pad}<!DOCTYPE {name}>\n"))
+            }
             NodeData::Element(elem) => {
                 let attrs = if elem.attributes.is_empty() {
                     String::new()
@@ -1119,10 +1182,10 @@ mod tests {
         let text = doc.create_text("inside template");
         doc.append_child(span, text);
         doc.append_child(frag, span);
-        if let Some(node) = doc.get_mut(t) {
-            if let NodeData::Element(elem) = &mut node.data {
-                elem.template_contents = Some(frag);
-            }
+        if let Some(node) = doc.get_mut(t)
+            && let NodeData::Element(elem) = &mut node.data
+        {
+            elem.template_contents = Some(frag);
         }
         let inner = doc.serialize_children(t);
         assert_eq!(inner, "<span>inside template</span>");
@@ -1131,8 +1194,15 @@ mod tests {
     #[test]
     fn test_serialize_doctype_identifiers() {
         let mut doc = Document::new();
-        let dt = doc.create_doctype("html", "-//W3C//DTD HTML 4.01//EN", "http://www.w3.org/TR/html4/strict.dtd");
+        let dt = doc.create_doctype(
+            "html",
+            "-//W3C//DTD HTML 4.01//EN",
+            "http://www.w3.org/TR/html4/strict.dtd",
+        );
         let html = doc.serialize_html(dt);
-        assert_eq!(html, "<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01//EN\" \"http://www.w3.org/TR/html4/strict.dtd\">");
+        assert_eq!(
+            html,
+            "<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01//EN\" \"http://www.w3.org/TR/html4/strict.dtd\">"
+        );
     }
 }

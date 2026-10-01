@@ -1,10 +1,10 @@
 //! CSS cascade resolution, user-agent stylesheet defaults, and priority sorting.
 
-use std::collections::{HashMap, HashSet};
 use mango_core::Color;
 use mango_html::dom::{Document, NodeData, NodeId};
+use std::collections::{HashMap, HashSet};
 
-use crate::parser::{parse_declaration_list, parse_stylesheet, Rule, StyleRule, Stylesheet};
+use crate::parser::{Rule, StyleRule, Stylesheet, parse_declaration_list, parse_stylesheet};
 use crate::properties::Declaration;
 use crate::specificity::Specificity;
 use crate::values::{Length, Value};
@@ -46,8 +46,8 @@ impl MatchedDeclaration {
             (Origin::Author, true) => 5,
             (Origin::Inline, false) => 4,
             (Origin::Author, false) => 3,
+            (Origin::PresentationalHint, true) => 3,
             (Origin::PresentationalHint, false) => 2,
-            (Origin::PresentationalHint, true) => 2,
             (Origin::UserAgent, false) => 1,
         };
         (precedence, self.specificity, self.source_order)
@@ -497,7 +497,11 @@ impl<'a> RuleIndex<'a> {
                     self.add_style_rule(style_rule, origin, order);
                 }
                 Rule::Media(media_rule)
-                    if matches_media_query_size(&media_rule.query, self.viewport_width, self.viewport_height) =>
+                    if matches_media_query_size(
+                        &media_rule.query,
+                        self.viewport_width,
+                        self.viewport_height,
+                    ) =>
                 {
                     for style_rule in &media_rule.rules {
                         self.add_style_rule(style_rule, origin, order);
@@ -605,7 +609,14 @@ impl<'a> RuleIndex<'a> {
         // 1. Universal rules (always candidates)
         for cand in &self.universal_rules {
             if seen_rules.insert(cand.source_order) {
-                apply_style_rule(cand.style_rule, node_id, doc, cand.origin, source_order, out);
+                apply_style_rule(
+                    cand.style_rule,
+                    node_id,
+                    doc,
+                    cand.origin,
+                    source_order,
+                    out,
+                );
             }
         }
 
@@ -614,18 +625,32 @@ impl<'a> RuleIndex<'a> {
         if let Some(rules) = self.tag_rules.get(&tag_lower) {
             for cand in rules {
                 if seen_rules.insert(cand.source_order) {
-                    apply_style_rule(cand.style_rule, node_id, doc, cand.origin, source_order, out);
+                    apply_style_rule(
+                        cand.style_rule,
+                        node_id,
+                        doc,
+                        cand.origin,
+                        source_order,
+                        out,
+                    );
                 }
             }
         }
 
         // 3. ID bucket
-        if let Some(id) = elem.id() {
-            if let Some(rules) = self.id_rules.get(id) {
-                for cand in rules {
-                    if seen_rules.insert(cand.source_order) {
-                        apply_style_rule(cand.style_rule, node_id, doc, cand.origin, source_order, out);
-                    }
+        if let Some(id) = elem.id()
+            && let Some(rules) = self.id_rules.get(id)
+        {
+            for cand in rules {
+                if seen_rules.insert(cand.source_order) {
+                    apply_style_rule(
+                        cand.style_rule,
+                        node_id,
+                        doc,
+                        cand.origin,
+                        source_order,
+                        out,
+                    );
                 }
             }
         }
@@ -635,7 +660,14 @@ impl<'a> RuleIndex<'a> {
             if let Some(rules) = self.class_rules.get(cls) {
                 for cand in rules {
                     if seen_rules.insert(cand.source_order) {
-                        apply_style_rule(cand.style_rule, node_id, doc, cand.origin, source_order, out);
+                        apply_style_rule(
+                            cand.style_rule,
+                            node_id,
+                            doc,
+                            cand.origin,
+                            source_order,
+                            out,
+                        );
                     }
                 }
             }
@@ -643,12 +675,19 @@ impl<'a> RuleIndex<'a> {
 
         // 5. Container rules
         for cand in &self.container_rules {
-            if seen_rules.insert(cand.source_order) {
-                if let Some((cw, ch)) = self.find_container_size_for_node(node_id, doc, cand.name.as_deref()) {
-                    if matches_container_query(&cand.query, cw, ch) {
-                        apply_style_rule(cand.style_rule, node_id, doc, cand.origin, source_order, out);
-                    }
-                }
+            if seen_rules.insert(cand.source_order)
+                && let Some((cw, ch)) =
+                    self.find_container_size_for_node(node_id, doc, cand.name.as_deref())
+                && matches_container_query(&cand.query, cw, ch)
+            {
+                apply_style_rule(
+                    cand.style_rule,
+                    node_id,
+                    doc,
+                    cand.origin,
+                    source_order,
+                    out,
+                );
             }
         }
     }
@@ -695,24 +734,25 @@ impl<'a> RuleIndex<'a> {
             if !seen_rules.insert(cand.source_order) {
                 continue;
             }
-            if let Some((cw, ch)) = self.find_container_size_for_node(node_id, doc, cand.name.as_deref()) {
-                if matches_container_query(&cand.query, cw, ch) {
-                    for complex_sel in &cand.style_rule.selectors.selectors {
-                        if complex_sel.matches_pseudo_element(node_id, doc, pseudo) {
-                            let specificity = Specificity::of(complex_sel);
-                            for decl in &cand.style_rule.declarations {
-                                for expanded in decl.clone().expand_shorthand() {
-                                    *source_order += 1;
-                                    out.push(MatchedDeclaration {
-                                        declaration: expanded,
-                                        specificity,
-                                        origin: cand.origin,
-                                        source_order: *source_order,
-                                    });
-                                }
+            if let Some((cw, ch)) =
+                self.find_container_size_for_node(node_id, doc, cand.name.as_deref())
+                && matches_container_query(&cand.query, cw, ch)
+            {
+                for complex_sel in &cand.style_rule.selectors.selectors {
+                    if complex_sel.matches_pseudo_element(node_id, doc, pseudo) {
+                        let specificity = Specificity::of(complex_sel);
+                        for decl in &cand.style_rule.declarations {
+                            for expanded in decl.clone().expand_shorthand() {
+                                *source_order += 1;
+                                out.push(MatchedDeclaration {
+                                    declaration: expanded,
+                                    specificity,
+                                    origin: cand.origin,
+                                    source_order: *source_order,
+                                });
                             }
-                            break;
                         }
+                        break;
                     }
                 }
             }
@@ -729,7 +769,9 @@ impl<'a> RuleIndex<'a> {
     ) -> Option<(f32, f32)> {
         let mut current = doc.get(node_id).and_then(|n| n.parent);
         while let Some(ancestor_id) = current {
-            let Some(ancestor_node) = doc.get(ancestor_id) else { break; };
+            let Some(ancestor_node) = doc.get(ancestor_id) else {
+                break;
+            };
             if let NodeData::Element(elem) = &ancestor_node.data {
                 let mut container_type = None;
                 let mut container_name = None;
@@ -765,10 +807,10 @@ impl<'a> RuleIndex<'a> {
                             if let Value::Length(Length::Px(px)) = d.value {
                                 explicit_width = Some(px);
                             }
-                        } else if name == "height" {
-                            if let Value::Length(Length::Px(px)) = d.value {
-                                explicit_height = Some(px);
-                            }
+                        } else if name == "height"
+                            && let Value::Length(Length::Px(px)) = d.value
+                        {
+                            explicit_height = Some(px);
                         }
                     }
                 }
@@ -809,7 +851,8 @@ impl<'a> RuleIndex<'a> {
                                     let dname = exp.name.to_ascii_lowercase();
                                     if dname == "container-type" && container_type.is_none() {
                                         container_type = Some(exp.value);
-                                    } else if dname == "container-name" && container_name.is_none() {
+                                    } else if dname == "container-name" && container_name.is_none()
+                                    {
                                         if let Value::String(s) = exp.value {
                                             container_name = Some(s);
                                         } else if let Value::Keyword(s) = exp.value {
@@ -819,10 +862,11 @@ impl<'a> RuleIndex<'a> {
                                         if let Value::Length(Length::Px(px)) = exp.value {
                                             explicit_width = Some(px);
                                         }
-                                    } else if dname == "height" && explicit_height.is_none() {
-                                        if let Value::Length(Length::Px(px)) = exp.value {
-                                            explicit_height = Some(px);
-                                        }
+                                    } else if dname == "height"
+                                        && explicit_height.is_none()
+                                        && let Value::Length(Length::Px(px)) = exp.value
+                                    {
+                                        explicit_height = Some(px);
                                     }
                                 }
                             }
@@ -832,31 +876,28 @@ impl<'a> RuleIndex<'a> {
                 }
 
                 // 3. HTML attributes
-                if explicit_width.is_none() {
-                    if let Some(w_str) = elem.get_attribute("width") {
-                        if let Ok(w) = w_str.trim_end_matches("px").parse::<f32>() {
-                            explicit_width = Some(w);
-                        }
-                    }
+                if explicit_width.is_none()
+                    && let Some(w_str) = elem.get_attribute("width")
+                    && let Ok(w) = w_str.trim_end_matches("px").parse::<f32>()
+                {
+                    explicit_width = Some(w);
                 }
-                if explicit_height.is_none() {
-                    if let Some(h_str) = elem.get_attribute("height") {
-                        if let Ok(h) = h_str.trim_end_matches("px").parse::<f32>() {
-                            explicit_height = Some(h);
-                        }
-                    }
+                if explicit_height.is_none()
+                    && let Some(h_str) = elem.get_attribute("height")
+                    && let Ok(h) = h_str.trim_end_matches("px").parse::<f32>()
+                {
+                    explicit_height = Some(h);
                 }
-                if container_name.is_none() {
-                    if let Some(cn) = elem.get_attribute("data-container-name") {
-                        container_name = Some(cn.to_string());
-                    }
+                if container_name.is_none()
+                    && let Some(cn) = elem.get_attribute("data-container-name")
+                {
+                    container_name = Some(cn.to_string());
                 }
-                if container_type.is_none() {
-                    if let Some(ct) = elem.get_attribute("data-container-type") {
-                        if let Some(parsed_ct) = crate::values::ContainerType::parse(ct) {
-                            container_type = Some(Value::ContainerType(parsed_ct));
-                        }
-                    }
+                if container_type.is_none()
+                    && let Some(ct) = elem.get_attribute("data-container-type")
+                    && let Some(parsed_ct) = crate::values::ContainerType::parse(ct)
+                {
+                    container_type = Some(Value::ContainerType(parsed_ct));
                 }
 
                 // Check if this element establishes a container
@@ -870,7 +911,8 @@ impl<'a> RuleIndex<'a> {
                     let matches_name = match name_filter {
                         Some(filter) => {
                             if let Some(ref cn) = container_name {
-                                cn.split_whitespace().any(|part| part.eq_ignore_ascii_case(filter))
+                                cn.split_whitespace()
+                                    .any(|part| part.eq_ignore_ascii_case(filter))
                             } else {
                                 false
                             }
@@ -1025,10 +1067,10 @@ fn parse_presentational_color(raw: &str) -> Option<Color> {
 
 fn parse_presentational_dimension(raw: &str) -> Option<Value> {
     let s = raw.trim();
-    if let Some(rest) = s.strip_suffix('%') {
-        if let Ok(pct) = rest.trim().parse::<f32>() {
-            return Some(Value::Length(Length::Percent(pct)));
-        }
+    if let Some(rest) = s.strip_suffix('%')
+        && let Ok(pct) = rest.trim().parse::<f32>()
+    {
+        return Some(Value::Length(Length::Percent(pct)));
     }
     let num_str = s.strip_suffix("px").unwrap_or(s).trim();
     if let Ok(px) = num_str.parse::<f32>() {
@@ -1047,16 +1089,16 @@ fn collect_presentational_hints(
     let tag = elem.tag_name.to_ascii_lowercase();
 
     // bgcolor -> background-color
-    if let Some(bg) = elem.get_attribute("bgcolor") {
-        if let Some(c) = parse_presentational_color(bg) {
-            *source_order += 1;
-            matched_decls.push(MatchedDeclaration {
-                declaration: Declaration::new("background-color", Value::Color(c), false),
-                specificity: Specificity(0, 0, 0),
-                origin: Origin::PresentationalHint,
-                source_order: *source_order,
-            });
-        }
+    if let Some(bg) = elem.get_attribute("bgcolor")
+        && let Some(c) = parse_presentational_color(bg)
+    {
+        *source_order += 1;
+        matched_decls.push(MatchedDeclaration {
+            declaration: Declaration::new("background-color", Value::Color(c), false),
+            specificity: Specificity(0, 0, 0),
+            origin: Origin::PresentationalHint,
+            source_order: *source_order,
+        });
     }
 
     // background -> background-image
@@ -1065,7 +1107,11 @@ fn collect_presentational_hints(
         if !trimmed.is_empty() {
             *source_order += 1;
             matched_decls.push(MatchedDeclaration {
-                declaration: Declaration::new("background-image", Value::Url(trimmed.to_string()), false),
+                declaration: Declaration::new(
+                    "background-image",
+                    Value::Url(trimmed.to_string()),
+                    false,
+                ),
                 specificity: Specificity(0, 0, 0),
                 origin: Origin::PresentationalHint,
                 source_order: *source_order,
@@ -1074,29 +1120,29 @@ fn collect_presentational_hints(
     }
 
     // width
-    if let Some(w) = elem.get_attribute("width") {
-        if let Some(dim) = parse_presentational_dimension(w) {
-            *source_order += 1;
-            matched_decls.push(MatchedDeclaration {
-                declaration: Declaration::new("width", dim, false),
-                specificity: Specificity(0, 0, 0),
-                origin: Origin::PresentationalHint,
-                source_order: *source_order,
-            });
-        }
+    if let Some(w) = elem.get_attribute("width")
+        && let Some(dim) = parse_presentational_dimension(w)
+    {
+        *source_order += 1;
+        matched_decls.push(MatchedDeclaration {
+            declaration: Declaration::new("width", dim, false),
+            specificity: Specificity(0, 0, 0),
+            origin: Origin::PresentationalHint,
+            source_order: *source_order,
+        });
     }
 
     // height
-    if let Some(h) = elem.get_attribute("height") {
-        if let Some(dim) = parse_presentational_dimension(h) {
-            *source_order += 1;
-            matched_decls.push(MatchedDeclaration {
-                declaration: Declaration::new("height", dim, false),
-                specificity: Specificity(0, 0, 0),
-                origin: Origin::PresentationalHint,
-                source_order: *source_order,
-            });
-        }
+    if let Some(h) = elem.get_attribute("height")
+        && let Some(dim) = parse_presentational_dimension(h)
+    {
+        *source_order += 1;
+        matched_decls.push(MatchedDeclaration {
+            declaration: Declaration::new("height", dim, false),
+            specificity: Specificity(0, 0, 0),
+            origin: Origin::PresentationalHint,
+            source_order: *source_order,
+        });
     }
 
     // align
@@ -1107,14 +1153,22 @@ fn collect_presentational_hints(
                 "center" => {
                     *source_order += 1;
                     matched_decls.push(MatchedDeclaration {
-                        declaration: Declaration::new("margin-left", Value::Keyword("auto".to_string()), false),
+                        declaration: Declaration::new(
+                            "margin-left",
+                            Value::Keyword("auto".to_string()),
+                            false,
+                        ),
                         specificity: Specificity(0, 0, 0),
                         origin: Origin::PresentationalHint,
                         source_order: *source_order,
                     });
                     *source_order += 1;
                     matched_decls.push(MatchedDeclaration {
-                        declaration: Declaration::new("margin-right", Value::Keyword("auto".to_string()), false),
+                        declaration: Declaration::new(
+                            "margin-right",
+                            Value::Keyword("auto".to_string()),
+                            false,
+                        ),
                         specificity: Specificity(0, 0, 0),
                         origin: Origin::PresentationalHint,
                         source_order: *source_order,
@@ -1123,14 +1177,22 @@ fn collect_presentational_hints(
                 "right" => {
                     *source_order += 1;
                     matched_decls.push(MatchedDeclaration {
-                        declaration: Declaration::new("margin-left", Value::Keyword("auto".to_string()), false),
+                        declaration: Declaration::new(
+                            "margin-left",
+                            Value::Keyword("auto".to_string()),
+                            false,
+                        ),
                         specificity: Specificity(0, 0, 0),
                         origin: Origin::PresentationalHint,
                         source_order: *source_order,
                     });
                     *source_order += 1;
                     matched_decls.push(MatchedDeclaration {
-                        declaration: Declaration::new("margin-right", Value::Length(Length::Px(0.0)), false),
+                        declaration: Declaration::new(
+                            "margin-right",
+                            Value::Length(Length::Px(0.0)),
+                            false,
+                        ),
                         specificity: Specificity(0, 0, 0),
                         origin: Origin::PresentationalHint,
                         source_order: *source_order,
@@ -1139,14 +1201,22 @@ fn collect_presentational_hints(
                 "left" => {
                     *source_order += 1;
                     matched_decls.push(MatchedDeclaration {
-                        declaration: Declaration::new("margin-left", Value::Length(Length::Px(0.0)), false),
+                        declaration: Declaration::new(
+                            "margin-left",
+                            Value::Length(Length::Px(0.0)),
+                            false,
+                        ),
                         specificity: Specificity(0, 0, 0),
                         origin: Origin::PresentationalHint,
                         source_order: *source_order,
                     });
                     *source_order += 1;
                     matched_decls.push(MatchedDeclaration {
-                        declaration: Declaration::new("margin-right", Value::Keyword("auto".to_string()), false),
+                        declaration: Declaration::new(
+                            "margin-right",
+                            Value::Keyword("auto".to_string()),
+                            false,
+                        ),
                         specificity: Specificity(0, 0, 0),
                         origin: Origin::PresentationalHint,
                         source_order: *source_order,
@@ -1186,7 +1256,11 @@ fn collect_presentational_hints(
         if let Some(va_val) = va {
             *source_order += 1;
             matched_decls.push(MatchedDeclaration {
-                declaration: Declaration::new("vertical-align", Value::VerticalAlign(va_val), false),
+                declaration: Declaration::new(
+                    "vertical-align",
+                    Value::VerticalAlign(va_val),
+                    false,
+                ),
                 specificity: Specificity(0, 0, 0),
                 origin: Origin::PresentationalHint,
                 source_order: *source_order,
@@ -1195,84 +1269,70 @@ fn collect_presentational_hints(
     }
 
     // border (on table or img)
-    if let Some(b) = elem.get_attribute("border") {
-        if let Ok(b_val) = b.trim().parse::<f32>() {
-            if b_val <= 0.0 {
-                for side in &["border-top-style", "border-right-style", "border-bottom-style", "border-left-style"] {
-                    *source_order += 1;
-                    matched_decls.push(MatchedDeclaration {
-                        declaration: Declaration::new(*side, Value::BorderStyle(crate::values::BorderStyle::None), false),
-                        specificity: Specificity(0, 0, 0),
-                        origin: Origin::PresentationalHint,
-                        source_order: *source_order,
-                    });
-                }
-                for side in &["border-top-width", "border-right-width", "border-bottom-width", "border-left-width"] {
-                    *source_order += 1;
-                    matched_decls.push(MatchedDeclaration {
-                        declaration: Declaration::new(*side, Value::Length(Length::Px(0.0)), false),
-                        specificity: Specificity(0, 0, 0),
-                        origin: Origin::PresentationalHint,
-                        source_order: *source_order,
-                    });
-                }
-            } else {
-                for side in &["border-top-style", "border-right-style", "border-bottom-style", "border-left-style"] {
-                    *source_order += 1;
-                    matched_decls.push(MatchedDeclaration {
-                        declaration: Declaration::new(*side, Value::BorderStyle(crate::values::BorderStyle::Solid), false),
-                        specificity: Specificity(0, 0, 0),
-                        origin: Origin::PresentationalHint,
-                        source_order: *source_order,
-                    });
-                }
-                for side in &["border-top-width", "border-right-width", "border-bottom-width", "border-left-width"] {
-                    *source_order += 1;
-                    matched_decls.push(MatchedDeclaration {
-                        declaration: Declaration::new(*side, Value::Length(Length::Px(b_val)), false),
-                        specificity: Specificity(0, 0, 0),
-                        origin: Origin::PresentationalHint,
-                        source_order: *source_order,
-                    });
-                }
-            }
-        }
-    }
-
-    // frameborder (on iframe: "0" or "no" removes border)
-    if tag == "iframe" {
-        if let Some(fb) = elem.get_attribute("frameborder") {
-            let fb_clean = fb.trim().to_ascii_lowercase();
-            if fb_clean == "0" || fb_clean == "no" {
-                for side in &["border-top-style", "border-right-style", "border-bottom-style", "border-left-style"] {
-                    *source_order += 1;
-                    matched_decls.push(MatchedDeclaration {
-                        declaration: Declaration::new(*side, Value::BorderStyle(crate::values::BorderStyle::None), false),
-                        specificity: Specificity(0, 0, 0),
-                        origin: Origin::PresentationalHint,
-                        source_order: *source_order,
-                    });
-                }
-                for side in &["border-top-width", "border-right-width", "border-bottom-width", "border-left-width"] {
-                    *source_order += 1;
-                    matched_decls.push(MatchedDeclaration {
-                        declaration: Declaration::new(*side, Value::Length(Length::Px(0.0)), false),
-                        specificity: Specificity(0, 0, 0),
-                        origin: Origin::PresentationalHint,
-                        source_order: *source_order,
-                    });
-                }
-            }
-        }
-    }
-
-    // For table, cellspacing attribute -> border-spacing
-    if tag == "table" {
-        if let Some(cs_str) = elem.get_attribute("cellspacing") {
-            if let Ok(cs) = cs_str.trim().parse::<f32>() {
+    if let Some(b) = elem.get_attribute("border")
+        && let Ok(b_val) = b.trim().parse::<f32>()
+    {
+        if b_val <= 0.0 {
+            for side in &[
+                "border-top-style",
+                "border-right-style",
+                "border-bottom-style",
+                "border-left-style",
+            ] {
                 *source_order += 1;
                 matched_decls.push(MatchedDeclaration {
-                    declaration: Declaration::new("border-spacing", Value::Length(Length::Px(cs)), false),
+                    declaration: Declaration::new(
+                        *side,
+                        Value::BorderStyle(crate::values::BorderStyle::None),
+                        false,
+                    ),
+                    specificity: Specificity(0, 0, 0),
+                    origin: Origin::PresentationalHint,
+                    source_order: *source_order,
+                });
+            }
+            for side in &[
+                "border-top-width",
+                "border-right-width",
+                "border-bottom-width",
+                "border-left-width",
+            ] {
+                *source_order += 1;
+                matched_decls.push(MatchedDeclaration {
+                    declaration: Declaration::new(*side, Value::Length(Length::Px(0.0)), false),
+                    specificity: Specificity(0, 0, 0),
+                    origin: Origin::PresentationalHint,
+                    source_order: *source_order,
+                });
+            }
+        } else {
+            for side in &[
+                "border-top-style",
+                "border-right-style",
+                "border-bottom-style",
+                "border-left-style",
+            ] {
+                *source_order += 1;
+                matched_decls.push(MatchedDeclaration {
+                    declaration: Declaration::new(
+                        *side,
+                        Value::BorderStyle(crate::values::BorderStyle::Solid),
+                        false,
+                    ),
+                    specificity: Specificity(0, 0, 0),
+                    origin: Origin::PresentationalHint,
+                    source_order: *source_order,
+                });
+            }
+            for side in &[
+                "border-top-width",
+                "border-right-width",
+                "border-bottom-width",
+                "border-left-width",
+            ] {
+                *source_order += 1;
+                matched_decls.push(MatchedDeclaration {
+                    declaration: Declaration::new(*side, Value::Length(Length::Px(b_val)), false),
                     specificity: Specificity(0, 0, 0),
                     origin: Origin::PresentationalHint,
                     source_order: *source_order,
@@ -1281,54 +1341,115 @@ fn collect_presentational_hints(
         }
     }
 
+    // frameborder (on iframe: "0" or "no" removes border)
+    if tag == "iframe"
+        && let Some(fb) = elem.get_attribute("frameborder")
+    {
+        let fb_clean = fb.trim().to_ascii_lowercase();
+        if fb_clean == "0" || fb_clean == "no" {
+            for side in &[
+                "border-top-style",
+                "border-right-style",
+                "border-bottom-style",
+                "border-left-style",
+            ] {
+                *source_order += 1;
+                matched_decls.push(MatchedDeclaration {
+                    declaration: Declaration::new(
+                        *side,
+                        Value::BorderStyle(crate::values::BorderStyle::None),
+                        false,
+                    ),
+                    specificity: Specificity(0, 0, 0),
+                    origin: Origin::PresentationalHint,
+                    source_order: *source_order,
+                });
+            }
+            for side in &[
+                "border-top-width",
+                "border-right-width",
+                "border-bottom-width",
+                "border-left-width",
+            ] {
+                *source_order += 1;
+                matched_decls.push(MatchedDeclaration {
+                    declaration: Declaration::new(*side, Value::Length(Length::Px(0.0)), false),
+                    specificity: Specificity(0, 0, 0),
+                    origin: Origin::PresentationalHint,
+                    source_order: *source_order,
+                });
+            }
+        }
+    }
+
+    // For table, cellspacing attribute -> border-spacing
+    if tag == "table"
+        && let Some(cs_str) = elem.get_attribute("cellspacing")
+        && let Ok(cs) = cs_str.trim().parse::<f32>()
+    {
+        *source_order += 1;
+        matched_decls.push(MatchedDeclaration {
+            declaration: Declaration::new("border-spacing", Value::Length(Length::Px(cs)), false),
+            specificity: Specificity(0, 0, 0),
+            origin: Origin::PresentationalHint,
+            source_order: *source_order,
+        });
+    }
+
     // For td or th, inherit cellpadding from ancestor table, and valign/align from parent tr
     if tag == "td" || tag == "th" {
         // Inherit valign and align from parent tr if not explicitly declared on cell
-        if let Some(parent_id) = doc.get(node_id).and_then(|n| n.parent) {
-            if let Some(p_node) = doc.get(parent_id) {
-                if let NodeData::Element(p_elem) = &p_node.data {
-                    if p_elem.tag_name.eq_ignore_ascii_case("tr") {
-                        if elem.get_attribute("valign").is_none() {
-                            if let Some(valign) = p_elem.get_attribute("valign") {
-                                let va = match valign.trim().to_ascii_lowercase().as_str() {
-                                    "top" => Some(crate::values::VerticalAlign::Top),
-                                    "middle" => Some(crate::values::VerticalAlign::Middle),
-                                    "bottom" => Some(crate::values::VerticalAlign::Bottom),
-                                    "baseline" => Some(crate::values::VerticalAlign::Baseline),
-                                    _ => None,
-                                };
-                                if let Some(va_val) = va {
-                                    *source_order += 1;
-                                    matched_decls.push(MatchedDeclaration {
-                                        declaration: Declaration::new("vertical-align", Value::VerticalAlign(va_val), false),
-                                        specificity: Specificity(0, 0, 0),
-                                        origin: Origin::PresentationalHint,
-                                        source_order: *source_order,
-                                    });
-                                }
-                            }
-                        }
-                        if elem.get_attribute("align").is_none() {
-                            if let Some(align) = p_elem.get_attribute("align") {
-                                let ta = match align.trim().to_ascii_lowercase().as_str() {
-                                    "center" => Some(crate::values::TextAlign::Center),
-                                    "right" => Some(crate::values::TextAlign::Right),
-                                    "left" => Some(crate::values::TextAlign::Left),
-                                    "justify" => Some(crate::values::TextAlign::Justify),
-                                    _ => None,
-                                };
-                                if let Some(ta_val) = ta {
-                                    *source_order += 1;
-                                    matched_decls.push(MatchedDeclaration {
-                                        declaration: Declaration::new("text-align", Value::TextAlign(ta_val), false),
-                                        specificity: Specificity(0, 0, 0),
-                                        origin: Origin::PresentationalHint,
-                                        source_order: *source_order,
-                                    });
-                                }
-                            }
-                        }
-                    }
+        if let Some(parent_id) = doc.get(node_id).and_then(|n| n.parent)
+            && let Some(p_node) = doc.get(parent_id)
+            && let NodeData::Element(p_elem) = &p_node.data
+            && p_elem.tag_name.eq_ignore_ascii_case("tr")
+        {
+            if elem.get_attribute("valign").is_none()
+                && let Some(valign) = p_elem.get_attribute("valign")
+            {
+                let va = match valign.trim().to_ascii_lowercase().as_str() {
+                    "top" => Some(crate::values::VerticalAlign::Top),
+                    "middle" => Some(crate::values::VerticalAlign::Middle),
+                    "bottom" => Some(crate::values::VerticalAlign::Bottom),
+                    "baseline" => Some(crate::values::VerticalAlign::Baseline),
+                    _ => None,
+                };
+                if let Some(va_val) = va {
+                    *source_order += 1;
+                    matched_decls.push(MatchedDeclaration {
+                        declaration: Declaration::new(
+                            "vertical-align",
+                            Value::VerticalAlign(va_val),
+                            false,
+                        ),
+                        specificity: Specificity(0, 0, 0),
+                        origin: Origin::PresentationalHint,
+                        source_order: *source_order,
+                    });
+                }
+            }
+            if elem.get_attribute("align").is_none()
+                && let Some(align) = p_elem.get_attribute("align")
+            {
+                let ta = match align.trim().to_ascii_lowercase().as_str() {
+                    "center" => Some(crate::values::TextAlign::Center),
+                    "right" => Some(crate::values::TextAlign::Right),
+                    "left" => Some(crate::values::TextAlign::Left),
+                    "justify" => Some(crate::values::TextAlign::Justify),
+                    _ => None,
+                };
+                if let Some(ta_val) = ta {
+                    *source_order += 1;
+                    matched_decls.push(MatchedDeclaration {
+                        declaration: Declaration::new(
+                            "text-align",
+                            Value::TextAlign(ta_val),
+                            false,
+                        ),
+                        specificity: Specificity(0, 0, 0),
+                        origin: Origin::PresentationalHint,
+                        source_order: *source_order,
+                    });
                 }
             }
         }
@@ -1336,25 +1457,33 @@ fn collect_presentational_hints(
         // Inherit cellpadding from ancestor table
         let mut cur = node_id;
         while let Some(parent_id) = doc.get(cur).and_then(|n| n.parent) {
-            if let Some(p_node) = doc.get(parent_id) {
-                if let NodeData::Element(p_elem) = &p_node.data {
-                    if p_elem.tag_name.eq_ignore_ascii_case("table") {
-                        if let Some(cp_str) = p_elem.get_attribute("cellpadding") {
-                            if let Ok(cp) = cp_str.trim().parse::<f32>() {
-                                for side in &["padding-top", "padding-right", "padding-bottom", "padding-left"] {
-                                    *source_order += 1;
-                                    matched_decls.push(MatchedDeclaration {
-                                        declaration: Declaration::new(*side, Value::Length(Length::Px(cp)), false),
-                                        specificity: Specificity(0, 0, 0),
-                                        origin: Origin::PresentationalHint,
-                                        source_order: *source_order,
-                                    });
-                                }
-                            }
-                        }
-                        break;
+            if let Some(p_node) = doc.get(parent_id)
+                && let NodeData::Element(p_elem) = &p_node.data
+                && p_elem.tag_name.eq_ignore_ascii_case("table")
+            {
+                if let Some(cp_str) = p_elem.get_attribute("cellpadding")
+                    && let Ok(cp) = cp_str.trim().parse::<f32>()
+                {
+                    for side in &[
+                        "padding-top",
+                        "padding-right",
+                        "padding-bottom",
+                        "padding-left",
+                    ] {
+                        *source_order += 1;
+                        matched_decls.push(MatchedDeclaration {
+                            declaration: Declaration::new(
+                                *side,
+                                Value::Length(Length::Px(cp)),
+                                false,
+                            ),
+                            specificity: Specificity(0, 0, 0),
+                            origin: Origin::PresentationalHint,
+                            source_order: *source_order,
+                        });
                     }
                 }
+                break;
             }
             cur = parent_id;
         }
@@ -1464,10 +1593,10 @@ static GLOBAL_MEDIA_ENV: std::sync::RwLock<Option<MediaEnvironment>> = std::sync
 
 /// Returns the current global media environment.
 pub fn current_media_environment() -> MediaEnvironment {
-    if let Ok(guard) = GLOBAL_MEDIA_ENV.read() {
-        if let Some(ref env) = *guard {
-            return env.clone();
-        }
+    if let Ok(guard) = GLOBAL_MEDIA_ENV.read()
+        && let Some(ref env) = *guard
+    {
+        return env.clone();
     }
     MediaEnvironment::default()
 }
@@ -1530,7 +1659,12 @@ pub fn matches_media_query(query: &str, viewport_width: f32) -> bool {
 
 /// Tests if a CSS media query matches the browser environment with explicit width and height.
 pub fn matches_media_query_size(query: &str, viewport_width: f32, viewport_height: f32) -> bool {
-    matches_media_query_env(query, viewport_width, viewport_height, &current_media_environment())
+    matches_media_query_env(
+        query,
+        viewport_width,
+        viewport_height,
+        &current_media_environment(),
+    )
 }
 
 /// Tests if a CSS media query matches the specified media environment and viewport dimensions.
@@ -1622,11 +1756,15 @@ fn matches_single_condition(
         }
 
         let trimmed_cond = cond.trim();
-        let inner = if trimmed_cond.starts_with('(') && trimmed_cond.ends_with(')') && trimmed_cond.len() >= 2 {
+        let inner = if trimmed_cond.starts_with('(')
+            && trimmed_cond.ends_with(')')
+            && trimmed_cond.len() >= 2
+        {
             &trimmed_cond[1..trimmed_cond.len() - 1]
         } else {
             trimmed_cond
-        }.trim();
+        }
+        .trim();
 
         // 1. Check if it's a range condition (contains <=, >=, <, >, =)
         if let Some(res) = eval_range_condition(inner, width, height, env, is_container) {
@@ -1638,7 +1776,14 @@ fn matches_single_condition(
 
         // 2. Feature: value condition
         if let Some((name, val_str)) = inner.split_once(':') {
-            if !eval_feature_condition(name.trim(), val_str.trim(), width, height, env, is_container) {
+            if !eval_feature_condition(
+                name.trim(),
+                val_str.trim(),
+                width,
+                height,
+                env,
+                is_container,
+            ) {
                 return false;
             }
             continue;
@@ -1727,15 +1872,15 @@ fn eval_feature_condition(
         }
         "aspect-ratio" => {
             let ratio = width / height.max(1.0);
-            parse_aspect_ratio(val_str).map_or(false, |t| (ratio - t).abs() < 1e-4)
+            parse_aspect_ratio(val_str).is_some_and(|t| (ratio - t).abs() < 1e-4)
         }
         "min-aspect-ratio" => {
             let ratio = width / height.max(1.0);
-            parse_aspect_ratio(val_str).map_or(false, |t| ratio >= t - 1e-4)
+            parse_aspect_ratio(val_str).is_some_and(|t| ratio >= t - 1e-4)
         }
         "max-aspect-ratio" => {
             let ratio = width / height.max(1.0);
-            parse_aspect_ratio(val_str).map_or(false, |t| ratio <= t + 1e-4)
+            parse_aspect_ratio(val_str).is_some_and(|t| ratio <= t + 1e-4)
         }
         "prefers-color-scheme" => {
             if val_str.contains("dark") {
@@ -1753,53 +1898,43 @@ fn eval_feature_condition(
                 env.reduced_motion == ReducedMotionPreference::NoPreference
             }
         }
-        "prefers-contrast" => {
-            match val_str {
-                "more" => env.contrast == ContrastPreference::More,
-                "less" => env.contrast == ContrastPreference::Less,
-                "no-preference" => env.contrast == ContrastPreference::NoPreference,
-                "custom" => env.contrast == ContrastPreference::Custom,
-                _ => false,
-            }
-        }
-        "hover" => {
-            match val_str {
-                "hover" => env.hover == HoverType::Hover,
-                "none" => env.hover == HoverType::None,
-                _ => false,
-            }
-        }
-        "any-hover" => {
-            match val_str {
-                "hover" => env.any_hover == HoverType::Hover,
-                "none" => env.any_hover == HoverType::None,
-                _ => false,
-            }
-        }
-        "pointer" => {
-            match val_str {
-                "fine" => env.pointer == PointerType::Fine,
-                "coarse" => env.pointer == PointerType::Coarse,
-                "none" => env.pointer == PointerType::None,
-                _ => false,
-            }
-        }
-        "any-pointer" => {
-            match val_str {
-                "fine" => env.any_pointer == PointerType::Fine,
-                "coarse" => env.any_pointer == PointerType::Coarse,
-                "none" => env.any_pointer == PointerType::None,
-                _ => false,
-            }
-        }
+        "prefers-contrast" => match val_str {
+            "more" => env.contrast == ContrastPreference::More,
+            "less" => env.contrast == ContrastPreference::Less,
+            "no-preference" => env.contrast == ContrastPreference::NoPreference,
+            "custom" => env.contrast == ContrastPreference::Custom,
+            _ => false,
+        },
+        "hover" => match val_str {
+            "hover" => env.hover == HoverType::Hover,
+            "none" => env.hover == HoverType::None,
+            _ => false,
+        },
+        "any-hover" => match val_str {
+            "hover" => env.any_hover == HoverType::Hover,
+            "none" => env.any_hover == HoverType::None,
+            _ => false,
+        },
+        "pointer" => match val_str {
+            "fine" => env.pointer == PointerType::Fine,
+            "coarse" => env.pointer == PointerType::Coarse,
+            "none" => env.pointer == PointerType::None,
+            _ => false,
+        },
+        "any-pointer" => match val_str {
+            "fine" => env.any_pointer == PointerType::Fine,
+            "coarse" => env.any_pointer == PointerType::Coarse,
+            "none" => env.any_pointer == PointerType::None,
+            _ => false,
+        },
         "resolution" | "-webkit-device-pixel-ratio" => {
-            parse_resolution(val_str).map_or(false, |t| (env.device_pixel_ratio - t).abs() < 1e-4)
+            parse_resolution(val_str).is_some_and(|t| (env.device_pixel_ratio - t).abs() < 1e-4)
         }
         "min-resolution" | "-webkit-min-device-pixel-ratio" => {
-            parse_resolution(val_str).map_or(false, |t| env.device_pixel_ratio >= t - 1e-4)
+            parse_resolution(val_str).is_some_and(|t| env.device_pixel_ratio >= t - 1e-4)
         }
         "max-resolution" | "-webkit-max-device-pixel-ratio" => {
-            parse_resolution(val_str).map_or(false, |t| env.device_pixel_ratio <= t + 1e-4)
+            parse_resolution(val_str).is_some_and(|t| env.device_pixel_ratio <= t + 1e-4)
         }
         _ => false,
     }
@@ -1873,17 +2008,19 @@ fn resolve_range_operand(
         "width" | "inline-size" => Some(width),
         "height" | "block-size" => Some(height),
         "aspect-ratio" => Some(width / height.max(1.0)),
-        "resolution" | "device-pixel-ratio" | "-webkit-device-pixel-ratio" => Some(env.device_pixel_ratio),
+        "resolution" | "device-pixel-ratio" | "-webkit-device-pixel-ratio" => {
+            Some(env.device_pixel_ratio)
+        }
         _ => {
-            if let Some(num_str) = s_lower.strip_suffix("vw") {
-                if let Ok(val) = num_str.trim().parse::<f32>() {
-                    return Some((val / 100.0) * width);
-                }
+            if let Some(num_str) = s_lower.strip_suffix("vw")
+                && let Ok(val) = num_str.trim().parse::<f32>()
+            {
+                return Some((val / 100.0) * width);
             }
-            if let Some(num_str) = s_lower.strip_suffix("vh") {
-                if let Ok(val) = num_str.trim().parse::<f32>() {
-                    return Some((val / 100.0) * height);
-                }
+            if let Some(num_str) = s_lower.strip_suffix("vh")
+                && let Ok(val) = num_str.trim().parse::<f32>()
+            {
+                return Some((val / 100.0) * height);
             }
             if s_lower.contains('/') {
                 let parts: Vec<&str> = s_lower.split('/').collect();
@@ -1959,7 +2096,11 @@ fn parse_resolution(s: &str) -> Option<f32> {
     } else if let Some(num_str) = s.strip_suffix("dpi") {
         num_str.trim().parse::<f32>().ok().map(|dpi| dpi / 96.0)
     } else if let Some(num_str) = s.strip_suffix("dpcm") {
-        num_str.trim().parse::<f32>().ok().map(|dpcm| dpcm / 37.79527559)
+        num_str
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .map(|dpcm| dpcm / 37.795_277)
     } else {
         s.parse::<f32>().ok()
     }
@@ -1996,13 +2137,25 @@ fn parse_simple_length(s: &str) -> Option<f32> {
     } else if let Some(num_str) = s.strip_suffix("rem") {
         num_str.trim().parse::<f32>().ok().map(|rem| rem * 16.0)
     } else if let Some(num_str) = s.strip_suffix("pt") {
-        num_str.trim().parse::<f32>().ok().map(|pt| pt * (96.0 / 72.0))
+        num_str
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .map(|pt| pt * (96.0 / 72.0))
     } else if let Some(num_str) = s.strip_suffix("in") {
         num_str.trim().parse::<f32>().ok().map(|i| i * 96.0)
     } else if let Some(num_str) = s.strip_suffix("cm") {
-        num_str.trim().parse::<f32>().ok().map(|cm| cm * (96.0 / 2.54))
+        num_str
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .map(|cm| cm * (96.0 / 2.54))
     } else if let Some(num_str) = s.strip_suffix("mm") {
-        num_str.trim().parse::<f32>().ok().map(|mm| mm * (9.6 / 2.54))
+        num_str
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .map(|mm| mm * (9.6 / 2.54))
     } else if let Some(num_str) = s.strip_suffix("ch") {
         num_str.trim().parse::<f32>().ok().map(|ch| ch * 8.0)
     } else if let Some(num_str) = s.strip_suffix("ex") {
@@ -2076,12 +2229,24 @@ mod tests {
         let td_id = doc.find_element_by_tag(root, "td").unwrap();
 
         let table_styles = resolve_cascade(table_id, &doc, &[]);
-        assert_eq!(table_styles.get("width"), Some(&Value::Length(Length::Percent(85.0))));
-        assert_eq!(table_styles.get("background-color"), Some(&Value::Color(Color::rgb(0xf6, 0xf6, 0xef))));
+        assert_eq!(
+            table_styles.get("width"),
+            Some(&Value::Length(Length::Percent(85.0)))
+        );
+        assert_eq!(
+            table_styles.get("background-color"),
+            Some(&Value::Color(Color::rgb(0xf6, 0xf6, 0xef)))
+        );
 
         let td_styles = resolve_cascade(td_id, &doc, &[]);
-        assert_eq!(td_styles.get("background-color"), Some(&Value::Color(Color::rgb(0xff, 0x66, 0x00))));
-        assert_eq!(td_styles.get("padding-top"), Some(&Value::Length(Length::Px(0.0))));
+        assert_eq!(
+            td_styles.get("background-color"),
+            Some(&Value::Color(Color::rgb(0xff, 0x66, 0x00)))
+        );
+        assert_eq!(
+            td_styles.get("padding-top"),
+            Some(&Value::Length(Length::Px(0.0)))
+        );
     }
 
     #[test]
@@ -2094,12 +2259,24 @@ mod tests {
         let styles = resolve_cascade(iframe_id, &doc, &[]);
         // width and height from presentational attributes
         assert_eq!(styles.get("width"), Some(&Value::Length(Length::Px(560.0))));
-        assert_eq!(styles.get("height"), Some(&Value::Length(Length::Px(315.0))));
+        assert_eq!(
+            styles.get("height"),
+            Some(&Value::Length(Length::Px(315.0)))
+        );
         // frameborder="0" removes borders
-        assert_eq!(styles.get("border-top-style"), Some(&Value::BorderStyle(crate::values::BorderStyle::None)));
-        assert_eq!(styles.get("border-top-width"), Some(&Value::Length(Length::Px(0.0))));
+        assert_eq!(
+            styles.get("border-top-style"),
+            Some(&Value::BorderStyle(crate::values::BorderStyle::None))
+        );
+        assert_eq!(
+            styles.get("border-top-width"),
+            Some(&Value::Length(Length::Px(0.0)))
+        );
         // display is inline-block from UA stylesheet
-        assert_eq!(styles.get("display"), Some(&Value::Display(crate::values::Display::InlineBlock)));
+        assert_eq!(
+            styles.get("display"),
+            Some(&Value::Display(crate::values::Display::InlineBlock))
+        );
     }
 
     #[test]
@@ -2115,21 +2292,42 @@ mod tests {
         // 1. Video has default inline-block and presentational width/height
         let v1_id = doc.find_element_by_tag(root, "video").unwrap();
         let v1_styles = resolve_cascade(v1_id, &doc, &[]);
-        assert_eq!(v1_styles.get("display"), Some(&Value::Display(crate::values::Display::InlineBlock)));
-        assert_eq!(v1_styles.get("width"), Some(&Value::Length(Length::Px(640.0))));
-        assert_eq!(v1_styles.get("height"), Some(&Value::Length(Length::Px(360.0))));
+        assert_eq!(
+            v1_styles.get("display"),
+            Some(&Value::Display(crate::values::Display::InlineBlock))
+        );
+        assert_eq!(
+            v1_styles.get("width"),
+            Some(&Value::Length(Length::Px(640.0)))
+        );
+        assert_eq!(
+            v1_styles.get("height"),
+            Some(&Value::Length(Length::Px(360.0)))
+        );
 
         // 2. Audio without controls is display: none
         let a1_id = doc.find_element_by_id(root, "a1").unwrap();
         let a1_styles = resolve_cascade(a1_id, &doc, &[]);
-        assert_eq!(a1_styles.get("display"), Some(&Value::Keyword("none".to_string())));
+        assert_eq!(
+            a1_styles.get("display"),
+            Some(&Value::Keyword("none".to_string()))
+        );
 
         // 3. Audio with controls is display: inline-block with 300x36 dimensions
         let a2_id = doc.find_element_by_id(root, "a2").unwrap();
         let a2_styles = resolve_cascade(a2_id, &doc, &[]);
-        assert_eq!(a2_styles.get("display"), Some(&Value::Display(crate::values::Display::InlineBlock)));
-        assert_eq!(a2_styles.get("width"), Some(&Value::Length(Length::Px(300.0))));
-        assert_eq!(a2_styles.get("height"), Some(&Value::Length(Length::Px(36.0))));
+        assert_eq!(
+            a2_styles.get("display"),
+            Some(&Value::Display(crate::values::Display::InlineBlock))
+        );
+        assert_eq!(
+            a2_styles.get("width"),
+            Some(&Value::Length(Length::Px(300.0)))
+        );
+        assert_eq!(
+            a2_styles.get("height"),
+            Some(&Value::Length(Length::Px(36.0)))
+        );
     }
 
     #[test]
@@ -2144,16 +2342,34 @@ mod tests {
         // 1. Default canvas: inline-block, 300x150
         let c1_id = doc.find_element_by_id(root, "c1").unwrap();
         let c1_styles = resolve_cascade(c1_id, &doc, &[]);
-        assert_eq!(c1_styles.get("display"), Some(&Value::Display(crate::values::Display::InlineBlock)));
-        assert_eq!(c1_styles.get("width"), Some(&Value::Length(Length::Px(300.0))));
-        assert_eq!(c1_styles.get("height"), Some(&Value::Length(Length::Px(150.0))));
+        assert_eq!(
+            c1_styles.get("display"),
+            Some(&Value::Display(crate::values::Display::InlineBlock))
+        );
+        assert_eq!(
+            c1_styles.get("width"),
+            Some(&Value::Length(Length::Px(300.0)))
+        );
+        assert_eq!(
+            c1_styles.get("height"),
+            Some(&Value::Length(Length::Px(150.0)))
+        );
 
         // 2. Canvas with presentational hints
         let c2_id = doc.find_element_by_id(root, "c2").unwrap();
         let c2_styles = resolve_cascade(c2_id, &doc, &[]);
-        assert_eq!(c2_styles.get("display"), Some(&Value::Display(crate::values::Display::InlineBlock)));
-        assert_eq!(c2_styles.get("width"), Some(&Value::Length(Length::Px(500.0))));
-        assert_eq!(c2_styles.get("height"), Some(&Value::Length(Length::Px(250.0))));
+        assert_eq!(
+            c2_styles.get("display"),
+            Some(&Value::Display(crate::values::Display::InlineBlock))
+        );
+        assert_eq!(
+            c2_styles.get("width"),
+            Some(&Value::Length(Length::Px(500.0)))
+        );
+        assert_eq!(
+            c2_styles.get("height"),
+            Some(&Value::Length(Length::Px(250.0)))
+        );
     }
 
     #[test]
@@ -2178,10 +2394,19 @@ mod tests {
         let div_id = doc.find_element_by_tag(doc.root(), "div").unwrap();
         let styles = resolve_cascade_with_index(div_id, &doc, &index);
 
-        assert_eq!(styles.get("margin-top"), Some(&Value::Length(Length::Px(0.0))));
+        assert_eq!(
+            styles.get("margin-top"),
+            Some(&Value::Length(Length::Px(0.0)))
+        );
         assert_eq!(styles.get("color"), Some(&Value::Color(Color::RED)));
-        assert_eq!(styles.get("background-color"), Some(&Value::Color(Color::BLUE)));
-        assert_eq!(styles.get("font-size"), Some(&Value::Length(Length::Px(20.0))));
+        assert_eq!(
+            styles.get("background-color"),
+            Some(&Value::Color(Color::BLUE))
+        );
+        assert_eq!(
+            styles.get("font-size"),
+            Some(&Value::Length(Length::Px(20.0)))
+        );
     }
 
     #[test]
@@ -2203,79 +2428,177 @@ mod tests {
         // 1. dialog: closed is display: none, open is display: block
         let d1_id = doc.find_element_by_id(root, "d1").unwrap();
         let d1_styles = resolve_cascade(d1_id, &doc, &[]);
-        assert!(matches!(d1_styles.get("display"), Some(Value::Display(crate::values::Display::None))) || d1_styles.get("display") == Some(&Value::Keyword("none".to_string())));
+        assert!(
+            matches!(
+                d1_styles.get("display"),
+                Some(Value::Display(crate::values::Display::None))
+            ) || d1_styles.get("display") == Some(&Value::Keyword("none".to_string()))
+        );
 
         let d2_id = doc.find_element_by_id(root, "d2").unwrap();
         let d2_styles = resolve_cascade(d2_id, &doc, &[]);
-        assert_eq!(d2_styles.get("display"), Some(&Value::Display(crate::values::Display::Block)));
+        assert_eq!(
+            d2_styles.get("display"),
+            Some(&Value::Display(crate::values::Display::Block))
+        );
 
         // 2. progress & meter dimensions
         let p1_id = doc.find_element_by_id(root, "p1").unwrap();
         let p1_styles = resolve_cascade(p1_id, &doc, &[]);
-        assert_eq!(p1_styles.get("display"), Some(&Value::Display(crate::values::Display::InlineBlock)));
-        assert_eq!(p1_styles.get("width"), Some(&Value::Length(Length::Px(160.0))));
-        assert_eq!(p1_styles.get("height"), Some(&Value::Length(Length::Px(16.0))));
+        assert_eq!(
+            p1_styles.get("display"),
+            Some(&Value::Display(crate::values::Display::InlineBlock))
+        );
+        assert_eq!(
+            p1_styles.get("width"),
+            Some(&Value::Length(Length::Px(160.0)))
+        );
+        assert_eq!(
+            p1_styles.get("height"),
+            Some(&Value::Length(Length::Px(16.0)))
+        );
 
         let m1_id = doc.find_element_by_id(root, "m1").unwrap();
         let m1_styles = resolve_cascade(m1_id, &doc, &[]);
-        assert_eq!(m1_styles.get("display"), Some(&Value::Display(crate::values::Display::InlineBlock)));
-        assert_eq!(m1_styles.get("width"), Some(&Value::Length(Length::Px(80.0))));
-        assert_eq!(m1_styles.get("height"), Some(&Value::Length(Length::Px(16.0))));
+        assert_eq!(
+            m1_styles.get("display"),
+            Some(&Value::Display(crate::values::Display::InlineBlock))
+        );
+        assert_eq!(
+            m1_styles.get("width"),
+            Some(&Value::Length(Length::Px(80.0)))
+        );
+        assert_eq!(
+            m1_styles.get("height"),
+            Some(&Value::Length(Length::Px(16.0)))
+        );
 
         // 3. datalist is display: none
         let dl1_id = doc.find_element_by_id(root, "dl1").unwrap();
         let dl1_styles = resolve_cascade(dl1_id, &doc, &[]);
-        assert!(matches!(dl1_styles.get("display"), Some(Value::Display(crate::values::Display::None))) || dl1_styles.get("display") == Some(&Value::Keyword("none".to_string())));
+        assert!(
+            matches!(
+                dl1_styles.get("display"),
+                Some(Value::Display(crate::values::Display::None))
+            ) || dl1_styles.get("display") == Some(&Value::Keyword("none".to_string()))
+        );
 
         // 4. ruby: rp is display: none, rt is font-size 50%
         let rt1_id = doc.find_element_by_id(root, "rt1").unwrap();
         let rt1_styles = resolve_cascade(rt1_id, &doc, &[]);
-        assert_eq!(rt1_styles.get("font-size"), Some(&Value::Length(Length::Percent(50.0))));
+        assert_eq!(
+            rt1_styles.get("font-size"),
+            Some(&Value::Length(Length::Percent(50.0)))
+        );
 
         let rp1_id = doc.find_element_by_id(root, "rp1").unwrap();
         let rp1_styles = resolve_cascade(rp1_id, &doc, &[]);
-        assert!(matches!(rp1_styles.get("display"), Some(Value::Display(crate::values::Display::None))) || rp1_styles.get("display") == Some(&Value::Keyword("none".to_string())));
+        assert!(
+            matches!(
+                rp1_styles.get("display"),
+                Some(Value::Display(crate::values::Display::None))
+            ) || rp1_styles.get("display") == Some(&Value::Keyword("none".to_string()))
+        );
 
         // 5. bdi & bdo unicode-bidi and direction
         let bdi1_id = doc.find_element_by_id(root, "bdi1").unwrap();
         let bdi1_styles = resolve_cascade(bdi1_id, &doc, &[]);
-        assert_eq!(bdi1_styles.get("unicode-bidi"), Some(&Value::UnicodeBidi(crate::values::UnicodeBidi::Isolate)));
+        assert_eq!(
+            bdi1_styles.get("unicode-bidi"),
+            Some(&Value::UnicodeBidi(crate::values::UnicodeBidi::Isolate))
+        );
 
         let bdo1_id = doc.find_element_by_id(root, "bdo1").unwrap();
         let bdo1_styles = resolve_cascade(bdo1_id, &doc, &[]);
-        assert_eq!(bdo1_styles.get("unicode-bidi"), Some(&Value::UnicodeBidi(crate::values::UnicodeBidi::BidiOverride)));
-        assert_eq!(bdo1_styles.get("direction"), Some(&Value::Direction(crate::values::Direction::Rtl)));
+        assert_eq!(
+            bdo1_styles.get("unicode-bidi"),
+            Some(&Value::UnicodeBidi(
+                crate::values::UnicodeBidi::BidiOverride
+            ))
+        );
+        assert_eq!(
+            bdo1_styles.get("direction"),
+            Some(&Value::Direction(crate::values::Direction::Rtl))
+        );
     }
 
     #[test]
     fn test_media_query_calc() {
-        assert!(!matches_media_query_size("screen and (max-width:calc(1120px - 1px))", 1280.0, 900.0));
-        assert!(matches_media_query_size("screen and (max-width:calc(1120px - 1px))", 1000.0, 900.0));
-        assert!(matches_media_query_size("screen and (min-width: 60em)", 1280.0, 900.0));
-        assert!(!matches_media_query_size("screen and (min-width: 60em)", 800.0, 900.0));
+        assert!(!matches_media_query_size(
+            "screen and (max-width:calc(1120px - 1px))",
+            1280.0,
+            900.0
+        ));
+        assert!(matches_media_query_size(
+            "screen and (max-width:calc(1120px - 1px))",
+            1000.0,
+            900.0
+        ));
+        assert!(matches_media_query_size(
+            "screen and (min-width: 60em)",
+            1280.0,
+            900.0
+        ));
+        assert!(!matches_media_query_size(
+            "screen and (min-width: 60em)",
+            800.0,
+            900.0
+        ));
     }
 
     #[test]
     fn test_media_and_container_queries() {
         // 1. prefers-color-scheme
         set_prefers_color_scheme(ColorSchemePreference::Dark);
-        assert!(matches_media_query_size("(prefers-color-scheme: dark)", 1000.0, 800.0));
-        assert!(!matches_media_query_size("(prefers-color-scheme: light)", 1000.0, 800.0));
+        assert!(matches_media_query_size(
+            "(prefers-color-scheme: dark)",
+            1000.0,
+            800.0
+        ));
+        assert!(!matches_media_query_size(
+            "(prefers-color-scheme: light)",
+            1000.0,
+            800.0
+        ));
 
         set_prefers_color_scheme(ColorSchemePreference::Light);
-        assert!(!matches_media_query_size("(prefers-color-scheme: dark)", 1000.0, 800.0));
-        assert!(matches_media_query_size("(prefers-color-scheme: light)", 1000.0, 800.0));
+        assert!(!matches_media_query_size(
+            "(prefers-color-scheme: dark)",
+            1000.0,
+            800.0
+        ));
+        assert!(matches_media_query_size(
+            "(prefers-color-scheme: light)",
+            1000.0,
+            800.0
+        ));
 
         // 2. prefers-reduced-motion
         set_prefers_reduced_motion(ReducedMotionPreference::Reduce);
-        assert!(matches_media_query_size("(prefers-reduced-motion: reduce)", 1000.0, 800.0));
-        assert!(!matches_media_query_size("(prefers-reduced-motion: no-preference)", 1000.0, 800.0));
+        assert!(matches_media_query_size(
+            "(prefers-reduced-motion: reduce)",
+            1000.0,
+            800.0
+        ));
+        assert!(!matches_media_query_size(
+            "(prefers-reduced-motion: no-preference)",
+            1000.0,
+            800.0
+        ));
         set_prefers_reduced_motion(ReducedMotionPreference::NoPreference);
 
         // 3. prefers-contrast
         set_prefers_contrast(ContrastPreference::More);
-        assert!(matches_media_query_size("(prefers-contrast: more)", 1000.0, 800.0));
-        assert!(!matches_media_query_size("(prefers-contrast: less)", 1000.0, 800.0));
+        assert!(matches_media_query_size(
+            "(prefers-contrast: more)",
+            1000.0,
+            800.0
+        ));
+        assert!(!matches_media_query_size(
+            "(prefers-contrast: less)",
+            1000.0,
+            800.0
+        ));
         set_prefers_contrast(ContrastPreference::NoPreference);
 
         // 4. hover and pointer
@@ -2288,29 +2611,77 @@ mod tests {
 
         // 5. resolution / device-pixel-ratio
         set_device_pixel_ratio(2.0);
-        assert!(matches_media_query_size("(min-resolution: 2dppx)", 1000.0, 800.0));
-        assert!(matches_media_query_size("(min-resolution: 192dpi)", 1000.0, 800.0));
-        assert!(matches_media_query_size("(-webkit-min-device-pixel-ratio: 2)", 1000.0, 800.0));
-        assert!(!matches_media_query_size("(min-resolution: 3dppx)", 1000.0, 800.0));
+        assert!(matches_media_query_size(
+            "(min-resolution: 2dppx)",
+            1000.0,
+            800.0
+        ));
+        assert!(matches_media_query_size(
+            "(min-resolution: 192dpi)",
+            1000.0,
+            800.0
+        ));
+        assert!(matches_media_query_size(
+            "(-webkit-min-device-pixel-ratio: 2)",
+            1000.0,
+            800.0
+        ));
+        assert!(!matches_media_query_size(
+            "(min-resolution: 3dppx)",
+            1000.0,
+            800.0
+        ));
         set_device_pixel_ratio(1.0);
 
         // 6. Media Queries Level 4 range comparison syntax
         assert!(matches_media_query_size("(width >= 600px)", 800.0, 600.0));
         assert!(!matches_media_query_size("(width >= 900px)", 800.0, 600.0));
-        assert!(matches_media_query_size("(600px <= width <= 1000px)", 800.0, 600.0));
-        assert!(!matches_media_query_size("(600px <= width <= 750px)", 800.0, 600.0));
-        assert!(matches_media_query_size("(aspect-ratio >= 4/3)", 800.0, 600.0));
+        assert!(matches_media_query_size(
+            "(600px <= width <= 1000px)",
+            800.0,
+            600.0
+        ));
+        assert!(!matches_media_query_size(
+            "(600px <= width <= 750px)",
+            800.0,
+            600.0
+        ));
+        assert!(matches_media_query_size(
+            "(aspect-ratio >= 4/3)",
+            800.0,
+            600.0
+        ));
 
         // 7. Logical 'or' and 'not'
-        assert!(matches_media_query_size("(max-width: 500px) or (min-width: 700px)", 800.0, 600.0));
-        assert!(!matches_media_query_size("(max-width: 500px) or (min-width: 900px)", 800.0, 600.0));
-        assert!(matches_media_query_size("not (max-width: 500px)", 800.0, 600.0));
+        assert!(matches_media_query_size(
+            "(max-width: 500px) or (min-width: 700px)",
+            800.0,
+            600.0
+        ));
+        assert!(!matches_media_query_size(
+            "(max-width: 500px) or (min-width: 900px)",
+            800.0,
+            600.0
+        ));
+        assert!(matches_media_query_size(
+            "not (max-width: 500px)",
+            800.0,
+            600.0
+        ));
 
         // 8. Container queries matching and cascade resolution
         assert!(matches_container_query("(min-width: 400px)", 500.0, 300.0));
         assert!(!matches_container_query("(min-width: 600px)", 500.0, 300.0));
-        assert!(matches_container_query("(inline-size >= 400px)", 500.0, 300.0));
-        assert!(matches_container_query("(300px <= width <= 600px)", 500.0, 300.0));
+        assert!(matches_container_query(
+            "(inline-size >= 400px)",
+            500.0,
+            300.0
+        ));
+        assert!(matches_container_query(
+            "(300px <= width <= 600px)",
+            500.0,
+            300.0
+        ));
 
         // 9. Cascade resolution with @container rule
         let html = r#"
@@ -2335,9 +2706,13 @@ mod tests {
         let cascaded = resolve_cascade(target_id, &doc, &[&sheet]);
 
         // Container is 500px, so min-width: 400px matches (color: green), min-width: 800px does NOT match
-        assert_eq!(cascaded.get("color"), Some(&Value::Color(Color::rgb(0, 128, 0))));
-        assert_eq!(cascaded.get("font-size"), Some(&Value::Length(Length::Px(20.0))));
+        assert_eq!(
+            cascaded.get("color"),
+            Some(&Value::Color(Color::rgb(0, 128, 0)))
+        );
+        assert_eq!(
+            cascaded.get("font-size"),
+            Some(&Value::Length(Length::Px(20.0)))
+        );
     }
 }
-
-

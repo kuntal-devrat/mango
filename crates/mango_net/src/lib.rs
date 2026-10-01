@@ -19,13 +19,13 @@ pub mod url;
 
 pub use cache::{CachedResource, ResourceCache};
 pub use cookies::{Cookie, CookieJar, SameSite};
-pub use dns::{global_dns_cache, DnsCache};
-pub use encoding::{decode_html_bytes, detect_encoding, Encoding};
+pub use dns::{DnsCache, global_dns_cache};
+pub use encoding::{Encoding, decode_html_bytes, detect_encoding};
 pub use http::{HttpClient, HttpMethod, HttpRequest, HttpResponse, NetworkError};
 pub use http2::{FrameHeader, FrameType, Http2Frame, Http2Session, Http2Stream, HttpVersion};
 pub use pipeline::{
-    cache_stage, decode_stage, decompress_stage, http_request_stage, resolve_dns_stage,
-    tls_handshake_stage, DecodedResource, ResourcePipeline, TlsConnectionInfo,
+    DecodedResource, ResourcePipeline, TlsConnectionInfo, cache_stage, decode_stage,
+    decompress_stage, http_request_stage, resolve_dns_stage, tls_handshake_stage,
 };
 pub use resource_loader::{FetchedDocument, ResourceLoader};
 pub use security::{CspPolicy, HstsStore, SecurityHeaders};

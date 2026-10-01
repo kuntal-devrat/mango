@@ -29,8 +29,8 @@ use std::collections::HashMap;
 use mango_core::Color;
 use mango_html::dom::NodeId;
 
-use crate::computed::{apply_cascaded_properties, ComputedStyle};
-use crate::parser::{KeyframesRule, Stylesheet, Rule};
+use crate::computed::{ComputedStyle, apply_cascaded_properties};
+use crate::parser::{KeyframesRule, Rule, Stylesheet};
 use crate::properties::Declaration;
 use crate::values::{
     Animation, AnimationDirection, AnimationFillMode, AnimationIterationCount, AnimationPlayState,
@@ -46,7 +46,8 @@ pub fn lerp(a: f32, b: f32, t: f32) -> f32 {
 /// Interpolates two colors in premultiplied sRGB space.
 pub fn interpolate_color(a: Color, b: Color, t: f32) -> Color {
     let t = t.clamp(0.0, 1.0);
-    let blend = |x: u8, y: u8| -> u8 { lerp(x as f32, y as f32, t).round().clamp(0.0, 255.0) as u8 };
+    let blend =
+        |x: u8, y: u8| -> u8 { lerp(x as f32, y as f32, t).round().clamp(0.0, 255.0) as u8 };
     Color::rgba(
         blend(a.r, b.r),
         blend(a.g, b.g),
@@ -137,9 +138,10 @@ pub fn interpolate_transform(a: &Transform, b: &Transform, t: f32) -> Transform 
             (TransformFunction::TranslateZ(z1), TransformFunction::TranslateZ(z2)) => {
                 TransformFunction::TranslateZ(lerp(z1, z2, t))
             }
-            (TransformFunction::Translate3d(x1, y1, z1), TransformFunction::Translate3d(x2, y2, z2)) => {
-                TransformFunction::Translate3d(lerp(x1, x2, t), lerp(y1, y2, t), lerp(z1, z2, t))
-            }
+            (
+                TransformFunction::Translate3d(x1, y1, z1),
+                TransformFunction::Translate3d(x2, y2, z2),
+            ) => TransformFunction::Translate3d(lerp(x1, x2, t), lerp(y1, y2, t), lerp(z1, z2, t)),
             (TransformFunction::RotateX(r1), TransformFunction::RotateX(r2)) => {
                 TransformFunction::RotateX(lerp(r1, r2, t))
             }
@@ -184,14 +186,20 @@ pub fn interpolate_transform(a: &Transform, b: &Transform, t: f32) -> Transform 
     Transform(out)
 }
 
-fn interpolate_filter_list(a: &[FilterFunction], b: &[FilterFunction], t: f32) -> Vec<FilterFunction> {
+fn interpolate_filter_list(
+    a: &[FilterFunction],
+    b: &[FilterFunction],
+    t: f32,
+) -> Vec<FilterFunction> {
     if a.len() != b.len() {
         return if t < 0.5 { a.to_vec() } else { b.to_vec() };
     }
     a.iter()
         .zip(b.iter())
         .map(|(fa, fb)| match (fa, fb) {
-            (FilterFunction::Blur(x), FilterFunction::Blur(y)) => FilterFunction::Blur(lerp(*x, *y, t)),
+            (FilterFunction::Blur(x), FilterFunction::Blur(y)) => {
+                FilterFunction::Blur(lerp(*x, *y, t))
+            }
             (FilterFunction::Brightness(x), FilterFunction::Brightness(y)) => {
                 FilterFunction::Brightness(lerp(*x, *y, t))
             }
@@ -207,14 +215,28 @@ fn interpolate_filter_list(a: &[FilterFunction], b: &[FilterFunction], t: f32) -
             (FilterFunction::Saturate(x), FilterFunction::Saturate(y)) => {
                 FilterFunction::Saturate(lerp(*x, *y, t))
             }
-            (FilterFunction::Sepia(x), FilterFunction::Sepia(y)) => FilterFunction::Sepia(lerp(*x, *y, t)),
+            (FilterFunction::Sepia(x), FilterFunction::Sepia(y)) => {
+                FilterFunction::Sepia(lerp(*x, *y, t))
+            }
             (FilterFunction::HueRotate(x), FilterFunction::HueRotate(y)) => {
                 FilterFunction::HueRotate(lerp(*x, *y, t))
             }
-            (FilterFunction::Invert(x), FilterFunction::Invert(y)) => FilterFunction::Invert(lerp(*x, *y, t)),
+            (FilterFunction::Invert(x), FilterFunction::Invert(y)) => {
+                FilterFunction::Invert(lerp(*x, *y, t))
+            }
             (
-                FilterFunction::DropShadow { offset_x: x1, offset_y: y1, blur: b1, color: c1 },
-                FilterFunction::DropShadow { offset_x: x2, offset_y: y2, blur: b2, color: c2 },
+                FilterFunction::DropShadow {
+                    offset_x: x1,
+                    offset_y: y1,
+                    blur: b1,
+                    color: c1,
+                },
+                FilterFunction::DropShadow {
+                    offset_x: x2,
+                    offset_y: y2,
+                    blur: b2,
+                    color: c2,
+                },
             ) => FilterFunction::DropShadow {
                 offset_x: lerp(*x1, *x2, t),
                 offset_y: lerp(*y1, *y2, t),
@@ -226,20 +248,42 @@ fn interpolate_filter_list(a: &[FilterFunction], b: &[FilterFunction], t: f32) -
         .collect()
 }
 
-fn interpolate_clip_path(a: &crate::values::ClipPath, b: &crate::values::ClipPath, t: f32) -> crate::values::ClipPath {
+fn interpolate_clip_path(
+    a: &crate::values::ClipPath,
+    b: &crate::values::ClipPath,
+    t: f32,
+) -> crate::values::ClipPath {
     use crate::values::ClipPath;
     match (a, b) {
         (
-            ClipPath::Circle { radius: r1, center_x: cx1, center_y: cy1 },
-            ClipPath::Circle { radius: r2, center_x: cx2, center_y: cy2 },
+            ClipPath::Circle {
+                radius: r1,
+                center_x: cx1,
+                center_y: cy1,
+            },
+            ClipPath::Circle {
+                radius: r2,
+                center_x: cx2,
+                center_y: cy2,
+            },
         ) => ClipPath::Circle {
             radius: interpolate_length(*r1, *r2, t),
             center_x: interpolate_length(*cx1, *cx2, t),
             center_y: interpolate_length(*cy1, *cy2, t),
         },
         (
-            ClipPath::Ellipse { radius_x: rx1, radius_y: ry1, center_x: cx1, center_y: cy1 },
-            ClipPath::Ellipse { radius_x: rx2, radius_y: ry2, center_x: cx2, center_y: cy2 },
+            ClipPath::Ellipse {
+                radius_x: rx1,
+                radius_y: ry1,
+                center_x: cx1,
+                center_y: cy1,
+            },
+            ClipPath::Ellipse {
+                radius_x: rx2,
+                radius_y: ry2,
+                center_x: cx2,
+                center_y: cy2,
+            },
         ) => ClipPath::Ellipse {
             radius_x: interpolate_length(*rx1, *rx2, t),
             radius_y: interpolate_length(*ry1, *ry2, t),
@@ -247,8 +291,20 @@ fn interpolate_clip_path(a: &crate::values::ClipPath, b: &crate::values::ClipPat
             center_y: interpolate_length(*cy1, *cy2, t),
         },
         (
-            ClipPath::Inset { top: t1, right: r1, bottom: b1, left: l1, round: rnd1 },
-            ClipPath::Inset { top: t2, right: r2, bottom: b2, left: l2, round: rnd2 },
+            ClipPath::Inset {
+                top: t1,
+                right: r1,
+                bottom: b1,
+                left: l1,
+                round: rnd1,
+            },
+            ClipPath::Inset {
+                top: t2,
+                right: r2,
+                bottom: b2,
+                left: l2,
+                round: rnd2,
+            },
         ) => {
             let round = match (rnd1, rnd2) {
                 (Some(a), Some(b)) => Some([
@@ -270,12 +326,25 @@ fn interpolate_clip_path(a: &crate::values::ClipPath, b: &crate::values::ClipPat
             }
         }
         (ClipPath::Polygon(p1), ClipPath::Polygon(p2)) if p1.len() == p2.len() => {
-            let pts = p1.iter().zip(p2.iter()).map(|((x1, y1), (x2, y2))| {
-                (interpolate_length(*x1, *x2, t), interpolate_length(*y1, *y2, t))
-            }).collect();
+            let pts = p1
+                .iter()
+                .zip(p2.iter())
+                .map(|((x1, y1), (x2, y2))| {
+                    (
+                        interpolate_length(*x1, *x2, t),
+                        interpolate_length(*y1, *y2, t),
+                    )
+                })
+                .collect();
             ClipPath::Polygon(pts)
         }
-        _ => if t < 0.5 { a.clone() } else { b.clone() },
+        _ => {
+            if t < 0.5 {
+                a.clone()
+            } else {
+                b.clone()
+            }
+        }
     }
 }
 
@@ -298,22 +367,30 @@ pub fn interpolate_value(a: &Value, b: &Value, t: f32) -> Option<Value> {
         (Value::Transform(x), Value::Transform(y)) => {
             Some(Value::Transform(interpolate_transform(x, y, t)))
         }
-        (Value::TextShadow(x), Value::TextShadow(y)) => Some(Value::TextShadow(crate::values::TextShadow {
-            offset_x: lerp(x.offset_x, y.offset_x, t),
-            offset_y: lerp(x.offset_y, y.offset_y, t),
-            blur_radius: lerp(x.blur_radius, y.blur_radius, t),
-            color: interpolate_color(x.color, y.color, t),
-        })),
-        (Value::BoxShadow(x), Value::BoxShadow(y)) => Some(Value::BoxShadow(crate::values::BoxShadow {
-            offset_x: lerp(x.offset_x, y.offset_x, t),
-            offset_y: lerp(x.offset_y, y.offset_y, t),
-            blur_radius: lerp(x.blur_radius, y.blur_radius, t),
-            spread_radius: lerp(x.spread_radius, y.spread_radius, t),
-            color: interpolate_color(x.color, y.color, t),
-            inset: x.inset,
-        })),
-        (Value::Filter(x), Value::Filter(y)) => Some(Value::Filter(interpolate_filter_list(x, y, t))),
-        (Value::ClipPath(x), Value::ClipPath(y)) => Some(Value::ClipPath(interpolate_clip_path(x, y, t))),
+        (Value::TextShadow(x), Value::TextShadow(y)) => {
+            Some(Value::TextShadow(crate::values::TextShadow {
+                offset_x: lerp(x.offset_x, y.offset_x, t),
+                offset_y: lerp(x.offset_y, y.offset_y, t),
+                blur_radius: lerp(x.blur_radius, y.blur_radius, t),
+                color: interpolate_color(x.color, y.color, t),
+            }))
+        }
+        (Value::BoxShadow(x), Value::BoxShadow(y)) => {
+            Some(Value::BoxShadow(crate::values::BoxShadow {
+                offset_x: lerp(x.offset_x, y.offset_x, t),
+                offset_y: lerp(x.offset_y, y.offset_y, t),
+                blur_radius: lerp(x.blur_radius, y.blur_radius, t),
+                spread_radius: lerp(x.spread_radius, y.spread_radius, t),
+                color: interpolate_color(x.color, y.color, t),
+                inset: x.inset,
+            }))
+        }
+        (Value::Filter(x), Value::Filter(y)) => {
+            Some(Value::Filter(interpolate_filter_list(x, y, t)))
+        }
+        (Value::ClipPath(x), Value::ClipPath(y)) => {
+            Some(Value::ClipPath(interpolate_clip_path(x, y, t)))
+        }
         (Value::List(x), Value::List(y)) if x.len() == y.len() => {
             let mut out = Vec::with_capacity(x.len());
             for (xi, yi) in x.iter().zip(y.iter()) {
@@ -344,7 +421,8 @@ pub fn interpolate_style(from: &ComputedStyle, to: &ComputedStyle, t: f32) -> Co
     style.background_color = interpolate_color(from.background_color, to.background_color, t);
     style.border_top_color = interpolate_color(from.border_top_color, to.border_top_color, t);
     style.border_right_color = interpolate_color(from.border_right_color, to.border_right_color, t);
-    style.border_bottom_color = interpolate_color(from.border_bottom_color, to.border_bottom_color, t);
+    style.border_bottom_color =
+        interpolate_color(from.border_bottom_color, to.border_bottom_color, t);
     style.border_left_color = interpolate_color(from.border_left_color, to.border_left_color, t);
     style.outline_color = interpolate_color(from.outline_color, to.outline_color, t);
 
@@ -383,11 +461,18 @@ pub fn interpolate_style(from: &ComputedStyle, to: &ComputedStyle, t: f32) -> Co
     style.outline_offset = lerp(from.outline_offset, to.outline_offset, t);
 
     style.border_top_left_radius = lerp(from.border_top_left_radius, to.border_top_left_radius, t);
-    style.border_top_right_radius = lerp(from.border_top_right_radius, to.border_top_right_radius, t);
-    style.border_bottom_right_radius =
-        lerp(from.border_bottom_right_radius, to.border_bottom_right_radius, t);
-    style.border_bottom_left_radius =
-        lerp(from.border_bottom_left_radius, to.border_bottom_left_radius, t);
+    style.border_top_right_radius =
+        lerp(from.border_top_right_radius, to.border_top_right_radius, t);
+    style.border_bottom_right_radius = lerp(
+        from.border_bottom_right_radius,
+        to.border_bottom_right_radius,
+        t,
+    );
+    style.border_bottom_left_radius = lerp(
+        from.border_bottom_left_radius,
+        to.border_bottom_left_radius,
+        t,
+    );
 
     style.row_gap = interpolate_length(from.row_gap, to.row_gap, t);
     style.column_gap = interpolate_length(from.column_gap, to.column_gap, t);
@@ -396,9 +481,12 @@ pub fn interpolate_style(from: &ComputedStyle, to: &ComputedStyle, t: f32) -> Co
     style.flex_shrink = lerp(from.flex_shrink, to.flex_shrink, t);
 
     style.transform = interpolate_transform(&from.transform, &to.transform, t);
-    style.transform_origin_x = interpolate_length(from.transform_origin_x, to.transform_origin_x, t);
-    style.transform_origin_y = interpolate_length(from.transform_origin_y, to.transform_origin_y, t);
-    style.transform_origin_z = interpolate_length(from.transform_origin_z, to.transform_origin_z, t);
+    style.transform_origin_x =
+        interpolate_length(from.transform_origin_x, to.transform_origin_x, t);
+    style.transform_origin_y =
+        interpolate_length(from.transform_origin_y, to.transform_origin_y, t);
+    style.transform_origin_z =
+        interpolate_length(from.transform_origin_z, to.transform_origin_z, t);
     style.filter = interpolate_filter_list(&from.filter, &to.filter, t);
     style.backdrop_filter = interpolate_filter_list(&from.backdrop_filter, &to.backdrop_filter, t);
     style.clip_path = interpolate_clip_path(&from.clip_path, &to.clip_path, t);
@@ -429,9 +517,12 @@ pub fn interpolate_style(from: &ComputedStyle, to: &ComputedStyle, t: f32) -> Co
         style.box_shadow = to.box_shadow;
     }
 
-    if let (Some(x1), Some(y1), Some(x2), Some(y2)) =
-        (from.aspect_ratio, to.aspect_ratio, from.aspect_ratio, to.aspect_ratio)
-    {
+    if let (Some(x1), Some(y1), Some(x2), Some(y2)) = (
+        from.aspect_ratio,
+        to.aspect_ratio,
+        from.aspect_ratio,
+        to.aspect_ratio,
+    ) {
         style.aspect_ratio = Some(lerp(x1, y2, t));
         let _ = (y1, x2);
     }
@@ -485,12 +576,9 @@ impl Keyframes {
         for kf in &rule.keyframes {
             let mut declarations: HashMap<String, Value> = HashMap::new();
             for decl in &kf.declarations {
-                for expanded in Declaration::new(
-                    decl.name.clone(),
-                    decl.value.clone(),
-                    decl.important,
-                )
-                .expand_shorthand()
+                for expanded in
+                    Declaration::new(decl.name.clone(), decl.value.clone(), decl.important)
+                        .expand_shorthand()
                 {
                     declarations.insert(expanded.name.clone(), expanded.value.clone());
                 }
@@ -502,7 +590,11 @@ impl Keyframes {
                 });
             }
         }
-        frames.sort_by(|a, b| a.offset.partial_cmp(&b.offset).unwrap_or(std::cmp::Ordering::Equal));
+        frames.sort_by(|a, b| {
+            a.offset
+                .partial_cmp(&b.offset)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         Self {
             name: rule.name.clone(),
             frames,
@@ -520,8 +612,7 @@ impl Keyframes {
         let before = self
             .frames
             .iter()
-            .filter(|f| f.offset <= progress)
-            .next_back()
+            .rfind(|f| f.offset <= progress)
             .unwrap_or(&self.frames[0]);
         let after = self
             .frames
@@ -577,13 +668,8 @@ where
 
 fn collect_from_rules(rules: &[Rule], map: &mut HashMap<String, Keyframes>) {
     for rule in rules {
-        match rule {
-            Rule::Keyframes(kf) => {
-                map.insert(kf.name.clone(), Keyframes::from_rule(kf));
-            }
-            // `@keyframes` nested inside `@media` blocks are collected by the
-            // stylesheet parser when the media query matches at parse time.
-            _ => {}
+        if let Rule::Keyframes(kf) = rule {
+            map.insert(kf.name.clone(), Keyframes::from_rule(kf));
         }
     }
 }
@@ -669,7 +755,8 @@ impl AnimationEngine {
             return false;
         }
         // Restart if an identical animation already exists for this node.
-        self.active.retain(|a| !(a.node == node && a.spec.name == spec.name));
+        self.active
+            .retain(|a| !(a.node == node && a.spec.name == spec.name));
         self.active.push(ActiveAnimation {
             node,
             spec: spec.clone(),
@@ -685,7 +772,8 @@ impl AnimationEngine {
     /// Stops a named animation on a node, emitting `animationcancel`.
     pub fn cancel(&mut self, node: NodeId, name: &str) {
         let before = self.active.len();
-        self.active.retain(|a| !(a.node == node && a.spec.name == name));
+        self.active
+            .retain(|a| !(a.node == node && a.spec.name == name));
         if self.active.len() != before {
             self.events.push(AnimationEvent {
                 node,
@@ -982,7 +1070,8 @@ impl TransitionEngine {
                 });
             }
         }
-        self.running.retain(|t| !t.finished || now - t.start_ms < t.delay_ms + t.duration_ms);
+        self.running
+            .retain(|t| !t.finished || now - t.start_ms < t.delay_ms + t.duration_ms);
         self.events.extend(events);
     }
 
@@ -1148,14 +1237,18 @@ pub fn animation_names(style: &ComputedStyle) -> Vec<String> {
 
 /// Returns true when this style declares any transition that could animate.
 pub fn has_transitions(style: &ComputedStyle) -> bool {
-    style.transitions.iter().any(|t| t.duration_ms > 0.0 || t.delay_ms > 0.0)
+    style
+        .transitions
+        .iter()
+        .any(|t| t.duration_ms > 0.0 || t.delay_ms > 0.0)
 }
 
 /// Returns true when the style declares any runnable animation.
 pub fn has_animations(style: &ComputedStyle) -> bool {
-    style.animations.iter().any(|a| {
-        !a.name.is_empty() && !a.name.eq_ignore_ascii_case("none")
-    })
+    style
+        .animations
+        .iter()
+        .any(|a| !a.name.is_empty() && !a.name.eq_ignore_ascii_case("none"))
 }
 
 /// Interpolates two gradients (used when animating `background-image`).
@@ -1184,24 +1277,34 @@ pub fn interpolate_gradient(a: &Gradient, b: &Gradient, t: f32) -> Option<Gradie
         })
         .collect();
     match (a, b) {
-        (Gradient::Linear { angle_deg: a1, repeating, .. }, Gradient::Linear { angle_deg: a2, .. }) => {
-            Some(Gradient::Linear {
-                angle_deg: lerp(*a1, *a2, t),
-                stops,
-                repeating: *repeating,
-            })
-        }
+        (
+            Gradient::Linear {
+                angle_deg: a1,
+                repeating,
+                ..
+            },
+            Gradient::Linear { angle_deg: a2, .. },
+        ) => Some(Gradient::Linear {
+            angle_deg: lerp(*a1, *a2, t),
+            stops,
+            repeating: *repeating,
+        }),
         (Gradient::Radial { repeating, .. }, Gradient::Radial { .. }) => Some(Gradient::Radial {
             stops,
             repeating: *repeating,
         }),
-        (Gradient::Conic { angle_deg: a1, repeating, .. }, Gradient::Conic { angle_deg: a2, .. }) => {
-            Some(Gradient::Conic {
-                angle_deg: lerp(*a1, *a2, t),
-                stops,
-                repeating: *repeating,
-            })
-        }
+        (
+            Gradient::Conic {
+                angle_deg: a1,
+                repeating,
+                ..
+            },
+            Gradient::Conic { angle_deg: a2, .. },
+        ) => Some(Gradient::Conic {
+            angle_deg: lerp(*a1, *a2, t),
+            stops,
+            repeating: *repeating,
+        }),
         _ => None,
     }
 }
@@ -1293,7 +1396,10 @@ mod tests {
     fn test_interpolate_value_lengths_and_colors() {
         let a = Value::Length(Length::Px(0.0));
         let b = Value::Length(Length::Px(100.0));
-        assert_eq!(interpolate_value(&a, &b, 0.5), Some(Value::Length(Length::Px(50.0))));
+        assert_eq!(
+            interpolate_value(&a, &b, 0.5),
+            Some(Value::Length(Length::Px(50.0)))
+        );
 
         let ca = Value::Color(Color::rgb(0, 0, 0));
         let cb = Value::Color(Color::rgb(255, 255, 255));
@@ -1399,15 +1505,20 @@ mod tests {
         let mut engine = TransitionEngine::new();
 
         let old = ComputedStyle::default();
-        let mut new = ComputedStyle::default();
-        new.opacity = 1.0;
-        new.transitions = vec![Transition {
-            property: "opacity".to_string(),
-            duration_ms: 100.0,
-            timing: TimingFunction::Linear,
-            delay_ms: 0.0,
-        }];
-        let old = ComputedStyle { opacity: 0.0, ..old };
+        let new = ComputedStyle {
+            opacity: 1.0,
+            transitions: vec![Transition {
+                property: "opacity".to_string(),
+                duration_ms: 100.0,
+                timing: TimingFunction::Linear,
+                delay_ms: 0.0,
+            }],
+            ..Default::default()
+        };
+        let old = ComputedStyle {
+            opacity: 0.0,
+            ..old
+        };
 
         assert!(engine.retarget(node, &old, &new));
         engine.advance(50.0);
@@ -1469,8 +1580,18 @@ mod tests {
             }
         }
         assert_eq!(variants.len(), 3);
-        assert!(matches!(variants[0], Gradient::Linear { angle_deg, repeating: false, .. } if (angle_deg - 90.0).abs() < 0.01));
-        assert!(matches!(variants[1], Gradient::Conic { angle_deg, repeating: false, .. } if (angle_deg - 45.0).abs() < 0.01));
-        assert!(matches!(variants[2], Gradient::Linear { repeating: true, .. }));
+        assert!(
+            matches!(variants[0], Gradient::Linear { angle_deg, repeating: false, .. } if (angle_deg - 90.0).abs() < 0.01)
+        );
+        assert!(
+            matches!(variants[1], Gradient::Conic { angle_deg, repeating: false, .. } if (angle_deg - 45.0).abs() < 0.01)
+        );
+        assert!(matches!(
+            variants[2],
+            Gradient::Linear {
+                repeating: true,
+                ..
+            }
+        ));
     }
 }

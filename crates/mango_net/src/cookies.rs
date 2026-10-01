@@ -208,29 +208,134 @@ pub fn is_public_suffix(domain: &str) -> bool {
     }
 
     const MULTI_PART_SUFFIXES: &[&str] = &[
-        "co.uk", "org.uk", "gov.uk", "ac.uk", "net.uk", "me.uk", "ltd.uk", "plc.uk",
-        "com.au", "net.au", "org.au", "edu.au", "gov.au", "asn.au", "id.au",
-        "co.jp", "ne.jp", "or.jp", "ac.jp", "go.jp", "ed.jp",
-        "co.nz", "org.nz", "net.nz", "govt.nz", "ac.nz", "geek.nz",
-        "com.br", "org.br", "net.br", "gov.br", "edu.br",
-        "com.cn", "net.cn", "org.cn", "gov.cn", "edu.cn",
-        "co.in", "net.in", "org.in", "gen.in", "firm.in", "ind.in", "nic.in",
-        "ac.in", "edu.in", "res.in", "gov.in", "mil.in",
-        "co.za", "org.za", "gov.za", "ac.za", "net.za",
-        "com.sg", "edu.sg", "gov.sg", "net.sg", "org.sg",
-        "com.mx", "org.mx", "gob.mx", "edu.mx", "net.mx",
-        "co.kr", "ne.kr", "or.kr", "re.kr", "pe.kr", "go.kr", "ac.kr",
-        "com.tw", "org.tw", "net.tw", "gov.tw", "edu.tw", "idv.tw",
-        "com.hk", "org.hk", "net.hk", "gov.hk", "edu.hk",
-        "com.tr", "org.tr", "net.tr", "gov.tr", "edu.tr",
-        "com.ua", "net.ua", "org.ua", "gov.ua", "edu.ua",
-        "co.id", "or.id", "web.id", "go.id", "ac.id", "sch.id",
-        "com.my", "org.my", "net.my", "gov.my", "edu.my",
-        "com.ph", "org.ph", "net.ph", "gov.ph", "edu.ph",
-        "com.vn", "net.vn", "org.vn", "gov.vn", "edu.vn",
-        "com.ar", "org.ar", "gob.ar", "net.ar", "edu.ar",
-        "co.il", "org.il", "gov.il", "ac.il", "muni.il",
-        "github.io", "gitlab.io", "vercel.app", "netlify.app", "pages.dev",
+        "co.uk",
+        "org.uk",
+        "gov.uk",
+        "ac.uk",
+        "net.uk",
+        "me.uk",
+        "ltd.uk",
+        "plc.uk",
+        "com.au",
+        "net.au",
+        "org.au",
+        "edu.au",
+        "gov.au",
+        "asn.au",
+        "id.au",
+        "co.jp",
+        "ne.jp",
+        "or.jp",
+        "ac.jp",
+        "go.jp",
+        "ed.jp",
+        "co.nz",
+        "org.nz",
+        "net.nz",
+        "govt.nz",
+        "ac.nz",
+        "geek.nz",
+        "com.br",
+        "org.br",
+        "net.br",
+        "gov.br",
+        "edu.br",
+        "com.cn",
+        "net.cn",
+        "org.cn",
+        "gov.cn",
+        "edu.cn",
+        "co.in",
+        "net.in",
+        "org.in",
+        "gen.in",
+        "firm.in",
+        "ind.in",
+        "nic.in",
+        "ac.in",
+        "edu.in",
+        "res.in",
+        "gov.in",
+        "mil.in",
+        "co.za",
+        "org.za",
+        "gov.za",
+        "ac.za",
+        "net.za",
+        "com.sg",
+        "edu.sg",
+        "gov.sg",
+        "net.sg",
+        "org.sg",
+        "com.mx",
+        "org.mx",
+        "gob.mx",
+        "edu.mx",
+        "net.mx",
+        "co.kr",
+        "ne.kr",
+        "or.kr",
+        "re.kr",
+        "pe.kr",
+        "go.kr",
+        "ac.kr",
+        "com.tw",
+        "org.tw",
+        "net.tw",
+        "gov.tw",
+        "edu.tw",
+        "idv.tw",
+        "com.hk",
+        "org.hk",
+        "net.hk",
+        "gov.hk",
+        "edu.hk",
+        "com.tr",
+        "org.tr",
+        "net.tr",
+        "gov.tr",
+        "edu.tr",
+        "com.ua",
+        "net.ua",
+        "org.ua",
+        "gov.ua",
+        "edu.ua",
+        "co.id",
+        "or.id",
+        "web.id",
+        "go.id",
+        "ac.id",
+        "sch.id",
+        "com.my",
+        "org.my",
+        "net.my",
+        "gov.my",
+        "edu.my",
+        "com.ph",
+        "org.ph",
+        "net.ph",
+        "gov.ph",
+        "edu.ph",
+        "com.vn",
+        "net.vn",
+        "org.vn",
+        "gov.vn",
+        "edu.vn",
+        "com.ar",
+        "org.ar",
+        "gob.ar",
+        "net.ar",
+        "edu.ar",
+        "co.il",
+        "org.il",
+        "gov.il",
+        "ac.il",
+        "muni.il",
+        "github.io",
+        "gitlab.io",
+        "vercel.app",
+        "netlify.app",
+        "pages.dev",
     ];
 
     MULTI_PART_SUFFIXES.iter().any(|&s| d == s)
@@ -247,10 +352,8 @@ pub fn get_registrable_domain(host: &str) -> String {
         return d;
     }
     let last_two = format!("{}.{}", parts[parts.len() - 2], parts[parts.len() - 1]);
-    if is_public_suffix(&last_two) {
-        if parts.len() >= 3 {
-            return format!("{}.{}", parts[parts.len() - 3], last_two);
-        }
+    if is_public_suffix(&last_two) && parts.len() >= 3 {
+        return format!("{}.{}", parts[parts.len() - 3], last_two);
     }
     format!("{}.{}", parts[parts.len() - 2], parts[parts.len() - 1])
 }
@@ -403,10 +506,8 @@ impl CookieJar {
         }
 
         // __Host- prefix requires Secure, HTTPS, Path=/, and NO explicit Domain attribute
-        if name.starts_with("__Host-") {
-            if !secure || !is_https || explicit_domain || path != "/" {
-                return None;
-            }
+        if name.starts_with("__Host-") && (!secure || !is_https || explicit_domain || path != "/") {
+            return None;
         }
 
         let host_only = !explicit_domain;
@@ -527,7 +628,10 @@ impl CookieJar {
         let is_https = url.scheme.eq_ignore_ascii_case("https");
         let path = if url.path.is_empty() { "/" } else { &url.path };
 
-        let is_same_site = match (initiator_url.and_then(|u| u.host.as_deref()), url.host.as_deref()) {
+        let is_same_site = match (
+            initiator_url.and_then(|u| u.host.as_deref()),
+            url.host.as_deref(),
+        ) {
             (Some(h1), Some(h2)) => is_same_site_hosts(h1, h2),
             _ => true,
         };
@@ -597,7 +701,12 @@ impl CookieJar {
         is_top_level_navigation: bool,
         is_safe_method: bool,
     ) -> Option<String> {
-        let matching = self.get_cookies_with_context(url, initiator_url, is_top_level_navigation, is_safe_method);
+        let matching = self.get_cookies_with_context(
+            url,
+            initiator_url,
+            is_top_level_navigation,
+            is_safe_method,
+        );
         if matching.is_empty() {
             return None;
         }
@@ -775,14 +884,18 @@ fn cookie_domain_matches(url_host: &str, cookie_domain: &str, host_only: bool) -
 
 fn path_matches(url_path: &str, cookie_path: &str) -> bool {
     let u_path = if url_path.is_empty() { "/" } else { url_path };
-    let c_path = if cookie_path.is_empty() { "/" } else { cookie_path };
+    let c_path = if cookie_path.is_empty() {
+        "/"
+    } else {
+        cookie_path
+    };
     if u_path == c_path {
         return true;
     }
-    if u_path.starts_with(c_path) {
-        if c_path.ends_with('/') || u_path[c_path.len()..].starts_with('/') {
-            return true;
-        }
+    if u_path.starts_with(c_path)
+        && (c_path.ends_with('/') || u_path[c_path.len()..].starts_with('/'))
+    {
+        return true;
     }
     false
 }
@@ -793,12 +906,7 @@ const MONTHS: [&str; 12] = [
 
 /// Parses the RFC 1123 / RFC 850 / asctime date formats used by `Expires`.
 pub fn parse_http_date(input: &str) -> Option<u64> {
-    let cleaned: String = input
-        .replace(',', " ")
-        .replace('-', " ")
-        .chars()
-        .map(|c| c)
-        .collect();
+    let cleaned: String = input.replace([',', '-'], " ").chars().collect();
     let tokens: Vec<String> = cleaned
         .split_whitespace()
         .map(|t| t.to_ascii_lowercase())
@@ -817,7 +925,10 @@ pub fn parse_http_date(input: &str) -> Option<u64> {
             let mut parts = token.split(':');
             let h = parts.next().and_then(|v| v.parse::<u32>().ok());
             let m = parts.next().and_then(|v| v.parse::<u32>().ok());
-            let s = parts.next().and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
+            let s = parts
+                .next()
+                .and_then(|v| v.parse::<u32>().ok())
+                .unwrap_or(0);
             if let (Some(h), Some(m)) = (h, m) {
                 time = Some((h, m, s));
                 continue;
@@ -830,9 +941,7 @@ pub fn parse_http_date(input: &str) -> Option<u64> {
             continue;
         }
         if let Ok(num) = token.parse::<i64>() {
-            if day.is_none() && (1..=31).contains(&num) && month.is_some() {
-                day = Some(num as u32);
-            } else if month.is_none() && (1..=31).contains(&num) {
+            if day.is_none() && (1..=31).contains(&num) {
                 day = Some(num as u32);
             } else if year.is_none() {
                 // RFC 6265 §5.1.1: 70..=99 → 19xx, 00..=69 → 20xx.
@@ -849,10 +958,12 @@ pub fn parse_http_date(input: &str) -> Option<u64> {
     if year < 1601 {
         return None;
     }
-    Some(days_from_civil(year, month, day) * 86_400
-        + time.0 as u64 * 3600
-        + time.1 as u64 * 60
-        + time.2 as u64)
+    Some(
+        days_from_civil(year, month, day) * 86_400
+            + time.0 as u64 * 3600
+            + time.1 as u64 * 60
+            + time.2 as u64,
+    )
 }
 
 /// Howard Hinnant's days-from-civil algorithm (days since 1970-01-01).
@@ -900,7 +1011,9 @@ mod tests {
     fn test_cookie_deletion_via_max_age_zero() {
         let mut jar = CookieJar::new();
         let u = url("https://duckduckgo.com/");
-        jar.store_cookie(CookieJar::parse_set_cookie("p=1; Domain=duckduckgo.com; Path=/", &u).unwrap());
+        jar.store_cookie(
+            CookieJar::parse_set_cookie("p=1; Domain=duckduckgo.com; Path=/", &u).unwrap(),
+        );
         assert_eq!(jar.len(), 1);
         jar.store_cookie(
             CookieJar::parse_set_cookie("p=deleted; Max-Age=0; Domain=duckduckgo.com; Path=/", &u)
@@ -927,8 +1040,7 @@ mod tests {
         let sub = url("https://api.example.com/");
         assert!(jar.get_cookie_header(&sub).is_none());
 
-        let with_domain =
-            CookieJar::parse_set_cookie("b=2; Domain=.example.com", &host).unwrap();
+        let with_domain = CookieJar::parse_set_cookie("b=2; Domain=.example.com", &host).unwrap();
         jar.store_cookie(with_domain);
         assert!(jar.get_cookie_header(&sub).is_some());
     }
@@ -969,9 +1081,7 @@ mod tests {
             )
             .unwrap(),
         );
-        jar.store_cookie(
-            CookieJar::parse_set_cookie("anon_session=1; Path=/item", &u).unwrap(),
-        );
+        jar.store_cookie(CookieJar::parse_set_cookie("anon_session=1; Path=/item", &u).unwrap());
 
         let serialized = jar.to_profile_string();
         assert!(serialized.contains("news.ycombinator.com"));
@@ -1033,11 +1143,20 @@ mod tests {
     #[test]
     fn test_expires_header_parsing() {
         // RFC 1123
-        assert_eq!(parse_http_date("Wed, 21 Oct 2015 07:28:00 GMT"), Some(1_445_412_480));
+        assert_eq!(
+            parse_http_date("Wed, 21 Oct 2015 07:28:00 GMT"),
+            Some(1_445_412_480)
+        );
         // RFC 850
-        assert_eq!(parse_http_date("Wednesday, 21-Oct-15 07:28:00 GMT"), Some(1_445_412_480));
+        assert_eq!(
+            parse_http_date("Wednesday, 21-Oct-15 07:28:00 GMT"),
+            Some(1_445_412_480)
+        );
         // asctime
-        assert_eq!(parse_http_date("Wed Oct 21 07:28:00 2015"), Some(1_445_412_480));
+        assert_eq!(
+            parse_http_date("Wed Oct 21 07:28:00 2015"),
+            Some(1_445_412_480)
+        );
         assert_eq!(parse_http_date("not a date"), None);
     }
 
@@ -1147,10 +1266,20 @@ mod tests {
         assert!(CookieJar::parse_set_cookie("__Secure-sess=1; Secure", &secure_url).is_some());
 
         // __Host- requires HTTPS, Secure, Path=/, and NO Domain attribute
-        assert!(CookieJar::parse_set_cookie("__Host-id=1; Secure; Path=/", &insecure_url).is_none()); // not HTTPS
+        assert!(
+            CookieJar::parse_set_cookie("__Host-id=1; Secure; Path=/", &insecure_url).is_none()
+        ); // not HTTPS
         assert!(CookieJar::parse_set_cookie("__Host-id=1; Path=/", &secure_url).is_none()); // missing Secure
-        assert!(CookieJar::parse_set_cookie("__Host-id=1; Secure; Path=/sub", &secure_url).is_none()); // path not /
-        assert!(CookieJar::parse_set_cookie("__Host-id=1; Secure; Domain=example.com; Path=/", &secure_url).is_none()); // Domain present
+        assert!(
+            CookieJar::parse_set_cookie("__Host-id=1; Secure; Path=/sub", &secure_url).is_none()
+        ); // path not /
+        assert!(
+            CookieJar::parse_set_cookie(
+                "__Host-id=1; Secure; Domain=example.com; Path=/",
+                &secure_url
+            )
+            .is_none()
+        ); // Domain present
         assert!(CookieJar::parse_set_cookie("__Host-id=1; Secure; Path=/", &secure_url).is_some());
     }
 
@@ -1181,7 +1310,11 @@ mod tests {
     #[test]
     fn test_quoted_attributes_and_positive_max_age() {
         let u = url("https://example.com/");
-        let c = CookieJar::parse_set_cookie(r#"val="hello world"; Path="/"; Max-Age="+3600"; SameSite="Strict""#, &u).unwrap();
+        let c = CookieJar::parse_set_cookie(
+            r#"val="hello world"; Path="/"; Max-Age="+3600"; SameSite="Strict""#,
+            &u,
+        )
+        .unwrap();
         assert_eq!(c.value, "hello world");
         assert_eq!(c.path, "/");
         assert_eq!(c.same_site, SameSite::Strict);

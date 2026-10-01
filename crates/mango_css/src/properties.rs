@@ -35,7 +35,9 @@ impl Declaration {
             "margin" => expand_four_sides("margin", &self.value, important),
             "padding" => expand_four_sides("padding", &self.value, important),
 
-            "border" => expand_border_sides(&["top", "right", "bottom", "left"], &self.value, important),
+            "border" => {
+                expand_border_sides(&["top", "right", "bottom", "left"], &self.value, important)
+            }
             "border-top" => expand_border_sides(&["top"], &self.value, important),
             "border-right" => expand_border_sides(&["right"], &self.value, important),
             "border-bottom" => expand_border_sides(&["bottom"], &self.value, important),
@@ -62,9 +64,15 @@ impl Declaration {
             "grid-row" => expand_grid_placement_shorthand("grid-row", &self.value, important),
             "grid-area" => expand_grid_area_shorthand(&self.value, important),
             "grid-template" => expand_grid_template_shorthand(&self.value, important),
-            "place-items" => expand_place_shorthand("align-items", "justify-items", &self.value, important),
-            "place-content" => expand_place_shorthand("align-content", "justify-content", &self.value, important),
-            "place-self" => expand_place_shorthand("align-self", "justify-self", &self.value, important),
+            "place-items" => {
+                expand_place_shorthand("align-items", "justify-items", &self.value, important)
+            }
+            "place-content" => {
+                expand_place_shorthand("align-content", "justify-content", &self.value, important)
+            }
+            "place-self" => {
+                expand_place_shorthand("align-self", "justify-self", &self.value, important)
+            }
             "column-rule" => expand_column_rule_shorthand(&self.value, important),
             "text-emphasis" => expand_text_emphasis_shorthand(&self.value, important),
             "container" => expand_container_shorthand(&self.value, important),
@@ -85,20 +93,32 @@ fn expand_container_shorthand(value: &Value, important: bool) -> Vec<Declaration
         }
         Value::ContainerType(ct) => {
             vec![
-                Declaration::new("container-name", Value::Keyword("none".to_string()), important),
+                Declaration::new(
+                    "container-name",
+                    Value::Keyword("none".to_string()),
+                    important,
+                ),
                 Declaration::new("container-type", Value::ContainerType(*ct), important),
             ]
         }
         Value::String(s) | Value::Keyword(s) => {
             if let Some(ct) = crate::values::ContainerType::parse(s) {
                 vec![
-                    Declaration::new("container-name", Value::Keyword("none".to_string()), important),
+                    Declaration::new(
+                        "container-name",
+                        Value::Keyword("none".to_string()),
+                        important,
+                    ),
                     Declaration::new("container-type", Value::ContainerType(ct), important),
                 ]
             } else {
                 vec![
                     Declaration::new("container-name", Value::String(s.clone()), important),
-                    Declaration::new("container-type", Value::ContainerType(crate::values::ContainerType::Normal), important),
+                    Declaration::new(
+                        "container-type",
+                        Value::ContainerType(crate::values::ContainerType::Normal),
+                        important,
+                    ),
                 ]
             }
         }
@@ -107,7 +127,11 @@ fn expand_container_shorthand(value: &Value, important: bool) -> Vec<Declaration
 }
 
 /// Expands grid-column or grid-row shorthand into -start and -end declarations.
-fn expand_grid_placement_shorthand(prefix: &str, value: &Value, important: bool) -> Vec<Declaration> {
+fn expand_grid_placement_shorthand(
+    prefix: &str,
+    value: &Value,
+    important: bool,
+) -> Vec<Declaration> {
     let start_name = format!("{prefix}-start");
     let end_name = format!("{prefix}-end");
 
@@ -140,14 +164,26 @@ fn expand_grid_area_shorthand(value: &Value, important: bool) -> Vec<Declaration
             2 => vec![
                 Declaration::new("grid-row-start", items[0].clone(), important),
                 Declaration::new("grid-column-start", items[1].clone(), important),
-                Declaration::new("grid-row-end", Value::GridPlacement(crate::values::GridPlacement::Auto), important),
-                Declaration::new("grid-column-end", Value::GridPlacement(crate::values::GridPlacement::Auto), important),
+                Declaration::new(
+                    "grid-row-end",
+                    Value::GridPlacement(crate::values::GridPlacement::Auto),
+                    important,
+                ),
+                Declaration::new(
+                    "grid-column-end",
+                    Value::GridPlacement(crate::values::GridPlacement::Auto),
+                    important,
+                ),
             ],
             3 => vec![
                 Declaration::new("grid-row-start", items[0].clone(), important),
                 Declaration::new("grid-column-start", items[1].clone(), important),
                 Declaration::new("grid-row-end", items[2].clone(), important),
-                Declaration::new("grid-column-end", Value::GridPlacement(crate::values::GridPlacement::Auto), important),
+                Declaration::new(
+                    "grid-column-end",
+                    Value::GridPlacement(crate::values::GridPlacement::Auto),
+                    important,
+                ),
             ],
             _ => vec![
                 Declaration::new("grid-row-start", items[0].clone(), important),
@@ -172,7 +208,11 @@ fn expand_grid_template_shorthand(value: &Value, important: bool) -> Vec<Declara
             Declaration::new("grid-template-rows", items[0].clone(), important),
             Declaration::new("grid-template-columns", items[1].clone(), important),
         ],
-        single => vec![Declaration::new("grid-template-rows", single.clone(), important)],
+        single => vec![Declaration::new(
+            "grid-template-rows",
+            single.clone(),
+            important,
+        )],
     }
 }
 
@@ -184,10 +224,30 @@ fn expand_border_radius_shorthand(value: &Value, important: bool) -> Vec<Declara
     };
 
     let (tl, tr, br, bl) = match values.len() {
-        1 => (values[0].clone(), values[0].clone(), values[0].clone(), values[0].clone()),
-        2 => (values[0].clone(), values[1].clone(), values[0].clone(), values[1].clone()),
-        3 => (values[0].clone(), values[1].clone(), values[2].clone(), values[1].clone()),
-        4 => (values[0].clone(), values[1].clone(), values[2].clone(), values[3].clone()),
+        1 => (
+            values[0].clone(),
+            values[0].clone(),
+            values[0].clone(),
+            values[0].clone(),
+        ),
+        2 => (
+            values[0].clone(),
+            values[1].clone(),
+            values[0].clone(),
+            values[1].clone(),
+        ),
+        3 => (
+            values[0].clone(),
+            values[1].clone(),
+            values[2].clone(),
+            values[1].clone(),
+        ),
+        4 => (
+            values[0].clone(),
+            values[1].clone(),
+            values[2].clone(),
+            values[3].clone(),
+        ),
         _ => return vec![Declaration::new("border-radius", value.clone(), important)],
     };
 
@@ -238,7 +298,11 @@ fn expand_list_style_shorthand(value: &Value, important: bool) -> Vec<Declaratio
         }
     }
     if decls.is_empty() {
-        vec![Declaration::new("list-style-type", value.clone(), important)]
+        vec![Declaration::new(
+            "list-style-type",
+            value.clone(),
+            important,
+        )]
     } else {
         decls
     }
@@ -252,10 +316,30 @@ fn expand_four_sides(prefix: &str, value: &Value, important: bool) -> Vec<Declar
     };
 
     let (top, right, bottom, left) = match values.len() {
-        1 => (values[0].clone(), values[0].clone(), values[0].clone(), values[0].clone()),
-        2 => (values[0].clone(), values[1].clone(), values[0].clone(), values[1].clone()),
-        3 => (values[0].clone(), values[1].clone(), values[2].clone(), values[1].clone()),
-        4 => (values[0].clone(), values[1].clone(), values[2].clone(), values[3].clone()),
+        1 => (
+            values[0].clone(),
+            values[0].clone(),
+            values[0].clone(),
+            values[0].clone(),
+        ),
+        2 => (
+            values[0].clone(),
+            values[1].clone(),
+            values[0].clone(),
+            values[1].clone(),
+        ),
+        3 => (
+            values[0].clone(),
+            values[1].clone(),
+            values[2].clone(),
+            values[1].clone(),
+        ),
+        4 => (
+            values[0].clone(),
+            values[1].clone(),
+            values[2].clone(),
+            values[3].clone(),
+        ),
         _ => return vec![Declaration::new(prefix, value.clone(), important)],
     };
 
@@ -268,18 +352,49 @@ fn expand_four_sides(prefix: &str, value: &Value, important: bool) -> Vec<Declar
 }
 
 /// Expands border scalar properties (e.g. `border-width: 1px 2px`).
-fn expand_four_sides_scalar(prefix: &str, suffix: &str, value: &Value, important: bool) -> Vec<Declaration> {
+fn expand_four_sides_scalar(
+    prefix: &str,
+    suffix: &str,
+    value: &Value,
+    important: bool,
+) -> Vec<Declaration> {
     let values = match value {
         Value::List(items) => items.clone(),
         single => vec![single.clone()],
     };
 
     let (top, right, bottom, left) = match values.len() {
-        1 => (values[0].clone(), values[0].clone(), values[0].clone(), values[0].clone()),
-        2 => (values[0].clone(), values[1].clone(), values[0].clone(), values[1].clone()),
-        3 => (values[0].clone(), values[1].clone(), values[2].clone(), values[1].clone()),
-        4 => (values[0].clone(), values[1].clone(), values[2].clone(), values[3].clone()),
-        _ => return vec![Declaration::new(format!("{prefix}-{suffix}"), value.clone(), important)],
+        1 => (
+            values[0].clone(),
+            values[0].clone(),
+            values[0].clone(),
+            values[0].clone(),
+        ),
+        2 => (
+            values[0].clone(),
+            values[1].clone(),
+            values[0].clone(),
+            values[1].clone(),
+        ),
+        3 => (
+            values[0].clone(),
+            values[1].clone(),
+            values[2].clone(),
+            values[1].clone(),
+        ),
+        4 => (
+            values[0].clone(),
+            values[1].clone(),
+            values[2].clone(),
+            values[3].clone(),
+        ),
+        _ => {
+            return vec![Declaration::new(
+                format!("{prefix}-{suffix}"),
+                value.clone(),
+                important,
+            )];
+        }
     };
 
     vec![
@@ -322,11 +437,11 @@ fn expand_background_shorthand(value: &Value, important: bool) -> Vec<Declaratio
             let mut layer_clip = None;
 
             for item in chunk {
-                if let Value::Keyword(k) = item {
-                    if k == "/" {
-                        in_size = true;
-                        continue;
-                    }
+                if let Value::Keyword(k) = item
+                    && k == "/"
+                {
+                    in_size = true;
+                    continue;
                 }
                 match item {
                     Value::Url(_) | Value::Gradient(_) => {
@@ -338,7 +453,9 @@ fn expand_background_shorthand(value: &Value, important: bool) -> Vec<Declaratio
                     Value::BackgroundSize(_) => layer_size = Some(item.clone()),
                     Value::BackgroundAttachment(_) => layer_att = Some(item.clone()),
                     Value::BackgroundClip(_) => layer_clip = Some(item.clone()),
-                    Value::Color(_) | Value::Var { .. } | Value::CurrentColor => color = Some(item.clone()),
+                    Value::Color(_) | Value::Var { .. } | Value::CurrentColor => {
+                        color = Some(item.clone())
+                    }
                     Value::Length(_) | Value::Percentage(_) => {
                         if in_size {
                             layer_sizes.push(item.clone());
@@ -350,7 +467,9 @@ fn expand_background_shorthand(value: &Value, important: bool) -> Vec<Declaratio
                         "none" => {
                             layer_img = Some(Value::Keyword("none".to_string()));
                         }
-                        "repeat" | "repeat-x" | "repeat-y" | "no-repeat" => layer_repeat = Some(item.clone()),
+                        "repeat" | "repeat-x" | "repeat-y" | "no-repeat" => {
+                            layer_repeat = Some(item.clone())
+                        }
                         "cover" | "contain" => layer_size = Some(item.clone()),
                         "auto" => {
                             if in_size {
@@ -381,17 +500,31 @@ fn expand_background_shorthand(value: &Value, important: bool) -> Vec<Declaratio
             }
 
             images.push(layer_img.unwrap_or(Value::Keyword("none".to_string())));
-            if let Some(r) = layer_repeat { repeats.push(r); }
+            if let Some(r) = layer_repeat {
+                repeats.push(r);
+            }
             if let Some(s) = layer_size {
                 sizes.push(s);
             } else if !layer_sizes.is_empty() {
-                sizes.push(if layer_sizes.len() == 1 { layer_sizes[0].clone() } else { Value::List(layer_sizes) });
+                sizes.push(if layer_sizes.len() == 1 {
+                    layer_sizes[0].clone()
+                } else {
+                    Value::List(layer_sizes)
+                });
             }
             if !layer_pos.is_empty() {
-                positions.push(if layer_pos.len() == 1 { layer_pos[0].clone() } else { Value::List(layer_pos) });
+                positions.push(if layer_pos.len() == 1 {
+                    layer_pos[0].clone()
+                } else {
+                    Value::List(layer_pos)
+                });
             }
-            if let Some(a) = layer_att { attachments.push(a); }
-            if let Some(c) = layer_clip { clips.push(c); }
+            if let Some(a) = layer_att {
+                attachments.push(a);
+            }
+            if let Some(c) = layer_clip {
+                clips.push(c);
+            }
         }
 
         let mut decls = Vec::new();
@@ -399,22 +532,46 @@ fn expand_background_shorthand(value: &Value, important: bool) -> Vec<Declaratio
             decls.push(Declaration::new("background-color", c, important));
         }
         if !images.is_empty() {
-            decls.push(Declaration::new("background-image", Value::List(images), important));
+            decls.push(Declaration::new(
+                "background-image",
+                Value::List(images),
+                important,
+            ));
         }
         if !repeats.is_empty() {
-            decls.push(Declaration::new("background-repeat", Value::List(repeats), important));
+            decls.push(Declaration::new(
+                "background-repeat",
+                Value::List(repeats),
+                important,
+            ));
         }
         if !sizes.is_empty() {
-            decls.push(Declaration::new("background-size", Value::List(sizes), important));
+            decls.push(Declaration::new(
+                "background-size",
+                Value::List(sizes),
+                important,
+            ));
         }
         if !positions.is_empty() {
-            decls.push(Declaration::new("background-position", Value::List(positions), important));
+            decls.push(Declaration::new(
+                "background-position",
+                Value::List(positions),
+                important,
+            ));
         }
         if !attachments.is_empty() {
-            decls.push(Declaration::new("background-attachment", Value::List(attachments), important));
+            decls.push(Declaration::new(
+                "background-attachment",
+                Value::List(attachments),
+                important,
+            ));
         }
         if !clips.is_empty() {
-            decls.push(Declaration::new("background-clip", Value::List(clips), important));
+            decls.push(Declaration::new(
+                "background-clip",
+                Value::List(clips),
+                important,
+            ));
         }
         return decls;
     }
@@ -432,11 +589,11 @@ fn expand_background_shorthand(value: &Value, important: bool) -> Vec<Declaratio
     let mut clip = None;
 
     for item in items {
-        if let Value::Keyword(k) = item {
-            if k == "/" {
-                in_size = true;
-                continue;
-            }
+        if let Value::Keyword(k) = item
+            && k == "/"
+        {
+            in_size = true;
+            continue;
         }
         match item {
             Value::Url(_) => {
@@ -520,16 +677,32 @@ fn expand_background_shorthand(value: &Value, important: bool) -> Vec<Declaratio
         decls.push(Declaration::new("background-size", s, important));
     } else if !sizes.is_empty() {
         if sizes.len() == 1 {
-            decls.push(Declaration::new("background-size", sizes[0].clone(), important));
+            decls.push(Declaration::new(
+                "background-size",
+                sizes[0].clone(),
+                important,
+            ));
         } else {
-            decls.push(Declaration::new("background-size", Value::List(sizes), important));
+            decls.push(Declaration::new(
+                "background-size",
+                Value::List(sizes),
+                important,
+            ));
         }
     }
     if !positions.is_empty() {
         if positions.len() == 1 {
-            decls.push(Declaration::new("background-position", positions[0].clone(), important));
+            decls.push(Declaration::new(
+                "background-position",
+                positions[0].clone(),
+                important,
+            ));
         } else {
-            decls.push(Declaration::new("background-position", Value::List(positions), important));
+            decls.push(Declaration::new(
+                "background-position",
+                Value::List(positions),
+                important,
+            ));
         }
     }
     if let Some(a) = attachment {
@@ -560,10 +733,10 @@ fn expand_border_sides(sides: &[&str], value: &Value, important: bool) -> Vec<De
     for item in items {
         match item {
             Value::Length(len) => {
-                if let Length::Px(px) = len {
-                    if *px == 0.0 {
-                        style = Some(Value::BorderStyle(BorderStyle::None));
-                    }
+                if let Length::Px(px) = len
+                    && *px == 0.0
+                {
+                    style = Some(Value::BorderStyle(BorderStyle::None));
                 }
                 width = Some(item.clone());
             }
@@ -595,10 +768,29 @@ fn expand_border_sides(sides: &[&str], value: &Value, important: bool) -> Vec<De
         }
     }
 
-    let is_none_style = style.as_ref().map(|s| matches!(s, Value::BorderStyle(BorderStyle::None) | Value::BorderStyle(BorderStyle::Hidden))).unwrap_or(false)
-        || width.as_ref().map(|w| matches!(w, Value::Length(Length::Px(p)) if *p == 0.0)).unwrap_or(false);
-    let default_width = if is_none_style { Length::Px(0.0) } else { Length::Px(1.0) };
-    let default_style = if is_none_style { BorderStyle::None } else { BorderStyle::Solid };
+    let is_none_style = style
+        .as_ref()
+        .map(|s| {
+            matches!(
+                s,
+                Value::BorderStyle(BorderStyle::None) | Value::BorderStyle(BorderStyle::Hidden)
+            )
+        })
+        .unwrap_or(false)
+        || width
+            .as_ref()
+            .map(|w| matches!(w, Value::Length(Length::Px(p)) if *p == 0.0))
+            .unwrap_or(false);
+    let default_width = if is_none_style {
+        Length::Px(0.0)
+    } else {
+        Length::Px(1.0)
+    };
+    let default_style = if is_none_style {
+        BorderStyle::None
+    } else {
+        BorderStyle::Solid
+    };
     let default_color = if is_none_style {
         Value::Color(mango_core::Color::TRANSPARENT)
     } else {
@@ -611,9 +803,21 @@ fn expand_border_sides(sides: &[&str], value: &Value, important: bool) -> Vec<De
 
     let mut decls = Vec::with_capacity(sides.len() * 3);
     for side in sides {
-        decls.push(Declaration::new(format!("border-{side}-width"), width_val.clone(), important));
-        decls.push(Declaration::new(format!("border-{side}-style"), style_val.clone(), important));
-        decls.push(Declaration::new(format!("border-{side}-color"), color_val.clone(), important));
+        decls.push(Declaration::new(
+            format!("border-{side}-width"),
+            width_val.clone(),
+            important,
+        ));
+        decls.push(Declaration::new(
+            format!("border-{side}-style"),
+            style_val.clone(),
+            important,
+        ));
+        decls.push(Declaration::new(
+            format!("border-{side}-color"),
+            color_val.clone(),
+            important,
+        ));
     }
     decls
 }
@@ -633,7 +837,9 @@ fn expand_text_emphasis_shorthand(value: &Value, important: bool) -> Vec<Declara
     for item in &items {
         match item {
             Value::Color(c) => color_val = Some(Value::Color(*c)),
-            Value::TextEmphasisStyle(tes) => style_val = Some(Value::TextEmphasisStyle(tes.clone())),
+            Value::TextEmphasisStyle(tes) => {
+                style_val = Some(Value::TextEmphasisStyle(tes.clone()))
+            }
             Value::Keyword(k) => {
                 if let Some(c) = Value::parse_color(k) {
                     color_val = Some(Value::Color(c));
@@ -683,7 +889,11 @@ fn expand_text_emphasis_shorthand(value: &Value, important: bool) -> Vec<Declara
         decls.push(Declaration::new("text-emphasis-color", cv, important));
     }
     if decls.is_empty() {
-        vec![Declaration::new("text-emphasis-style", Value::Keyword("none".to_string()), important)]
+        vec![Declaration::new(
+            "text-emphasis-style",
+            Value::Keyword("none".to_string()),
+            important,
+        )]
     } else {
         decls
     }
@@ -792,12 +1002,22 @@ fn expand_flex_flow_shorthand(value: &Value, important: bool) -> Vec<Declaration
             Value::FlexWrap(fw) => wrap = Some(Value::FlexWrap(*fw)),
             Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
                 "row" => dir = Some(Value::FlexDirection(crate::values::FlexDirection::Row)),
-                "row-reverse" => dir = Some(Value::FlexDirection(crate::values::FlexDirection::RowReverse)),
+                "row-reverse" => {
+                    dir = Some(Value::FlexDirection(
+                        crate::values::FlexDirection::RowReverse,
+                    ))
+                }
                 "column" => dir = Some(Value::FlexDirection(crate::values::FlexDirection::Column)),
-                "column-reverse" => dir = Some(Value::FlexDirection(crate::values::FlexDirection::ColumnReverse)),
+                "column-reverse" => {
+                    dir = Some(Value::FlexDirection(
+                        crate::values::FlexDirection::ColumnReverse,
+                    ))
+                }
                 "nowrap" => wrap = Some(Value::FlexWrap(crate::values::FlexWrap::NoWrap)),
                 "wrap" => wrap = Some(Value::FlexWrap(crate::values::FlexWrap::Wrap)),
-                "wrap-reverse" => wrap = Some(Value::FlexWrap(crate::values::FlexWrap::WrapReverse)),
+                "wrap-reverse" => {
+                    wrap = Some(Value::FlexWrap(crate::values::FlexWrap::WrapReverse))
+                }
                 _ => {}
             },
             _ => {}
@@ -833,7 +1053,12 @@ fn expand_gap_shorthand(value: &Value, important: bool) -> Vec<Declaration> {
 }
 
 /// Expands place-items, place-content, or place-self shorthand.
-fn expand_place_shorthand(align_prop: &str, justify_prop: &str, value: &Value, important: bool) -> Vec<Declaration> {
+fn expand_place_shorthand(
+    align_prop: &str,
+    justify_prop: &str,
+    value: &Value,
+    important: bool,
+) -> Vec<Declaration> {
     let items = match value {
         Value::List(list) => list.as_slice(),
         single => std::slice::from_ref(single),
@@ -892,9 +1117,21 @@ fn expand_column_rule_shorthand(value: &Value, important: bool) -> Vec<Declarati
     }
 
     vec![
-        Declaration::new("column-rule-width", width.unwrap_or(Value::Length(Length::Px(1.0))), important),
-        Declaration::new("column-rule-style", style.unwrap_or(Value::BorderStyle(BorderStyle::Solid)), important),
-        Declaration::new("column-rule-color", color.unwrap_or(Value::Color(mango_core::Color::BLACK)), important),
+        Declaration::new(
+            "column-rule-width",
+            width.unwrap_or(Value::Length(Length::Px(1.0))),
+            important,
+        ),
+        Declaration::new(
+            "column-rule-style",
+            style.unwrap_or(Value::BorderStyle(BorderStyle::Solid)),
+            important,
+        ),
+        Declaration::new(
+            "column-rule-color",
+            color.unwrap_or(Value::Color(mango_core::Color::BLACK)),
+            important,
+        ),
     ]
 }
 
@@ -912,10 +1149,10 @@ fn expand_outline_shorthand(value: &Value, important: bool) -> Vec<Declaration> 
     for item in items {
         match item {
             Value::Length(len) => {
-                if let Length::Px(px) = len {
-                    if *px == 0.0 {
-                        style = Some(Value::BorderStyle(BorderStyle::None));
-                    }
+                if let Length::Px(px) = len
+                    && *px == 0.0
+                {
+                    style = Some(Value::BorderStyle(BorderStyle::None));
                 }
                 width = Some(item.clone());
             }
@@ -959,11 +1196,34 @@ fn expand_outline_shorthand(value: &Value, important: bool) -> Vec<Declaration> 
         }
     }
 
-    let is_none_style = style.as_ref().map(|s| matches!(s, Value::BorderStyle(BorderStyle::None) | Value::BorderStyle(BorderStyle::Hidden))).unwrap_or(false)
-        || width.as_ref().map(|w| matches!(w, Value::Length(Length::Px(p)) if *p == 0.0)).unwrap_or(false);
-    let default_width = if is_none_style { Length::Px(0.0) } else { Length::Px(1.0) };
-    let default_style = if is_none_style { BorderStyle::None } else { BorderStyle::Solid };
-    let default_color = if is_none_style { mango_core::Color::TRANSPARENT } else { mango_core::Color::BLACK };
+    let is_none_style = style
+        .as_ref()
+        .map(|s| {
+            matches!(
+                s,
+                Value::BorderStyle(BorderStyle::None) | Value::BorderStyle(BorderStyle::Hidden)
+            )
+        })
+        .unwrap_or(false)
+        || width
+            .as_ref()
+            .map(|w| matches!(w, Value::Length(Length::Px(p)) if *p == 0.0))
+            .unwrap_or(false);
+    let default_width = if is_none_style {
+        Length::Px(0.0)
+    } else {
+        Length::Px(1.0)
+    };
+    let default_style = if is_none_style {
+        BorderStyle::None
+    } else {
+        BorderStyle::Solid
+    };
+    let default_color = if is_none_style {
+        mango_core::Color::TRANSPARENT
+    } else {
+        mango_core::Color::BLACK
+    };
 
     let width_val = width.unwrap_or(Value::Length(default_width));
     let style_val = style.unwrap_or(Value::BorderStyle(default_style));
@@ -989,21 +1249,18 @@ fn expand_columns_shorthand(value: &Value, important: bool) -> Vec<Declaration> 
     for item in items {
         match item {
             Value::Length(len) => {
-                col_width = Some(Value::Length(len.clone()));
+                col_width = Some(Value::Length(*len));
             }
             Value::Number(n) => {
                 col_count = Some(Value::Number(*n));
             }
-            Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
-                "auto" => {
-                    if col_width.is_none() {
-                        col_width = Some(Value::Keyword("auto".to_string()));
-                    } else {
-                        col_count = Some(Value::Keyword("auto".to_string()));
-                    }
+            Value::Keyword(k) if k.eq_ignore_ascii_case("auto") => {
+                if col_width.is_none() {
+                    col_width = Some(Value::Keyword("auto".to_string()));
+                } else {
+                    col_count = Some(Value::Keyword("auto".to_string()));
                 }
-                _ => {}
-            },
+            }
             _ => {}
         }
     }
@@ -1031,11 +1288,31 @@ fn expand_mask_shorthand(prefix: &str, value: &Value, important: bool) -> Vec<De
     let mut size = None;
     let mut positions = Vec::new();
 
-    let img_prop = if prefix.starts_with("-webkit") { "-webkit-mask-image" } else { "mask-image" };
-    let mode_prop = if prefix.starts_with("-webkit") { "-webkit-mask-mode" } else { "mask-mode" };
-    let repeat_prop = if prefix.starts_with("-webkit") { "-webkit-mask-repeat" } else { "mask-repeat" };
-    let size_prop = if prefix.starts_with("-webkit") { "-webkit-mask-size" } else { "mask-size" };
-    let pos_prop = if prefix.starts_with("-webkit") { "-webkit-mask-position" } else { "mask-position" };
+    let img_prop = if prefix.starts_with("-webkit") {
+        "-webkit-mask-image"
+    } else {
+        "mask-image"
+    };
+    let mode_prop = if prefix.starts_with("-webkit") {
+        "-webkit-mask-mode"
+    } else {
+        "mask-mode"
+    };
+    let repeat_prop = if prefix.starts_with("-webkit") {
+        "-webkit-mask-repeat"
+    } else {
+        "mask-repeat"
+    };
+    let size_prop = if prefix.starts_with("-webkit") {
+        "-webkit-mask-size"
+    } else {
+        "mask-size"
+    };
+    let pos_prop = if prefix.starts_with("-webkit") {
+        "-webkit-mask-position"
+    } else {
+        "mask-position"
+    };
 
     for item in items {
         match item {
@@ -1075,7 +1352,11 @@ fn expand_mask_shorthand(prefix: &str, value: &Value, important: bool) -> Vec<De
         if positions.len() == 1 {
             decls.push(Declaration::new(pos_prop, positions[0].clone(), important));
         } else {
-            decls.push(Declaration::new(pos_prop, Value::List(positions), important));
+            decls.push(Declaration::new(
+                pos_prop,
+                Value::List(positions),
+                important,
+            ));
         }
     }
 
@@ -1105,7 +1386,10 @@ mod tests {
 
         let gap_decl = Declaration::new(
             "gap",
-            Value::List(vec![Value::Length(Length::Px(10.0)), Value::Length(Length::Px(20.0))]),
+            Value::List(vec![
+                Value::Length(Length::Px(10.0)),
+                Value::Length(Length::Px(20.0)),
+            ]),
             false,
         );
         let expanded_gap = gap_decl.expand_shorthand();
@@ -1120,7 +1404,10 @@ mod tests {
     fn test_expand_margin_shorthand() {
         let decl = Declaration::new(
             "margin",
-            Value::List(vec![Value::Length(Length::Px(10.0)), Value::Length(Length::Px(20.0))]),
+            Value::List(vec![
+                Value::Length(Length::Px(10.0)),
+                Value::Length(Length::Px(20.0)),
+            ]),
             false,
         );
         let expanded = decl.expand_shorthand();
@@ -1177,17 +1464,17 @@ mod tests {
         let expanded_none = none_decl.expand_shorthand();
         assert_eq!(expanded_none.len(), 3);
         assert_eq!(expanded_none[0].value, Value::Length(Length::Px(0.0)));
-        assert_eq!(expanded_none[1].value, Value::BorderStyle(BorderStyle::None));
+        assert_eq!(
+            expanded_none[1].value,
+            Value::BorderStyle(BorderStyle::None)
+        );
     }
 
     #[test]
     fn test_expand_columns_shorthand() {
         let decl = Declaration::new(
             "columns",
-            Value::List(vec![
-                Value::Length(Length::Px(250.0)),
-                Value::Number(2.0),
-            ]),
+            Value::List(vec![Value::Length(Length::Px(250.0)), Value::Number(2.0)]),
             false,
         );
         let expanded = decl.expand_shorthand();
@@ -1214,7 +1501,10 @@ mod tests {
         assert_eq!(expanded[0].name, "mask-image");
         assert_eq!(expanded[0].value, Value::Url("mask.png".to_string()));
         assert_eq!(expanded[1].name, "mask-mode");
-        assert_eq!(expanded[1].value, Value::MaskMode(crate::values::MaskMode::Alpha));
+        assert_eq!(
+            expanded[1].value,
+            Value::MaskMode(crate::values::MaskMode::Alpha)
+        );
         assert_eq!(expanded[2].name, "mask-repeat");
     }
 }

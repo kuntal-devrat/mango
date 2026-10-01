@@ -45,10 +45,24 @@ pub fn layout_grid(
     let font_size = style.font_size;
 
     // 1. Resolve container padding, borders, and margins
-    let pad_top = style.padding_top.to_px_with_viewport(font_size, 16.0, container_width, container_height);
-    let pad_right = style.padding_right.to_px_with_viewport(font_size, 16.0, container_width, container_height);
-    let pad_bottom = style.padding_bottom.to_px_with_viewport(font_size, 16.0, container_width, container_height);
-    let pad_left = style.padding_left.to_px_with_viewport(font_size, 16.0, container_width, container_height);
+    let pad_top =
+        style
+            .padding_top
+            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
+    let pad_right =
+        style
+            .padding_right
+            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
+    let pad_bottom = style.padding_bottom.to_px_with_viewport(
+        font_size,
+        16.0,
+        container_width,
+        container_height,
+    );
+    let pad_left =
+        style
+            .padding_left
+            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
 
     let border_top = style.border_top_width;
     let border_right = style.border_right_width;
@@ -56,17 +70,30 @@ pub fn layout_grid(
     let border_left = style.border_left_width;
 
     container.dimensions.padding = EdgeSizes::new(pad_top, pad_right, pad_bottom, pad_left);
-    container.dimensions.border = EdgeSizes::new(border_top, border_right, border_bottom, border_left);
+    container.dimensions.border =
+        EdgeSizes::new(border_top, border_right, border_bottom, border_left);
 
-    let margin_top = style.margin_top.to_px_with_viewport(font_size, 16.0, container_width, container_height);
-    let margin_bottom = style.margin_bottom.to_px_with_viewport(font_size, 16.0, container_width, container_height);
+    let margin_top =
+        style
+            .margin_top
+            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
+    let margin_bottom =
+        style
+            .margin_bottom
+            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
 
     let is_width_auto = style.width == Length::Auto;
     let is_margin_left_auto = style.margin_left == Length::Auto;
     let is_margin_right_auto = style.margin_right == Length::Auto;
 
-    let mut margin_left = style.margin_left.to_px_with_viewport(font_size, 16.0, container_width, container_height);
-    let mut margin_right = style.margin_right.to_px_with_viewport(font_size, 16.0, container_width, container_height);
+    let mut margin_left =
+        style
+            .margin_left
+            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
+    let mut margin_right =
+        style
+            .margin_right
+            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
 
     let total_non_content_h = pad_left + pad_right + border_left + border_right;
 
@@ -79,14 +106,18 @@ pub fn layout_grid(
         }
         (container_width - total_non_content_h - margin_left - margin_right).max(0.0)
     } else {
-        let raw_w = style.width.to_px_with_viewport(font_size, 16.0, container_width, container_height);
+        let raw_w =
+            style
+                .width
+                .to_px_with_viewport(font_size, 16.0, container_width, container_height);
         let resolved_w = if style.box_sizing == BoxSizing::BorderBox {
             (raw_w - total_non_content_h).max(0.0)
         } else {
             raw_w
         };
 
-        let underflow = container_width - (resolved_w + total_non_content_h + margin_left + margin_right);
+        let underflow =
+            container_width - (resolved_w + total_non_content_h + margin_left + margin_right);
 
         if is_margin_left_auto && is_margin_right_auto {
             margin_left = (underflow / 2.0).max(0.0);
@@ -102,12 +133,16 @@ pub fn layout_grid(
         resolved_w
     };
 
-    container.dimensions.margin = EdgeSizes::new(margin_top, margin_right, margin_bottom, margin_left);
+    container.dimensions.margin =
+        EdgeSizes::new(margin_top, margin_right, margin_bottom, margin_left);
     container.dimensions.content.size.width = content_width;
 
     // Position container in parent if not already positioned
     let (container_x, container_y) = if container.dimensions.content.origin != Point::ZERO {
-        (container.dimensions.content.origin.x, container.dimensions.content.origin.y)
+        (
+            container.dimensions.content.origin.x,
+            container.dimensions.content.origin.y,
+        )
     } else {
         (
             containing_block.content.x() + margin_left + border_left + pad_left,
@@ -122,21 +157,40 @@ pub fn layout_grid(
     }
 
     // 2. Resolve gaps
-    let col_gap = style.column_gap.to_px_with_viewport(font_size, 16.0, content_width, container_height);
-    let row_gap = style.row_gap.to_px_with_viewport(font_size, 16.0, content_width, container_height);
+    let col_gap =
+        style
+            .column_gap
+            .to_px_with_viewport(font_size, 16.0, content_width, container_height);
+    let row_gap =
+        style
+            .row_gap
+            .to_px_with_viewport(font_size, 16.0, content_width, container_height);
 
     // 3. Filter in-flow children
     let mut in_flow_indices = Vec::new();
     for (idx, child) in container.children.iter().enumerate() {
-        let disp = child.style.as_ref().map(|s| s.display).unwrap_or(Display::Block);
-        let pos = child.style.as_ref().map(|s| s.position).unwrap_or(Position::Static);
+        let disp = child
+            .style
+            .as_ref()
+            .map(|s| s.display)
+            .unwrap_or(Display::Block);
+        let pos = child
+            .style
+            .as_ref()
+            .map(|s| s.position)
+            .unwrap_or(Position::Static);
         if disp != Display::None && !matches!(pos, Position::Absolute | Position::Fixed) {
             in_flow_indices.push(idx);
         }
     }
 
     // 4. Resolve column track templates (including auto-fill / auto-fit)
-    let area_cols = style.grid_template_areas.iter().map(|row| row.len()).max().unwrap_or(0);
+    let area_cols = style
+        .grid_template_areas
+        .iter()
+        .map(|row| row.len())
+        .max()
+        .unwrap_or(0);
     let mut template_cols = if !style.grid_template_columns.is_empty() {
         let mut expanded = Vec::new();
         // Calculate non-repeat space
@@ -146,7 +200,8 @@ pub fn layout_grid(
             match t {
                 GridTrackSize::RepeatAutoFill(_) | GridTrackSize::RepeatAutoFit(_) => {}
                 GridTrackSize::Length(l) => {
-                    non_repeat_fixed += l.to_px_with_viewport(font_size, 16.0, content_width, container_height);
+                    non_repeat_fixed +=
+                        l.to_px_with_viewport(font_size, 16.0, content_width, container_height);
                     non_repeat_count += 1;
                 }
                 _ => {
@@ -154,7 +209,8 @@ pub fn layout_grid(
                 }
             }
         }
-        let repeat_space = (content_width - non_repeat_fixed - (non_repeat_count as f32) * col_gap).max(0.0);
+        let repeat_space =
+            (content_width - non_repeat_fixed - (non_repeat_count as f32) * col_gap).max(0.0);
 
         for t in &style.grid_template_columns {
             match t {
@@ -184,7 +240,11 @@ pub fn layout_grid(
         vec![GridTrackSize::Fr(1.0)]
     };
     let mut num_cols = template_cols.len().max(area_cols).max(1);
-    let explicit_row_count = style.grid_template_rows.len().max(style.grid_template_areas.len()).max(1);
+    let explicit_row_count = style
+        .grid_template_rows
+        .len()
+        .max(style.grid_template_areas.len())
+        .max(1);
     let auto_flow = style.grid_auto_flow;
     let is_col_flow = auto_flow.is_column();
     let is_dense = auto_flow.is_dense();
@@ -199,119 +259,178 @@ pub fn layout_grid(
         let child = &container.children[child_idx];
         let child_style = child.style.clone().unwrap_or_default();
 
-        let (col_explicit, col_auto_span) = match (&child_style.grid_column_start, &child_style.grid_column_end) {
-            (GridPlacement::Line(start_line), GridPlacement::Line(end_line)) => {
-                let s = resolve_line(*start_line, num_cols, false);
-                let e = resolve_line(*end_line, num_cols, true);
-                let span = if e > s { e - s } else { 1 };
-                (Some((s, span)), 1)
-            }
-            (GridPlacement::Line(start_line), GridPlacement::Span(span_val)) => {
-                let s = resolve_line(*start_line, num_cols, false);
-                (Some((s, (*span_val as usize).max(1))), 1)
-            }
-            (GridPlacement::Line(start_line), GridPlacement::Auto) => {
-                let s = resolve_line(*start_line, num_cols, false);
-                (Some((s, 1)), 1)
-            }
-            (GridPlacement::Area(name), GridPlacement::Area(end_name)) => {
-                let s = resolve_grid_line_name(name, &style.grid_column_lines, &style.grid_template_areas, true, false);
-                let e = resolve_grid_line_name(end_name, &style.grid_column_lines, &style.grid_template_areas, true, true);
-                if let (Some(s_idx), Some(e_idx)) = (s, e) {
-                    let span = if e_idx > s_idx { e_idx - s_idx } else { 1 };
-                    (Some((s_idx, span)), 1)
-                } else if let Some(s_idx) = s {
-                    (Some((s_idx, 1)), 1)
-                } else {
-                    (None, 1)
+        let (col_explicit, col_auto_span) =
+            match (&child_style.grid_column_start, &child_style.grid_column_end) {
+                (GridPlacement::Line(start_line), GridPlacement::Line(end_line)) => {
+                    let s = resolve_line(*start_line, num_cols, false);
+                    let e = resolve_line(*end_line, num_cols, true);
+                    let span = if e > s { e - s } else { 1 };
+                    (Some((s, span)), 1)
                 }
-            }
-            (GridPlacement::Area(name), GridPlacement::Span(span_val)) => {
-                let s = resolve_grid_line_name(name, &style.grid_column_lines, &style.grid_template_areas, true, false);
-                if let Some(s_idx) = s {
-                    (Some((s_idx, (*span_val as usize).max(1))), 1)
-                } else {
-                    (None, (*span_val as usize).max(1))
+                (GridPlacement::Line(start_line), GridPlacement::Span(span_val)) => {
+                    let s = resolve_line(*start_line, num_cols, false);
+                    (Some((s, (*span_val as usize).max(1))), 1)
                 }
-            }
-            (GridPlacement::Area(name), GridPlacement::Auto) => {
-                let s = resolve_grid_line_name(name, &style.grid_column_lines, &style.grid_template_areas, true, false);
-                let e = resolve_grid_line_name(name, &style.grid_column_lines, &style.grid_template_areas, true, true);
-                if let (Some(s_idx), Some(e_idx)) = (s, e) {
-                    let span = if e_idx > s_idx { e_idx - s_idx } else { 1 };
-                    (Some((s_idx, span)), 1)
-                } else if let Some(s_idx) = s {
-                    (Some((s_idx, 1)), 1)
-                } else {
-                    (None, 1)
+                (GridPlacement::Line(start_line), GridPlacement::Auto) => {
+                    let s = resolve_line(*start_line, num_cols, false);
+                    (Some((s, 1)), 1)
                 }
-            }
-            (GridPlacement::Span(span_val), _) => (None, (*span_val as usize).max(1)),
-            _ => (None, 1),
-        };
+                (GridPlacement::Area(name), GridPlacement::Area(end_name)) => {
+                    let s = resolve_grid_line_name(
+                        name,
+                        &style.grid_column_lines,
+                        &style.grid_template_areas,
+                        true,
+                        false,
+                    );
+                    let e = resolve_grid_line_name(
+                        end_name,
+                        &style.grid_column_lines,
+                        &style.grid_template_areas,
+                        true,
+                        true,
+                    );
+                    if let (Some(s_idx), Some(e_idx)) = (s, e) {
+                        let span = if e_idx > s_idx { e_idx - s_idx } else { 1 };
+                        (Some((s_idx, span)), 1)
+                    } else if let Some(s_idx) = s {
+                        (Some((s_idx, 1)), 1)
+                    } else {
+                        (None, 1)
+                    }
+                }
+                (GridPlacement::Area(name), GridPlacement::Span(span_val)) => {
+                    let s = resolve_grid_line_name(
+                        name,
+                        &style.grid_column_lines,
+                        &style.grid_template_areas,
+                        true,
+                        false,
+                    );
+                    if let Some(s_idx) = s {
+                        (Some((s_idx, (*span_val as usize).max(1))), 1)
+                    } else {
+                        (None, (*span_val as usize).max(1))
+                    }
+                }
+                (GridPlacement::Area(name), GridPlacement::Auto) => {
+                    let s = resolve_grid_line_name(
+                        name,
+                        &style.grid_column_lines,
+                        &style.grid_template_areas,
+                        true,
+                        false,
+                    );
+                    let e = resolve_grid_line_name(
+                        name,
+                        &style.grid_column_lines,
+                        &style.grid_template_areas,
+                        true,
+                        true,
+                    );
+                    if let (Some(s_idx), Some(e_idx)) = (s, e) {
+                        let span = if e_idx > s_idx { e_idx - s_idx } else { 1 };
+                        (Some((s_idx, span)), 1)
+                    } else if let Some(s_idx) = s {
+                        (Some((s_idx, 1)), 1)
+                    } else {
+                        (None, 1)
+                    }
+                }
+                (GridPlacement::Span(span_val), _) => (None, (*span_val as usize).max(1)),
+                _ => (None, 1),
+            };
 
-        let (row_explicit, row_auto_span) = match (&child_style.grid_row_start, &child_style.grid_row_end) {
-            (GridPlacement::Line(start_line), GridPlacement::Line(end_line)) => {
-                let s = resolve_line(*start_line, explicit_row_count, false);
-                let e = resolve_line(*end_line, explicit_row_count, true);
-                let span = if e > s { e - s } else { 1 };
-                (Some((s, span)), 1)
-            }
-            (GridPlacement::Line(start_line), GridPlacement::Span(span_val)) => {
-                let s = resolve_line(*start_line, explicit_row_count, false);
-                (Some((s, (*span_val as usize).max(1))), 1)
-            }
-            (GridPlacement::Line(start_line), GridPlacement::Auto) => {
-                let s = resolve_line(*start_line, explicit_row_count, false);
-                (Some((s, 1)), 1)
-            }
-            (GridPlacement::Area(name), GridPlacement::Area(end_name)) => {
-                let s = resolve_grid_line_name(name, &style.grid_row_lines, &style.grid_template_areas, false, false);
-                let e = resolve_grid_line_name(end_name, &style.grid_row_lines, &style.grid_template_areas, false, true);
-                if let (Some(s_idx), Some(e_idx)) = (s, e) {
-                    let span = if e_idx > s_idx { e_idx - s_idx } else { 1 };
-                    (Some((s_idx, span)), 1)
-                } else if let Some(s_idx) = s {
-                    (Some((s_idx, 1)), 1)
-                } else {
-                    (None, 1)
+        let (row_explicit, row_auto_span) =
+            match (&child_style.grid_row_start, &child_style.grid_row_end) {
+                (GridPlacement::Line(start_line), GridPlacement::Line(end_line)) => {
+                    let s = resolve_line(*start_line, explicit_row_count, false);
+                    let e = resolve_line(*end_line, explicit_row_count, true);
+                    let span = if e > s { e - s } else { 1 };
+                    (Some((s, span)), 1)
                 }
-            }
-            (GridPlacement::Area(name), GridPlacement::Span(span_val)) => {
-                let s = resolve_grid_line_name(name, &style.grid_row_lines, &style.grid_template_areas, false, false);
-                if let Some(s_idx) = s {
-                    (Some((s_idx, (*span_val as usize).max(1))), 1)
-                } else {
-                    (None, (*span_val as usize).max(1))
+                (GridPlacement::Line(start_line), GridPlacement::Span(span_val)) => {
+                    let s = resolve_line(*start_line, explicit_row_count, false);
+                    (Some((s, (*span_val as usize).max(1))), 1)
                 }
-            }
-            (GridPlacement::Area(name), GridPlacement::Auto) => {
-                let s = resolve_grid_line_name(name, &style.grid_row_lines, &style.grid_template_areas, false, false);
-                let e = resolve_grid_line_name(name, &style.grid_row_lines, &style.grid_template_areas, false, true);
-                if let (Some(s_idx), Some(e_idx)) = (s, e) {
-                    let span = if e_idx > s_idx { e_idx - s_idx } else { 1 };
-                    (Some((s_idx, span)), 1)
-                } else if let Some(s_idx) = s {
-                    (Some((s_idx, 1)), 1)
-                } else {
-                    (None, 1)
+                (GridPlacement::Line(start_line), GridPlacement::Auto) => {
+                    let s = resolve_line(*start_line, explicit_row_count, false);
+                    (Some((s, 1)), 1)
                 }
-            }
-            (GridPlacement::Span(span_val), _) => (None, (*span_val as usize).max(1)),
-            _ => (None, 1),
-        };
+                (GridPlacement::Area(name), GridPlacement::Area(end_name)) => {
+                    let s = resolve_grid_line_name(
+                        name,
+                        &style.grid_row_lines,
+                        &style.grid_template_areas,
+                        false,
+                        false,
+                    );
+                    let e = resolve_grid_line_name(
+                        end_name,
+                        &style.grid_row_lines,
+                        &style.grid_template_areas,
+                        false,
+                        true,
+                    );
+                    if let (Some(s_idx), Some(e_idx)) = (s, e) {
+                        let span = if e_idx > s_idx { e_idx - s_idx } else { 1 };
+                        (Some((s_idx, span)), 1)
+                    } else if let Some(s_idx) = s {
+                        (Some((s_idx, 1)), 1)
+                    } else {
+                        (None, 1)
+                    }
+                }
+                (GridPlacement::Area(name), GridPlacement::Span(span_val)) => {
+                    let s = resolve_grid_line_name(
+                        name,
+                        &style.grid_row_lines,
+                        &style.grid_template_areas,
+                        false,
+                        false,
+                    );
+                    if let Some(s_idx) = s {
+                        (Some((s_idx, (*span_val as usize).max(1))), 1)
+                    } else {
+                        (None, (*span_val as usize).max(1))
+                    }
+                }
+                (GridPlacement::Area(name), GridPlacement::Auto) => {
+                    let s = resolve_grid_line_name(
+                        name,
+                        &style.grid_row_lines,
+                        &style.grid_template_areas,
+                        false,
+                        false,
+                    );
+                    let e = resolve_grid_line_name(
+                        name,
+                        &style.grid_row_lines,
+                        &style.grid_template_areas,
+                        false,
+                        true,
+                    );
+                    if let (Some(s_idx), Some(e_idx)) = (s, e) {
+                        let span = if e_idx > s_idx { e_idx - s_idx } else { 1 };
+                        (Some((s_idx, span)), 1)
+                    } else if let Some(s_idx) = s {
+                        (Some((s_idx, 1)), 1)
+                    } else {
+                        (None, 1)
+                    }
+                }
+                (GridPlacement::Span(span_val), _) => (None, (*span_val as usize).max(1)),
+                _ => (None, 1),
+            };
 
         let (col_start, col_span, row_start, row_span) = match (col_explicit, row_explicit) {
-            (Some((cs, cspan)), Some((rs, rspan))) => {
-                (cs, cspan, rs, rspan)
-            }
+            (Some((cs, cspan)), Some((rs, rspan))) => (cs, cspan, rs, rspan),
             (Some((cs, cspan)), None) => {
                 let rspan = row_auto_span;
                 let mut r = if is_dense { 0 } else { auto_row };
                 loop {
-                    let can_fit = (r..r + rspan).all(|ri| {
-                        (cs..cs + cspan).all(|ci| !occupied.contains(&(ri, ci)))
-                    });
+                    let can_fit = (r..r + rspan)
+                        .all(|ri| (cs..cs + cspan).all(|ci| !occupied.contains(&(ri, ci))));
                     if can_fit {
                         break;
                     }
@@ -323,9 +442,8 @@ pub fn layout_grid(
                 let cspan = col_auto_span;
                 let mut c = if is_dense { 0 } else { auto_col };
                 loop {
-                    let can_fit = (rs..rs + rspan).all(|ri| {
-                        (c..c + cspan).all(|ci| !occupied.contains(&(ri, ci)))
-                    });
+                    let can_fit = (rs..rs + rspan)
+                        .all(|ri| (c..c + cspan).all(|ci| !occupied.contains(&(ri, ci))));
                     if can_fit {
                         break;
                     }
@@ -480,18 +598,36 @@ pub fn layout_grid(
                 for item in &placed_items {
                     if item.col_start <= c && c < item.col_start + item.col_span {
                         let child = &container.children[item.child_idx];
-                        let w = if let Some(cs) = &child.style && cs.width != Length::Auto {
-                            cs.width.to_px_with_viewport(font_size, 16.0, content_width, container_height)
+                        let w = if let Some(cs) = &child.style
+                            && cs.width != Length::Auto
+                        {
+                            cs.width.to_px_with_viewport(
+                                font_size,
+                                16.0,
+                                content_width,
+                                container_height,
+                            )
                         } else {
                             match &child.box_type {
                                 crate::box_model::BoxType::TextNode(t) => {
                                     crate::inline_flow::measure_text_width(t, font_size)
                                 }
-                                crate::box_model::BoxType::ReplacedElement { intrinsic_width, .. }
-                                | crate::box_model::BoxType::IFrame { intrinsic_width, .. }
-                                | crate::box_model::BoxType::Video { intrinsic_width, .. }
-                                | crate::box_model::BoxType::Audio { intrinsic_width, .. }
-                                | crate::box_model::BoxType::Canvas { intrinsic_width, .. } => *intrinsic_width,
+                                crate::box_model::BoxType::ReplacedElement {
+                                    intrinsic_width,
+                                    ..
+                                }
+                                | crate::box_model::BoxType::IFrame {
+                                    intrinsic_width, ..
+                                }
+                                | crate::box_model::BoxType::Video {
+                                    intrinsic_width, ..
+                                }
+                                | crate::box_model::BoxType::Audio {
+                                    intrinsic_width, ..
+                                }
+                                | crate::box_model::BoxType::Canvas {
+                                    intrinsic_width, ..
+                                } => *intrinsic_width,
                                 _ => 120.0,
                             }
                         };
@@ -503,7 +639,15 @@ pub fn layout_grid(
                 fixed_used += resolved;
             }
             GridTrackSize::MinMax(min_t, max_t) => {
-                let min_px = track_min_px(min_t, font_size, content_width, container_height, c, &placed_items, container);
+                let min_px = track_min_px(
+                    min_t,
+                    font_size,
+                    content_width,
+                    container_height,
+                    c,
+                    &placed_items,
+                    container,
+                );
                 col_widths[c] = min_px;
                 fixed_used += min_px;
                 if let GridTrackSize::Fr(fr) = &**max_t {
@@ -513,8 +657,9 @@ pub fn layout_grid(
             GridTrackSize::RepeatAutoFill(_) | GridTrackSize::RepeatAutoFit(_) => {
                 // These should have been expanded in the template expansion pass above.
                 // If we encounter them here, treat as auto.
-                let resolved = measure_col_content_max_width(c, &placed_items, container, font_size)
-                    .min(available_width_for_tracks);
+                let resolved =
+                    measure_col_content_max_width(c, &placed_items, container, font_size)
+                        .min(available_width_for_tracks);
                 col_widths[c] = resolved;
                 fixed_used += resolved;
             }
@@ -531,11 +676,25 @@ pub fn layout_grid(
                 if let GridTrackSize::Fr(_) = &**max_t {
                     false
                 } else {
-                    let min_px = track_min_px(min_t, font_size, content_width, container_height, *c, &placed_items, container);
+                    let min_px = track_min_px(
+                        min_t,
+                        font_size,
+                        content_width,
+                        container_height,
+                        *c,
+                        &placed_items,
+                        container,
+                    );
                     let max_px = match &**max_t {
-                        GridTrackSize::Length(l) => l.to_px_with_viewport(font_size, 16.0, content_width, container_height),
-                        GridTrackSize::MaxContent => measure_col_content_max_width(*c, &placed_items, container, font_size),
-                        GridTrackSize::MinContent => measure_col_content_min_width(*c, &placed_items, container, font_size),
+                        GridTrackSize::Length(l) => {
+                            l.to_px_with_viewport(font_size, 16.0, content_width, container_height)
+                        }
+                        GridTrackSize::MaxContent => {
+                            measure_col_content_max_width(*c, &placed_items, container, font_size)
+                        }
+                        GridTrackSize::MinContent => {
+                            measure_col_content_min_width(*c, &placed_items, container, font_size)
+                        }
                         _ => min_px,
                     };
                     max_px > min_px
@@ -553,11 +712,25 @@ pub fn layout_grid(
                 if let GridTrackSize::Fr(_) = &**max_t {
                     continue;
                 }
-                let min_px = track_min_px(min_t, font_size, content_width, container_height, c, &placed_items, container);
+                let min_px = track_min_px(
+                    min_t,
+                    font_size,
+                    content_width,
+                    container_height,
+                    c,
+                    &placed_items,
+                    container,
+                );
                 let max_px = match &**max_t {
-                    GridTrackSize::Length(l) => l.to_px_with_viewport(font_size, 16.0, content_width, container_height),
-                    GridTrackSize::MaxContent => measure_col_content_max_width(c, &placed_items, container, font_size),
-                    GridTrackSize::MinContent => measure_col_content_min_width(c, &placed_items, container, font_size),
+                    GridTrackSize::Length(l) => {
+                        l.to_px_with_viewport(font_size, 16.0, content_width, container_height)
+                    }
+                    GridTrackSize::MaxContent => {
+                        measure_col_content_max_width(c, &placed_items, container, font_size)
+                    }
+                    GridTrackSize::MinContent => {
+                        measure_col_content_min_width(c, &placed_items, container, font_size)
+                    }
                     _ => min_px,
                 };
                 let growth_capacity = (max_px - min_px).max(0.0);
@@ -607,7 +780,8 @@ pub fn layout_grid(
         if r < num_rows
             && let GridTrackSize::Length(l) = r_track
         {
-            row_heights[r] = l.to_px_with_viewport(font_size, 16.0, container_height, container_height);
+            row_heights[r] =
+                l.to_px_with_viewport(font_size, 16.0, container_height, container_height);
         }
     }
 
@@ -624,20 +798,44 @@ pub fn layout_grid(
             + (item.col_span.saturating_sub(1) as f32) * col_gap;
 
         // Child padding, border, margins
-        let p_top = child_style.padding_top.to_px_with_viewport(c_fs, 16.0, span_w, container_height);
-        let p_right = child_style.padding_right.to_px_with_viewport(c_fs, 16.0, span_w, container_height);
-        let p_bottom = child_style.padding_bottom.to_px_with_viewport(c_fs, 16.0, span_w, container_height);
-        let p_left = child_style.padding_left.to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+        let p_top =
+            child_style
+                .padding_top
+                .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+        let p_right =
+            child_style
+                .padding_right
+                .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+        let p_bottom =
+            child_style
+                .padding_bottom
+                .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+        let p_left =
+            child_style
+                .padding_left
+                .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
 
         let b_top = child_style.border_top_width;
         let b_right = child_style.border_right_width;
         let b_bottom = child_style.border_bottom_width;
         let b_left = child_style.border_left_width;
 
-        let m_top = child_style.margin_top.to_px_with_viewport(c_fs, 16.0, span_w, container_height);
-        let m_right = child_style.margin_right.to_px_with_viewport(c_fs, 16.0, span_w, container_height);
-        let m_bottom = child_style.margin_bottom.to_px_with_viewport(c_fs, 16.0, span_w, container_height);
-        let m_left = child_style.margin_left.to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+        let m_top =
+            child_style
+                .margin_top
+                .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+        let m_right =
+            child_style
+                .margin_right
+                .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+        let m_bottom =
+            child_style
+                .margin_bottom
+                .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+        let m_left =
+            child_style
+                .margin_left
+                .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
 
         child.dimensions.padding = EdgeSizes::new(p_top, p_right, p_bottom, p_left);
         child.dimensions.border = EdgeSizes::new(b_top, b_right, b_bottom, b_left);
@@ -645,7 +843,10 @@ pub fn layout_grid(
 
         let non_content_w = p_left + p_right + b_left + b_right + m_left + m_right;
         let item_content_w = if child_style.width != Length::Auto {
-            let explicit = child_style.width.to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+            let explicit =
+                child_style
+                    .width
+                    .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
             if child_style.box_sizing == BoxSizing::BorderBox {
                 (explicit - p_left - p_right - b_left - b_right).max(0.0)
             } else {
@@ -672,7 +873,12 @@ pub fn layout_grid(
 
         // Resolve height if specified or measured
         let item_outer_h = if child_style.height != Length::Auto {
-            let raw_h = child_style.height.to_px_with_viewport(c_fs, 16.0, container_height, container_height);
+            let raw_h = child_style.height.to_px_with_viewport(
+                c_fs,
+                16.0,
+                container_height,
+                container_height,
+            );
             let content_h = if child_style.box_sizing == BoxSizing::BorderBox {
                 (raw_h - p_top - p_bottom - b_top - b_bottom).max(0.0)
             } else {
@@ -700,7 +906,11 @@ pub fn layout_grid(
                 + (item.row_span.saturating_sub(1) as f32) * row_gap;
             if item_outer_h > current_span_h {
                 let excess_per_row = (item_outer_h - current_span_h) / (item.row_span as f32);
-                for row_h in row_heights.iter_mut().skip(item.row_start).take(item.row_span) {
+                for row_h in row_heights
+                    .iter_mut()
+                    .skip(item.row_start)
+                    .take(item.row_span)
+                {
                     *row_h += excess_per_row;
                 }
             }
@@ -762,7 +972,8 @@ pub fn layout_grid(
                 let p = child.dimensions.padding;
                 let b = child.dimensions.border;
                 let m = child.dimensions.margin;
-                child.dimensions.content.size.height = (span_cell_h - p.top - p.bottom - b.top - b.bottom - m.top - m.bottom).max(0.0);
+                child.dimensions.content.size.height =
+                    (span_cell_h - p.top - p.bottom - b.top - b.bottom - m.top - m.bottom).max(0.0);
             }
             _ => {}
         }
@@ -774,17 +985,22 @@ pub fn layout_grid(
     }
 
     // 9. Compute container final height
-    let is_percent_indefinite = matches!(style.height, Length::Percent(_))
-        && containing_block.content.height() <= 0.0;
+    let is_percent_indefinite =
+        matches!(style.height, Length::Percent(_)) && containing_block.content.height() <= 0.0;
     if style.height != Length::Auto && !is_percent_indefinite {
-        let raw_h = style.height.to_px_with_viewport(font_size, 16.0, container_height, container_height);
+        let raw_h =
+            style
+                .height
+                .to_px_with_viewport(font_size, 16.0, container_height, container_height);
         if style.box_sizing == BoxSizing::BorderBox {
-            container.dimensions.content.size.height = (raw_h - pad_top - pad_bottom - border_top - border_bottom).max(0.0);
+            container.dimensions.content.size.height =
+                (raw_h - pad_top - pad_bottom - border_top - border_bottom).max(0.0);
         } else {
             container.dimensions.content.size.height = raw_h;
         }
     } else {
-        let total_grid_h = row_heights.iter().sum::<f32>() + (num_rows.saturating_sub(1) as f32) * row_gap;
+        let total_grid_h =
+            row_heights.iter().sum::<f32>() + (num_rows.saturating_sub(1) as f32) * row_gap;
         container.dimensions.content.size.height = total_grid_h.max(0.0);
     }
 
@@ -888,13 +1104,21 @@ fn track_min_size(
     container_height: f32,
 ) -> f32 {
     match track {
-        GridTrackSize::Length(l) => l.to_px_with_viewport(font_size, 16.0, container_width, container_height),
-        GridTrackSize::MinMax(min_t, _) => track_min_size(min_t, font_size, container_width, container_height),
+        GridTrackSize::Length(l) => {
+            l.to_px_with_viewport(font_size, 16.0, container_width, container_height)
+        }
+        GridTrackSize::MinMax(min_t, _) => {
+            track_min_size(min_t, font_size, container_width, container_height)
+        }
         GridTrackSize::Fr(_) => 0.0,
         GridTrackSize::Auto | GridTrackSize::MinContent | GridTrackSize::MaxContent => 0.0,
         GridTrackSize::Subgrid => 0.0,
-        GridTrackSize::RepeatAutoFill(inner) => track_min_size(inner, font_size, container_width, container_height),
-        GridTrackSize::RepeatAutoFit(inner) => track_min_size(inner, font_size, container_width, container_height),
+        GridTrackSize::RepeatAutoFill(inner) => {
+            track_min_size(inner, font_size, container_width, container_height)
+        }
+        GridTrackSize::RepeatAutoFit(inner) => {
+            track_min_size(inner, font_size, container_width, container_height)
+        }
     }
 }
 
@@ -910,10 +1134,18 @@ fn track_min_px(
     container: &LayoutBox,
 ) -> f32 {
     match min_track {
-        GridTrackSize::Length(l) => l.to_px_with_viewport(font_size, 16.0, container_width, container_height),
-        GridTrackSize::MinContent => measure_col_content_min_width(col, placed_items, container, font_size),
-        GridTrackSize::MaxContent => measure_col_content_max_width(col, placed_items, container, font_size),
-        GridTrackSize::Auto => measure_col_content_min_width(col, placed_items, container, font_size),
+        GridTrackSize::Length(l) => {
+            l.to_px_with_viewport(font_size, 16.0, container_width, container_height)
+        }
+        GridTrackSize::MinContent => {
+            measure_col_content_min_width(col, placed_items, container, font_size)
+        }
+        GridTrackSize::MaxContent => {
+            measure_col_content_max_width(col, placed_items, container, font_size)
+        }
+        GridTrackSize::Auto => {
+            measure_col_content_min_width(col, placed_items, container, font_size)
+        }
         _ => 0.0,
     }
 }
@@ -931,7 +1163,11 @@ fn measure_col_content_max_width(
             let child = &container.children[item.child_idx];
             let w = child_intrinsic_width(child, font_size, false);
             // For multi-column-span items, attribute a proportional share
-            let share = if item.col_span > 1 { w / item.col_span as f32 } else { w };
+            let share = if item.col_span > 1 {
+                w / item.col_span as f32
+            } else {
+                w
+            };
             max_w = max_w.max(share);
         }
     }
@@ -950,7 +1186,11 @@ fn measure_col_content_min_width(
         if item.col_start <= col && col < item.col_start + item.col_span {
             let child = &container.children[item.child_idx];
             let w = child_intrinsic_width(child, font_size, true);
-            let share = if item.col_span > 1 { w / item.col_span as f32 } else { w };
+            let share = if item.col_span > 1 {
+                w / item.col_span as f32
+            } else {
+                w
+            };
             max_w = max_w.max(share);
         }
     }
@@ -962,17 +1202,21 @@ fn measure_col_content_min_width(
 /// when false, returns the max-content width (unconstrained line).
 fn child_intrinsic_width(child: &LayoutBox, font_size: f32, is_min: bool) -> f32 {
     // If the child has an explicit width, use that
-    if let Some(cs) = &child.style {
-        if cs.width != Length::Auto {
-            return cs.width.to_px_with_viewport(
-                cs.font_size,
-                16.0,
-                0.0, // no percentage basis for intrinsic measurement
-                0.0,
-            );
-        }
+    if let Some(cs) = &child.style
+        && cs.width != Length::Auto
+    {
+        return cs.width.to_px_with_viewport(
+            cs.font_size,
+            16.0,
+            0.0, // no percentage basis for intrinsic measurement
+            0.0,
+        );
     }
-    let fs = child.style.as_ref().map(|s| s.font_size).unwrap_or(font_size);
+    let fs = child
+        .style
+        .as_ref()
+        .map(|s| s.font_size)
+        .unwrap_or(font_size);
     match &child.box_type {
         crate::box_model::BoxType::TextNode(t) => {
             if is_min {
@@ -984,11 +1228,21 @@ fn child_intrinsic_width(child: &LayoutBox, font_size: f32, is_min: bool) -> f32
                 crate::inline_flow::measure_text_width(t, fs)
             }
         }
-        crate::box_model::BoxType::ReplacedElement { intrinsic_width, .. }
-        | crate::box_model::BoxType::IFrame { intrinsic_width, .. }
-        | crate::box_model::BoxType::Video { intrinsic_width, .. }
-        | crate::box_model::BoxType::Audio { intrinsic_width, .. }
-        | crate::box_model::BoxType::Canvas { intrinsic_width, .. } => *intrinsic_width,
+        crate::box_model::BoxType::ReplacedElement {
+            intrinsic_width, ..
+        }
+        | crate::box_model::BoxType::IFrame {
+            intrinsic_width, ..
+        }
+        | crate::box_model::BoxType::Video {
+            intrinsic_width, ..
+        }
+        | crate::box_model::BoxType::Audio {
+            intrinsic_width, ..
+        }
+        | crate::box_model::BoxType::Canvas {
+            intrinsic_width, ..
+        } => *intrinsic_width,
         _ => {
             // For block/inline containers, recurse into children for a rough estimate
             let mut total = 0.0f32;
@@ -1072,10 +1326,7 @@ mod tests {
         c_style.display = Display::Grid;
         c_style.width = Length::Px(400.0);
         c_style.row_gap = Length::Px(10.0);
-        c_style.grid_template_columns = vec![
-            GridTrackSize::Fr(1.0),
-            GridTrackSize::Fr(1.0),
-        ];
+        c_style.grid_template_columns = vec![GridTrackSize::Fr(1.0), GridTrackSize::Fr(1.0)];
         container.style = Some(c_style);
 
         // Item 1: Full-width Header spanning both columns (grid-column: 1 / 3)

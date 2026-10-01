@@ -147,7 +147,11 @@ fn test_flexbox_row_space_between_and_gap() {
 
     let body = &root_box.children[0];
     let container = &body.children[0];
-    assert_eq!(container.children.len(), 3, "Container should have 3 flex items");
+    assert_eq!(
+        container.children.len(),
+        3,
+        "Container should have 3 flex items"
+    );
 
     let item1 = &container.children[0];
     let item2 = &container.children[1];
@@ -460,8 +464,16 @@ fn test_z_index_stacking_order_in_display_list() {
         .collect();
 
     assert_eq!(colored_fills.len(), 2);
-    assert_eq!(colored_fills[0], Color::RED, "z-index: 2 (Red) should paint before z-index: 10");
-    assert_eq!(colored_fills[1], Color::BLUE, "z-index: 10 (Blue) should paint after z-index: 2");
+    assert_eq!(
+        colored_fills[0],
+        Color::RED,
+        "z-index: 2 (Red) should paint before z-index: 10"
+    );
+    assert_eq!(
+        colored_fills[1],
+        Color::BLUE,
+        "z-index: 10 (Blue) should paint after z-index: 2"
+    );
 }
 
 #[test]
@@ -496,7 +508,10 @@ fn test_border_radius_rounded_rect_rendering() {
         _ => false,
     });
 
-    assert!(has_rounded_rect, "Expected FillRoundedRect command for border-radius");
+    assert!(
+        has_rounded_rect,
+        "Expected FillRoundedRect command for border-radius"
+    );
 
     let mut buffer = vec![0u32; 800 * 600];
     paint(&display_list, &mut buffer, 800, 600);
@@ -571,7 +586,10 @@ fn test_form_controls_layout_and_paint() {
         DisplayCommand::DrawText { text, .. } => text == "✓",
         _ => false,
     });
-    assert!(has_checkbox_check, "Expected checkmark icon in display list");
+    assert!(
+        has_checkbox_check,
+        "Expected checkmark icon in display list"
+    );
 
     let mut buffer = vec![0u32; 800 * 600];
     paint(&display_list, &mut buffer, 800, 600);
@@ -651,7 +669,10 @@ fn test_visibility_and_opacity_display() {
         }
         _ => false,
     });
-    assert!(!has_red_bg, "visibility: hidden element should not paint background");
+    assert!(
+        !has_red_bg,
+        "visibility: hidden element should not paint background"
+    );
 
     let has_semi_blue = display_list.iter().any(|cmd| match cmd {
         DisplayCommand::FillRect { color, .. } | DisplayCommand::FillRoundedRect { color, .. } => {
@@ -668,7 +689,11 @@ fn test_web_font_face_layout_integration() {
     // Register custom web font
     let font_bytes = include_bytes!("../crates/mango_render/src/fonts/DejaVuSans.ttf");
     let font_id = fm
-        .register_web_font("WikipediaModern", mango_render::FontWeight::Regular, font_bytes)
+        .register_web_font(
+            "WikipediaModern",
+            mango_render::FontWeight::Regular,
+            font_bytes,
+        )
         .expect("web font should register successfully");
 
     let html = r#"
@@ -695,10 +720,20 @@ fn test_web_font_face_layout_integration() {
     let text_cmd = display_list.iter().find(|cmd| matches!(cmd, DisplayCommand::DrawText { text, .. } if text.contains("Wikipedia Today")));
     assert!(text_cmd.is_some(), "Text run for heading must be generated");
 
-    if let Some(DisplayCommand::DrawText { text, family, font_size, .. }) = text_cmd {
+    if let Some(DisplayCommand::DrawText {
+        text,
+        family,
+        font_size,
+        ..
+    }) = text_cmd
+    {
         assert_eq!(text, "Wikipedia Today");
         assert_eq!(*font_size, 28.0);
-        assert_eq!(*family, mango_render::FontFamily::Custom(font_id), "Heading should resolve to registered custom web font");
+        assert_eq!(
+            *family,
+            mango_render::FontFamily::Custom(font_id),
+            "Heading should resolve to registered custom web font"
+        );
     }
 }
 
@@ -747,7 +782,10 @@ fn test_table_border_collapse_and_cellspacing() {
 
     // Under border-collapse: collapse, cell2 begins exactly where cell1 ends (single 1px border, no 2px spacing gap!)
     assert_eq!(cell1.dimensions.content.x(), 1.0);
-    assert_eq!(cell2.dimensions.content.x(), cell1.dimensions.content.x() + cell1.dimensions.content.width() + 1.0);
+    assert_eq!(
+        cell2.dimensions.content.x(),
+        cell1.dimensions.content.x() + cell1.dimensions.content.width() + 1.0
+    );
 }
 
 #[test]
@@ -799,8 +837,18 @@ fn test_table_cell_vertical_alignment() {
     let bot_text = &cell_bot.children[0];
 
     // top_text is at top of cell, mid_text shifted down to middle, bot_text shifted to bottom!
-    assert!(mid_text.dimensions.content.y() > top_text.dimensions.content.y(), "middle text y ({}) must be > top text y ({})", mid_text.dimensions.content.y(), top_text.dimensions.content.y());
-    assert!(bot_text.dimensions.content.y() > mid_text.dimensions.content.y(), "bottom text y ({}) must be > middle text y ({})", bot_text.dimensions.content.y(), mid_text.dimensions.content.y());
+    assert!(
+        mid_text.dimensions.content.y() > top_text.dimensions.content.y(),
+        "middle text y ({}) must be > top text y ({})",
+        mid_text.dimensions.content.y(),
+        top_text.dimensions.content.y()
+    );
+    assert!(
+        bot_text.dimensions.content.y() > mid_text.dimensions.content.y(),
+        "bottom text y ({}) must be > middle text y ({})",
+        bot_text.dimensions.content.y(),
+        mid_text.dimensions.content.y()
+    );
 }
 
 #[test]
@@ -852,7 +900,11 @@ fn test_table_rowspan_layout_and_stretch() {
 
     // Row 2 only has 1 cell in HTML, but because Col 0 is occupied by rowspan,
     // its X coordinate must align with Col 1 (r1c2), NOT at x = 0!
-    assert_eq!(r2c2.dimensions.content.x(), r1c2.dimensions.content.x(), "Row 2 cell must be placed in Column 1");
+    assert_eq!(
+        r2c2.dimensions.content.x(),
+        r1c2.dimensions.content.x(),
+        "Row 2 cell must be placed in Column 1"
+    );
 
     // Span cell must stretch across both rows (height >= row1 height + row2 height = 100px)
     assert!(
@@ -863,7 +915,10 @@ fn test_table_rowspan_layout_and_stretch() {
 }
 
 /// Recursively searches the layout tree for the first box with the given tag name.
-fn find_box<'a>(root: &'a mango_layout::box_tree::LayoutBox, tag: &str) -> Option<&'a mango_layout::box_tree::LayoutBox> {
+fn find_box<'a>(
+    root: &'a mango_layout::box_tree::LayoutBox,
+    tag: &str,
+) -> Option<&'a mango_layout::box_tree::LayoutBox> {
     if root.tag_name.as_deref() == Some(tag) {
         return Some(root);
     }

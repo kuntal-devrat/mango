@@ -43,10 +43,9 @@ pub struct CachedGlyph {
 
 type GlyphCacheKey = (FontFamily, FontWeight, u32, char);
 
-#[derive(Clone)]
 struct GlyphCacheEntry {
     glyph: CachedGlyph,
-    last_access: u64,
+    last_access: AtomicU64,
 }
 
 static ACCESS_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -137,10 +136,10 @@ fn emoji_cache() -> &'static RwLock<HashMap<(char, u32), ColorEmojiBitmap>> {
 pub fn get_or_rasterize_color_emoji(ch: char, size: f32) -> ColorEmojiBitmap {
     let px = size.round().clamp(10.0, 128.0) as u32;
     let key = (ch, px);
-    if let Ok(c) = emoji_cache().read() {
-        if let Some(bmp) = c.get(&key) {
-            return bmp.clone();
-        }
+    if let Ok(c) = emoji_cache().read()
+        && let Some(bmp) = c.get(&key)
+    {
+        return bmp.clone();
     }
     let bmp = rasterize_color_emoji(ch, px);
     if let Ok(mut c) = emoji_cache().write() {
@@ -170,7 +169,7 @@ pub fn rasterize_color_emoji(ch: char, s: u32) -> ColorEmojiBitmap {
                     let dist_body = ((body_dx / 0.34).powi(2) + (body_dy / 0.38).powi(2)).sqrt();
 
                     let stem_dx = (nx - 0.48).abs();
-                    let is_stem = stem_dx < 0.04 && ny >= 0.12 && ny <= 0.24;
+                    let is_stem = stem_dx < 0.04 && (0.12..=0.24).contains(&ny);
 
                     let leaf_dx = nx - 0.62;
                     let leaf_dy = ny - 0.22;
@@ -230,9 +229,12 @@ pub fn rasterize_color_emoji(ch: char, s: u32) -> ColorEmojiBitmap {
                 '😀' | '😃' | '😊' => {
                     // Smiley face
                     let dist = ((nx - 0.5).powi(2) + (ny - 0.5).powi(2)).sqrt();
-                    let is_eye_l = ((nx - 0.35).powi(2) + ((ny - 0.38) / 1.3).powi(2)).sqrt() < 0.06;
-                    let is_eye_r = ((nx - 0.65).powi(2) + ((ny - 0.38) / 1.3).powi(2)).sqrt() < 0.06;
-                    let is_mouth = ny >= 0.55 && ny <= 0.72 && ((nx - 0.5).abs() < 0.25)
+                    let is_eye_l =
+                        ((nx - 0.35).powi(2) + ((ny - 0.38) / 1.3).powi(2)).sqrt() < 0.06;
+                    let is_eye_r =
+                        ((nx - 0.65).powi(2) + ((ny - 0.38) / 1.3).powi(2)).sqrt() < 0.06;
+                    let is_mouth = (0.55..=0.72).contains(&ny)
+                        && ((nx - 0.5).abs() < 0.25)
                         && ((nx - 0.5).powi(2) + (ny - 0.55).powi(2)).sqrt() < 0.25;
 
                     if is_eye_l || is_eye_r {
@@ -271,9 +273,12 @@ pub fn rasterize_color_emoji(ch: char, s: u32) -> ColorEmojiBitmap {
                 }
                 '🎉' => {
                     let cone = ny > 0.45 && nx < 0.65 && (nx + ny) > 0.85 && (nx - ny).abs() < 0.35;
-                    let is_confetti_cyan = ((nx - 0.35).powi(2) + (ny - 0.25).powi(2)).sqrt() < 0.07;
-                    let is_confetti_pink = ((nx - 0.65).powi(2) + (ny - 0.35).powi(2)).sqrt() < 0.06;
-                    let is_confetti_lime = ((nx - 0.45).powi(2) + (ny - 0.15).powi(2)).sqrt() < 0.06;
+                    let is_confetti_cyan =
+                        ((nx - 0.35).powi(2) + (ny - 0.25).powi(2)).sqrt() < 0.07;
+                    let is_confetti_pink =
+                        ((nx - 0.65).powi(2) + (ny - 0.35).powi(2)).sqrt() < 0.06;
+                    let is_confetti_lime =
+                        ((nx - 0.45).powi(2) + (ny - 0.15).powi(2)).sqrt() < 0.06;
                     if cone {
                         Some(0xFFFFC107)
                     } else if is_confetti_cyan {
@@ -302,15 +307,11 @@ pub fn rasterize_color_emoji(ch: char, s: u32) -> ColorEmojiBitmap {
                     let hx = (nx - 0.5) * 2.4;
                     let hy = (0.55 - ny) * 2.4;
                     let val = (hx * hx + hy * hy - 1.0).powi(3) - hx * hx * hy.powi(3);
-                    if val <= 0.0 {
-                        Some(0xFFE53935)
-                    } else {
-                        None
-                    }
+                    if val <= 0.0 { Some(0xFFE53935) } else { None }
                 }
                 '👍' => {
                     let is_thumb = nx > 0.25 && nx < 0.55 && ny < 0.55;
-                    let is_hand = nx > 0.20 && nx < 0.75 && ny >= 0.45 && ny <= 0.80;
+                    let is_hand = nx > 0.20 && nx < 0.75 && (0.45..=0.80).contains(&ny);
                     let is_cuff = nx < 0.32 && ny > 0.65;
                     if is_cuff {
                         Some(0xFF1976D2)
@@ -326,9 +327,9 @@ pub fn rasterize_color_emoji(ch: char, s: u32) -> ColorEmojiBitmap {
                         let edge_a = ((0.44 - dist) * wf * 0.8).clamp(0.0, 1.0);
                         let alpha = (edge_a * 255.0) as u32;
                         let u = ch as u32;
-                        let theme_r = ((u * 67) % 180 + 75) as u32;
-                        let theme_g = ((u * 131) % 180 + 75) as u32;
-                        let theme_b = ((u * 197) % 180 + 75) as u32;
+                        let theme_r = (u * 67) % 180 + 75;
+                        let theme_g = (u * 131) % 180 + 75;
+                        let theme_b = (u * 197) % 180 + 75;
 
                         let is_inner = dist < 0.20;
                         if is_inner {
@@ -435,9 +436,24 @@ pub fn parse_fvar_table(bytes: &[u8]) -> Option<VariableFontMetadata> {
             break;
         }
         let tag: [u8; 4] = [bytes[cur], bytes[cur + 1], bytes[cur + 2], bytes[cur + 3]];
-        let min_raw = i32::from_be_bytes([bytes[cur + 4], bytes[cur + 5], bytes[cur + 6], bytes[cur + 7]]);
-        let def_raw = i32::from_be_bytes([bytes[cur + 8], bytes[cur + 9], bytes[cur + 10], bytes[cur + 11]]);
-        let max_raw = i32::from_be_bytes([bytes[cur + 12], bytes[cur + 13], bytes[cur + 14], bytes[cur + 15]]);
+        let min_raw = i32::from_be_bytes([
+            bytes[cur + 4],
+            bytes[cur + 5],
+            bytes[cur + 6],
+            bytes[cur + 7],
+        ]);
+        let def_raw = i32::from_be_bytes([
+            bytes[cur + 8],
+            bytes[cur + 9],
+            bytes[cur + 10],
+            bytes[cur + 11],
+        ]);
+        let max_raw = i32::from_be_bytes([
+            bytes[cur + 12],
+            bytes[cur + 13],
+            bytes[cur + 14],
+            bytes[cur + 15],
+        ]);
         let flags = u16::from_be_bytes([bytes[cur + 16], bytes[cur + 17]]);
 
         let min_value = min_raw as f32 / 65536.0;
@@ -579,27 +595,32 @@ impl FontManager {
         let sans_regular = load_system_font("arial.ttf")
             .or_else(|| load_system_font("segoeui.ttf"))
             .unwrap_or_else(|| {
-                Font::from_bytes(FONT_SANS, settings).expect("Failed to parse embedded DejaVuSans.ttf")
+                Font::from_bytes(FONT_SANS, settings)
+                    .expect("Failed to parse embedded DejaVuSans.ttf")
             });
         let sans_bold = load_system_font("arialbd.ttf")
             .or_else(|| load_system_font("segoeuib.ttf"))
             .unwrap_or_else(|| {
-                Font::from_bytes(FONT_SANS_BOLD, settings).expect("Failed to parse embedded DejaVuSans-Bold.ttf")
+                Font::from_bytes(FONT_SANS_BOLD, settings)
+                    .expect("Failed to parse embedded DejaVuSans-Bold.ttf")
             });
         let serif_regular = load_system_font("times.ttf")
             .or_else(|| load_system_font("georgia.ttf"))
             .unwrap_or_else(|| {
-                Font::from_bytes(FONT_SERIF, settings).expect("Failed to parse embedded DejaVuSerif.ttf")
+                Font::from_bytes(FONT_SERIF, settings)
+                    .expect("Failed to parse embedded DejaVuSerif.ttf")
             });
         let serif_bold = load_system_font("timesbd.ttf")
             .or_else(|| load_system_font("georgiab.ttf"))
             .unwrap_or_else(|| {
-                Font::from_bytes(FONT_SERIF_BOLD, settings).expect("Failed to parse embedded DejaVuSerif-Bold.ttf")
+                Font::from_bytes(FONT_SERIF_BOLD, settings)
+                    .expect("Failed to parse embedded DejaVuSerif-Bold.ttf")
             });
         let mono = load_system_font("consola.ttf")
             .or_else(|| load_system_font("cour.ttf"))
             .unwrap_or_else(|| {
-                Font::from_bytes(FONT_MONO, settings).expect("Failed to parse embedded DejaVuSansMono.ttf")
+                Font::from_bytes(FONT_MONO, settings)
+                    .expect("Failed to parse embedded DejaVuSansMono.ttf")
             });
 
         // Fallback font candidates for Indic scripts (Hindi, Bengali, Telugu, Tamil, etc.), CJK, Arabic, Thai, Hebrew, and symbols.
@@ -718,46 +739,85 @@ fn script_candidates_for_char(ch: char) -> &'static [&'static str] {
     match u {
         // Devanagari & Indic scripts (Hindi, Bengali, Telugu, Tamil, Gujarati, Kannada, Malayalam, Gurmukhi, Oriya, Sinhala)
         0x0900..=0x0DFF => &[
-            "Nirmala.ttc", "nirmala.ttf", "mangal.ttf", "vrinda.ttf",
-            "gautami.ttf", "latha.ttf",
+            "Nirmala.ttc",
+            "nirmala.ttf",
+            "mangal.ttf",
+            "vrinda.ttf",
+            "gautami.ttf",
+            "latha.ttf",
         ],
         // Arabic, Persian, Urdu
-        0x0600..=0x06FF | 0x0750..=0x077F | 0x08A0..=0x08FF | 0xFB50..=0xFDFF | 0xFE70..=0xFEFF => &[
-            "NotoSansArabic-Regular.ttf", "tahoma.ttf", "tahomabd.ttf",
-            "NotoKufiArabic-Regular.ttf", "NotoNaskhArabic-Regular.ttf",
-        ],
+        0x0600..=0x06FF | 0x0750..=0x077F | 0x08A0..=0x08FF | 0xFB50..=0xFDFF | 0xFE70..=0xFEFF => {
+            &[
+                "NotoSansArabic-Regular.ttf",
+                "tahoma.ttf",
+                "tahomabd.ttf",
+                "NotoKufiArabic-Regular.ttf",
+                "NotoNaskhArabic-Regular.ttf",
+            ]
+        }
         // Hebrew
         0x0590..=0x05FF | 0xFB1D..=0xFB4F => &[
-            "NotoSansHebrew-Regular.ttf", "DavidLibre-Regular.ttf", "david.ttf", "tahoma.ttf",
+            "NotoSansHebrew-Regular.ttf",
+            "DavidLibre-Regular.ttf",
+            "david.ttf",
+            "tahoma.ttf",
         ],
         // Thai
         0x0E00..=0x0E7F => &[
-            "LeelawUI.ttf", "leelawad.ttf", "NotoSansThai-Regular.ttf", "tahoma.ttf",
+            "LeelawUI.ttf",
+            "leelawad.ttf",
+            "NotoSansThai-Regular.ttf",
+            "tahoma.ttf",
         ],
         // CJK Japanese (Hiragana, Katakana)
         0x3040..=0x30FF | 0x31F0..=0x31FF | 0xFF65..=0xFF9F => &[
-            "msgothic.ttc", "meiryo.ttc", "YuGothR.ttc", "NotoSansJP-Regular.otf",
-            "msyh.ttc", "NotoSansCJK-Regular.ttc",
+            "msgothic.ttc",
+            "meiryo.ttc",
+            "YuGothR.ttc",
+            "NotoSansJP-Regular.otf",
+            "msyh.ttc",
+            "NotoSansCJK-Regular.ttc",
         ],
         // CJK Korean (Hangul Syllables & Jamo)
         0xAC00..=0xD7AF | 0x1100..=0x11FF | 0x3130..=0x318F => &[
-            "malgun.ttf", "malgunbd.ttf", "gulim.ttc", "NotoSansKR-Regular.otf",
-            "msyh.ttc", "NotoSansCJK-Regular.ttc",
+            "malgun.ttf",
+            "malgunbd.ttf",
+            "gulim.ttc",
+            "NotoSansKR-Regular.otf",
+            "msyh.ttc",
+            "NotoSansCJK-Regular.ttc",
         ],
         // CJK Unified Ideographs (Chinese / Hanzi / Kanji / Hanja)
         0x4E00..=0x9FFF | 0x3400..=0x4DBF | 0x20000..=0x2A6DF => &[
-            "msyh.ttc", "msyhl.ttc", "simsun.ttc", "simsunb.ttf",
-            "SimsunExtG.ttf", "msjh.ttc", "mingliu.ttc", "deng.ttf",
-            "NotoSansCJK-Regular.ttc", "NotoSansSC-Regular.otf", "NotoSansTC-Regular.otf",
-            "wqy-zenhei.ttc", "wqy-microhei.ttc", "msgothic.ttc", "malgun.ttf",
+            "msyh.ttc",
+            "msyhl.ttc",
+            "simsun.ttc",
+            "simsunb.ttf",
+            "SimsunExtG.ttf",
+            "msjh.ttc",
+            "mingliu.ttc",
+            "deng.ttf",
+            "NotoSansCJK-Regular.ttc",
+            "NotoSansSC-Regular.otf",
+            "NotoSansTC-Regular.otf",
+            "wqy-zenhei.ttc",
+            "wqy-microhei.ttc",
+            "msgothic.ttc",
+            "malgun.ttf",
         ],
         // Armenian, Georgian, Lao
         0x0530..=0x058F | 0x10A0..=0x10FF | 0x0E80..=0x0EFF => &[
-            "NotoSansArmenian-Regular.ttf", "NotoSansGeorgian-Regular.ttf", "NotoSansLao-Regular.ttf",
+            "NotoSansArmenian-Regular.ttf",
+            "NotoSansGeorgian-Regular.ttf",
+            "NotoSansLao-Regular.ttf",
         ],
         // Emoji & Symbols
         0x1F000..=0x1FAFF | 0x2600..=0x27BF => &[
-            "seguiemj.ttf", "seguisym.ttf", "NotoColorEmoji.ttf", "Symbola.ttf",
+            "seguiemj.ttf",
+            "seguisym.ttf",
+            "NotoColorEmoji.ttf",
+            "Symbola.ttf",
         ],
         _ => &[],
     }
@@ -772,10 +832,10 @@ impl FontManager {
         }
 
         // Fast-path: if this glyph is known to be missing across all system fallbacks, return immediately
-        if let Ok(missing) = self.missing_glyphs.read() {
-            if missing.contains(&ch) {
-                return primary;
-            }
+        if let Ok(missing) = self.missing_glyphs.read()
+            && missing.contains(&ch)
+        {
+            return primary;
         }
 
         // 1. Check already-loaded fallback fonts
@@ -823,7 +883,10 @@ impl FontManager {
 
             if !script_candidates.is_empty() {
                 for &target_name in script_candidates {
-                    if let Some(pos) = pending.iter().position(|&name| name.eq_ignore_ascii_case(target_name)) {
+                    if let Some(pos) = pending
+                        .iter()
+                        .position(|&name| name.eq_ignore_ascii_case(target_name))
+                    {
                         let name = pending.remove(pos);
                         if let Some(font) = load_system_font(name) {
                             let leaked: &'static Font = Box::leak(Box::new(font));
@@ -927,7 +990,11 @@ impl FontManager {
         let font = decode_font_bytes(&raw_bytes)?;
         let leaked: &'static Font = Box::leak(Box::new(font));
 
-        let key = family_name.trim().trim_matches('\'').trim_matches('"').to_ascii_lowercase();
+        let key = family_name
+            .trim()
+            .trim_matches('\'')
+            .trim_matches('"')
+            .to_ascii_lowercase();
 
         let mut family_map = self.family_to_id.write().map_err(|e| e.to_string())?;
         let mut web_fonts = self.web_fonts.write().map_err(|e| e.to_string())?;
@@ -961,24 +1028,33 @@ impl FontManager {
 
     /// Checks if a custom web font family has been registered.
     pub fn has_web_font(&self, family_name: &str) -> bool {
-        let key = family_name.trim().trim_matches('\'').trim_matches('"').to_ascii_lowercase();
-        self.family_to_id.read().map(|m| m.contains_key(&key)).unwrap_or(false)
+        let key = family_name
+            .trim()
+            .trim_matches('\'')
+            .trim_matches('"')
+            .to_ascii_lowercase();
+        self.family_to_id
+            .read()
+            .map(|m| m.contains_key(&key))
+            .unwrap_or(false)
     }
 
     /// Checks if a specific weight for a custom web font family has been registered.
     pub fn has_web_font_weight(&self, family_name: &str, weight: FontWeight) -> bool {
-        let key = family_name.trim().trim_matches('\'').trim_matches('"').to_ascii_lowercase();
-        if let Ok(family_map) = self.family_to_id.read() {
-            if let Some(&id) = family_map.get(&key) {
-                if let Ok(web_fonts) = self.web_fonts.read() {
-                    if let Some(entry) = web_fonts.get(&id) {
-                        return match weight {
-                            FontWeight::Bold => entry.bold.is_some(),
-                            FontWeight::Regular => entry.regular.is_some(),
-                        };
-                    }
-                }
-            }
+        let key = family_name
+            .trim()
+            .trim_matches('\'')
+            .trim_matches('"')
+            .to_ascii_lowercase();
+        if let Ok(family_map) = self.family_to_id.read()
+            && let Some(&id) = family_map.get(&key)
+            && let Ok(web_fonts) = self.web_fonts.read()
+            && let Some(entry) = web_fonts.get(&id)
+        {
+            return match weight {
+                FontWeight::Bold => entry.bold.is_some(),
+                FontWeight::Regular => entry.regular.is_some(),
+            };
         }
         false
     }
@@ -990,10 +1066,15 @@ impl FontManager {
             FontFamily::Serif => "Serif".to_string(),
             FontFamily::Monospace => "Monospace".to_string(),
             FontFamily::Custom(id) => {
-                if let Ok(web_fonts) = self.web_fonts.read() {
-                    if let Some(entry) = web_fonts.get(&id) {
-                        return format!("{}(has_reg={}, has_bold={})", entry.family_name, entry.regular.is_some(), entry.bold.is_some());
-                    }
+                if let Ok(web_fonts) = self.web_fonts.read()
+                    && let Some(entry) = web_fonts.get(&id)
+                {
+                    return format!(
+                        "{}(has_reg={}, has_bold={})",
+                        entry.family_name,
+                        entry.regular.is_some(),
+                        entry.bold.is_some()
+                    );
                 }
                 format!("Custom({})", id)
             }
@@ -1009,21 +1090,28 @@ impl FontManager {
     /// and named platform system fonts (`Verdana`, `Segoe UI`, `Arial`, etc.).
     pub fn resolve_family_for(&self, family_str: &str) -> FontFamily {
         for item in family_str.split(',') {
-            let mut clean = item.trim().trim_matches('\'').trim_matches('"').to_ascii_lowercase();
+            let mut clean = item
+                .trim()
+                .trim_matches('\'')
+                .trim_matches('"')
+                .to_ascii_lowercase();
             if clean.is_empty() {
                 continue;
             }
 
             // `system-ui` is the platform UI font in Chromium (Segoe UI on Windows),
             // not the generic `sans-serif` family, so normalize it before checking cache.
-            if matches!(clean.as_str(), "system-ui" | "-apple-system" | "blinkmacsystemfont") {
+            if matches!(
+                clean.as_str(),
+                "system-ui" | "-apple-system" | "blinkmacsystemfont"
+            ) {
                 clean = "segoe ui".to_string();
             }
 
-            if let Ok(family_map) = self.family_to_id.read() {
-                if let Some(&id) = family_map.get(&clean) {
-                    return FontFamily::Custom(id);
-                }
+            if let Ok(family_map) = self.family_to_id.read()
+                && let Some(&id) = family_map.get(&clean)
+            {
+                return FontFamily::Custom(id);
             }
 
             // Check generic families early to skip disk checks
@@ -1159,11 +1247,12 @@ impl FontManager {
             }
             let font = self.select_font_for_char(family, weight, ch);
             let metrics = font.metrics(ch, px_size);
-            let synth_extra = if is_synth_bold && std::ptr::eq(font, reg_font) && !ch.is_whitespace() {
-                if px_size >= 28.0 { 2.0 } else { 1.0 }
-            } else {
-                0.0
-            };
+            let synth_extra =
+                if is_synth_bold && std::ptr::eq(font, reg_font) && !ch.is_whitespace() {
+                    if px_size >= 28.0 { 2.0 } else { 1.0 }
+                } else {
+                    0.0
+                };
             total_width += metrics.advance_width + synth_extra + letter_spacing;
         }
 
@@ -1253,11 +1342,14 @@ impl FontManager {
         let size_key = (px_size * 10.0).round() as u32;
         let key = (family, weight, size_key, ch);
 
-        if let Ok(mut cache) = glyph_cache().write() {
-            if let Some(entry) = cache.get_mut(&key) {
-                entry.last_access = ACCESS_COUNTER.fetch_add(1, Ordering::Relaxed);
-                return entry.glyph.clone();
-            }
+        if let Ok(cache) = glyph_cache().read()
+            && let Some(entry) = cache.get(&key)
+        {
+            entry.last_access.store(
+                ACCESS_COUNTER.fetch_add(1, Ordering::Relaxed),
+                Ordering::Relaxed,
+            );
+            return entry.glyph.clone();
         }
 
         let (mut metrics, bitmap) = font.rasterize(ch, px_size);
@@ -1299,16 +1391,22 @@ impl FontManager {
         if let Ok(mut cache) = glyph_cache().write() {
             if cache.len() >= 4096 {
                 // Bounded LRU eviction: retain the most recent 2048 entries instead of clearing all (OPT-3.2.3)
-                let mut access_times: Vec<u64> = cache.values().map(|e| e.last_access).collect();
+                let mut access_times: Vec<u64> = cache
+                    .values()
+                    .map(|e| e.last_access.load(Ordering::Relaxed))
+                    .collect();
                 access_times.sort_unstable();
                 let median_threshold = access_times[access_times.len() / 2];
-                cache.retain(|_, v| v.last_access >= median_threshold);
+                cache.retain(|_, v| v.last_access.load(Ordering::Relaxed) >= median_threshold);
             }
             let tick = ACCESS_COUNTER.fetch_add(1, Ordering::Relaxed);
-            cache.insert(key, GlyphCacheEntry {
-                glyph: cached.clone(),
-                last_access: tick,
-            });
+            cache.insert(
+                key,
+                GlyphCacheEntry {
+                    glyph: cached.clone(),
+                    last_access: AtomicU64::new(tick),
+                },
+            );
         }
 
         cached
@@ -1455,12 +1553,15 @@ impl FontManager {
                             let bg_r = (bg >> 16) & 0xFF;
                             let bg_g = (bg >> 8) & 0xFF;
                             let bg_b = bg & 0xFF;
-                            let r =
-                                ((color.r as u32 * effective_alpha + bg_r * inv_alpha + 127) / 255).min(255);
-                            let g =
-                                ((color.g as u32 * effective_alpha + bg_g * inv_alpha + 127) / 255).min(255);
-                            let b =
-                                ((color.b as u32 * effective_alpha + bg_b * inv_alpha + 127) / 255).min(255);
+                            let r = ((color.r as u32 * effective_alpha + bg_r * inv_alpha + 127)
+                                / 255)
+                                .min(255);
+                            let g = ((color.g as u32 * effective_alpha + bg_g * inv_alpha + 127)
+                                / 255)
+                                .min(255);
+                            let b = ((color.b as u32 * effective_alpha + bg_b * inv_alpha + 127)
+                                / 255)
+                                .min(255);
                             buffer[idx] = (r << 16) | (g << 8) | b;
                         }
                     }
@@ -1585,8 +1686,16 @@ impl FontManager {
                     let row_start = gy * w;
                     for gx in 0..w {
                         let center = bitmap[row_start + gx] as u32;
-                        let left = if gx > 0 { bitmap[row_start + gx - 1] as u32 } else { 0 };
-                        let right = if gx + 1 < w { bitmap[row_start + gx + 1] as u32 } else { 0 };
+                        let left = if gx > 0 {
+                            bitmap[row_start + gx - 1] as u32
+                        } else {
+                            0
+                        };
+                        let right = if gx + 1 < w {
+                            bitmap[row_start + gx + 1] as u32
+                        } else {
+                            0
+                        };
 
                         let cov_r = ((left + 2 * center + 1) / 3).min(255);
                         let cov_g = center.min(255);
@@ -1617,9 +1726,12 @@ impl FontManager {
                         let bg_g = (bg >> 8) & 0xFF;
                         let bg_b = bg & 0xFF;
 
-                        let out_r = ((color.r as u32 * eff_r + bg_r * (255 - eff_r) + 127) / 255).min(255);
-                        let out_g = ((color.g as u32 * eff_g + bg_g * (255 - eff_g) + 127) / 255).min(255);
-                        let out_b = ((color.b as u32 * eff_b + bg_b * (255 - eff_b) + 127) / 255).min(255);
+                        let out_r =
+                            ((color.r as u32 * eff_r + bg_r * (255 - eff_r) + 127) / 255).min(255);
+                        let out_g =
+                            ((color.g as u32 * eff_g + bg_g * (255 - eff_g) + 127) / 255).min(255);
+                        let out_b =
+                            ((color.b as u32 * eff_b + bg_b * (255 - eff_b) + 127) / 255).min(255);
 
                         buffer[idx] = (out_r << 16) | (out_g << 8) | out_b;
                     }
@@ -1745,15 +1857,19 @@ impl FontManager {
                             continue;
                         }
 
-                        let grad_x = (((px as f32 - gradient_rect.x()) / gradient_rect.width().max(1.0)) * gw as f32)
-                            .clamp(0.0, (gw - 1) as f32) as u32;
-                        let grad_y = (((py as f32 - gradient_rect.y()) / gradient_rect.height().max(1.0)) * gh as f32)
-                            .clamp(0.0, (gh - 1) as f32) as u32;
+                        let grad_x =
+                            (((px as f32 - gradient_rect.x()) / gradient_rect.width().max(1.0))
+                                * gw as f32)
+                                .clamp(0.0, (gw - 1) as f32) as u32;
+                        let grad_y =
+                            (((py as f32 - gradient_rect.y()) / gradient_rect.height().max(1.0))
+                                * gh as f32)
+                                .clamp(0.0, (gh - 1) as f32) as u32;
                         let src = grad_pixels[(grad_y * gw + grad_x) as usize];
-                        let src_a = ((src >> 24) & 0xFF) as u32;
-                        let src_r = ((src >> 16) & 0xFF) as u32;
-                        let src_g = ((src >> 8) & 0xFF) as u32;
-                        let src_b = (src & 0xFF) as u32;
+                        let src_a = (src >> 24) & 0xFF;
+                        let src_r = (src >> 16) & 0xFF;
+                        let src_g = (src >> 8) & 0xFF;
+                        let src_b = src & 0xFF;
 
                         let effective_alpha = ((coverage as u32 * src_a) + 127) / 255;
                         if effective_alpha == 0 {
@@ -1768,9 +1884,12 @@ impl FontManager {
                             let bg_r = (bg >> 16) & 0xFF;
                             let bg_g = (bg >> 8) & 0xFF;
                             let bg_b = bg & 0xFF;
-                            let r = ((src_r * effective_alpha + bg_r * inv_alpha + 127) / 255).min(255);
-                            let g = ((src_g * effective_alpha + bg_g * inv_alpha + 127) / 255).min(255);
-                            let b = ((src_b * effective_alpha + bg_b * inv_alpha + 127) / 255).min(255);
+                            let r =
+                                ((src_r * effective_alpha + bg_r * inv_alpha + 127) / 255).min(255);
+                            let g =
+                                ((src_g * effective_alpha + bg_g * inv_alpha + 127) / 255).min(255);
+                            let b =
+                                ((src_b * effective_alpha + bg_b * inv_alpha + 127) / 255).min(255);
                             buffer[idx] = (r << 16) | (g << 8) | b;
                         }
                     }
@@ -1803,8 +1922,10 @@ mod tests {
     #[test]
     fn test_proportional_measurement() {
         let fm = font_manager();
-        let (w_wide, _) = fm.measure_text("WWWWW", 16.0, FontWeight::Regular, FontFamily::SansSerif);
-        let (w_narrow, _) = fm.measure_text("iiiii", 16.0, FontWeight::Regular, FontFamily::SansSerif);
+        let (w_wide, _) =
+            fm.measure_text("WWWWW", 16.0, FontWeight::Regular, FontFamily::SansSerif);
+        let (w_narrow, _) =
+            fm.measure_text("iiiii", 16.0, FontWeight::Regular, FontFamily::SansSerif);
         // 'W' should be wider than 'i' in a proportional font
         assert!(
             w_wide > w_narrow,
@@ -1815,7 +1936,8 @@ mod tests {
     #[test]
     fn test_bold_measurement() {
         let fm = font_manager();
-        let (w_regular, _) = fm.measure_text("Hello", 16.0, FontWeight::Regular, FontFamily::SansSerif);
+        let (w_regular, _) =
+            fm.measure_text("Hello", 16.0, FontWeight::Regular, FontFamily::SansSerif);
         let (w_bold, _) = fm.measure_text("Hello", 16.0, FontWeight::Bold, FontFamily::SansSerif);
         println!("w_regular={}, w_bold={}", w_regular, w_bold);
         assert!(w_regular > 0.0);
@@ -1825,8 +1947,10 @@ mod tests {
     #[test]
     fn test_serif_measurement() {
         let fm = font_manager();
-        let (w_serif, h_serif) = fm.measure_text("Moby-Dick", 16.0, FontWeight::Regular, FontFamily::Serif);
-        let (w_serif_bold, _) = fm.measure_text("Moby-Dick", 16.0, FontWeight::Bold, FontFamily::Serif);
+        let (w_serif, h_serif) =
+            fm.measure_text("Moby-Dick", 16.0, FontWeight::Regular, FontFamily::Serif);
+        let (w_serif_bold, _) =
+            fm.measure_text("Moby-Dick", 16.0, FontWeight::Bold, FontFamily::Serif);
         assert!(w_serif > 0.0, "serif width should be positive");
         assert!(h_serif > 0.0, "serif height should be positive");
         assert!(w_serif_bold > 0.0, "serif bold width should be positive");
@@ -1836,10 +1960,12 @@ mod tests {
     fn test_mono_measurement() {
         let fm = font_manager();
         // In a monospace font, each character should have the same width
-        let w_a = fm.select_font(FontFamily::Monospace, FontWeight::Regular)
+        let w_a = fm
+            .select_font(FontFamily::Monospace, FontWeight::Regular)
             .metrics('a', 16.0)
             .advance_width;
-        let w_m = fm.select_font(FontFamily::Monospace, FontWeight::Regular)
+        let w_m = fm
+            .select_font(FontFamily::Monospace, FontWeight::Regular)
             .metrics('M', 16.0)
             .advance_width;
         assert!(
@@ -1884,18 +2010,12 @@ mod tests {
             FontManager::resolve_family("Courier New"),
             FontFamily::Monospace
         );
-        assert_eq!(
-            FontManager::resolve_family("Arial"),
-            FontFamily::SansSerif
-        );
+        assert_eq!(FontManager::resolve_family("Arial"), FontFamily::SansSerif);
         assert_eq!(
             FontManager::resolve_family("sans-serif"),
             FontFamily::SansSerif
         );
-        assert_eq!(
-            FontManager::resolve_family("serif"),
-            FontFamily::Serif
-        );
+        assert_eq!(FontManager::resolve_family("serif"), FontFamily::Serif);
         assert_eq!(
             FontManager::resolve_family("Times New Roman"),
             FontFamily::Serif
@@ -1934,7 +2054,11 @@ mod tests {
     fn test_web_font_registration_via_data_uri() {
         let fm = font_manager();
         // A minimal dummy data URI with valid TTF prefix but too short payload
-        let result = fm.register_web_font("BadFont", FontWeight::Regular, b"data:font/woff2;base64,AAAA");
+        let result = fm.register_web_font(
+            "BadFont",
+            FontWeight::Regular,
+            b"data:font/woff2;base64,AAAA",
+        );
         assert!(result.is_err());
     }
 
@@ -1942,8 +2066,10 @@ mod tests {
     fn test_glyph_caching() {
         let fm = font_manager();
         let font = fm.select_font(FontFamily::SansSerif, FontWeight::Regular);
-        let g1 = fm.get_or_rasterize_glyph(FontFamily::SansSerif, FontWeight::Regular, font, 'M', 16.0);
-        let g2 = fm.get_or_rasterize_glyph(FontFamily::SansSerif, FontWeight::Regular, font, 'M', 16.0);
+        let g1 =
+            fm.get_or_rasterize_glyph(FontFamily::SansSerif, FontWeight::Regular, font, 'M', 16.0);
+        let g2 =
+            fm.get_or_rasterize_glyph(FontFamily::SansSerif, FontWeight::Regular, font, 'M', 16.0);
         assert_eq!(g1.metrics.width, g2.metrics.width);
         assert_eq!(g1.metrics.height, g2.metrics.height);
         assert_eq!(g1.bitmap.len(), g2.bitmap.len());
@@ -2049,7 +2175,10 @@ mod tests {
             let b = px & 0xFF;
             r != g || g != b
         });
-        assert!(has_colored_subpixel_edges, "Subpixel rendering must yield distinct R, G, B channels on edge pixels");
+        assert!(
+            has_colored_subpixel_edges,
+            "Subpixel rendering must yield distinct R, G, B channels on edge pixels"
+        );
     }
 
     #[test]
@@ -2082,7 +2211,10 @@ mod tests {
             let b = p & 0xFF;
             g > r && g > b && g > 80
         });
-        assert!(has_warm_orange, "Mango emoji must contain golden/orange body pixels");
+        assert!(
+            has_warm_orange,
+            "Mango emoji must contain golden/orange body pixels"
+        );
         assert!(has_green_leaf, "Mango emoji must contain green leaf pixels");
 
         // Test drawing emoji in text run
@@ -2161,4 +2293,3 @@ mod tests {
         assert!((interpolate_axis(wght, 650.0) - 0.5).abs() < 0.001);
     }
 }
-

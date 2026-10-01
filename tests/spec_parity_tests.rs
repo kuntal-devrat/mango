@@ -47,8 +47,16 @@ fn test_dynamic_resolution_1920x1080_media_queries_and_viewport_units() {
     let vp_small = Size::new(800.0, 600.0);
     let (root_small, dl_small) = layout_document(&doc, &[], vp_small);
     let box_small = root_small.children[0].children[0].dimensions.content;
-    assert_eq!(box_small.width(), 400.0, "50vw at 800px width should be 400px");
-    assert_eq!(box_small.height(), 150.0, "25vh at 600px height should be 150px");
+    assert_eq!(
+        box_small.width(),
+        400.0,
+        "50vw at 800px width should be 400px"
+    );
+    assert_eq!(
+        box_small.height(),
+        150.0,
+        "25vh at 600px height should be 150px"
+    );
 
     let has_red_small = dl_small.iter().any(|cmd| matches!(cmd, DisplayCommand::FillRect { color, .. } if *color == Color::rgb(255, 0, 0)));
     assert!(has_red_small, "Under 1024px viewport should be red");
@@ -57,32 +65,67 @@ fn test_dynamic_resolution_1920x1080_media_queries_and_viewport_units() {
     let vp_large = Size::new(1920.0, 1080.0);
     let (root_large, dl_large) = layout_document(&doc, &[], vp_large);
     let box_large = root_large.children[0].children[0].dimensions.content;
-    assert_eq!(box_large.width(), 960.0, "50vw at 1920px width should be 960px");
-    assert_eq!(box_large.height(), 270.0, "25vh at 1080px height should be 270px");
+    assert_eq!(
+        box_large.width(),
+        960.0,
+        "50vw at 1920px width should be 960px"
+    );
+    assert_eq!(
+        box_large.height(),
+        270.0,
+        "25vh at 1080px height should be 270px"
+    );
 
     let has_green_large = dl_large.iter().any(|cmd| matches!(cmd, DisplayCommand::FillRect { color, .. } if *color == Color::rgb(0, 255, 0)));
-    assert!(has_green_large, "1920x1080 viewport should trigger min-width: 1024px green style");
+    assert!(
+        has_green_large,
+        "1920x1080 viewport should trigger min-width: 1024px green style"
+    );
 }
 
 #[test]
 fn test_js_match_media_dynamic_resolution() {
     let doc = parse_html("<!DOCTYPE html><html><body></body></html>");
     let mut js_runtime = mango_js::JsRuntime::new(doc, 800.0, 600.0);
-    js_runtime.eval("window.innerWidth = 1920; window.innerHeight = 1080;").unwrap();
+    js_runtime
+        .eval("window.innerWidth = 1920; window.innerHeight = 1080;")
+        .unwrap();
 
-    let m1 = js_runtime.eval("window.matchMedia('(min-width: 1024px)').matches").unwrap();
-    assert_eq!(m1, "true", "matchMedia(min-width: 1024px) at 1920px should be true");
+    let m1 = js_runtime
+        .eval("window.matchMedia('(min-width: 1024px)').matches")
+        .unwrap();
+    assert_eq!(
+        m1, "true",
+        "matchMedia(min-width: 1024px) at 1920px should be true"
+    );
 
-    let m2 = js_runtime.eval("window.matchMedia('(max-width: 1023px)').matches").unwrap();
-    assert_eq!(m2, "false", "matchMedia(max-width: 1023px) at 1920px should be false");
+    let m2 = js_runtime
+        .eval("window.matchMedia('(max-width: 1023px)').matches")
+        .unwrap();
+    assert_eq!(
+        m2, "false",
+        "matchMedia(max-width: 1023px) at 1920px should be false"
+    );
 
     // Change to small resolution
-    js_runtime.eval("window.innerWidth = 800; window.innerHeight = 600;").unwrap();
-    let m3 = js_runtime.eval("window.matchMedia('(min-width: 1024px)').matches").unwrap();
-    assert_eq!(m3, "false", "matchMedia(min-width: 1024px) at 800px should be false");
+    js_runtime
+        .eval("window.innerWidth = 800; window.innerHeight = 600;")
+        .unwrap();
+    let m3 = js_runtime
+        .eval("window.matchMedia('(min-width: 1024px)').matches")
+        .unwrap();
+    assert_eq!(
+        m3, "false",
+        "matchMedia(min-width: 1024px) at 800px should be false"
+    );
 
-    let m4 = js_runtime.eval("window.matchMedia('(max-width: 1023px)').matches").unwrap();
-    assert_eq!(m4, "true", "matchMedia(max-width: 1023px) at 800px should be true");
+    let m4 = js_runtime
+        .eval("window.matchMedia('(max-width: 1023px)').matches")
+        .unwrap();
+    assert_eq!(
+        m4, "true",
+        "matchMedia(max-width: 1023px) at 800px should be true"
+    );
 }
 
 // ========================================================================
@@ -105,7 +148,9 @@ fn test_layout_idempotent_box_tree_relayout() {
     let (mut root, dl1) = layout_document(&doc, &[], viewport);
 
     fn count_draw_texts(dl: &[DisplayCommand]) -> usize {
-        dl.iter().filter(|c| matches!(c, DisplayCommand::DrawText { .. })).count()
+        dl.iter()
+            .filter(|c| matches!(c, DisplayCommand::DrawText { .. }))
+            .count()
     }
 
     let count1 = count_draw_texts(&dl1);
@@ -115,12 +160,18 @@ fn test_layout_idempotent_box_tree_relayout() {
     relayout_box_tree(&mut root, viewport);
     let dl2 = mango_layout::build_display_list(&root);
     let count2 = count_draw_texts(&dl2);
-    assert_eq!(count1, count2, "First relayout should not duplicate text runs");
+    assert_eq!(
+        count1, count2,
+        "First relayout should not duplicate text runs"
+    );
 
     relayout_box_tree(&mut root, viewport);
     let dl3 = mango_layout::build_display_list(&root);
     let count3 = count_draw_texts(&dl3);
-    assert_eq!(count1, count3, "Second relayout should be strictly idempotent");
+    assert_eq!(
+        count1, count3,
+        "Second relayout should be strictly idempotent"
+    );
 }
 
 #[test]
@@ -139,16 +190,22 @@ fn test_layout_no_synthetic_inline_spacing() {
     let (_, dl) = layout_document(&doc, &[], viewport);
 
     // HelloWorld without space in the DOM should not have a synthetic space inserted
-    let text_cmds: Vec<String> = dl.iter().filter_map(|cmd| {
-        if let DisplayCommand::DrawText { text, .. } = cmd {
-            Some(text.clone())
-        } else {
-            None
-        }
-    }).collect();
+    let text_cmds: Vec<String> = dl
+        .iter()
+        .filter_map(|cmd| {
+            if let DisplayCommand::DrawText { text, .. } = cmd {
+                Some(text.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
 
     let combined = text_cmds.join("");
-    assert_eq!(combined, "HelloWorld", "Adjacent text nodes without space must not have synthetic spaces inserted");
+    assert_eq!(
+        combined, "HelloWorld",
+        "Adjacent text nodes without space must not have synthetic spaces inserted"
+    );
 }
 
 #[test]
@@ -176,7 +233,11 @@ fn test_layout_inline_block_shrink_to_fit() {
 
     let ib_box = &root.children[0].children[0];
     let w = ib_box.dimensions.content.width();
-    assert!(w < 200.0, "Inline-block width ({}) should shrink-to-fit, not expand to container width (800px)", w);
+    assert!(
+        w < 200.0,
+        "Inline-block width ({}) should shrink-to-fit, not expand to container width (800px)",
+        w
+    );
 }
 
 #[test]
@@ -234,13 +295,22 @@ fn test_flex_auto_margin_relayout_stability() {
     let viewport = Size::new(800.0, 600.0);
     let (mut root, _) = layout_document(&doc, &[], viewport);
 
-    let item_x1 = root.children[0].children[0].children[0].dimensions.content.x();
+    let item_x1 = root.children[0].children[0].children[0]
+        .dimensions
+        .content
+        .x();
     assert_eq!(item_x1, 350.0, "Auto margin should push item to x=350");
 
     // Relayout should not accumulate margins
     relayout_box_tree(&mut root, viewport);
-    let item_x2 = root.children[0].children[0].children[0].dimensions.content.x();
-    assert_eq!(item_x1, item_x2, "Margin-left: auto must be reset to computed style and not drift on relayout");
+    let item_x2 = root.children[0].children[0].children[0]
+        .dimensions
+        .content
+        .x();
+    assert_eq!(
+        item_x1, item_x2,
+        "Margin-left: auto must be reset to computed style and not drift on relayout"
+    );
 }
 
 #[test]
@@ -277,7 +347,10 @@ fn test_grid_negative_lines_and_fr_tracks() {
 
     let last_item = &root.children[0].children[0].children[0];
     let x = last_item.dimensions.content.x();
-    assert_eq!(x, 400.0, "Item with grid-column: -2 / -1 should be in track 3 starting at 400px");
+    assert_eq!(
+        x, 400.0,
+        "Item with grid-column: -2 / -1 should be in track 3 starting at 400px"
+    );
 }
 
 #[test]
@@ -308,7 +381,10 @@ fn test_table_min_content_clamping() {
 
     let table_box = &root.children[0].children[0];
     let w = table_box.dimensions.content.width();
-    assert!(w > 50.0, "Table must clamp to min-content rather than shrinking down to 10px");
+    assert!(
+        w > 50.0,
+        "Table must clamp to min-content rather than shrinking down to 10px"
+    );
 }
 
 #[test]
@@ -403,10 +479,16 @@ fn test_css_important_origin_order() {
     let (_, dl) = layout_document(&doc, &[], viewport);
 
     let has_blue_text = dl.iter().any(|cmd| matches!(cmd, DisplayCommand::DrawText { text, color, .. } if text == "Box 1" && *color == Color::rgb(0, 0, 255)));
-    assert!(has_blue_text, "Author !important must override Inline normal");
+    assert!(
+        has_blue_text,
+        "Author !important must override Inline normal"
+    );
 
     let has_green_text = dl.iter().any(|cmd| matches!(cmd, DisplayCommand::DrawText { text, color, .. } if text == "Box 2" && *color == Color::rgb(0, 255, 0)));
-    assert!(has_green_text, "Inline !important must override Author !important");
+    assert!(
+        has_green_text,
+        "Inline !important must override Author !important"
+    );
 }
 
 #[test]
@@ -441,10 +523,16 @@ fn test_css_case_sensitive_id_and_class() {
     let (_, dl) = layout_document(&doc, &[], viewport);
 
     let has_green_bg = dl.iter().any(|cmd| matches!(cmd, DisplayCommand::FillRect { color, .. } if *color == Color::rgb(0, 255, 0)));
-    assert!(has_green_bg, "Selector #myID must match id='myID' case-sensitively and NOT #myid");
+    assert!(
+        has_green_bg,
+        "Selector #myID must match id='myID' case-sensitively and NOT #myid"
+    );
 
     let has_blue_text = dl.iter().any(|cmd| matches!(cmd, DisplayCommand::DrawText { color, .. } if *color == Color::rgb(0, 0, 255)));
-    assert!(has_blue_text, "Selector .myClass must match class='myClass' case-sensitively");
+    assert!(
+        has_blue_text,
+        "Selector .myClass must match class='myClass' case-sensitively"
+    );
 }
 
 #[test]
@@ -471,7 +559,11 @@ fn test_css_unknown_units_dropped() {
     let (root, _) = layout_document(&doc, &[], viewport);
 
     let b = &root.children[0].children[0];
-    assert_eq!(b.dimensions.content.width(), 200.0, "Unknown units must be rejected and fallback to valid prior declaration");
+    assert_eq!(
+        b.dimensions.content.width(),
+        200.0,
+        "Unknown units must be rejected and fallback to valid prior declaration"
+    );
 }
 
 #[test]
@@ -500,7 +592,11 @@ fn test_css_calc_dimensions_addition() {
     let (root, _) = layout_document(&doc, &[], viewport);
 
     let b = &root.children[0].children[0];
-    assert_eq!(b.dimensions.content.width(), 100.0, "calc(40px + 60px) should evaluate to 100px");
+    assert_eq!(
+        b.dimensions.content.width(),
+        100.0,
+        "calc(40px + 60px) should evaluate to 100px"
+    );
 }
 
 #[test]
@@ -527,8 +623,14 @@ fn test_css_multi_value_box_shadow() {
     let viewport = Size::new(800.0, 600.0);
     let (_, dl) = layout_document(&doc, &[], viewport);
 
-    let shadow_count = dl.iter().filter(|cmd| matches!(cmd, DisplayCommand::DrawBoxShadow { .. })).count();
-    assert!(shadow_count >= 1, "Box shadow should produce DrawBoxShadow command");
+    let shadow_count = dl
+        .iter()
+        .filter(|cmd| matches!(cmd, DisplayCommand::DrawBoxShadow { .. }))
+        .count();
+    assert!(
+        shadow_count >= 1,
+        "Box shadow should produce DrawBoxShadow command"
+    );
 }
 
 #[test]
@@ -561,7 +663,10 @@ fn test_css_supports_rule_evaluation() {
     let (_, dl) = layout_document(&doc, &[], viewport);
 
     let has_green = dl.iter().any(|cmd| matches!(cmd, DisplayCommand::FillRect { color, .. } if *color == Color::rgb(0, 255, 0)));
-    assert!(has_green, "@supports (display: flex) should evaluate to true and apply green background");
+    assert!(
+        has_green,
+        "@supports (display: flex) should evaluate to true and apply green background"
+    );
 }
 
 // ========================================================================
@@ -586,7 +691,10 @@ fn test_html5_self_closing_slash_on_non_void_element_ignored() {
     let body_id = doc.find_element_by_tag(root, "body").unwrap();
     let div_id = doc.find_element_by_tag(body_id, "div").unwrap();
     let p_inside_div = doc.find_element_by_tag(div_id, "p");
-    assert!(p_inside_div.is_some(), "<div/> acts as open tag, containing the subsequent <p>");
+    assert!(
+        p_inside_div.is_some(),
+        "<div/> acts as open tag, containing the subsequent <p>"
+    );
 }
 
 #[test]
@@ -629,11 +737,17 @@ fn test_html5_rcdata_textarea_and_title() {
     let root = doc.root();
     let title_id = doc.find_element_by_tag(root, "title").unwrap();
     let title = doc.text_content(title_id);
-    assert_eq!(title, "<Hello> & World", "RCDATA in <title> should decode entities without creating element nodes");
+    assert_eq!(
+        title, "<Hello> & World",
+        "RCDATA in <title> should decode entities without creating element nodes"
+    );
 
     let textarea_id = doc.find_element_by_tag(root, "textarea").unwrap();
     let text = doc.text_content(textarea_id);
-    assert_eq!(text, "<b>No Bold</b> & <raw>", "RCDATA in <textarea> should preserve tags as literal text while decoding entities");
+    assert_eq!(
+        text, "<b>No Bold</b> & <raw>",
+        "RCDATA in <textarea> should preserve tags as literal text while decoding entities"
+    );
 }
 
 // ========================================================================
@@ -664,8 +778,13 @@ fn test_render_inset_box_shadow() {
     let viewport = Size::new(800.0, 600.0);
     let (_, dl) = layout_document(&doc, &[], viewport);
 
-    let has_inset_shadow = dl.iter().any(|cmd| matches!(cmd, DisplayCommand::DrawBoxShadow { inset: true, .. }));
-    assert!(has_inset_shadow, "box-shadow: inset ... should emit DrawBoxShadow with inset: true");
+    let has_inset_shadow = dl
+        .iter()
+        .any(|cmd| matches!(cmd, DisplayCommand::DrawBoxShadow { inset: true, .. }));
+    assert!(
+        has_inset_shadow,
+        "box-shadow: inset ... should emit DrawBoxShadow with inset: true"
+    );
 
     // Also verify painter rasterization does not panic
     let mut pixels = vec![0u32; 800 * 600];
@@ -696,8 +815,13 @@ fn test_render_drop_shadow_filter() {
     let viewport = Size::new(800.0, 600.0);
     let (_, dl) = layout_document(&doc, &[], viewport);
 
-    let has_filter = dl.iter().any(|cmd| matches!(cmd, DisplayCommand::PushFilter { .. }));
-    assert!(has_filter, "filter: drop-shadow should emit PushFilter with DropShadow");
+    let has_filter = dl
+        .iter()
+        .any(|cmd| matches!(cmd, DisplayCommand::PushFilter { .. }));
+    assert!(
+        has_filter,
+        "filter: drop-shadow should emit PushFilter with DropShadow"
+    );
 
     let mut pixels = vec![0u32; 800 * 600];
     paint(&dl, &mut pixels, 800, 600);
@@ -720,7 +844,9 @@ fn test_svg_fill_none_and_stroke() {
     let viewport = Size::new(800.0, 600.0);
     let (_, dl) = layout_document(&doc, &[], viewport);
 
-    let has_image = dl.iter().any(|cmd| matches!(cmd, DisplayCommand::DrawImage { .. }));
+    let has_image = dl
+        .iter()
+        .any(|cmd| matches!(cmd, DisplayCommand::DrawImage { .. }));
     assert!(has_image, "SVG should be rendered to an image atom");
 }
 
@@ -744,8 +870,13 @@ fn test_text_shaping_and_bidi() {
     let (root, dl) = layout_document(&doc, &[], viewport);
 
     assert!(root.dimensions.content.height() > 0.0);
-    let has_text = dl.iter().any(|cmd| matches!(cmd, DisplayCommand::DrawText { .. }));
-    assert!(has_text, "Complex multilingual text should shape and emit DrawText commands");
+    let has_text = dl
+        .iter()
+        .any(|cmd| matches!(cmd, DisplayCommand::DrawText { .. }));
+    assert!(
+        has_text,
+        "Complex multilingual text should shape and emit DrawText commands"
+    );
 
     let mut pixels = vec![0u32; 800 * 600];
     paint(&dl, &mut pixels, 800, 600);

@@ -38,7 +38,9 @@ fn test_external_stylesheet_integration_pipeline() {
     );
 
     // Fetch external stylesheet via loader
-    let fetched_css = loader.fetch_stylesheet(&base_url, "theme.css").expect("fetch stylesheet");
+    let fetched_css = loader
+        .fetch_stylesheet(&base_url, "theme.css")
+        .expect("fetch stylesheet");
     let sheet = parse_stylesheet(&fetched_css);
 
     // HTML document that references the hero class
@@ -64,18 +66,21 @@ fn test_external_stylesheet_integration_pipeline() {
         DisplayCommand::FillRect { color, .. } => *color == Color::rgb(255, 161, 54),
         _ => false,
     });
-    assert!(has_hero_bg, "Display list should include hero background from external stylesheet");
+    assert!(
+        has_hero_bg,
+        "Display list should include hero background from external stylesheet"
+    );
 }
 
 #[test]
 fn test_remote_image_download_and_layout_integration() {
     // 1x1 transparent PNG bytes
     let png_bytes: Vec<u8> = vec![
-        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
-        0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
-        0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78,
-        0x9C, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00,
-        0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
+        0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
     ];
 
     let decoded = decode_image_bytes(&png_bytes).expect("decode valid PNG bytes");
@@ -103,7 +108,10 @@ fn test_remote_image_download_and_layout_integration() {
         DisplayCommand::DrawImage { width, height, .. } => *width == 64.0 && *height == 64.0,
         _ => false,
     });
-    assert!(has_image_cmd, "Layout should emit DrawImage for cached remote image");
+    assert!(
+        has_image_cmd,
+        "Layout should emit DrawImage for cached remote image"
+    );
 }
 
 #[test]
@@ -149,12 +157,16 @@ fn test_live_local_http_server_and_asset_pipeline() {
     let base_url = Url::parse(&format!("http://127.0.0.1:{}/", port)).unwrap();
 
     // 1. Fetch document from real live HTTP server over TCP socket
-    let doc_res = loader.fetch_document(&base_url).expect("fetch live document");
+    let doc_res = loader
+        .fetch_document(&base_url)
+        .expect("fetch live document");
     assert_eq!(doc_res.status, 200);
     assert!(doc_res.html.contains("Live Test"));
 
     // 2. Fetch external stylesheet from live server over TCP socket
-    let css_res = loader.fetch_stylesheet(&base_url, "style.css").expect("fetch live css");
+    let css_res = loader
+        .fetch_stylesheet(&base_url, "style.css")
+        .expect("fetch live css");
     assert!(css_res.contains("#ffa136"));
     let sheet = parse_stylesheet(&css_res);
 
@@ -169,7 +181,10 @@ fn test_live_local_http_server_and_asset_pipeline() {
         DisplayCommand::FillRect { color, .. } => *color == Color::rgb(255, 161, 54),
         _ => false,
     });
-    assert!(has_orange_bg, "Live fetched external stylesheet applied to layout");
+    assert!(
+        has_orange_bg,
+        "Live fetched external stylesheet applied to layout"
+    );
 
     let _ = server_handle.join();
 }
@@ -186,17 +201,27 @@ fn test_live_website_fetch_neverssl_or_example_com() {
             println!("Live fetch success! Status: {}", resp.status);
             assert_eq!(resp.status, 200);
             let html = resp.body_as_string();
-            println!("Fetched {} bytes of HTML: {:?}", html.len(), &html[..html.len().min(200)]);
+            println!(
+                "Fetched {} bytes of HTML: {:?}",
+                html.len(),
+                &html[..html.len().min(200)]
+            );
             assert!(!html.is_empty(), "HTML body should not be empty");
 
             // Parse live HTML into Mango DOM
             let doc = parse_html(&html);
             let viewport = Size::new(800.0, 600.0);
             let (_root_box, display_list) = layout_document(&doc, &[], viewport);
-            assert!(!display_list.is_empty(), "Display list should be non-empty for live website");
+            assert!(
+                !display_list.is_empty(),
+                "Display list should be non-empty for live website"
+            );
         }
         Err(e) => {
-            println!("Notice: live website fetch skipped or network unreachable: {}", e);
+            println!(
+                "Notice: live website fetch skipped or network unreachable: {}",
+                e
+            );
         }
     }
 }
@@ -245,23 +270,56 @@ fn test_example_com_rendering_structure() {
 
     // The body element is the child of html
     let body_box = &root_box.children[0];
-    assert!((body_box.dimensions.content.width() - 480.0).abs() < 0.1, "60vw of 800px should be 480px");
-    assert!((body_box.dimensions.margin.top - 90.0).abs() < 0.1, "15vh of 600px should be 90px");
-    assert!((body_box.dimensions.margin.left - 128.0).abs() < 0.1, "Auto margins should center the card with 2em padding: (800 - 544)/2 = 128px");
-    assert!((body_box.dimensions.content.x() - 160.0).abs() < 0.1, "Content origin X should be margin_left (128) + padding_left (32) = 160px");
+    assert!(
+        (body_box.dimensions.content.width() - 480.0).abs() < 0.1,
+        "60vw of 800px should be 480px"
+    );
+    assert!(
+        (body_box.dimensions.margin.top - 90.0).abs() < 0.1,
+        "15vh of 600px should be 90px"
+    );
+    assert!(
+        (body_box.dimensions.margin.left - 128.0).abs() < 0.1,
+        "Auto margins should center the card with 2em padding: (800 - 544)/2 = 128px"
+    );
+    assert!(
+        (body_box.dimensions.content.x() - 160.0).abs() < 0.1,
+        "Content origin X should be margin_left (128) + padding_left (32) = 160px"
+    );
 
     // Verify link color #348 is applied via :link pseudo-class
-    let link_cmd = dl.iter().find(|cmd| matches!(cmd, DisplayCommand::DrawText { text, .. } if text == "More..."));
-    assert!(link_cmd.is_some(), "Link text 'More...' should be present in display list");
+    let link_cmd = dl
+        .iter()
+        .find(|cmd| matches!(cmd, DisplayCommand::DrawText { text, .. } if text == "More..."));
+    assert!(
+        link_cmd.is_some(),
+        "Link text 'More...' should be present in display list"
+    );
     if let Some(DisplayCommand::DrawText { color, .. }) = link_cmd {
-        assert_eq!(*color, Color::rgb(51, 68, 136), "#348 should be rgb(51, 68, 136)");
+        assert_eq!(
+            *color,
+            Color::rgb(51, 68, 136),
+            "#348 should be rgb(51, 68, 136)"
+        );
     }
 
     // Verify h1 heading is drawn with FontWeight::Bold
-    let h1_cmd = dl.iter().find(|cmd| matches!(cmd, DisplayCommand::DrawText { text, .. } if text.contains("Example")));
-    assert!(h1_cmd.is_some(), "H1 heading text should be present in display list");
-    if let Some(DisplayCommand::DrawText { weight, font_size, .. }) = h1_cmd {
-        assert_eq!(*weight, mango_render::FontWeight::Bold, "H1 text must be rendered bold");
+    let h1_cmd = dl.iter().find(
+        |cmd| matches!(cmd, DisplayCommand::DrawText { text, .. } if text.contains("Example")),
+    );
+    assert!(
+        h1_cmd.is_some(),
+        "H1 heading text should be present in display list"
+    );
+    if let Some(DisplayCommand::DrawText {
+        weight, font_size, ..
+    }) = h1_cmd
+    {
+        assert_eq!(
+            *weight,
+            mango_render::FontWeight::Bold,
+            "H1 text must be rendered bold"
+        );
         assert_eq!(*font_size, 24.0, "1.5em of 16px body font is 24px");
     }
 }
@@ -286,19 +344,48 @@ fn test_cern_and_httpbin_typography_and_link_hittest() {
     // 1. Heading verification: consolidated run with intact spaces, bold weight, and default Serif font
     let heading_cmd = dl.iter().find(|cmd| matches!(cmd, DisplayCommand::DrawText { text, .. } if text.contains("Herman Melville")));
     assert!(heading_cmd.is_some(), "Heading text run must be present");
-    if let Some(DisplayCommand::DrawText { text, weight, family, .. }) = heading_cmd {
-        assert_eq!(text, "Herman Melville - Moby-Dick", "Heading text run must contain full text with proper spacing");
-        assert_eq!(*weight, FontWeight::Bold, "Heading should be rendered with Bold font weight");
-        assert_eq!(*family, FontFamily::Serif, "Default UA stylesheet specifies serif for body/headings");
+    if let Some(DisplayCommand::DrawText {
+        text,
+        weight,
+        family,
+        ..
+    }) = heading_cmd
+    {
+        assert_eq!(
+            text, "Herman Melville - Moby-Dick",
+            "Heading text run must contain full text with proper spacing"
+        );
+        assert_eq!(
+            *weight,
+            FontWeight::Bold,
+            "Heading should be rendered with Bold font weight"
+        );
+        assert_eq!(
+            *family,
+            FontFamily::Serif,
+            "Default UA stylesheet specifies serif for body/headings"
+        );
     }
 
     // 2. Link verification: blue color and default Serif font
     let link_cmd = dl.iter().find(|cmd| matches!(cmd, DisplayCommand::DrawText { text, .. } if text.contains("Browse the first website")));
     assert!(link_cmd.is_some(), "Link text run must be present");
     let mut link_coords = (0.0, 0.0);
-    if let Some(DisplayCommand::DrawText { text, color, family, x, y, .. }) = link_cmd {
+    if let Some(DisplayCommand::DrawText {
+        text,
+        color,
+        family,
+        x,
+        y,
+        ..
+    }) = link_cmd
+    {
         assert_eq!(text, "Browse the first website");
-        assert_eq!(*color, Color::rgb(0, 0, 238), "Unvisited link should have default browser blue color");
+        assert_eq!(
+            *color,
+            Color::rgb(0, 0, 238),
+            "Unvisited link should have default browser blue color"
+        );
         assert_eq!(*family, FontFamily::Serif);
         link_coords = (*x, *y);
     }
@@ -312,14 +399,16 @@ fn test_cern_and_httpbin_typography_and_link_hittest() {
     );
 }
 
-
 #[test]
 #[ignore = "requires live internet connection"]
 fn test_navigate_neverssl_repro() {
     let mut browser = mango_browser::browser::BrowserChrome::new(1024, 768);
     browser.navigate("http://neverssl.com");
     let dl = browser.build_display_list((1024, 768));
-    assert!(!dl.is_empty(), "Display list should not be empty for neverssl.com");
+    assert!(
+        !dl.is_empty(),
+        "Display list should not be empty for neverssl.com"
+    );
 }
 
 #[test]
@@ -328,12 +417,22 @@ fn test_wikipedia_rendering_and_display_list() {
     let mut browser = mango_browser::browser::BrowserChrome::new(1280, 900);
     browser.navigate("https://en.wikipedia.org/wiki/Main_Page");
     let dl = browser.build_display_list((1280, 900));
-    assert!(!dl.is_empty(), "Display list should not be empty for Wikipedia");
+    assert!(
+        !dl.is_empty(),
+        "Display list should not be empty for Wikipedia"
+    );
     let has_content_text = dl.iter().any(|cmd| match cmd {
-        mango_render::DisplayCommand::DrawText { text, .. } => text.contains("Wikipedia") || text.contains("article") || text.contains("free encyclopedia"),
+        mango_render::DisplayCommand::DrawText { text, .. } => {
+            text.contains("Wikipedia")
+                || text.contains("article")
+                || text.contains("free encyclopedia")
+        }
         _ => false,
     });
-    assert!(has_content_text, "Wikipedia display list should contain page content text");
+    assert!(
+        has_content_text,
+        "Wikipedia display list should contain page content text"
+    );
 }
 
 #[test]
@@ -342,12 +441,20 @@ fn test_duckduckgo_search_rendering() {
     let mut browser = mango_browser::browser::BrowserChrome::new(1280, 900);
     browser.navigate("https://html.duckduckgo.com/html/?q=rust");
     let dl = browser.build_display_list((1280, 900));
-    assert!(!dl.is_empty(), "Display list should not be empty for DuckDuckGo");
+    assert!(
+        !dl.is_empty(),
+        "Display list should not be empty for DuckDuckGo"
+    );
     let has_result = dl.iter().any(|cmd| match cmd {
-        mango_render::DisplayCommand::DrawText { text, .. } => text.contains("Rust") || text.contains("rust-lang.org"),
+        mango_render::DisplayCommand::DrawText { text, .. } => {
+            text.contains("Rust") || text.contains("rust-lang.org")
+        }
         _ => false,
     });
-    assert!(has_result, "DuckDuckGo display list should contain search result items");
+    assert!(
+        has_result,
+        "DuckDuckGo display list should contain search result items"
+    );
 
     // Verify scroll geometry for long DuckDuckGo result lists
     assert!(
@@ -362,7 +469,10 @@ fn test_duckduckgo_search_rendering() {
 
     // Scroll down several lines
     browser.handle_scroll(-10.0);
-    assert!(browser.scroll_y() > 0.0, "Scroll position should advance after scroll");
+    assert!(
+        browser.scroll_y() > 0.0,
+        "Scroll position should advance after scroll"
+    );
 
     let dl_scrolled = browser.build_display_list((1280, 900));
     assert!(
@@ -383,21 +493,29 @@ fn test_duckduckgo_search_rendering() {
     );
 }
 
-
 #[test]
 #[ignore = "requires live internet connection"]
 fn test_hackernews_rendering_and_table_layout() {
     let mut browser = mango_browser::browser::BrowserChrome::new(1280, 900);
     browser.navigate("https://news.ycombinator.com/");
     let dl = browser.build_display_list((1280, 900));
-    assert!(!dl.is_empty(), "Display list should not be empty for Hacker News");
+    assert!(
+        !dl.is_empty(),
+        "Display list should not be empty for Hacker News"
+    );
     let has_hn_text = dl.iter().any(|cmd| match cmd {
         mango_render::DisplayCommand::DrawText { text, .. } => {
-            text.contains("Hacker News") || text.contains("points") || text.contains("comments") || text.contains("past")
+            text.contains("Hacker News")
+                || text.contains("points")
+                || text.contains("comments")
+                || text.contains("past")
         }
         _ => false,
     });
-    assert!(has_hn_text, "Hacker News display list should contain stories or navbar text");
+    assert!(
+        has_hn_text,
+        "Hacker News display list should contain stories or navbar text"
+    );
 }
 
 #[test]
@@ -472,7 +590,10 @@ fn test_import_stylesheet_chaining_and_inline_style() {
         DisplayCommand::FillRect { color, .. } => *color == Color::rgb(255, 0, 170),
         _ => false,
     });
-    assert!(has_card_bg, "Display list must render background from @import stylesheet");
+    assert!(
+        has_card_bg,
+        "Display list must render background from @import stylesheet"
+    );
 }
 
 #[test]
@@ -509,7 +630,10 @@ fn test_character_encoding_section_5_4_pipeline() {
         None,
     );
     let fetched_win = loader.fetch_document(&ct_url).expect("fetch win doc");
-    assert_eq!(fetched_win.encoding, mango_net::encoding::Encoding::Windows1252);
+    assert_eq!(
+        fetched_win.encoding,
+        mango_net::encoding::Encoding::Windows1252
+    );
     assert!(fetched_win.html.contains("Price: €100 and “quoted”"));
 
     // 3. <meta charset> prescan without HTTP header charset
@@ -525,7 +649,10 @@ fn test_character_encoding_section_5_4_pipeline() {
         None,
     );
     let fetched_meta = loader.fetch_document(&meta_url).expect("fetch meta doc");
-    assert_eq!(fetched_meta.encoding, mango_net::encoding::Encoding::Windows1252);
+    assert_eq!(
+        fetched_meta.encoding,
+        mango_net::encoding::Encoding::Windows1252
+    );
     assert!(fetched_meta.html.contains("café"));
 
     // 4. <meta http-equiv="Content-Type"> fallback
@@ -540,8 +667,13 @@ fn test_character_encoding_section_5_4_pipeline() {
         he_bytes.to_vec(),
         None,
     );
-    let fetched_he = loader.fetch_document(&http_equiv_url).expect("fetch he doc");
-    assert_eq!(fetched_he.encoding, mango_net::encoding::Encoding::Windows1252);
+    let fetched_he = loader
+        .fetch_document(&http_equiv_url)
+        .expect("fetch he doc");
+    assert_eq!(
+        fetched_he.encoding,
+        mango_net::encoding::Encoding::Windows1252
+    );
     assert!(fetched_he.html.contains("™ brand"));
 }
 
@@ -567,53 +699,109 @@ fn test_hover_and_active_state_triggers_relayout_and_styling() {
 
     // Before hover: link is blue (#0000ff), not underlined
     let root = browser.root_box().expect("root box");
-    let link_box = root.children.iter().find(|c| c.tag_name.as_deref() == Some("body"))
-        .and_then(|b| b.children.iter().find(|c| c.tag_name.as_deref() == Some("a")))
+    let link_box = root
+        .children
+        .iter()
+        .find(|c| c.tag_name.as_deref() == Some("body"))
+        .and_then(|b| {
+            b.children
+                .iter()
+                .find(|c| c.tag_name.as_deref() == Some("a"))
+        })
         .expect("a element");
     let style_before = link_box.style.as_ref().unwrap();
-    assert_eq!(style_before.text_decoration, mango_css::values::TextDecoration::None);
+    assert_eq!(
+        style_before.text_decoration,
+        mango_css::values::TextDecoration::None
+    );
     assert_eq!(style_before.color, Color::rgba(0, 0, 255, 255));
 
     // Move mouse over the link (content y starts below HEADER_HEIGHT 81.0)
     let moved = browser.handle_mouse_move(50.0, 100.0);
-    assert!(moved, "handle_mouse_move should return true when hover state changes");
+    assert!(
+        moved,
+        "handle_mouse_move should return true when hover state changes"
+    );
 
     // After hover: link is red (#ff0000), underlined
     let root = browser.root_box().expect("root box");
-    let link_box = root.children.iter().find(|c| c.tag_name.as_deref() == Some("body"))
-        .and_then(|b| b.children.iter().find(|c| c.tag_name.as_deref() == Some("a")))
+    let link_box = root
+        .children
+        .iter()
+        .find(|c| c.tag_name.as_deref() == Some("body"))
+        .and_then(|b| {
+            b.children
+                .iter()
+                .find(|c| c.tag_name.as_deref() == Some("a"))
+        })
         .expect("a element");
     let style_hovered = link_box.style.as_ref().unwrap();
-    assert_eq!(style_hovered.text_decoration, mango_css::values::TextDecoration::Underline);
+    assert_eq!(
+        style_hovered.text_decoration,
+        mango_css::values::TextDecoration::Underline
+    );
     assert_eq!(style_hovered.color, Color::rgba(255, 0, 0, 255));
 
     // Press mouse: :active styling activates (#00ff00)
-    browser.handle_mouse_click(mango_platform::input::MouseButton::Left, mango_platform::input::KeyState::Pressed);
+    browser.handle_mouse_click(
+        mango_platform::input::MouseButton::Left,
+        mango_platform::input::KeyState::Pressed,
+    );
     let root = browser.root_box().expect("root box");
-    let link_box = root.children.iter().find(|c| c.tag_name.as_deref() == Some("body"))
-        .and_then(|b| b.children.iter().find(|c| c.tag_name.as_deref() == Some("a")))
+    let link_box = root
+        .children
+        .iter()
+        .find(|c| c.tag_name.as_deref() == Some("body"))
+        .and_then(|b| {
+            b.children
+                .iter()
+                .find(|c| c.tag_name.as_deref() == Some("a"))
+        })
         .expect("a element");
     let style_active = link_box.style.as_ref().unwrap();
     assert_eq!(style_active.color, Color::rgba(0, 255, 0, 255));
 
     // Release mouse: returns to :hover styling (#ff0000)
-    browser.handle_mouse_click(mango_platform::input::MouseButton::Left, mango_platform::input::KeyState::Released);
+    browser.handle_mouse_click(
+        mango_platform::input::MouseButton::Left,
+        mango_platform::input::KeyState::Released,
+    );
     let root = browser.root_box().expect("root box");
-    let link_box = root.children.iter().find(|c| c.tag_name.as_deref() == Some("body"))
-        .and_then(|b| b.children.iter().find(|c| c.tag_name.as_deref() == Some("a")))
+    let link_box = root
+        .children
+        .iter()
+        .find(|c| c.tag_name.as_deref() == Some("body"))
+        .and_then(|b| {
+            b.children
+                .iter()
+                .find(|c| c.tag_name.as_deref() == Some("a"))
+        })
         .expect("a element");
     let style_after_release = link_box.style.as_ref().unwrap();
     assert_eq!(style_after_release.color, Color::rgba(255, 0, 0, 255));
 
     // Move mouse away to window top (header)
     let moved_away = browser.handle_mouse_move(10.0, 10.0);
-    assert!(moved_away, "handle_mouse_move should return true when unhovering");
+    assert!(
+        moved_away,
+        "handle_mouse_move should return true when unhovering"
+    );
     let root = browser.root_box().expect("root box");
-    let link_box = root.children.iter().find(|c| c.tag_name.as_deref() == Some("body"))
-        .and_then(|b| b.children.iter().find(|c| c.tag_name.as_deref() == Some("a")))
+    let link_box = root
+        .children
+        .iter()
+        .find(|c| c.tag_name.as_deref() == Some("body"))
+        .and_then(|b| {
+            b.children
+                .iter()
+                .find(|c| c.tag_name.as_deref() == Some("a"))
+        })
         .expect("a element");
     let style_after_leave = link_box.style.as_ref().unwrap();
-    assert_eq!(style_after_leave.text_decoration, mango_css::values::TextDecoration::None);
+    assert_eq!(
+        style_after_leave.text_decoration,
+        mango_css::values::TextDecoration::None
+    );
     assert_eq!(style_after_leave.color, Color::rgba(0, 0, 255, 255));
 }
 
@@ -641,8 +829,15 @@ fn test_duckduckgo_background_image_parsing_and_drain() {
     "#;
     browser.load_html(html.to_string(), "https://duckduckgo.com/html/".to_string());
     let root = browser.root_box().expect("root box");
-    let logo_box = root.children.iter().find(|c| c.tag_name.as_deref() == Some("body"))
-        .and_then(|b| b.children.iter().find(|c| c.tag_name.as_deref() == Some("a")))
+    let logo_box = root
+        .children
+        .iter()
+        .find(|c| c.tag_name.as_deref() == Some("body"))
+        .and_then(|b| {
+            b.children
+                .iter()
+                .find(|c| c.tag_name.as_deref() == Some("a"))
+        })
         .expect("logo element");
     let style = logo_box.style.as_ref().unwrap();
     assert_eq!(
@@ -651,5 +846,3 @@ fn test_duckduckgo_background_image_parsing_and_drain() {
         "multi-background shorthand should preserve the primary url() as background_image"
     );
 }
-
-

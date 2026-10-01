@@ -12,7 +12,7 @@
 use mango_core::{Color, Rect};
 
 use crate::display_list::{DisplayCommand, DisplayList};
-use crate::font::{font_manager, TextDecoration};
+use crate::font::{TextDecoration, font_manager};
 
 /// Rasterizes a [`DisplayList`] into a pixel buffer.
 ///
@@ -34,24 +34,24 @@ fn intersect_rect(a: mango_core::Rect, b: mango_core::Rect) -> mango_core::Rect 
 /// The buffer is a flat `&mut [u32]` in `0xRRGGBB` format with the given
 /// width and height. Scroll offset is NOT applied here — the caller must
 /// translate coordinates before building the display list.
-pub fn paint(
-    display_list: &DisplayList,
-    buffer: &mut [u32],
-    buf_width: u32,
-    buf_height: u32,
-) {
+pub fn paint(display_list: &DisplayList, buffer: &mut [u32], buf_width: u32, buf_height: u32) {
     let fm = font_manager();
     let mut clip_stack: Vec<mango_core::Rect> = Vec::new();
     let default_clip = mango_core::Rect::new(0.0, 0.0, buf_width as f32, buf_height as f32);
     let mut transform_stack: Vec<[f32; 6]> = Vec::new();
     let mut blend_mode_stack: Vec<mango_css::values::BlendMode> = Vec::new();
-    let mut filter_stack: Vec<(Vec<mango_css::values::FilterFunction>, mango_core::Rect)> = Vec::new();
-    let mut clip_path_stack: Vec<(mango_css::values::ClipPath, mango_core::Rect, Vec<u32>)> = Vec::new();
+    let mut filter_stack: Vec<(Vec<mango_css::values::FilterFunction>, mango_core::Rect)> =
+        Vec::new();
+    let mut clip_path_stack: Vec<(mango_css::values::ClipPath, mango_core::Rect, Vec<u32>)> =
+        Vec::new();
 
     for command in display_list.iter() {
         let active_clip = clip_stack.last().copied().unwrap_or(default_clip);
         let transform = transform_stack.last().copied().unwrap_or(IDENTITY);
-        let active_blend = blend_mode_stack.last().copied().unwrap_or(mango_css::values::BlendMode::Normal);
+        let active_blend = blend_mode_stack
+            .last()
+            .copied()
+            .unwrap_or(mango_css::values::BlendMode::Normal);
         match command {
             DisplayCommand::PushClip { rect } => {
                 let current = clip_stack.last().copied().unwrap_or(default_clip);
@@ -67,7 +67,12 @@ pub fn paint(
             DisplayCommand::PopTransform => {
                 transform_stack.pop();
             }
-            DisplayCommand::FillGradient { rect, gradient, radii, opacity } => {
+            DisplayCommand::FillGradient {
+                rect,
+                gradient,
+                radii,
+                opacity,
+            } => {
                 fill_gradient(
                     buffer,
                     buf_width,
@@ -166,7 +171,17 @@ pub fn paint(
                     let y = r.y() as i32;
                     let w = r.width() as u32;
                     let h = r.height() as u32;
-                    fill_rect_mode(buffer, buf_width, buf_height, x, y, w, h, *color, active_blend);
+                    fill_rect_mode(
+                        buffer,
+                        buf_width,
+                        buf_height,
+                        x,
+                        y,
+                        w,
+                        h,
+                        *color,
+                        active_blend,
+                    );
                 }
             }
             DisplayCommand::FillRoundedRect { rect, color, radii } => {
@@ -183,7 +198,15 @@ pub fn paint(
                     );
                     continue;
                 }
-                fill_rounded_rect(buffer, buf_width, buf_height, rect, *color, *radii, active_clip);
+                fill_rounded_rect(
+                    buffer,
+                    buf_width,
+                    buf_height,
+                    rect,
+                    *color,
+                    *radii,
+                    active_clip,
+                );
             }
             DisplayCommand::DrawBoxShadow {
                 rect,
@@ -212,14 +235,19 @@ pub fn paint(
                             (rect.height() - spread_radius * 2.0).max(0.0),
                         );
                         let clip_out = Some((&inner_rect, *radii));
-                        fill_rounded_rect_clipped(buffer, buf_width, buf_height, rect, *color, *radii, clip_out, inset_clip);
+                        fill_rounded_rect_clipped(
+                            buffer, buf_width, buf_height, rect, *color, *radii, clip_out,
+                            inset_clip,
+                        );
                     } else {
                         let steps = (blur.min(16.0) / 2.0).ceil().max(1.0) as i32;
                         let base_alpha = color.a as f32;
                         for step in (0..=steps).rev() {
                             let t = (step as f32) / (steps as f32);
                             let cur_spread = spread_radius + blur * t;
-                            let step_alpha = ((base_alpha * (1.0 - t * 0.6)) / (steps as f32 + 1.0)).clamp(0.0, 255.0) as u8;
+                            let step_alpha = ((base_alpha * (1.0 - t * 0.6)) / (steps as f32 + 1.0))
+                                .clamp(0.0, 255.0)
+                                as u8;
                             if step_alpha == 0 {
                                 continue;
                             }
@@ -231,7 +259,10 @@ pub fn paint(
                                 (rect.height() - cur_spread * 2.0).max(0.0),
                             );
                             let clip_out = Some((&inner_rect, *radii));
-                            fill_rounded_rect_clipped(buffer, buf_width, buf_height, rect, step_color, *radii, clip_out, inset_clip);
+                            fill_rounded_rect_clipped(
+                                buffer, buf_width, buf_height, rect, step_color, *radii, clip_out,
+                                inset_clip,
+                            );
                         }
                     }
                     continue;
@@ -247,7 +278,16 @@ pub fn paint(
                     );
                     let r = intersect_rect(active_clip, shadow_rect);
                     if r.width() > 0.0 && r.height() > 0.0 {
-                        fill_rounded_rect_clipped(buffer, buf_width, buf_height, &shadow_rect, *color, *radii, clip_out, active_clip);
+                        fill_rounded_rect_clipped(
+                            buffer,
+                            buf_width,
+                            buf_height,
+                            &shadow_rect,
+                            *color,
+                            *radii,
+                            clip_out,
+                            active_clip,
+                        );
                     }
                 } else {
                     let steps = (blur.min(16.0) / 2.0).ceil().max(1.0) as i32;
@@ -255,7 +295,8 @@ pub fn paint(
                     for step in (0..=steps).rev() {
                         let t = (step as f32) / (steps as f32);
                         let cur_spread = spread_radius + blur * t;
-                        let step_alpha = ((base_alpha * (1.0 - t * 0.6)) / (steps as f32 + 1.0)).clamp(0.0, 255.0) as u8;
+                        let step_alpha = ((base_alpha * (1.0 - t * 0.6)) / (steps as f32 + 1.0))
+                            .clamp(0.0, 255.0) as u8;
                         if step_alpha == 0 {
                             continue;
                         }
@@ -274,7 +315,16 @@ pub fn paint(
                         ];
                         let r = intersect_rect(active_clip, shadow_rect);
                         if r.width() > 0.0 && r.height() > 0.0 {
-                            fill_rounded_rect_clipped(buffer, buf_width, buf_height, &shadow_rect, step_color, step_radii, clip_out, active_clip);
+                            fill_rounded_rect_clipped(
+                                buffer,
+                                buf_width,
+                                buf_height,
+                                &shadow_rect,
+                                step_color,
+                                step_radii,
+                                clip_out,
+                                active_clip,
+                            );
                         }
                     }
                 }
@@ -296,7 +346,12 @@ pub fn paint(
                         mango_core::Rect::new(x, y, widths.left, h),
                         mango_core::Rect::new(x + w - widths.right, y, widths.right, h),
                     ];
-                    let present = [widths.top > 0.0, widths.bottom > 0.0, widths.left > 0.0, widths.right > 0.0];
+                    let present = [
+                        widths.top > 0.0,
+                        widths.bottom > 0.0,
+                        widths.left > 0.0,
+                        widths.right > 0.0,
+                    ];
                     for (edge, keep) in edges.iter().zip(present.iter()) {
                         if *keep {
                             fill_rect_transformed(
@@ -345,20 +400,42 @@ pub fn paint(
 
                 // CSS Border Triangle detection:
                 // When an element has zero (or near-zero) content dimensions, borders meet at the center forming triangles.
-                let is_zero_content = w <= widths.left + widths.right + 0.5 && h <= widths.top + widths.bottom + 0.5;
-                if is_zero_content && (widths.top > 0.0 || widths.bottom > 0.0 || widths.left > 0.0 || widths.right > 0.0) {
+                let is_zero_content =
+                    w <= widths.left + widths.right + 0.5 && h <= widths.top + widths.bottom + 0.5;
+                if is_zero_content
+                    && (widths.top > 0.0
+                        || widths.bottom > 0.0
+                        || widths.left > 0.0
+                        || widths.right > 0.0)
+                {
                     if widths.top > 0.0 && widths.bottom == 0.0 {
                         // Downward-pointing triangle
                         let start_y = y.round() as i32;
                         let end_y = (y + widths.top).round() as i32;
                         for cur_y in start_y..end_y {
-                            let t = if widths.top > 0.0 { (cur_y as f32 - y) / widths.top } else { 0.0 };
+                            let t = if widths.top > 0.0 {
+                                (cur_y as f32 - y) / widths.top
+                            } else {
+                                0.0
+                            };
                             let row_x1 = x + widths.left * t;
                             let row_x2 = x + w - widths.right * t;
                             let clip_x1 = (row_x1.max(active_clip.x())).round() as i32;
                             let clip_x2 = (row_x2.min(active_clip.right())).round() as i32;
-                            if clip_x2 > clip_x1 && cur_y >= active_clip.y() as i32 && cur_y < active_clip.bottom() as i32 {
-                                fill_rect(buffer, buf_width, buf_height, clip_x1, cur_y, (clip_x2 - clip_x1) as u32, 1, *color);
+                            if clip_x2 > clip_x1
+                                && cur_y >= active_clip.y() as i32
+                                && cur_y < active_clip.bottom() as i32
+                            {
+                                fill_rect(
+                                    buffer,
+                                    buf_width,
+                                    buf_height,
+                                    clip_x1,
+                                    cur_y,
+                                    (clip_x2 - clip_x1) as u32,
+                                    1,
+                                    *color,
+                                );
                             }
                         }
                         continue;
@@ -367,13 +444,29 @@ pub fn paint(
                         let start_y = y.round() as i32;
                         let end_y = (y + widths.bottom).round() as i32;
                         for cur_y in start_y..end_y {
-                            let t = if widths.bottom > 0.0 { (y + widths.bottom - cur_y as f32) / widths.bottom } else { 0.0 };
+                            let t = if widths.bottom > 0.0 {
+                                (y + widths.bottom - cur_y as f32) / widths.bottom
+                            } else {
+                                0.0
+                            };
                             let row_x1 = x + widths.left * t;
                             let row_x2 = x + w - widths.right * t;
                             let clip_x1 = (row_x1.max(active_clip.x())).round() as i32;
                             let clip_x2 = (row_x2.min(active_clip.right())).round() as i32;
-                            if clip_x2 > clip_x1 && cur_y >= active_clip.y() as i32 && cur_y < active_clip.bottom() as i32 {
-                                fill_rect(buffer, buf_width, buf_height, clip_x1, cur_y, (clip_x2 - clip_x1) as u32, 1, *color);
+                            if clip_x2 > clip_x1
+                                && cur_y >= active_clip.y() as i32
+                                && cur_y < active_clip.bottom() as i32
+                            {
+                                fill_rect(
+                                    buffer,
+                                    buf_width,
+                                    buf_height,
+                                    clip_x1,
+                                    cur_y,
+                                    (clip_x2 - clip_x1) as u32,
+                                    1,
+                                    *color,
+                                );
                             }
                         }
                         continue;
@@ -382,13 +475,29 @@ pub fn paint(
                         let start_x = x.round() as i32;
                         let end_x = (x + widths.left).round() as i32;
                         for cur_x in start_x..end_x {
-                            let t = if widths.left > 0.0 { (cur_x as f32 - x) / widths.left } else { 0.0 };
+                            let t = if widths.left > 0.0 {
+                                (cur_x as f32 - x) / widths.left
+                            } else {
+                                0.0
+                            };
                             let col_y1 = y + widths.top * t;
                             let col_y2 = y + h - widths.bottom * t;
                             let clip_y1 = (col_y1.max(active_clip.y())).round() as i32;
                             let clip_y2 = (col_y2.min(active_clip.bottom())).round() as i32;
-                            if clip_y2 > clip_y1 && cur_x >= active_clip.x() as i32 && cur_x < active_clip.right() as i32 {
-                                fill_rect(buffer, buf_width, buf_height, cur_x, clip_y1, 1, (clip_y2 - clip_y1) as u32, *color);
+                            if clip_y2 > clip_y1
+                                && cur_x >= active_clip.x() as i32
+                                && cur_x < active_clip.right() as i32
+                            {
+                                fill_rect(
+                                    buffer,
+                                    buf_width,
+                                    buf_height,
+                                    cur_x,
+                                    clip_y1,
+                                    1,
+                                    (clip_y2 - clip_y1) as u32,
+                                    *color,
+                                );
                             }
                         }
                         continue;
@@ -397,13 +506,29 @@ pub fn paint(
                         let start_x = x.round() as i32;
                         let end_x = (x + widths.right).round() as i32;
                         for cur_x in start_x..end_x {
-                            let t = if widths.right > 0.0 { (x + widths.right - cur_x as f32) / widths.right } else { 0.0 };
+                            let t = if widths.right > 0.0 {
+                                (x + widths.right - cur_x as f32) / widths.right
+                            } else {
+                                0.0
+                            };
                             let col_y1 = y + widths.top * t;
                             let col_y2 = y + h - widths.bottom * t;
                             let clip_y1 = (col_y1.max(active_clip.y())).round() as i32;
                             let clip_y2 = (col_y2.min(active_clip.bottom())).round() as i32;
-                            if clip_y2 > clip_y1 && cur_x >= active_clip.x() as i32 && cur_x < active_clip.right() as i32 {
-                                fill_rect(buffer, buf_width, buf_height, cur_x, clip_y1, 1, (clip_y2 - clip_y1) as u32, *color);
+                            if clip_y2 > clip_y1
+                                && cur_x >= active_clip.x() as i32
+                                && cur_x < active_clip.right() as i32
+                            {
+                                fill_rect(
+                                    buffer,
+                                    buf_width,
+                                    buf_height,
+                                    cur_x,
+                                    clip_y1,
+                                    1,
+                                    (clip_y2 - clip_y1) as u32,
+                                    *color,
+                                );
                             }
                         }
                         continue;
@@ -412,7 +537,8 @@ pub fn paint(
 
                 // Top border
                 if widths.top > 0.0 {
-                    let top_rect = intersect_rect(active_clip, mango_core::Rect::new(x, y, w, widths.top));
+                    let top_rect =
+                        intersect_rect(active_clip, mango_core::Rect::new(x, y, w, widths.top));
                     if top_rect.width() > 0.0 && top_rect.height() > 0.0 {
                         fill_rect(
                             buffer,
@@ -428,7 +554,10 @@ pub fn paint(
                 }
                 // Bottom border
                 if widths.bottom > 0.0 {
-                    let bottom_rect = intersect_rect(active_clip, mango_core::Rect::new(x, y + h - widths.bottom, w, widths.bottom));
+                    let bottom_rect = intersect_rect(
+                        active_clip,
+                        mango_core::Rect::new(x, y + h - widths.bottom, w, widths.bottom),
+                    );
                     if bottom_rect.width() > 0.0 && bottom_rect.height() > 0.0 {
                         fill_rect(
                             buffer,
@@ -444,7 +573,8 @@ pub fn paint(
                 }
                 // Left border
                 if widths.left > 0.0 {
-                    let left_rect = intersect_rect(active_clip, mango_core::Rect::new(x, y, widths.left, h));
+                    let left_rect =
+                        intersect_rect(active_clip, mango_core::Rect::new(x, y, widths.left, h));
                     if left_rect.width() > 0.0 && left_rect.height() > 0.0 {
                         fill_rect(
                             buffer,
@@ -460,7 +590,10 @@ pub fn paint(
                 }
                 // Right border
                 if widths.right > 0.0 {
-                    let right_rect = intersect_rect(active_clip, mango_core::Rect::new(x + w - widths.right, y, widths.right, h));
+                    let right_rect = intersect_rect(
+                        active_clip,
+                        mango_core::Rect::new(x + w - widths.right, y, widths.right, h),
+                    );
                     if right_rect.width() > 0.0 && right_rect.height() > 0.0 {
                         fill_rect(
                             buffer,
@@ -492,7 +625,13 @@ pub fn paint(
                 }
                 let is_rotated = transform[1].abs() > 1e-4 || transform[2].abs() > 1e-4;
                 if is_rotated {
-                    let (text_w, text_h) = fm.measure_text_with_spacing(text, *font_size, *weight, *family, *letter_spacing);
+                    let (text_w, text_h) = fm.measure_text_with_spacing(
+                        text,
+                        *font_size,
+                        *weight,
+                        *family,
+                        *letter_spacing,
+                    );
                     let w_u32 = text_w.ceil().max(1.0) as u32;
                     let h_u32 = text_h.ceil().max(1.0) as u32;
                     let mut text_buf = vec![0u32; (w_u32 * h_u32) as usize];
@@ -554,7 +693,13 @@ pub fn paint(
                 }
 
                 if *decoration != TextDecoration::None && is_identity(transform) {
-                    let (text_w, _) = fm.measure_text_with_spacing(text, *font_size, *weight, *family, *letter_spacing);
+                    let (text_w, _) = fm.measure_text_with_spacing(
+                        text,
+                        *font_size,
+                        *weight,
+                        *family,
+                        *letter_spacing,
+                    );
                     let font = fm.select_font(*family, *weight);
                     let ascent = font
                         .horizontal_line_metrics(font_size.max(1.0))
@@ -843,7 +988,12 @@ fn transformed_bounds(rect: &mango_core::Rect, m: [f32; 6]) -> mango_core::Rect 
         max_x = max_x.max(tx);
         max_y = max_y.max(ty);
     }
-    mango_core::Rect::new(min_x, min_y, (max_x - min_x).max(0.0), (max_y - min_y).max(0.0))
+    mango_core::Rect::new(
+        min_x,
+        min_y,
+        (max_x - min_x).max(0.0),
+        (max_y - min_y).max(0.0),
+    )
 }
 
 /// Fills a rectangle through an affine transform, optionally clipped to rounded corners.
@@ -969,7 +1119,13 @@ fn blit_image_transformed(
             let v = ((sy - y) / img_height).clamp(0.0, 0.9999);
             let samp_x = u * (src_stride as f32);
             let samp_y = v * img_height;
-            let pixel = sample_bilinear(pixels, src_stride as u32, img_height.max(1.0) as u32, samp_x, samp_y);
+            let pixel = sample_bilinear(
+                pixels,
+                src_stride as u32,
+                img_height.max(1.0) as u32,
+                samp_x,
+                samp_y,
+            );
             let alpha = (pixel >> 24) & 0xFF;
             if alpha == 0 {
                 continue;
@@ -1089,7 +1245,8 @@ fn draw_border_image(
     clip: mango_core::Rect,
     transform: [f32; 6],
 ) {
-    if img_w == 0 || img_h == 0 || pixels.is_empty() || rect.width() <= 0.0 || rect.height() <= 0.0 {
+    if img_w == 0 || img_h == 0 || pixels.is_empty() || rect.width() <= 0.0 || rect.height() <= 0.0
+    {
         return;
     }
     let s_top = slice[0].clamp(0.0, img_h as f32);
@@ -1113,33 +1270,88 @@ fn draw_border_image(
     // 9 slices: (dest_rect, src_rect, rep_h, rep_v)
     let slices = [
         // 1. Top-left corner
-        (mango_core::Rect::new(d_x, d_y, d_left, d_top), mango_core::Rect::new(0.0, 0.0, s_left, s_top), mango_css::values::BorderImageRepeat::Stretch, mango_css::values::BorderImageRepeat::Stretch),
+        (
+            mango_core::Rect::new(d_x, d_y, d_left, d_top),
+            mango_core::Rect::new(0.0, 0.0, s_left, s_top),
+            mango_css::values::BorderImageRepeat::Stretch,
+            mango_css::values::BorderImageRepeat::Stretch,
+        ),
         // 2. Top-right corner
-        (mango_core::Rect::new(d_x + d_w - d_right, d_y, d_right, d_top), mango_core::Rect::new(img_w as f32 - s_right, 0.0, s_right, s_top), mango_css::values::BorderImageRepeat::Stretch, mango_css::values::BorderImageRepeat::Stretch),
+        (
+            mango_core::Rect::new(d_x + d_w - d_right, d_y, d_right, d_top),
+            mango_core::Rect::new(img_w as f32 - s_right, 0.0, s_right, s_top),
+            mango_css::values::BorderImageRepeat::Stretch,
+            mango_css::values::BorderImageRepeat::Stretch,
+        ),
         // 3. Bottom-right corner
-        (mango_core::Rect::new(d_x + d_w - d_right, d_y + d_h - d_bottom, d_right, d_bottom), mango_core::Rect::new(img_w as f32 - s_right, img_h as f32 - s_bottom, s_right, s_bottom), mango_css::values::BorderImageRepeat::Stretch, mango_css::values::BorderImageRepeat::Stretch),
+        (
+            mango_core::Rect::new(d_x + d_w - d_right, d_y + d_h - d_bottom, d_right, d_bottom),
+            mango_core::Rect::new(
+                img_w as f32 - s_right,
+                img_h as f32 - s_bottom,
+                s_right,
+                s_bottom,
+            ),
+            mango_css::values::BorderImageRepeat::Stretch,
+            mango_css::values::BorderImageRepeat::Stretch,
+        ),
         // 4. Bottom-left corner
-        (mango_core::Rect::new(d_x, d_y + d_h - d_bottom, d_left, d_bottom), mango_core::Rect::new(0.0, img_h as f32 - s_bottom, s_left, s_bottom), mango_css::values::BorderImageRepeat::Stretch, mango_css::values::BorderImageRepeat::Stretch),
+        (
+            mango_core::Rect::new(d_x, d_y + d_h - d_bottom, d_left, d_bottom),
+            mango_core::Rect::new(0.0, img_h as f32 - s_bottom, s_left, s_bottom),
+            mango_css::values::BorderImageRepeat::Stretch,
+            mango_css::values::BorderImageRepeat::Stretch,
+        ),
         // 5. Top edge
-        (mango_core::Rect::new(d_x + d_left, d_y, d_mid_w, d_top), mango_core::Rect::new(s_left, 0.0, s_mid_w, s_top), repeat_h, mango_css::values::BorderImageRepeat::Stretch),
+        (
+            mango_core::Rect::new(d_x + d_left, d_y, d_mid_w, d_top),
+            mango_core::Rect::new(s_left, 0.0, s_mid_w, s_top),
+            repeat_h,
+            mango_css::values::BorderImageRepeat::Stretch,
+        ),
         // 6. Bottom edge
-        (mango_core::Rect::new(d_x + d_left, d_y + d_h - d_bottom, d_mid_w, d_bottom), mango_core::Rect::new(s_left, img_h as f32 - s_bottom, s_mid_w, s_bottom), repeat_h, mango_css::values::BorderImageRepeat::Stretch),
+        (
+            mango_core::Rect::new(d_x + d_left, d_y + d_h - d_bottom, d_mid_w, d_bottom),
+            mango_core::Rect::new(s_left, img_h as f32 - s_bottom, s_mid_w, s_bottom),
+            repeat_h,
+            mango_css::values::BorderImageRepeat::Stretch,
+        ),
         // 7. Left edge
-        (mango_core::Rect::new(d_x, d_y + d_top, d_left, d_mid_h), mango_core::Rect::new(0.0, s_top, s_left, s_mid_h), mango_css::values::BorderImageRepeat::Stretch, repeat_v),
+        (
+            mango_core::Rect::new(d_x, d_y + d_top, d_left, d_mid_h),
+            mango_core::Rect::new(0.0, s_top, s_left, s_mid_h),
+            mango_css::values::BorderImageRepeat::Stretch,
+            repeat_v,
+        ),
         // 8. Right edge
-        (mango_core::Rect::new(d_x + d_w - d_right, d_y + d_top, d_right, d_mid_h), mango_core::Rect::new(img_w as f32 - s_right, s_top, s_right, s_mid_h), mango_css::values::BorderImageRepeat::Stretch, repeat_v),
+        (
+            mango_core::Rect::new(d_x + d_w - d_right, d_y + d_top, d_right, d_mid_h),
+            mango_core::Rect::new(img_w as f32 - s_right, s_top, s_right, s_mid_h),
+            mango_css::values::BorderImageRepeat::Stretch,
+            repeat_v,
+        ),
     ];
 
     for (d_rect, s_rect, rep_h, rep_v) in slices {
-        if d_rect.width() > 0.0 && d_rect.height() > 0.0 && s_rect.width() > 0.0 && s_rect.height() > 0.0 {
-            blit_border_slice(buffer, buf_width, buf_height, &d_rect, pixels, img_w, img_h, &s_rect, rep_h, rep_v, clip, transform);
+        if d_rect.width() > 0.0
+            && d_rect.height() > 0.0
+            && s_rect.width() > 0.0
+            && s_rect.height() > 0.0
+        {
+            blit_border_slice(
+                buffer, buf_width, buf_height, &d_rect, pixels, img_w, img_h, &s_rect, rep_h,
+                rep_v, clip, transform,
+            );
         }
     }
 
     if fill && d_mid_w > 0.0 && d_mid_h > 0.0 && s_mid_w > 0.0 && s_mid_h > 0.0 {
         let center_d = mango_core::Rect::new(d_x + d_left, d_y + d_top, d_mid_w, d_mid_h);
         let center_s = mango_core::Rect::new(s_left, s_top, s_mid_w, s_mid_h);
-        blit_border_slice(buffer, buf_width, buf_height, &center_d, pixels, img_w, img_h, &center_s, repeat_h, repeat_v, clip, transform);
+        blit_border_slice(
+            buffer, buf_width, buf_height, &center_d, pixels, img_w, img_h, &center_s, repeat_h,
+            repeat_v, clip, transform,
+        );
     }
 }
 
@@ -1177,27 +1389,23 @@ fn blit_border_slice(
             let fx = px as f32 + 0.5;
             let fy = py as f32 + 0.5;
             let (dx, dy) = apply_matrix(inv, fx, fy);
-            if dx < dest.x() || dx >= dest.x() + dest.width() || dy < dest.y() || dy >= dest.y() + dest.height() {
+            if dx < dest.x()
+                || dx >= dest.x() + dest.width()
+                || dy < dest.y()
+                || dy >= dest.y() + dest.height()
+            {
                 continue;
             }
             let norm_x = (dx - dest.x()) / dest.width().max(1.0);
             let norm_y = (dy - dest.y()) / dest.height().max(1.0);
 
             let sx = match rep_h {
-                mango_css::values::BorderImageRepeat::Stretch => {
-                    src.x() + norm_x * src.width()
-                }
-                _ => {
-                    src.x() + ((dx - dest.x()) % src.width().max(1.0))
-                }
+                mango_css::values::BorderImageRepeat::Stretch => src.x() + norm_x * src.width(),
+                _ => src.x() + ((dx - dest.x()) % src.width().max(1.0)),
             };
             let sy = match rep_v {
-                mango_css::values::BorderImageRepeat::Stretch => {
-                    src.y() + norm_y * src.height()
-                }
-                _ => {
-                    src.y() + ((dy - dest.y()) % src.height().max(1.0))
-                }
+                mango_css::values::BorderImageRepeat::Stretch => src.y() + norm_y * src.height(),
+                _ => src.y() + ((dy - dest.y()) % src.height().max(1.0)),
             };
 
             let ix = (sx as u32).min(img_w.saturating_sub(1));
@@ -1346,56 +1554,84 @@ fn snapshot_rect(buffer: &[u32], buf_width: u32, buf_height: u32, rect: &Rect) -
     pixels
 }
 
-fn is_point_inside_clip_path(clip_path: &mango_css::values::ClipPath, bounds: &Rect, px: f32, py: f32) -> bool {
+fn is_point_inside_clip_path(
+    clip_path: &mango_css::values::ClipPath,
+    bounds: &Rect,
+    px: f32,
+    py: f32,
+) -> bool {
     use mango_css::values::ClipPath;
     match clip_path {
         ClipPath::None => true,
-        ClipPath::Circle { radius, center_x, center_y } => {
+        ClipPath::Circle {
+            radius,
+            center_x,
+            center_y,
+        } => {
             let r = match radius {
                 mango_css::values::Length::Px(p) => *p,
-                mango_css::values::Length::Percent(pct) => (bounds.width().min(bounds.height())) * pct / 100.0,
+                mango_css::values::Length::Percent(pct) => {
+                    (bounds.width().min(bounds.height())) * pct / 100.0
+                }
                 _ => 50.0,
             };
-            let cx = bounds.x() + match center_x {
-                mango_css::values::Length::Px(p) => *p,
-                mango_css::values::Length::Percent(pct) => bounds.width() * pct / 100.0,
-                _ => bounds.width() / 2.0,
-            };
-            let cy = bounds.y() + match center_y {
-                mango_css::values::Length::Px(p) => *p,
-                mango_css::values::Length::Percent(pct) => bounds.height() * pct / 100.0,
-                _ => bounds.height() / 2.0,
-            };
+            let cx = bounds.x()
+                + match center_x {
+                    mango_css::values::Length::Px(p) => *p,
+                    mango_css::values::Length::Percent(pct) => bounds.width() * pct / 100.0,
+                    _ => bounds.width() / 2.0,
+                };
+            let cy = bounds.y()
+                + match center_y {
+                    mango_css::values::Length::Px(p) => *p,
+                    mango_css::values::Length::Percent(pct) => bounds.height() * pct / 100.0,
+                    _ => bounds.height() / 2.0,
+                };
             let dx = px - cx;
             let dy = py - cy;
             dx * dx + dy * dy <= r * r
         }
-        ClipPath::Ellipse { radius_x, radius_y, center_x, center_y } => {
+        ClipPath::Ellipse {
+            radius_x,
+            radius_y,
+            center_x,
+            center_y,
+        } => {
             let rx = match radius_x {
                 mango_css::values::Length::Px(p) => *p,
                 mango_css::values::Length::Percent(pct) => bounds.width() * pct / 100.0,
                 _ => bounds.width() / 2.0,
-            }.max(0.1);
+            }
+            .max(0.1);
             let ry = match radius_y {
                 mango_css::values::Length::Px(p) => *p,
                 mango_css::values::Length::Percent(pct) => bounds.height() * pct / 100.0,
                 _ => bounds.height() / 2.0,
-            }.max(0.1);
-            let cx = bounds.x() + match center_x {
-                mango_css::values::Length::Px(p) => *p,
-                mango_css::values::Length::Percent(pct) => bounds.width() * pct / 100.0,
-                _ => bounds.width() / 2.0,
-            };
-            let cy = bounds.y() + match center_y {
-                mango_css::values::Length::Px(p) => *p,
-                mango_css::values::Length::Percent(pct) => bounds.height() * pct / 100.0,
-                _ => bounds.height() / 2.0,
-            };
+            }
+            .max(0.1);
+            let cx = bounds.x()
+                + match center_x {
+                    mango_css::values::Length::Px(p) => *p,
+                    mango_css::values::Length::Percent(pct) => bounds.width() * pct / 100.0,
+                    _ => bounds.width() / 2.0,
+                };
+            let cy = bounds.y()
+                + match center_y {
+                    mango_css::values::Length::Px(p) => *p,
+                    mango_css::values::Length::Percent(pct) => bounds.height() * pct / 100.0,
+                    _ => bounds.height() / 2.0,
+                };
             let dx = (px - cx) / rx;
             let dy = (py - cy) / ry;
             dx * dx + dy * dy <= 1.0
         }
-        ClipPath::Inset { top, right, bottom, left, round } => {
+        ClipPath::Inset {
+            top,
+            right,
+            bottom,
+            left,
+            round,
+        } => {
             let t = match top {
                 mango_css::values::Length::Px(p) => *p,
                 mango_css::values::Length::Percent(pct) => bounds.height() * pct / 100.0,
@@ -1453,19 +1689,26 @@ fn is_point_inside_clip_path(clip_path: &mango_css::values::ClipPath, bounds: &R
             if pts.len() < 3 {
                 return true;
             }
-            let resolved_pts: Vec<(f32, f32)> = pts.iter().map(|(x_len, y_len)| {
-                let x = bounds.x() + match x_len {
-                    mango_css::values::Length::Px(p) => *p,
-                    mango_css::values::Length::Percent(pct) => bounds.width() * pct / 100.0,
-                    _ => 0.0,
-                };
-                let y = bounds.y() + match y_len {
-                    mango_css::values::Length::Px(p) => *p,
-                    mango_css::values::Length::Percent(pct) => bounds.height() * pct / 100.0,
-                    _ => 0.0,
-                };
-                (x, y)
-            }).collect();
+            let resolved_pts: Vec<(f32, f32)> = pts
+                .iter()
+                .map(|(x_len, y_len)| {
+                    let x = bounds.x()
+                        + match x_len {
+                            mango_css::values::Length::Px(p) => *p,
+                            mango_css::values::Length::Percent(pct) => bounds.width() * pct / 100.0,
+                            _ => 0.0,
+                        };
+                    let y = bounds.y()
+                        + match y_len {
+                            mango_css::values::Length::Px(p) => *p,
+                            mango_css::values::Length::Percent(pct) => {
+                                bounds.height() * pct / 100.0
+                            }
+                            _ => 0.0,
+                        };
+                    (x, y)
+                })
+                .collect();
 
             // Ray-casting even-odd point-in-polygon
             let mut inside = false;
@@ -1473,8 +1716,7 @@ fn is_point_inside_clip_path(clip_path: &mango_css::values::ClipPath, bounds: &R
             for i in 0..n {
                 let (x1, y1) = resolved_pts[i];
                 let (x2, y2) = resolved_pts[(i + 1) % n];
-                if ((y1 > py) != (y2 > py))
-                    && (px < (x2 - x1) * (py - y1) / (y2 - y1 + 1e-6) + x1)
+                if ((y1 > py) != (y2 > py)) && (px < (x2 - x1) * (py - y1) / (y2 - y1 + 1e-6) + x1)
                 {
                     inside = !inside;
                 }
@@ -1558,9 +1800,12 @@ fn apply_filter_to_rect(
                     for x in min_x..max_x {
                         let idx = (y * buf_width + x) as usize;
                         let p = buffer[idx];
-                        let r = ((((p >> 16) & 0xff) as f32 - 128.0) * factor + 128.0).clamp(0.0, 255.0) as u32;
-                        let g = ((((p >> 8) & 0xff) as f32 - 128.0) * factor + 128.0).clamp(0.0, 255.0) as u32;
-                        let b = (((p & 0xff) as f32 - 128.0) * factor + 128.0).clamp(0.0, 255.0) as u32;
+                        let r = ((((p >> 16) & 0xff) as f32 - 128.0) * factor + 128.0)
+                            .clamp(0.0, 255.0) as u32;
+                        let g = ((((p >> 8) & 0xff) as f32 - 128.0) * factor + 128.0)
+                            .clamp(0.0, 255.0) as u32;
+                        let b =
+                            (((p & 0xff) as f32 - 128.0) * factor + 128.0).clamp(0.0, 255.0) as u32;
                         buffer[idx] = (p & 0xff000000) | (r << 16) | (g << 8) | b;
                     }
                 }
@@ -1657,18 +1902,26 @@ fn apply_filter_to_rect(
                         let b = (p & 0xff) as f32;
                         let out_r = ((0.213 + cos_a * 0.787 - sin_a * 0.213) * r
                             + (0.715 - cos_a * 0.715 - sin_a * 0.715) * g
-                            + (0.072 - cos_a * 0.072 + sin_a * 0.928) * b).clamp(0.0, 255.0) as u32;
+                            + (0.072 - cos_a * 0.072 + sin_a * 0.928) * b)
+                            .clamp(0.0, 255.0) as u32;
                         let out_g = ((0.213 - cos_a * 0.213 + sin_a * 0.143) * r
                             + (0.715 + cos_a * 0.285 + sin_a * 0.140) * g
-                            + (0.072 - cos_a * 0.072 - sin_a * 0.283) * b).clamp(0.0, 255.0) as u32;
+                            + (0.072 - cos_a * 0.072 - sin_a * 0.283) * b)
+                            .clamp(0.0, 255.0) as u32;
                         let out_b = ((0.213 - cos_a * 0.213 - sin_a * 0.787) * r
                             + (0.715 - cos_a * 0.715 + sin_a * 0.715) * g
-                            + (0.072 + cos_a * 0.928 + sin_a * 0.072) * b).clamp(0.0, 255.0) as u32;
+                            + (0.072 + cos_a * 0.928 + sin_a * 0.072) * b)
+                            .clamp(0.0, 255.0) as u32;
                         buffer[idx] = (p & 0xff000000) | (out_r << 16) | (out_g << 8) | out_b;
                     }
                 }
             }
-            mango_css::values::FilterFunction::DropShadow { offset_x, offset_y, blur, color } => {
+            mango_css::values::FilterFunction::DropShadow {
+                offset_x,
+                offset_y,
+                blur,
+                color,
+            } => {
                 let w = (max_x - min_x) as usize;
                 let h = (max_y - min_y) as usize;
                 if w == 0 || h == 0 || color.a == 0 {
@@ -1682,9 +1935,12 @@ fn apply_filter_to_rect(
                         let src_x = x as i32 - ox;
                         let src_y = y as i32 - oy;
                         if src_x >= 0 && src_x < w as i32 && src_y >= 0 && src_y < h as i32 {
-                            let src_idx = ((min_y as i32 + src_y) as u32 * buf_width + (min_x as i32 + src_x) as u32) as usize;
+                            let src_idx = ((min_y as i32 + src_y) as u32 * buf_width
+                                + (min_x as i32 + src_x) as u32)
+                                as usize;
                             let alpha = (buffer[src_idx] >> 24) & 0xff;
-                            shadow_alphas[y * w + x] = (alpha as f32 * (color.a as f32 / 255.0)).round() as u8;
+                            shadow_alphas[y * w + x] =
+                                (alpha as f32 * (color.a as f32 / 255.0)).round() as u8;
                         }
                     }
                 }
@@ -1735,7 +1991,8 @@ fn apply_filter_to_rect(
                                     count -= 1;
                                 }
                             }
-                            shadow_alphas[y * w + x] = if count > 0 { (sum / count) as u8 } else { 0 };
+                            shadow_alphas[y * w + x] =
+                                if count > 0 { (sum / count) as u8 } else { 0 };
                         }
                     }
                 }
@@ -2048,10 +2305,10 @@ fn fill_rounded_rect_clipped(
         for px in x_start..x_end {
             let fx = px as f32 + 0.5;
 
-            if let Some((clip_rect, clip_radii)) = clip_out {
-                if is_inside_rounded_rect(fx, fy, clip_rect, clip_radii) {
-                    continue;
-                }
+            if let Some((clip_rect, clip_radii)) = clip_out
+                && is_inside_rounded_rect(fx, fy, clip_rect, clip_radii)
+            {
+                continue;
             }
 
             let mut inside = true;
@@ -2117,11 +2374,22 @@ fn fill_rounded_rect(
     if radii[0] == 0.0 && radii[1] == 0.0 && radii[2] == 0.0 && radii[3] == 0.0 {
         let r = intersect_rect(clip, *rect);
         if r.width() > 0.0 && r.height() > 0.0 {
-            fill_rect(buffer, buf_width, buf_height, r.x() as i32, r.y() as i32, r.width() as u32, r.height() as u32, color);
+            fill_rect(
+                buffer,
+                buf_width,
+                buf_height,
+                r.x() as i32,
+                r.y() as i32,
+                r.width() as u32,
+                r.height() as u32,
+                color,
+            );
         }
         return;
     }
-    fill_rounded_rect_clipped(buffer, buf_width, buf_height, rect, color, radii, None, clip);
+    fill_rounded_rect_clipped(
+        buffer, buf_width, buf_height, rect, color, radii, None, clip,
+    );
 }
 
 /// Blits decoded image pixel data into the framebuffer with alpha blending.
@@ -2300,7 +2568,15 @@ mod tests {
         let radii = [20.0, 20.0, 20.0, 20.0];
         let red = Color::rgb(255, 0, 0);
 
-        fill_rounded_rect(&mut buffer, 100, 100, &rect, red, radii, Rect::new(0.0, 0.0, 100.0, 100.0));
+        fill_rounded_rect(
+            &mut buffer,
+            100,
+            100,
+            &rect,
+            red,
+            radii,
+            Rect::new(0.0, 0.0, 100.0, 100.0),
+        );
 
         // Center should definitely be red
         assert_eq!(buffer[50 * 100 + 50], 0x00FF0000);
@@ -2317,31 +2593,64 @@ mod tests {
         let mut buffer = vec![0u32; 60 * 60];
         let mut dl = DisplayList::new();
         // Draw a red 10x10 square, then the same square translated by (30, 30).
-        dl.push(DisplayCommand::FillRect { rect: Rect::new(0.0, 0.0, 10.0, 10.0), color: Color::RED });
-        dl.push(DisplayCommand::PushTransform { matrix: [1.0, 0.0, 0.0, 1.0, 30.0, 30.0] });
-        dl.push(DisplayCommand::FillRect { rect: Rect::new(0.0, 0.0, 10.0, 10.0), color: Color::GREEN });
+        dl.push(DisplayCommand::FillRect {
+            rect: Rect::new(0.0, 0.0, 10.0, 10.0),
+            color: Color::RED,
+        });
+        dl.push(DisplayCommand::PushTransform {
+            matrix: [1.0, 0.0, 0.0, 1.0, 30.0, 30.0],
+        });
+        dl.push(DisplayCommand::FillRect {
+            rect: Rect::new(0.0, 0.0, 10.0, 10.0),
+            color: Color::GREEN,
+        });
         dl.push(DisplayCommand::PopTransform);
 
         paint(&dl, &mut buffer, 60, 60);
 
-        assert_eq!(buffer[5 * 60 + 5], 0x00FF0000, "untransformed square stays red");
+        assert_eq!(
+            buffer[5 * 60 + 5],
+            0x00FF0000,
+            "untransformed square stays red"
+        );
         // CSS `green` is #008000, i.e. 0x00008000 in the 0x00RRGGBB buffer format.
-        assert_eq!(buffer[35 * 60 + 35], 0x00008000, "translated square lands at +30,+30");
-        assert_eq!(buffer[5 * 60 + 35], 0, "translation does not smear horizontally");
+        assert_eq!(
+            buffer[35 * 60 + 35],
+            0x00008000,
+            "translated square lands at +30,+30"
+        );
+        assert_eq!(
+            buffer[5 * 60 + 35],
+            0,
+            "translation does not smear horizontally"
+        );
     }
 
     #[test]
     fn test_push_transform_scales_fill() {
         let mut buffer = vec![0u32; 40 * 40];
         let mut dl = DisplayList::new();
-        dl.push(DisplayCommand::PushTransform { matrix: [2.0, 0.0, 0.0, 2.0, 0.0, 0.0] });
-        dl.push(DisplayCommand::FillRect { rect: Rect::new(0.0, 0.0, 10.0, 10.0), color: Color::BLUE });
+        dl.push(DisplayCommand::PushTransform {
+            matrix: [2.0, 0.0, 0.0, 2.0, 0.0, 0.0],
+        });
+        dl.push(DisplayCommand::FillRect {
+            rect: Rect::new(0.0, 0.0, 10.0, 10.0),
+            color: Color::BLUE,
+        });
         dl.push(DisplayCommand::PopTransform);
 
         paint(&dl, &mut buffer, 40, 40);
 
-        assert_eq!(buffer[10 * 40 + 10], 0x000000FF, "scaled fill covers the scaled area");
-        assert_eq!(buffer[25 * 40 + 25], 0, "scaled fill stops at 2x the source rect");
+        assert_eq!(
+            buffer[10 * 40 + 10],
+            0x000000FF,
+            "scaled fill covers the scaled area"
+        );
+        assert_eq!(
+            buffer[25 * 40 + 25],
+            0,
+            "scaled fill stops at 2x the source rect"
+        );
     }
 
     #[test]
@@ -2366,8 +2675,14 @@ mod tests {
 
         let left = buffer[5 * 40 + 1];
         let right = buffer[5 * 40 + 38];
-        assert!((left >> 16) & 0xFF > 150, "left edge is mostly red, got {left:#08x}");
-        assert!(right & 0xFF > 150, "right edge is mostly blue, got {right:#08x}");
+        assert!(
+            (left >> 16) & 0xFF > 150,
+            "left edge is mostly red, got {left:#08x}"
+        );
+        assert!(
+            right & 0xFF > 150,
+            "right edge is mostly blue, got {right:#08x}"
+        );
     }
 
     #[test]
@@ -2419,9 +2734,14 @@ mod tests {
         let mut buffer = vec![0u32; 100 * 100];
         let mut dl = DisplayList::new();
         // Clip to 20..80 in both X and Y
-        dl.push(DisplayCommand::PushClip { rect: Rect::new(20.0, 20.0, 60.0, 60.0) });
+        dl.push(DisplayCommand::PushClip {
+            rect: Rect::new(20.0, 20.0, 60.0, 60.0),
+        });
         // Draw a giant red rectangle covering 0..100
-        dl.push(DisplayCommand::FillRect { rect: Rect::new(0.0, 0.0, 100.0, 100.0), color: Color::RED });
+        dl.push(DisplayCommand::FillRect {
+            rect: Rect::new(0.0, 0.0, 100.0, 100.0),
+            color: Color::RED,
+        });
         dl.push(DisplayCommand::PopClip);
 
         paint(&dl, &mut buffer, 100, 100);
@@ -2475,4 +2795,3 @@ mod tests {
         assert_eq!(buffer2[10 * 100 + 10], 0);
     }
 }
-

@@ -88,7 +88,12 @@ impl SelectDropdown {
             if item_y + self.item_height > self.y + total_h {
                 break;
             }
-            let item_rect = Rect::new(self.x + 4.0, item_y, self.width - 8.0, self.item_height - 2.0);
+            let item_rect = Rect::new(
+                self.x + 4.0,
+                item_y,
+                self.width - 8.0,
+                self.item_height - 2.0,
+            );
 
             if self.hovered_idx == Some(i) {
                 dl.push(DisplayCommand::FillRoundedRect {
@@ -156,7 +161,11 @@ pub enum PickerKind {
     /// `<input type="date">` calendar grid (`month` is 1..=12).
     Date { year: i32, month: u32 },
     /// `<input type="time">` hour/minute spinner panel.
-    Time { hour: u32, minute: u32, minute_step: u32 },
+    Time {
+        hour: u32,
+        minute: u32,
+        minute_step: u32,
+    },
     /// `<input type="file">` directory browser.
     File {
         dir: PathBuf,
@@ -231,11 +240,7 @@ pub fn picker_size(kind: &PickerKind) -> (f32, f32) {
 /// returning the action it maps to. `None` means outside the panel or an
 /// inert region inside it.
 pub fn picker_hit_test(picker: &PickerOverlay, x: f32, y: f32) -> Option<PickerHit> {
-    if x < picker.x
-        || x > picker.x + picker.width
-        || y < picker.y
-        || y > picker.y + picker.height
-    {
+    if x < picker.x || x > picker.x + picker.width || y < picker.y || y > picker.y + picker.height {
         return None;
     }
     let rx = x - picker.x;
@@ -265,7 +270,7 @@ pub fn picker_hit_test(picker: &PickerOverlay, x: f32, y: f32) -> Option<PickerH
             None
         }
         PickerKind::Date { year, month } => {
-            if ry >= PICKER_DATE_HEADER_Y && ry <= PICKER_DATE_HEADER_Y + 22.0 {
+            if (PICKER_DATE_HEADER_Y..=PICKER_DATE_HEADER_Y + 22.0).contains(&ry) {
                 if rx < 34.0 {
                     return Some(PickerHit::PrevMonth);
                 }
@@ -277,8 +282,7 @@ pub fn picker_hit_test(picker: &PickerOverlay, x: f32, y: f32) -> Option<PickerH
             let col_w = (picker.width - PICKER_DATE_PAD * 2.0) / 7.0;
             if rx >= PICKER_DATE_PAD
                 && rx < picker.width - PICKER_DATE_PAD
-                && ry >= PICKER_DATE_GRID_Y
-                && ry < PICKER_DATE_GRID_Y + 6.0 * PICKER_DATE_ROW_H
+                && (PICKER_DATE_GRID_Y..PICKER_DATE_GRID_Y + 6.0 * PICKER_DATE_ROW_H).contains(&ry)
             {
                 let col = ((rx - PICKER_DATE_PAD) / col_w) as i64;
                 let row = ((ry - PICKER_DATE_GRID_Y) / PICKER_DATE_ROW_H) as i64;
@@ -296,21 +300,21 @@ pub fn picker_hit_test(picker: &PickerOverlay, x: f32, y: f32) -> Option<PickerH
             None
         }
         PickerKind::Time { .. } => {
-            if ry >= PICKER_TIME_HOUR_Y && ry < PICKER_TIME_HOUR_Y + PICKER_TIME_BTN_H {
-                if rx >= 10.0 && rx < 10.0 + PICKER_TIME_BTN_W {
+            if (PICKER_TIME_HOUR_Y..PICKER_TIME_HOUR_Y + PICKER_TIME_BTN_H).contains(&ry) {
+                if (10.0..10.0 + PICKER_TIME_BTN_W).contains(&rx) {
                     return Some(PickerHit::HourDown);
                 }
                 if rx >= picker.width - 10.0 - PICKER_TIME_BTN_W && rx < picker.width - 10.0 {
                     return Some(PickerHit::HourUp);
                 }
-            } else if ry >= PICKER_TIME_MIN_Y && ry < PICKER_TIME_MIN_Y + PICKER_TIME_BTN_H {
-                if rx >= 10.0 && rx < 10.0 + PICKER_TIME_BTN_W {
+            } else if (PICKER_TIME_MIN_Y..PICKER_TIME_MIN_Y + PICKER_TIME_BTN_H).contains(&ry) {
+                if (10.0..10.0 + PICKER_TIME_BTN_W).contains(&rx) {
                     return Some(PickerHit::MinDown);
                 }
                 if rx >= picker.width - 10.0 - PICKER_TIME_BTN_W && rx < picker.width - 10.0 {
                     return Some(PickerHit::MinUp);
                 }
-            } else if ry >= PICKER_TIME_SET_Y && ry < PICKER_TIME_SET_Y + PICKER_TIME_SET_H {
+            } else if (PICKER_TIME_SET_Y..PICKER_TIME_SET_Y + PICKER_TIME_SET_H).contains(&ry) {
                 let sx = (picker.width - PICKER_TIME_SET_W) / 2.0;
                 if rx >= sx && rx < sx + PICKER_TIME_SET_W {
                     return Some(PickerHit::SetTime);
@@ -405,7 +409,7 @@ pub fn parse_date_value(v: &str) -> Option<(i32, u32, u32)> {
     let y: i32 = parts.next()?.parse().ok()?;
     let m: u32 = parts.next()?.parse().ok()?;
     let d: u32 = parts.next()?.parse().ok()?;
-    if (1..=12).contains(&m) && d >= 1 && d <= 31 && (1..=9999).contains(&y) {
+    if (1..=12).contains(&m) && (1..=31).contains(&d) && (1..=9999).contains(&y) {
         Some((y, m, d))
     } else {
         None
@@ -417,11 +421,7 @@ pub fn parse_time_value(v: &str) -> Option<(u32, u32)> {
     let mut parts = v.trim().split(':');
     let h: u32 = parts.next()?.parse().ok()?;
     let m: u32 = parts.next()?.parse().ok()?;
-    if h < 24 && m < 60 {
-        Some((h, m))
-    } else {
-        None
-    }
+    if h < 24 && m < 60 { Some((h, m)) } else { None }
 }
 
 /// English month name for the date picker header (month is 1..=12).
@@ -482,7 +482,11 @@ mod tests {
             hover: None,
         };
 
-        let hit = picker_hit_test(&picker, 50.0 + PICKER_SWATCH_PAD + 2.0, 50.0 + PICKER_SWATCH_PAD + 2.0);
+        let hit = picker_hit_test(
+            &picker,
+            50.0 + PICKER_SWATCH_PAD + 2.0,
+            50.0 + PICKER_SWATCH_PAD + 2.0,
+        );
         assert_eq!(hit, Some(PickerHit::ColorSwatch(0)));
     }
 }

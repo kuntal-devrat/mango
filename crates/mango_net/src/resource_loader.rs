@@ -25,7 +25,8 @@ pub struct ResourceLoader {
     hsts: Arc<std::sync::Mutex<crate::security::HstsStore>>,
     /// Active `Content-Security-Policy` policies, keyed by page origin.
     /// Populated as documents load; consulted before every subresource fetch.
-    csp_by_origin: Arc<std::sync::Mutex<std::collections::HashMap<String, crate::security::CspPolicy>>>,
+    csp_by_origin:
+        Arc<std::sync::Mutex<std::collections::HashMap<String, crate::security::CspPolicy>>>,
 }
 
 impl Default for ResourceLoader {
@@ -72,15 +73,19 @@ impl ResourceLoader {
     }
 
     /// Records the `Content-Security-Policy` of a just-loaded document.
-    fn remember_csp(&self, page_url: &crate::url::Url, headers: &std::collections::HashMap<String, String>) {
+    fn remember_csp(
+        &self,
+        page_url: &crate::url::Url,
+        headers: &std::collections::HashMap<String, String>,
+    ) {
         let security = crate::security::SecurityHeaders::from_headers(headers);
         let Some(policy) = security.content_security_policy else {
             return;
         };
-        if let Some(origin) = origin_of(page_url) {
-            if let Ok(mut map) = self.csp_by_origin.lock() {
-                map.insert(origin, policy);
-            }
+        if let Some(origin) = origin_of(page_url)
+            && let Ok(mut map) = self.csp_by_origin.lock()
+        {
+            map.insert(origin, policy);
         }
     }
 
@@ -107,11 +112,7 @@ impl ResourceLoader {
         if let Some(policy) = self.csp_for(page_url) {
             let origin = origin_of(page_url).unwrap_or_default();
             if !policy.is_allowed(directive, resource_url, &origin) {
-                log::warn!(
-                    "CSP blocked {:?} resource {}",
-                    directive,
-                    resource_url
-                );
+                log::warn!("CSP blocked {:?} resource {}", directive, resource_url);
                 return Err(NetworkError::Other(format!(
                     "Blocked by Content-Security-Policy: {resource_url}"
                 )));
@@ -152,7 +153,8 @@ impl ResourceLoader {
     pub fn fetch_document(&self, url: &Url) -> Result<FetchedDocument, NetworkError> {
         if url.scheme.eq_ignore_ascii_case("data") {
             let bytes = decode_data_uri_bytes(&url.as_str())?;
-            let (html, encoding) = crate::encoding::decode_html_bytes_with_encoding(&bytes, Some("text/html"));
+            let (html, encoding) =
+                crate::encoding::decode_html_bytes_with_encoding(&bytes, Some("text/html"));
             return Ok(FetchedDocument {
                 url: url.clone(),
                 html,
@@ -179,25 +181,23 @@ impl ResourceLoader {
 
         let resp = self.client.fetch(url)?;
 
-        let content_type = resp
-            .content_type()
-            .unwrap_or("text/html")
-            .to_string();
+        let content_type = resp.content_type().unwrap_or("text/html").to_string();
 
         // Record HSTS ONLY over HTTPS (RFC 6797 §8.1)
-        if resp.final_url.scheme.eq_ignore_ascii_case("https") {
-            if let Some(hsts_header) = resp
+        if resp.final_url.scheme.eq_ignore_ascii_case("https")
+            && let Some(hsts_header) = resp
                 .headers
                 .iter()
                 .find(|(k, _)| k.eq_ignore_ascii_case("strict-transport-security"))
                 .map(|(_, v)| v.clone())
-            {
-                if let Some(host) = resp.final_url.host.as_deref() {
-                    self.record_hsts(host, &hsts_header);
-                }
-            }
+            && let Some(host) = resp.final_url.host.as_deref()
+        {
+            self.record_hsts(host, &hsts_header);
         }
-        let (html, encoding) = crate::encoding::decode_html_bytes_with_encoding(&resp.body, Some(content_type.as_str()));
+        let (html, encoding) = crate::encoding::decode_html_bytes_with_encoding(
+            &resp.body,
+            Some(content_type.as_str()),
+        );
 
         self.cache.insert(
             &url_key,
@@ -230,26 +230,24 @@ impl ResourceLoader {
     ) -> Result<FetchedDocument, NetworkError> {
         let resp = self.client.post_with_body(url, body, content_type)?;
 
-        let content_type = resp
-            .content_type()
-            .unwrap_or("text/html")
-            .to_string();
+        let content_type = resp.content_type().unwrap_or("text/html").to_string();
 
         // Record HSTS ONLY over HTTPS (RFC 6797 §8.1)
-        if resp.final_url.scheme.eq_ignore_ascii_case("https") {
-            if let Some(hsts_header) = resp
+        if resp.final_url.scheme.eq_ignore_ascii_case("https")
+            && let Some(hsts_header) = resp
                 .headers
                 .iter()
                 .find(|(k, _)| k.eq_ignore_ascii_case("strict-transport-security"))
                 .map(|(_, v)| v.clone())
-            {
-                if let Some(host) = resp.final_url.host.as_deref() {
-                    self.record_hsts(host, &hsts_header);
-                }
-            }
+            && let Some(host) = resp.final_url.host.as_deref()
+        {
+            self.record_hsts(host, &hsts_header);
         }
 
-        let (html, encoding) = crate::encoding::decode_html_bytes_with_encoding(&resp.body, Some(content_type.as_str()));
+        let (html, encoding) = crate::encoding::decode_html_bytes_with_encoding(
+            &resp.body,
+            Some(content_type.as_str()),
+        );
         let final_url = resp.final_url.clone();
         self.remember_csp(&final_url, &resp.headers);
 
@@ -265,11 +263,7 @@ impl ResourceLoader {
     /// Fetches an external stylesheet, resolving `href` relative to `base_url`.
     ///
     /// Utilizes the in-memory cache to avoid duplicate downloads of identical stylesheets.
-    pub fn fetch_stylesheet(
-        &self,
-        base_url: &Url,
-        href: &str,
-    ) -> Result<String, NetworkError> {
+    pub fn fetch_stylesheet(&self, base_url: &Url, href: &str) -> Result<String, NetworkError> {
         let trimmed = href.trim();
         if trimmed.starts_with("data:") {
             let bytes = decode_data_uri_bytes(trimmed)?;
@@ -289,7 +283,10 @@ impl ResourceLoader {
 
         // 1. Check cache
         if let Some(cached) = self.cache.get(&url_key) {
-            return Ok(Self::decode_text(&cached.body, Some(cached.content_type.as_str())));
+            return Ok(Self::decode_text(
+                &cached.body,
+                Some(cached.content_type.as_str()),
+            ));
         }
 
         // 2. Fetch over network
@@ -305,14 +302,8 @@ impl ResourceLoader {
         let body = resp.body;
 
         // 3. Store in cache
-        self.cache.insert(
-            &url_key,
-            &content_type,
-            status,
-            headers,
-            body,
-            None,
-        );
+        self.cache
+            .insert(&url_key, &content_type, status, headers, body, None);
 
         Ok(css_text)
     }
@@ -320,11 +311,7 @@ impl ResourceLoader {
     /// Fetches an external script, resolving `src` relative to `base_url`.
     ///
     /// Utilizes the in-memory cache and validates content type to avoid executing HTML 404 pages.
-    pub fn fetch_script(
-        &self,
-        base_url: &Url,
-        src: &str,
-    ) -> Result<String, NetworkError> {
+    pub fn fetch_script(&self, base_url: &Url, src: &str) -> Result<String, NetworkError> {
         let trimmed = src.trim();
         if trimmed.starts_with("data:") {
             let bytes = decode_data_uri_bytes(trimmed)?;
@@ -344,7 +331,10 @@ impl ResourceLoader {
 
         // 1. Check cache
         if let Some(cached) = self.cache.get(&url_key) {
-            return Ok(Self::decode_text(&cached.body, Some(cached.content_type.as_str())));
+            return Ok(Self::decode_text(
+                &cached.body,
+                Some(cached.content_type.as_str()),
+            ));
         }
 
         // 2. Fetch over network
@@ -355,24 +345,23 @@ impl ResourceLoader {
 
         let ct = resp.content_type().unwrap_or("").to_ascii_lowercase();
         if ct.contains("text/html") {
-            return Err(NetworkError::Other("Refusing to execute HTML response as script".to_string()));
+            return Err(NetworkError::Other(
+                "Refusing to execute HTML response as script".to_string(),
+            ));
         }
 
         let script_text = Self::decode_text(&resp.body, resp.content_type());
-        let content_type = resp.content_type().unwrap_or("application/javascript").to_string();
+        let content_type = resp
+            .content_type()
+            .unwrap_or("application/javascript")
+            .to_string();
         let status = resp.status;
         let headers = resp.headers;
         let body = resp.body;
 
         // 3. Store in cache
-        self.cache.insert(
-            &url_key,
-            &content_type,
-            status,
-            headers,
-            body,
-            None,
-        );
+        self.cache
+            .insert(&url_key, &content_type, status, headers, body, None);
 
         Ok(script_text)
     }
@@ -380,11 +369,7 @@ impl ResourceLoader {
     /// Fetches image bytes, resolving `src` relative to `base_url`.
     ///
     /// Supports `data:` URIs directly without network calls, and caches remote HTTP/HTTPS images.
-    pub fn fetch_image_bytes(
-        &self,
-        base_url: &Url,
-        src: &str,
-    ) -> Result<Vec<u8>, NetworkError> {
+    pub fn fetch_image_bytes(&self, base_url: &Url, src: &str) -> Result<Vec<u8>, NetworkError> {
         let trimmed = src.trim();
 
         // Data URIs are self-contained
@@ -421,14 +406,8 @@ impl ResourceLoader {
         let body = resp.body;
 
         // 3. Store in cache
-        self.cache.insert(
-            &url_key,
-            &content_type,
-            status,
-            headers,
-            body,
-            None,
-        );
+        self.cache
+            .insert(&url_key, &content_type, status, headers, body, None);
 
         Ok(bytes)
     }
@@ -436,11 +415,7 @@ impl ResourceLoader {
     /// Fetches font bytes, resolving `src` relative to `base_url`.
     ///
     /// Supports `data:` URIs directly without network calls, and caches remote HTTP/HTTPS fonts.
-    pub fn fetch_font_bytes(
-        &self,
-        base_url: &Url,
-        src: &str,
-    ) -> Result<Vec<u8>, NetworkError> {
+    pub fn fetch_font_bytes(&self, base_url: &Url, src: &str) -> Result<Vec<u8>, NetworkError> {
         let trimmed = src.trim();
 
         // Data URIs are self-contained
@@ -477,14 +452,8 @@ impl ResourceLoader {
         let body = resp.body;
 
         // 3. Store in cache
-        self.cache.insert(
-            &url_key,
-            &content_type,
-            status,
-            headers,
-            body,
-            None,
-        );
+        self.cache
+            .insert(&url_key, &content_type, status, headers, body, None);
 
         Ok(bytes)
     }
@@ -510,11 +479,11 @@ impl ResourceLoader {
                 let _ = dns.resolve(host, 443);
             }
             for preconnect in &scan.preconnect_urls {
-                if let Ok(u) = Url::parse(preconnect) {
-                    if let Some(h) = &u.host {
-                        let port = u.port.unwrap_or(if u.scheme == "https" { 443 } else { 80 });
-                        let _ = dns.resolve(h, port);
-                    }
+                if let Ok(u) = Url::parse(preconnect)
+                    && let Some(h) = &u.host
+                {
+                    let port = u.port.unwrap_or(if u.scheme == "https" { 443 } else { 80 });
+                    let _ = dns.resolve(h, port);
                 }
             }
         }
@@ -539,6 +508,7 @@ pub enum PreloadKind {
 }
 
 impl PreloadKind {
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(val: &str) -> Self {
         match val.trim().to_ascii_lowercase().as_str() {
             "style" | "stylesheet" => PreloadKind::Style,
@@ -561,6 +531,7 @@ pub enum FetchPriority {
 }
 
 impl FetchPriority {
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(val: &str) -> Self {
         match val.trim().to_ascii_lowercase().as_str() {
             "high" => FetchPriority::High,
@@ -644,57 +615,56 @@ pub fn scan_html_for_preloads(html: &str, base_url: &Url) -> PreloadScanResult {
             if let Some(rel) = attrs.get("rel") {
                 let rel_lower = rel.to_ascii_lowercase();
                 if rel_lower.contains("preload") {
-                    if let Some(href) = attrs.get("href") {
-                        if let Ok(resolved) = base_url.resolve(href) {
-                            let kind = attrs
-                                .get("as")
-                                .map(|s| PreloadKind::from_str(s))
-                                .unwrap_or(PreloadKind::Fetch);
-                            let priority = attrs
-                                .get("fetchpriority")
-                                .map(|s| FetchPriority::from_str(s))
-                                .unwrap_or(FetchPriority::Auto);
-                            result.preloads.push(PreloadItem {
-                                url: resolved.to_string(),
-                                kind,
-                                priority,
-                            });
-                        }
+                    if let Some(href) = attrs.get("href")
+                        && let Ok(resolved) = base_url.resolve(href)
+                    {
+                        let kind = attrs
+                            .get("as")
+                            .map(|s| PreloadKind::from_str(s))
+                            .unwrap_or(PreloadKind::Fetch);
+                        let priority = attrs
+                            .get("fetchpriority")
+                            .map(|s| FetchPriority::from_str(s))
+                            .unwrap_or(FetchPriority::Auto);
+                        result.preloads.push(PreloadItem {
+                            url: resolved.to_string(),
+                            kind,
+                            priority,
+                        });
                     }
                 } else if rel_lower.contains("dns-prefetch") {
                     if let Some(href) = attrs.get("href") {
                         let host = extract_host_from_href(href, base_url);
-                        if let Some(h) = host {
-                            if !result.dns_prefetch_hosts.contains(&h) {
-                                result.dns_prefetch_hosts.push(h);
-                            }
+                        if let Some(h) = host
+                            && !result.dns_prefetch_hosts.contains(&h)
+                        {
+                            result.dns_prefetch_hosts.push(h);
                         }
                     }
-                } else if rel_lower.contains("preconnect") {
-                    if let Some(href) = attrs.get("href") {
-                        if let Ok(resolved) = base_url.resolve(href) {
-                            let s = resolved.to_string();
-                            if !result.preconnect_urls.contains(&s) {
-                                result.preconnect_urls.push(s);
-                            }
-                        }
+                } else if rel_lower.contains("preconnect")
+                    && let Some(href) = attrs.get("href")
+                    && let Ok(resolved) = base_url.resolve(href)
+                {
+                    let s = resolved.to_string();
+                    if !result.preconnect_urls.contains(&s) {
+                        result.preconnect_urls.push(s);
                     }
                 }
             }
         } else if tag_name.eq_ignore_ascii_case("script") {
             let attrs = parse_tag_attributes(&trimmed_tag[name_end..]);
-            if let Some(src) = attrs.get("src") {
-                if let Ok(resolved) = base_url.resolve(src) {
-                    let priority = attrs
-                        .get("fetchpriority")
-                        .map(|s| FetchPriority::from_str(s))
-                        .unwrap_or(FetchPriority::Auto);
-                    result.preloads.push(PreloadItem {
-                        url: resolved.to_string(),
-                        kind: PreloadKind::Script,
-                        priority,
-                    });
-                }
+            if let Some(src) = attrs.get("src")
+                && let Ok(resolved) = base_url.resolve(src)
+            {
+                let priority = attrs
+                    .get("fetchpriority")
+                    .map(|s| FetchPriority::from_str(s))
+                    .unwrap_or(FetchPriority::Auto);
+                result.preloads.push(PreloadItem {
+                    url: resolved.to_string(),
+                    kind: PreloadKind::Script,
+                    priority,
+                });
             }
         }
     }
@@ -705,8 +675,7 @@ pub fn scan_html_for_preloads(html: &str, base_url: &Url) -> PreloadScanResult {
 
 fn extract_host_from_href(href: &str, base_url: &Url) -> Option<String> {
     let trimmed = href.trim();
-    if trimmed.starts_with("//") {
-        let rest = &trimmed[2..];
+    if let Some(rest) = trimmed.strip_prefix("//") {
         let host = rest.split(['/', ':', '?', '#']).next()?;
         Some(host.to_string())
     } else if let Ok(url) = base_url.resolve(trimmed) {
@@ -755,7 +724,7 @@ fn parse_tag_attributes(attr_str: &str) -> std::collections::HashMap<String, Str
             if let Some(&(_, quote)) = chars.peek() {
                 if quote == '"' || quote == '\'' {
                     chars.next(); // consume quote
-                    while let Some((_, qc)) = chars.next() {
+                    for (_, qc) in chars.by_ref() {
                         if qc == quote {
                             break;
                         }
@@ -892,7 +861,10 @@ mod tests {
         let result = loader.fetch_image_bytes(&base_url, data_uri);
         assert!(result.is_ok());
         let bytes = result.unwrap();
-        assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"), "must decode base64 PNG header");
+        assert!(
+            bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+            "must decode base64 PNG header"
+        );
     }
 
     #[test]
@@ -905,7 +877,11 @@ mod tests {
         assert!(result.is_ok());
         let bytes = result.unwrap();
         assert!(!bytes.is_empty());
-        assert_ne!(bytes, font_data_uri.as_bytes(), "must decode from ASCII base64");
+        assert_ne!(
+            bytes,
+            font_data_uri.as_bytes(),
+            "must decode from ASCII base64"
+        );
     }
 
     #[test]
@@ -1093,7 +1069,10 @@ mod tests {
         // Without a declaration, invalid UTF-8 does not panic — it degrades
         // to U+FFFD exactly like a browser's fallback decoder.
         let text = ResourceLoader::decode_text(b"a\xffb", None);
-        assert!(text.starts_with('a') && text.ends_with('b'), "got: {text:?}");
+        assert!(
+            text.starts_with('a') && text.ends_with('b'),
+            "got: {text:?}"
+        );
     }
 
     #[test]
@@ -1130,4 +1109,3 @@ mod tests {
         assert_eq!(result.preloads[3].url, "https://example.com/img/hero.webp");
     }
 }
-

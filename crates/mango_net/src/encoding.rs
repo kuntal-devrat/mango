@@ -47,11 +47,7 @@ impl Encoding {
     pub fn from_label(label: &str) -> Option<Encoding> {
         let normalized = label.trim().trim_matches(['"', '\'']).to_ascii_lowercase();
         // Strip any trailing parameters or punctuation (e.g. `utf-8;` or `utf-8,`)
-        let name = normalized
-            .split([';', ','])
-            .next()
-            .unwrap_or("")
-            .trim();
+        let name = normalized.split([';', ',']).next().unwrap_or("").trim();
 
         match name {
             // UTF-8 aliases
@@ -66,9 +62,8 @@ impl Encoding {
             "utf-16be" | "unicodefffe" => Some(Encoding::Utf16Be),
 
             // Windows-1252 / ISO-8859-1 / ASCII aliases
-            "windows-1252" | "cp1252" | "x-cp1252"
-            | "iso-8859-1" | "iso8859-1" | "iso_8859-1" | "iso_8859-1:1987" | "iso-ir-100"
-            | "latin1" | "latin-1" | "l1" | "csisolatin1"
+            "windows-1252" | "cp1252" | "x-cp1252" | "iso-8859-1" | "iso8859-1" | "iso_8859-1"
+            | "iso_8859-1:1987" | "iso-ir-100" | "latin1" | "latin-1" | "l1" | "csisolatin1"
             | "us-ascii" | "ascii" | "ansi_x3.4-1968" | "iso-ir-6" | "ansi_x3.4-1986"
             | "iso_646.irv:1991" | "iso646-us" | "us" | "ibm367" | "cp367" | "csascii" => {
                 Some(Encoding::Windows1252)
@@ -126,10 +121,10 @@ pub fn detect_encoding(bytes: &[u8], content_type: Option<&str>) -> Encoding {
     }
 
     // 3. <meta charset> and <meta http-equiv="Content-Type"> prescan of the first 1024 bytes
-    if let Some(label) = sniff_meta_charset(bytes) {
-        if let Some(enc) = Encoding::from_label(&label) {
-            return enc;
-        }
+    if let Some(label) = sniff_meta_charset(bytes)
+        && let Some(enc) = Encoding::from_label(&label)
+    {
+        return enc;
     }
 
     // 4. Default
@@ -158,16 +153,16 @@ pub fn sniff_bom(bytes: &[u8]) -> Option<Encoding> {
 pub fn charset_from_content_type(content_type: &str) -> Option<String> {
     for part in content_type.split(';') {
         let part = part.trim();
-        if let Some((key, val)) = part.split_once('=') {
-            if key.trim().eq_ignore_ascii_case("charset") {
-                let val = val.trim().trim_matches(['"', '\'']).trim();
-                let candidate: String = val
-                    .chars()
-                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
-                    .collect();
-                if !candidate.is_empty() {
-                    return Some(candidate);
-                }
+        if let Some((key, val)) = part.split_once('=')
+            && key.trim().eq_ignore_ascii_case("charset")
+        {
+            let val = val.trim().trim_matches(['"', '\'']).trim();
+            let candidate: String = val
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
+                .collect();
+            if !candidate.is_empty() {
+                return Some(candidate);
             }
         }
     }
@@ -270,9 +265,7 @@ pub fn sniff_meta_charset(bytes: &[u8]) -> Option<String> {
                             val
                         } else {
                             let val_start = pos;
-                            while pos < data.len()
-                                && !is_html_space(data[pos])
-                                && data[pos] != b'>'
+                            while pos < data.len() && !is_html_space(data[pos]) && data[pos] != b'>'
                             {
                                 pos += 1;
                             }
@@ -293,10 +286,8 @@ pub fn sniff_meta_charset(bytes: &[u8]) -> Option<String> {
                                 http_equiv_attr = Some(value);
                             }
                         }
-                        "content" => {
-                            if content_attr.is_none() {
-                                content_attr = Some(value);
-                            }
+                        "content" if content_attr.is_none() => {
+                            content_attr = Some(value);
                         }
                         _ => {}
                     }
@@ -311,16 +302,13 @@ pub fn sniff_meta_charset(bytes: &[u8]) -> Option<String> {
                 }
 
                 // 2. <meta http-equiv="Content-Type" content="..."> fallback
-                if let Some(he) = http_equiv_attr {
-                    if he.trim().eq_ignore_ascii_case("content-type") {
-                        if let Some(c) = content_attr {
-                            if let Some(extracted) = extract_charset_from_meta_content(&c) {
-                                if Encoding::from_label(&extracted).is_some() {
-                                    return Some(extracted);
-                                }
-                            }
-                        }
-                    }
+                if let Some(he) = http_equiv_attr
+                    && he.trim().eq_ignore_ascii_case("content-type")
+                    && let Some(c) = content_attr
+                    && let Some(extracted) = extract_charset_from_meta_content(&c)
+                    && Encoding::from_label(&extracted).is_some()
+                {
+                    return Some(extracted);
                 }
 
                 continue;
@@ -359,16 +347,16 @@ pub fn sniff_meta_charset(bytes: &[u8]) -> Option<String> {
 pub fn extract_charset_from_meta_content(content: &str) -> Option<String> {
     for part in content.split(';') {
         let part = part.trim();
-        if let Some((k, v)) = part.split_once('=') {
-            if k.trim().eq_ignore_ascii_case("charset") {
-                let val = v.trim().trim_matches(['"', '\'']).trim();
-                let candidate: String = val
-                    .chars()
-                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
-                    .collect();
-                if !candidate.is_empty() {
-                    return Some(candidate);
-                }
+        if let Some((k, v)) = part.split_once('=')
+            && k.trim().eq_ignore_ascii_case("charset")
+        {
+            let val = v.trim().trim_matches(['"', '\'']).trim();
+            let candidate: String = val
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
+                .collect();
+            if !candidate.is_empty() {
+                return Some(candidate);
             }
         }
     }
@@ -415,7 +403,7 @@ fn decode_utf16(bytes: &[u8], little_endian: bool) -> String {
         .collect();
 
     // If an odd trailing byte exists, append replacement character per WHATWG
-    if bytes.len() % 2 != 0 {
+    if !bytes.len().is_multiple_of(2) {
         units.push(0xFFFD);
     }
 
@@ -555,11 +543,13 @@ mod tests {
         assert_eq!(detect_encoding(legacy, None), Encoding::Windows1252);
 
         // Reverse attribute order: content first, then http-equiv
-        let reverse_order = br#"<meta content="text/html; charset=iso-8859-1" http-equiv="Content-Type">"#;
+        let reverse_order =
+            br#"<meta content="text/html; charset=iso-8859-1" http-equiv="Content-Type">"#;
         assert_eq!(detect_encoding(reverse_order, None), Encoding::Windows1252);
 
         // Case insensitivity in attribute values
-        let upper = br#"<META HTTP-EQUIV="CONTENT-TYPE" CONTENT="text/html; CHARSET=WINDOWS-1252">"#;
+        let upper =
+            br#"<META HTTP-EQUIV="CONTENT-TYPE" CONTENT="text/html; CHARSET=WINDOWS-1252">"#;
         assert_eq!(detect_encoding(upper, None), Encoding::Windows1252);
     }
 
@@ -608,12 +598,27 @@ mod tests {
     fn test_encoding_labels_comprehensive() {
         assert_eq!(Encoding::from_label("UTF-8"), Some(Encoding::Utf8));
         assert_eq!(Encoding::from_label("utf8"), Some(Encoding::Utf8));
-        assert_eq!(Encoding::from_label("unicode-1-1-utf-8"), Some(Encoding::Utf8));
-        assert_eq!(Encoding::from_label(" latin1 "), Some(Encoding::Windows1252));
-        assert_eq!(Encoding::from_label("iso-8859-1"), Some(Encoding::Windows1252));
-        assert_eq!(Encoding::from_label("windows-1252"), Some(Encoding::Windows1252));
+        assert_eq!(
+            Encoding::from_label("unicode-1-1-utf-8"),
+            Some(Encoding::Utf8)
+        );
+        assert_eq!(
+            Encoding::from_label(" latin1 "),
+            Some(Encoding::Windows1252)
+        );
+        assert_eq!(
+            Encoding::from_label("iso-8859-1"),
+            Some(Encoding::Windows1252)
+        );
+        assert_eq!(
+            Encoding::from_label("windows-1252"),
+            Some(Encoding::Windows1252)
+        );
         assert_eq!(Encoding::from_label("cp1252"), Some(Encoding::Windows1252));
-        assert_eq!(Encoding::from_label("us-ascii"), Some(Encoding::Windows1252));
+        assert_eq!(
+            Encoding::from_label("us-ascii"),
+            Some(Encoding::Windows1252)
+        );
         assert_eq!(Encoding::from_label("ascii"), Some(Encoding::Windows1252));
         assert_eq!(Encoding::from_label("utf-16"), Some(Encoding::Utf16Le));
         assert_eq!(Encoding::from_label("utf-16le"), Some(Encoding::Utf16Le));
@@ -641,7 +646,8 @@ mod tests {
 
     #[test]
     fn test_decode_html_bytes_with_encoding() {
-        let (html, enc) = decode_html_bytes_with_encoding(b"caf\xe9", Some("text/html; charset=latin1"));
+        let (html, enc) =
+            decode_html_bytes_with_encoding(b"caf\xe9", Some("text/html; charset=latin1"));
         assert_eq!(html, "café");
         assert_eq!(enc, Encoding::Windows1252);
     }

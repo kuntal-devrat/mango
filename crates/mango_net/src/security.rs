@@ -162,7 +162,8 @@ impl CspPolicy {
                         url_host == suffix || url_host.ends_with(&format!(".{suffix}"))
                     } else if src_host.is_empty() {
                         // Bare host without scheme: match the host only.
-                        let (_, bare_host) = split_url(&format!("//{}", source.to_ascii_lowercase()));
+                        let (_, bare_host) =
+                            split_url(&format!("//{}", source.to_ascii_lowercase()));
                         url_host == bare_host
                     } else {
                         url_host == src_host
@@ -213,9 +214,7 @@ fn split_url(url: &str) -> (String, String) {
         None => (String::new(), url),
     };
     let (scheme, rest) = after_scheme;
-    let end = rest
-        .find(['/', '?', '#'])
-        .unwrap_or(rest.len());
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     (scheme, rest[..end].to_string())
 }
 
@@ -260,19 +259,18 @@ impl SecurityHeaders {
 
     /// True when framing is refused via `X-Frame-Options`.
     pub fn blocks_framing(&self) -> bool {
-        self.x_frame_options.as_deref().is_some_and(|v| {
-            v.eq_ignore_ascii_case("deny") || v.eq_ignore_ascii_case("sameorigin")
-        }) || self
-            .content_security_policy
-            .as_ref()
-            .is_some_and(|csp| csp.blocks_framing())
+        self.x_frame_options
+            .as_deref()
+            .is_some_and(|v| v.eq_ignore_ascii_case("deny") || v.eq_ignore_ascii_case("sameorigin"))
+            || self
+                .content_security_policy
+                .as_ref()
+                .is_some_and(|csp| csp.blocks_framing())
     }
 
     /// True when the response may only be fetched over HTTPS.
     pub fn requires_https(&self) -> bool {
-        self.hsts
-            .as_ref()
-            .is_some_and(|h| h.max_age_secs > 0)
+        self.hsts.as_ref().is_some_and(|h| h.max_age_secs > 0)
     }
 }
 
@@ -350,10 +348,11 @@ impl HstsStore {
         let mut candidate = host.as_str();
         while let Some(dot) = candidate.find('.') {
             candidate = &candidate[dot + 1..];
-            if let Some((directive, expires)) = self.entries.get(candidate) {
-                if *expires > Instant::now() && directive.include_subdomains {
-                    return Some(*directive);
-                }
+            if let Some((directive, expires)) = self.entries.get(candidate)
+                && *expires > Instant::now()
+                && directive.include_subdomains
+            {
+                return Some(*directive);
             }
         }
         None
@@ -394,7 +393,10 @@ impl HstsStore {
 /// content (images, media) is upgraded when `upgrade` is set.
 pub fn blocks_mixed_content(page_url: &str, resource_url: &str, active: bool) -> bool {
     let page_is_https = page_url.trim().to_ascii_lowercase().starts_with("https://");
-    let resource_is_http = resource_url.trim().to_ascii_lowercase().starts_with("http://");
+    let resource_is_http = resource_url
+        .trim()
+        .to_ascii_lowercase()
+        .starts_with("http://");
     page_is_https && resource_is_http && active
 }
 
@@ -439,7 +441,9 @@ impl Origin {
 
         let (host, port) = if let Some(colon) = host_part.rfind(':') {
             let h = host_part[..colon].to_string();
-            let p = host_part[colon + 1..].parse::<u16>().unwrap_or(default_port);
+            let p = host_part[colon + 1..]
+                .parse::<u16>()
+                .unwrap_or(default_port);
             (h, p)
         } else {
             (host_part, default_port)
@@ -508,15 +512,28 @@ pub enum CorsError {
 impl std::fmt::Display for CorsError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CorsError::OriginNotAllowed(orig) => write!(f, "Origin '{orig}' not allowed by Access-Control-Allow-Origin"),
-            CorsError::MethodNotAllowed(m) => write!(f, "Method '{m}' not allowed by Access-Control-Allow-Methods"),
-            CorsError::HeaderNotAllowed(h) => write!(f, "Header '{h}' not allowed by Access-Control-Allow-Headers"),
+            CorsError::OriginNotAllowed(orig) => write!(
+                f,
+                "Origin '{orig}' not allowed by Access-Control-Allow-Origin"
+            ),
+            CorsError::MethodNotAllowed(m) => write!(
+                f,
+                "Method '{m}' not allowed by Access-Control-Allow-Methods"
+            ),
+            CorsError::HeaderNotAllowed(h) => write!(
+                f,
+                "Header '{h}' not allowed by Access-Control-Allow-Headers"
+            ),
             CorsError::WildcardOriginWithCredentialsNotAllowed => write!(
                 f,
                 "Access-Control-Allow-Origin cannot be '*' when request credentials are included"
             ),
-            CorsError::PreflightFailed(status) => write!(f, "CORS preflight channel failed with status {status}"),
-            CorsError::MissingAllowOriginHeader => write!(f, "Missing Access-Control-Allow-Origin response header"),
+            CorsError::PreflightFailed(status) => {
+                write!(f, "CORS preflight channel failed with status {status}")
+            }
+            CorsError::MissingAllowOriginHeader => {
+                write!(f, "Missing Access-Control-Allow-Origin response header")
+            }
             CorsError::InvalidUrl(msg) => write!(f, "Invalid URL for CORS check: {msg}"),
         }
     }
@@ -537,7 +554,12 @@ pub fn is_cors_simple_request(method: &str, headers: &HashMap<String, String>) -
         match key_lower.as_str() {
             "accept" | "accept-language" | "content-language" => {}
             "content-type" => {
-                let media_type = v.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+                let media_type = v
+                    .split(';')
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_ascii_lowercase();
                 if !matches!(
                     media_type.as_str(),
                     "application/x-www-form-urlencoded" | "multipart/form-data" | "text/plain"
@@ -683,7 +705,11 @@ mod tests {
         )
         .unwrap();
 
-        assert!(policy.allows(ResourceDirective::Script, "https://example.com/app.js", "https://example.com"));
+        assert!(policy.allows(
+            ResourceDirective::Script,
+            "https://example.com/app.js",
+            "https://example.com"
+        ));
         assert!(policy.allows(
             ResourceDirective::Script,
             "https://cdn.example.com/lib.js",
@@ -695,34 +721,70 @@ mod tests {
             "https://example.com"
         ));
         // img-src * allows anything
-        assert!(policy.allows(ResourceDirective::Image, "http://any.test/a.png", "https://example.com"));
+        assert!(policy.allows(
+            ResourceDirective::Image,
+            "http://any.test/a.png",
+            "https://example.com"
+        ));
         // Directives fall back to default-src
-        assert!(policy.allows(ResourceDirective::Font, "https://example.com/f.woff2", "https://example.com"));
-        assert!(!policy.allows(ResourceDirective::Connect, "https://api.other.com", "https://example.com"));
+        assert!(policy.allows(
+            ResourceDirective::Font,
+            "https://example.com/f.woff2",
+            "https://example.com"
+        ));
+        assert!(!policy.allows(
+            ResourceDirective::Connect,
+            "https://api.other.com",
+            "https://example.com"
+        ));
     }
 
     #[test]
     fn test_csp_none_and_wildcards() {
         let policy = CspPolicy::parse("default-src 'none'", false).unwrap();
-        assert!(!policy.allows(ResourceDirective::Image, "https://example.com/a.png", "https://example.com"));
+        assert!(!policy.allows(
+            ResourceDirective::Image,
+            "https://example.com/a.png",
+            "https://example.com"
+        ));
 
         let wildcard = CspPolicy::parse("script-src *.example.com", false).unwrap();
-        assert!(wildcard.allows(ResourceDirective::Script, "https://sub.example.com/a.js", "https://example.com"));
-        assert!(wildcard.allows(ResourceDirective::Script, "https://example.com/a.js", "https://example.com"));
-        assert!(!wildcard.allows(ResourceDirective::Script, "https://notexample.com/a.js", "https://example.com"));
+        assert!(wildcard.allows(
+            ResourceDirective::Script,
+            "https://sub.example.com/a.js",
+            "https://example.com"
+        ));
+        assert!(wildcard.allows(
+            ResourceDirective::Script,
+            "https://example.com/a.js",
+            "https://example.com"
+        ));
+        assert!(!wildcard.allows(
+            ResourceDirective::Script,
+            "https://notexample.com/a.js",
+            "https://example.com"
+        ));
     }
 
     #[test]
     fn test_csp_data_urls_allowed() {
         let policy = CspPolicy::parse("img-src 'self'", false).unwrap();
-        assert!(policy.allows(ResourceDirective::Image, "data:image/png;base64,AAAA", "https://example.com"));
+        assert!(policy.allows(
+            ResourceDirective::Image,
+            "data:image/png;base64,AAAA",
+            "https://example.com"
+        ));
     }
 
     #[test]
     fn test_csp_report_only_never_blocks() {
         let policy = CspPolicy::parse("default-src 'none'", true).unwrap();
         assert!(policy.report_only);
-        assert!(policy.is_allowed(ResourceDirective::Script, "https://x.test/a.js", "https://example.com"));
+        assert!(policy.is_allowed(
+            ResourceDirective::Script,
+            "https://x.test/a.js",
+            "https://example.com"
+        ));
     }
 
     #[test]
@@ -760,12 +822,20 @@ mod tests {
         let mut store = HstsStore::new();
         store.record(
             "example.com",
-            HstsDirective { max_age_secs: 100, include_subdomains: false, preload: false },
+            HstsDirective {
+                max_age_secs: 100,
+                include_subdomains: false,
+                preload: false,
+            },
         );
         assert!(store.should_upgrade("http://example.com/"));
         store.record(
             "example.com",
-            HstsDirective { max_age_secs: 0, include_subdomains: false, preload: false },
+            HstsDirective {
+                max_age_secs: 0,
+                include_subdomains: false,
+                preload: false,
+            },
         );
         assert!(!store.should_upgrade("http://example.com/"));
     }
@@ -781,8 +851,14 @@ mod tests {
     #[test]
     fn test_security_headers_from_map() {
         let mut headers = HashMap::new();
-        headers.insert("Content-Security-Policy".to_string(), "default-src 'self'".to_string());
-        headers.insert("Strict-Transport-Security".to_string(), "max-age=100".to_string());
+        headers.insert(
+            "Content-Security-Policy".to_string(),
+            "default-src 'self'".to_string(),
+        );
+        headers.insert(
+            "Strict-Transport-Security".to_string(),
+            "max-age=100".to_string(),
+        );
         headers.insert("X-Content-Type-Options".to_string(), "nosniff".to_string());
         headers.insert("X-Frame-Options".to_string(), "DENY".to_string());
 
@@ -824,15 +900,30 @@ mod tests {
 
     #[test]
     fn test_same_origin_policy() {
-        assert!(is_same_origin("https://example.com/foo", "https://example.com/bar"));
-        assert!(is_same_origin("https://example.com:443/foo", "https://example.com/bar"));
-        assert!(is_same_origin("http://example.com:80/foo", "http://example.com/bar"));
+        assert!(is_same_origin(
+            "https://example.com/foo",
+            "https://example.com/bar"
+        ));
+        assert!(is_same_origin(
+            "https://example.com:443/foo",
+            "https://example.com/bar"
+        ));
+        assert!(is_same_origin(
+            "http://example.com:80/foo",
+            "http://example.com/bar"
+        ));
         // Different schemes
         assert!(!is_same_origin("http://example.com", "https://example.com"));
         // Different hosts
-        assert!(!is_same_origin("https://sub.example.com", "https://example.com"));
+        assert!(!is_same_origin(
+            "https://sub.example.com",
+            "https://example.com"
+        ));
         // Different ports
-        assert!(!is_same_origin("https://example.com:8443", "https://example.com:443"));
+        assert!(!is_same_origin(
+            "https://example.com:8443",
+            "https://example.com:443"
+        ));
 
         let orig = Origin::parse("https://mango.dev:9000/path?query").unwrap();
         assert_eq!(orig.scheme, "https");
@@ -867,9 +958,18 @@ mod tests {
     #[test]
     fn test_cors_preflight_and_response() {
         let mut preflight_headers = HashMap::new();
-        preflight_headers.insert("access-control-allow-origin".to_string(), "https://app.mango.dev".to_string());
-        preflight_headers.insert("access-control-allow-methods".to_string(), "GET, POST, PUT, DELETE".to_string());
-        preflight_headers.insert("access-control-allow-headers".to_string(), "content-type, authorization".to_string());
+        preflight_headers.insert(
+            "access-control-allow-origin".to_string(),
+            "https://app.mango.dev".to_string(),
+        );
+        preflight_headers.insert(
+            "access-control-allow-methods".to_string(),
+            "GET, POST, PUT, DELETE".to_string(),
+        );
+        preflight_headers.insert(
+            "access-control-allow-headers".to_string(),
+            "content-type, authorization".to_string(),
+        );
         preflight_headers.insert("access-control-max-age".to_string(), "600".to_string());
 
         let max_age = validate_cors_preflight(
@@ -918,14 +1018,19 @@ mod tests {
         // Response validation
         let mut resp_headers = HashMap::new();
         resp_headers.insert("access-control-allow-origin".to_string(), "*".to_string());
-        resp_headers.insert("access-control-expose-headers".to_string(), "X-Total-Count, X-Request-ID".to_string());
-        let exposed = validate_cors_response(&resp_headers, "https://app.mango.dev", false).unwrap();
+        resp_headers.insert(
+            "access-control-expose-headers".to_string(),
+            "X-Total-Count, X-Request-ID".to_string(),
+        );
+        let exposed =
+            validate_cors_response(&resp_headers, "https://app.mango.dev", false).unwrap();
         assert!(exposed.contains(&"x-total-count".to_string()));
         assert!(exposed.contains(&"x-request-id".to_string()));
         assert!(exposed.contains(&"content-type".to_string()));
 
         // Response validation with credentials rejects wildcard
-        let cred_err = validate_cors_response(&resp_headers, "https://app.mango.dev", true).unwrap_err();
+        let cred_err =
+            validate_cors_response(&resp_headers, "https://app.mango.dev", true).unwrap_err();
         assert_eq!(cred_err, CorsError::WildcardOriginWithCredentialsNotAllowed);
     }
 }

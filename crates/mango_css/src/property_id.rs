@@ -606,6 +606,8 @@ impl CssPropertyId {
                 | Self::FontFeatureSettings
                 | Self::FontVariationSettings
                 | Self::AccentColor
+                // CSS spec: `direction` is an inherited property.
+                | Self::Direction
         )
     }
 
@@ -662,47 +664,172 @@ impl CssPropertyId {
     pub fn all() -> &'static [CssPropertyId] {
         use CssPropertyId::*;
         &[
-            Display, Position, Float, Clear, BoxSizing,
-            Width, Height, MinWidth, MaxWidth, MinHeight, MaxHeight,
-            MarginTop, MarginRight, MarginBottom, MarginLeft,
-            PaddingTop, PaddingRight, PaddingBottom, PaddingLeft,
-            Top, Right, Bottom, Left,
-            ZIndex, Overflow, OverflowX, OverflowY, Visibility, Opacity,
-            VerticalAlign, Order,
-            BorderTopWidth, BorderRightWidth, BorderBottomWidth, BorderLeftWidth,
-            BorderTopColor, BorderRightColor, BorderBottomColor, BorderLeftColor,
-            BorderTopStyle, BorderRightStyle, BorderBottomStyle, BorderLeftStyle,
-            BorderTopLeftRadius, BorderTopRightRadius, BorderBottomRightRadius, BorderBottomLeftRadius,
-            BorderCollapse, BorderSpacing, TableLayout, CaptionSide,
-            OutlineWidth, OutlineStyle, OutlineColor, OutlineOffset,
-            Color, BackgroundColor, BackgroundImage, BackgroundRepeat, BackgroundSize,
-            BackgroundPosition, BackgroundGradient, BoxShadow,
-            MaskImage, WebkitMaskImage, MaskSize, WebkitMaskSize,
-            MaskRepeat, WebkitMaskRepeat, MaskPosition, WebkitMaskPosition,
-            BackgroundAttachment, BackgroundClip, WebkitBackgroundClip,
-            BorderImage, BorderImageSource, BorderImageSlice, BorderImageWidth, BorderImageOutset, BorderImageRepeat,
-            MaskComposite, WebkitMaskComposite, Isolation,
-            FontSize, FontWeight, FontStyle, FontFamily, LineHeight,
-            TextAlign, TextDecoration, TextTransform, LetterSpacing, WordSpacing,
-            TextIndent, WhiteSpace, TextOverflow, TextShadow, Direction, UnicodeBidi,
-            WordBreak, OverflowWrap, Hyphens, TextUnderlineOffset, TextDecorationThickness,
-            TextEmphasis, TextEmphasisStyle, TextEmphasisColor,
-            FontFeatureSettings, FontVariationSettings, LineClamp, FontDisplay,
-            ListStyleType, ListStylePosition, Content, Cursor,
-            FlexDirection, FlexWrap, JustifyContent, AlignItems, AlignSelf, AlignContent,
-            FlexGrow, FlexShrink, FlexBasis, RowGap, ColumnGap,
-            GridTemplateColumns, GridTemplateRows, GridTemplateAreas,
-            GridColumnStart, GridColumnEnd, GridRowStart, GridRowEnd, GridAutoFlow,
-            Transform, TransformOriginX, TransformOriginY, TransformOriginZ,
-            Filter, BackdropFilter, WebkitBackdropFilter,
-            MixBlendMode, BackgroundBlendMode,
-            ClipPath, WebkitClipPath,
-            MaskMode, WebkitMaskMode,
-            AspectRatio, ObjectFit, ObjectPosition, WillChange,
-            ColumnCount, ColumnWidth,
-            ColumnRuleWidth, ColumnRuleStyle, ColumnRuleColor,
-            Contain, ContentVisibility, WritingMode, Resize, ScrollbarWidth, ScrollbarColor,
-            Appearance, WebkitAppearance, MozAppearance, AccentColor,
+            Display,
+            Position,
+            Float,
+            Clear,
+            BoxSizing,
+            Width,
+            Height,
+            MinWidth,
+            MaxWidth,
+            MinHeight,
+            MaxHeight,
+            MarginTop,
+            MarginRight,
+            MarginBottom,
+            MarginLeft,
+            PaddingTop,
+            PaddingRight,
+            PaddingBottom,
+            PaddingLeft,
+            Top,
+            Right,
+            Bottom,
+            Left,
+            ZIndex,
+            Overflow,
+            OverflowX,
+            OverflowY,
+            Visibility,
+            Opacity,
+            VerticalAlign,
+            Order,
+            BorderTopWidth,
+            BorderRightWidth,
+            BorderBottomWidth,
+            BorderLeftWidth,
+            BorderTopColor,
+            BorderRightColor,
+            BorderBottomColor,
+            BorderLeftColor,
+            BorderTopStyle,
+            BorderRightStyle,
+            BorderBottomStyle,
+            BorderLeftStyle,
+            BorderTopLeftRadius,
+            BorderTopRightRadius,
+            BorderBottomRightRadius,
+            BorderBottomLeftRadius,
+            BorderCollapse,
+            BorderSpacing,
+            TableLayout,
+            CaptionSide,
+            OutlineWidth,
+            OutlineStyle,
+            OutlineColor,
+            OutlineOffset,
+            Color,
+            BackgroundColor,
+            BackgroundImage,
+            BackgroundRepeat,
+            BackgroundSize,
+            BackgroundPosition,
+            BackgroundGradient,
+            BoxShadow,
+            MaskImage,
+            WebkitMaskImage,
+            MaskSize,
+            WebkitMaskSize,
+            MaskRepeat,
+            WebkitMaskRepeat,
+            MaskPosition,
+            WebkitMaskPosition,
+            BackgroundAttachment,
+            BackgroundClip,
+            WebkitBackgroundClip,
+            BorderImage,
+            BorderImageSource,
+            BorderImageSlice,
+            BorderImageWidth,
+            BorderImageOutset,
+            BorderImageRepeat,
+            MaskComposite,
+            WebkitMaskComposite,
+            Isolation,
+            FontSize,
+            FontWeight,
+            FontStyle,
+            FontFamily,
+            LineHeight,
+            TextAlign,
+            TextDecoration,
+            TextTransform,
+            LetterSpacing,
+            WordSpacing,
+            TextIndent,
+            WhiteSpace,
+            TextOverflow,
+            TextShadow,
+            Direction,
+            UnicodeBidi,
+            WordBreak,
+            OverflowWrap,
+            Hyphens,
+            TextUnderlineOffset,
+            TextDecorationThickness,
+            TextEmphasis,
+            TextEmphasisStyle,
+            TextEmphasisColor,
+            FontFeatureSettings,
+            FontVariationSettings,
+            LineClamp,
+            FontDisplay,
+            ListStyleType,
+            ListStylePosition,
+            Content,
+            Cursor,
+            FlexDirection,
+            FlexWrap,
+            JustifyContent,
+            AlignItems,
+            AlignSelf,
+            AlignContent,
+            FlexGrow,
+            FlexShrink,
+            FlexBasis,
+            RowGap,
+            ColumnGap,
+            GridTemplateColumns,
+            GridTemplateRows,
+            GridTemplateAreas,
+            GridColumnStart,
+            GridColumnEnd,
+            GridRowStart,
+            GridRowEnd,
+            GridAutoFlow,
+            Transform,
+            TransformOriginX,
+            TransformOriginY,
+            TransformOriginZ,
+            Filter,
+            BackdropFilter,
+            WebkitBackdropFilter,
+            MixBlendMode,
+            BackgroundBlendMode,
+            ClipPath,
+            WebkitClipPath,
+            MaskMode,
+            WebkitMaskMode,
+            AspectRatio,
+            ObjectFit,
+            ObjectPosition,
+            WillChange,
+            ColumnCount,
+            ColumnWidth,
+            ColumnRuleWidth,
+            ColumnRuleStyle,
+            ColumnRuleColor,
+            Contain,
+            ContentVisibility,
+            WritingMode,
+            Resize,
+            ScrollbarWidth,
+            ScrollbarColor,
+            Appearance,
+            WebkitAppearance,
+            MozAppearance,
+            AccentColor,
         ]
     }
 }
@@ -713,88 +840,113 @@ impl std::fmt::Display for CssPropertyId {
     }
 }
 
-
 use crate::values::Value;
 use std::collections::HashMap;
 
 /// An enum-indexed map of CSS properties (ARCH-007).
 ///
-/// Uses `CssPropertyId` variants as keys instead of raw strings, allowing
-/// compile-time checking, fast indexed access, and zero string allocation on lookups.
-#[derive(Debug, Clone, PartialEq, Default)]
+/// Backed by a fixed-size `[Option<Value>; CSS_PROPERTY_COUNT]` array indexed by
+/// `CssPropertyId` discriminant, providing true O(1) access with zero hashing
+/// overhead and no heap allocation per entry.
+#[derive(Debug, Clone, PartialEq)]
 pub struct PropertyMap {
-    entries: HashMap<CssPropertyId, Value>,
+    entries: Box<[Option<Value>; CSS_PROPERTY_COUNT]>,
+    len: usize,
+}
+
+impl Default for PropertyMap {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PropertyMap {
     /// Creates an empty `PropertyMap`.
     pub fn new() -> Self {
         Self {
-            entries: HashMap::new(),
+            entries: Box::new(std::array::from_fn(|_| None)),
+            len: 0,
         }
     }
 
-    /// Creates an empty `PropertyMap` with pre-allocated capacity.
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            entries: HashMap::with_capacity(capacity),
-        }
+    /// Creates an empty `PropertyMap` with pre-allocated capacity (no-op for array-backed).
+    pub fn with_capacity(_capacity: usize) -> Self {
+        Self::new()
     }
 
     /// Inserts a property and its value into the map.
     pub fn insert(&mut self, property: CssPropertyId, value: Value) -> Option<Value> {
-        self.entries.insert(property, value)
+        let idx = property as usize;
+        let old = self.entries[idx].take();
+        self.entries[idx] = Some(value);
+        if old.is_none() {
+            self.len += 1;
+        }
+        old
     }
 
     /// Gets a reference to the value for a property, if present.
     pub fn get(&self, property: CssPropertyId) -> Option<&Value> {
-        self.entries.get(&property)
+        self.entries[property as usize].as_ref()
     }
 
     /// Gets a mutable reference to the value for a property, if present.
     pub fn get_mut(&mut self, property: CssPropertyId) -> Option<&mut Value> {
-        self.entries.get_mut(&property)
+        self.entries[property as usize].as_mut()
     }
 
     /// Removes a property from the map and returns its value.
     pub fn remove(&mut self, property: CssPropertyId) -> Option<Value> {
-        self.entries.remove(&property)
+        let old = self.entries[property as usize].take();
+        if old.is_some() {
+            self.len -= 1;
+        }
+        old
     }
 
     /// Returns `true` if the map contains the specified property.
     pub fn contains(&self, property: CssPropertyId) -> bool {
-        self.entries.contains_key(&property)
+        self.entries[property as usize].is_some()
     }
 
     /// Returns the number of properties in the map.
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.len
     }
 
     /// Returns `true` if the map contains no properties.
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.len == 0
     }
 
     /// Clears all properties from the map.
     pub fn clear(&mut self) {
-        self.entries.clear();
+        for slot in self.entries.iter_mut() {
+            *slot = None;
+        }
+        self.len = 0;
     }
 
     /// Returns an iterator over property-value pairs.
     pub fn iter(&self) -> impl Iterator<Item = (&CssPropertyId, &Value)> {
-        self.entries.iter()
+        static ALL_IDS: std::sync::OnceLock<Vec<CssPropertyId>> = std::sync::OnceLock::new();
+        let all = ALL_IDS.get_or_init(|| CssPropertyId::all().to_vec());
+        all.iter()
+            .filter_map(move |id| self.entries[*id as usize].as_ref().map(|v| (id, v)))
     }
 
     /// Returns a mutable iterator over property-value pairs.
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&CssPropertyId, &mut Value)> {
-        self.entries.iter_mut()
+    pub fn iter_mut(&mut self) -> PropertyMapIterMut<'_> {
+        PropertyMapIterMut {
+            entries: self.entries.as_mut(),
+            index: 0,
+        }
     }
 
     /// Converts a string-based declaration map into a strongly typed `PropertyMap`.
     /// Properties that are not recognized by `CssPropertyId` are omitted.
     pub fn from_string_map(map: &HashMap<String, Value>) -> Self {
-        let mut prop_map = Self::with_capacity(map.len());
+        let mut prop_map = Self::new();
         for (k, v) in map {
             if let Some(prop_id) = CssPropertyId::from_name(k) {
                 prop_map.insert(prop_id, v.clone());
@@ -805,11 +957,38 @@ impl PropertyMap {
 
     /// Converts this `PropertyMap` into a standard string-keyed map for backward compatibility.
     pub fn to_string_map(&self) -> HashMap<String, Value> {
-        let mut map = HashMap::with_capacity(self.entries.len());
-        for (&id, val) in &self.entries {
+        let mut map = HashMap::with_capacity(self.len);
+        for (id, val) in self.iter() {
             map.insert(id.name().to_string(), val.clone());
         }
         map
+    }
+}
+
+/// Mutable iterator for `PropertyMap`.
+pub struct PropertyMapIterMut<'a> {
+    entries: &'a mut [Option<Value>; CSS_PROPERTY_COUNT],
+    index: usize,
+}
+
+impl<'a> Iterator for PropertyMapIterMut<'a> {
+    type Item = (CssPropertyId, &'a mut Value);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.index < CSS_PROPERTY_COUNT {
+            let idx = self.index;
+            self.index += 1;
+            // SAFETY: We guarantee unique access via the mutable borrow on `entries`,
+            // and each index is visited at most once.
+            let slot = unsafe { &mut *(self.entries.as_mut_ptr().add(idx)) };
+            if let Some(val) = slot {
+                // Reconstruct the CssPropertyId from the index.
+                // This is safe because all indices in 0..CSS_PROPERTY_COUNT are valid discriminants.
+                let id = CssPropertyId::all()[idx];
+                return Some((id, val));
+            }
+        }
+        None
     }
 }
 
@@ -822,11 +1001,7 @@ mod tests {
         for &id in CssPropertyId::all() {
             let name = id.name();
             let resolved = CssPropertyId::from_name(name);
-            assert_eq!(
-                resolved,
-                Some(id),
-                "roundtrip failed for {name}"
-            );
+            assert_eq!(resolved, Some(id), "roundtrip failed for {name}");
         }
     }
 
@@ -890,7 +1065,10 @@ mod tests {
         let mut str_map = HashMap::new();
         str_map.insert("font-size".to_string(), Value::Keyword("16px".to_string()));
         str_map.insert("color".to_string(), Value::Keyword("blue".to_string()));
-        str_map.insert("unknown-custom-prop".to_string(), Value::Keyword("test".to_string()));
+        str_map.insert(
+            "unknown-custom-prop".to_string(),
+            Value::Keyword("test".to_string()),
+        );
 
         let prop_map = PropertyMap::from_string_map(&str_map);
         assert_eq!(prop_map.len(), 2);
@@ -899,7 +1077,13 @@ mod tests {
 
         let roundtrip = prop_map.to_string_map();
         assert_eq!(roundtrip.len(), 2);
-        assert_eq!(roundtrip.get("font-size"), Some(&Value::Keyword("16px".to_string())));
-        assert_eq!(roundtrip.get("color"), Some(&Value::Keyword("blue".to_string())));
+        assert_eq!(
+            roundtrip.get("font-size"),
+            Some(&Value::Keyword("16px".to_string()))
+        );
+        assert_eq!(
+            roundtrip.get("color"),
+            Some(&Value::Keyword("blue".to_string()))
+        );
     }
 }

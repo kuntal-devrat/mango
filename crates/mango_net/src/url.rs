@@ -148,9 +148,7 @@ impl Url {
         };
 
         // Extract scheme
-        let scheme_end = normalized
-            .find("://")
-            .ok_or(UrlError::InvalidScheme)?;
+        let scheme_end = normalized.find("://").ok_or(UrlError::InvalidScheme)?;
         let scheme = normalized[..scheme_end].to_ascii_lowercase();
         let after_scheme = &normalized[scheme_end + 3..];
 
@@ -296,10 +294,7 @@ impl Url {
         };
 
         let (path_part, query) = match path_part.find('?') {
-            Some(idx) => (
-                &path_part[..idx],
-                Some(path_part[idx + 1..].to_string()),
-            ),
+            Some(idx) => (&path_part[..idx], Some(path_part[idx + 1..].to_string())),
             None => (path_part, None),
         };
 

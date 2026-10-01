@@ -273,8 +273,8 @@ impl Http2Session {
         bytes.extend_from_slice(HTTP2_CLIENT_PREFACE);
         // Default settings: ENABLE_PUSH = 0, MAX_CONCURRENT_STREAMS = 100
         let settings = Http2Frame::settings(&[
-            (0x2, 0),   // SETTINGS_ENABLE_PUSH = 0
-            (0x3, 100), // SETTINGS_MAX_CONCURRENT_STREAMS = 100
+            (0x2, 0),     // SETTINGS_ENABLE_PUSH = 0
+            (0x3, 100),   // SETTINGS_MAX_CONCURRENT_STREAMS = 100
             (0x4, 65535), // SETTINGS_INITIAL_WINDOW_SIZE = 65535
         ]);
         bytes.extend_from_slice(&settings.serialize());
@@ -293,7 +293,10 @@ impl Http2Session {
     }
 
     /// Handles an incoming HTTP/2 frame from the server.
-    pub fn handle_incoming_frame(&mut self, frame: &Http2Frame) -> Result<Option<Http2Frame>, String> {
+    pub fn handle_incoming_frame(
+        &mut self,
+        frame: &Http2Frame,
+    ) -> Result<Option<Http2Frame>, String> {
         match frame.header.frame_type {
             FrameType::Settings => {
                 if frame.header.flags & 0x1 == 0 {
@@ -351,11 +354,11 @@ impl Http2Session {
                 Ok(None)
             }
             FrameType::Headers => {
-                if let Some(stream) = self.streams.get_mut(&frame.header.stream_id) {
-                    if frame.header.flags & 0x1 != 0 {
-                        // END_STREAM flag received
-                        stream.state = StreamState::HalfClosedRemote;
-                    }
+                if let Some(stream) = self.streams.get_mut(&frame.header.stream_id)
+                    && frame.header.flags & 0x1 != 0
+                {
+                    // END_STREAM flag received
+                    stream.state = StreamState::HalfClosedRemote;
                 }
                 Ok(None)
             }

@@ -381,12 +381,21 @@ impl JsRuntime {
     }
 
     /// Sets an attribute on a node by NodeId and marks DOM as dirty.
-    pub fn set_node_attribute(&mut self, node_id: mango_html::dom::NodeId, name: &str, value: &str) {
+    pub fn set_node_attribute(
+        &mut self,
+        node_id: mango_html::dom::NodeId,
+        name: &str,
+        value: &str,
+    ) {
         let mut doc = self.document.borrow_mut();
         if let Some(node) = doc.get_mut(node_id)
             && let mango_html::dom::NodeData::Element(elem) = &mut node.data
         {
-            if let Some((_, v)) = elem.attributes.iter_mut().find(|(k, _)| k.eq_ignore_ascii_case(name)) {
+            if let Some((_, v)) = elem
+                .attributes
+                .iter_mut()
+                .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            {
                 *v = value.to_string();
             } else {
                 elem.attributes.push((name.to_string(), value.to_string()));
@@ -401,13 +410,18 @@ impl JsRuntime {
         if let Some(node) = doc.get_mut(node_id)
             && let mango_html::dom::NodeData::Element(elem) = &mut node.data
         {
-            elem.attributes.retain(|(k, _)| !k.eq_ignore_ascii_case(name));
+            elem.attributes
+                .retain(|(k, _)| !k.eq_ignore_ascii_case(name));
             *self.dom_dirty.borrow_mut() = true;
         }
     }
 
     /// Gets an attribute value from a node by NodeId.
-    pub fn get_node_attribute(&self, node_id: mango_html::dom::NodeId, name: &str) -> Option<String> {
+    pub fn get_node_attribute(
+        &self,
+        node_id: mango_html::dom::NodeId,
+        name: &str,
+    ) -> Option<String> {
         let doc = self.document.borrow();
         doc.get(node_id).and_then(|node| {
             if let mango_html::dom::NodeData::Element(elem) = &node.data {
@@ -434,7 +448,13 @@ impl JsRuntime {
         };
         let script = format!(
             "(function() {{ if (typeof globalThis._dispatchInternalEvent === 'function') {{ return globalThis._dispatchInternalEvent({}, {:?}, {}); }} return true; }})()",
-            node_id_js, event_type, if event_dict_json.trim().is_empty() { "{}" } else { event_dict_json }
+            node_id_js,
+            event_type,
+            if event_dict_json.trim().is_empty() {
+                "{}"
+            } else {
+                event_dict_json
+            }
         );
         let prev_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {}));
@@ -464,7 +484,14 @@ impl JsRuntime {
     ) -> Result<bool, String> {
         let dict = format!(
             r#"{{"eventType":"mouse","bubbles":true,"cancelable":true,"clientX":{},"clientY":{},"button":{},"buttons":{},"ctrlKey":{},"shiftKey":{},"altKey":{},"metaKey":{}}}"#,
-            client_x, client_y, button, buttons, modifiers.ctrl, modifiers.shift, modifiers.alt, modifiers.meta
+            client_x,
+            client_y,
+            button,
+            buttons,
+            modifiers.ctrl,
+            modifiers.shift,
+            modifiers.alt,
+            modifiers.meta
         );
         self.dispatch_event(node_id, "click", &dict)
     }
@@ -480,7 +507,13 @@ impl JsRuntime {
     ) -> Result<bool, String> {
         let dict = format!(
             r#"{{"eventType":"mouse","bubbles":true,"cancelable":true,"clientX":{},"clientY":{},"button":0,"buttons":{},"ctrlKey":{},"shiftKey":{},"altKey":{},"metaKey":{}}}"#,
-            client_x, client_y, buttons, modifiers.ctrl, modifiers.shift, modifiers.alt, modifiers.meta
+            client_x,
+            client_y,
+            buttons,
+            modifiers.ctrl,
+            modifiers.shift,
+            modifiers.alt,
+            modifiers.meta
         );
         self.dispatch_event(node_id, "mousemove", &dict)
     }
@@ -497,7 +530,14 @@ impl JsRuntime {
     ) -> Result<bool, String> {
         let dict = format!(
             r#"{{"eventType":"mouse","bubbles":true,"cancelable":true,"clientX":{},"clientY":{},"button":{},"buttons":{},"ctrlKey":{},"shiftKey":{},"altKey":{},"metaKey":{}}}"#,
-            client_x, client_y, button, buttons, modifiers.ctrl, modifiers.shift, modifiers.alt, modifiers.meta
+            client_x,
+            client_y,
+            button,
+            buttons,
+            modifiers.ctrl,
+            modifiers.shift,
+            modifiers.alt,
+            modifiers.meta
         );
         self.dispatch_event(node_id, "mousedown", &dict)
     }
@@ -514,7 +554,14 @@ impl JsRuntime {
     ) -> Result<bool, String> {
         let dict = format!(
             r#"{{"eventType":"mouse","bubbles":true,"cancelable":true,"clientX":{},"clientY":{},"button":{},"buttons":{},"ctrlKey":{},"shiftKey":{},"altKey":{},"metaKey":{}}}"#,
-            client_x, client_y, button, buttons, modifiers.ctrl, modifiers.shift, modifiers.alt, modifiers.meta
+            client_x,
+            client_y,
+            button,
+            buttons,
+            modifiers.ctrl,
+            modifiers.shift,
+            modifiers.alt,
+            modifiers.meta
         );
         self.dispatch_event(node_id, "mouseup", &dict)
     }
@@ -529,7 +576,14 @@ impl JsRuntime {
     ) -> Result<bool, String> {
         let dict = format!(
             r#"{{"eventType":"keyboard","bubbles":true,"cancelable":true,"key":{:?},"code":{:?},"keyCode":{},"which":{},"ctrlKey":{},"shiftKey":{},"altKey":{},"metaKey":{}}}"#,
-            key, code, key_code, key_code, modifiers.ctrl, modifiers.shift, modifiers.alt, modifiers.meta
+            key,
+            code,
+            key_code,
+            key_code,
+            modifiers.ctrl,
+            modifiers.shift,
+            modifiers.alt,
+            modifiers.meta
         );
         self.dispatch_event(None, "keydown", &dict)
     }
@@ -544,7 +598,14 @@ impl JsRuntime {
     ) -> Result<bool, String> {
         let dict = format!(
             r#"{{"eventType":"keyboard","bubbles":true,"cancelable":true,"key":{:?},"code":{:?},"keyCode":{},"which":{},"ctrlKey":{},"shiftKey":{},"altKey":{},"metaKey":{}}}"#,
-            key, code, key_code, key_code, modifiers.ctrl, modifiers.shift, modifiers.alt, modifiers.meta
+            key,
+            code,
+            key_code,
+            key_code,
+            modifiers.ctrl,
+            modifiers.shift,
+            modifiers.alt,
+            modifiers.meta
         );
         self.dispatch_event(None, "keyup", &dict)
     }
@@ -688,7 +749,9 @@ impl JsRuntime {
             let mut cur = Some(target);
             let mut guard = 0;
             while let Some(nid) = cur {
-                if guard > 512 { break; }
+                if guard > 512 {
+                    break;
+                }
                 guard += 1;
                 new_chain.insert(nid);
                 cur = doc.get(nid).and_then(|n| n.parent);
@@ -702,25 +765,29 @@ impl JsRuntime {
         let mut doc = self.document.borrow_mut();
         // Remove from unhovered
         for nid in &self.hovered_nodes {
-            if !new_chain.contains(nid) {
-                if let Some(node) = doc.get_mut(*nid) {
-                    if let mango_html::dom::NodeData::Element(el) = &mut node.data {
-                        el.attributes.retain(|(k, _)| !k.eq_ignore_ascii_case("data-mango-hover"));
-                    }
-                }
+            if !new_chain.contains(nid)
+                && let Some(node) = doc.get_mut(*nid)
+                && let mango_html::dom::NodeData::Element(el) = &mut node.data
+            {
+                el.attributes
+                    .retain(|(k, _)| !k.eq_ignore_ascii_case("data-mango-hover"));
             }
         }
         // Add to newly hovered
         for nid in &new_chain {
-            if !self.hovered_nodes.contains(nid) {
-                if let Some(node) = doc.get_mut(*nid) {
-                    if let mango_html::dom::NodeData::Element(el) = &mut node.data {
-                        if let Some((_, v)) = el.attributes.iter_mut().find(|(k, _)| k.eq_ignore_ascii_case("data-mango-hover")) {
-                            *v = "true".to_string();
-                        } else {
-                            el.attributes.push(("data-mango-hover".to_string(), "true".to_string()));
-                        }
-                    }
+            if !self.hovered_nodes.contains(nid)
+                && let Some(node) = doc.get_mut(*nid)
+                && let mango_html::dom::NodeData::Element(el) = &mut node.data
+            {
+                if let Some((_, v)) = el
+                    .attributes
+                    .iter_mut()
+                    .find(|(k, _)| k.eq_ignore_ascii_case("data-mango-hover"))
+                {
+                    *v = "true".to_string();
+                } else {
+                    el.attributes
+                        .push(("data-mango-hover".to_string(), "true".to_string()));
                 }
             }
         }
@@ -740,7 +807,9 @@ impl JsRuntime {
             let mut cur = Some(target);
             let mut guard = 0;
             while let Some(nid) = cur {
-                if guard > 512 { break; }
+                if guard > 512 {
+                    break;
+                }
                 guard += 1;
                 new_chain.insert(nid);
                 cur = doc.get(nid).and_then(|n| n.parent);
@@ -754,25 +823,29 @@ impl JsRuntime {
         let mut doc = self.document.borrow_mut();
         // Remove from inactive
         for nid in &self.active_nodes {
-            if !new_chain.contains(nid) {
-                if let Some(node) = doc.get_mut(*nid) {
-                    if let mango_html::dom::NodeData::Element(el) = &mut node.data {
-                        el.attributes.retain(|(k, _)| !k.eq_ignore_ascii_case("data-mango-active"));
-                    }
-                }
+            if !new_chain.contains(nid)
+                && let Some(node) = doc.get_mut(*nid)
+                && let mango_html::dom::NodeData::Element(el) = &mut node.data
+            {
+                el.attributes
+                    .retain(|(k, _)| !k.eq_ignore_ascii_case("data-mango-active"));
             }
         }
         // Add to newly active
         for nid in &new_chain {
-            if !self.active_nodes.contains(nid) {
-                if let Some(node) = doc.get_mut(*nid) {
-                    if let mango_html::dom::NodeData::Element(el) = &mut node.data {
-                        if let Some((_, v)) = el.attributes.iter_mut().find(|(k, _)| k.eq_ignore_ascii_case("data-mango-active")) {
-                            *v = "true".to_string();
-                        } else {
-                            el.attributes.push(("data-mango-active".to_string(), "true".to_string()));
-                        }
-                    }
+            if !self.active_nodes.contains(nid)
+                && let Some(node) = doc.get_mut(*nid)
+                && let mango_html::dom::NodeData::Element(el) = &mut node.data
+            {
+                if let Some((_, v)) = el
+                    .attributes
+                    .iter_mut()
+                    .find(|(k, _)| k.eq_ignore_ascii_case("data-mango-active"))
+                {
+                    *v = "true".to_string();
+                } else {
+                    el.attributes
+                        .push(("data-mango-active".to_string(), "true".to_string()));
                 }
             }
         }
@@ -851,7 +924,8 @@ mod tests {
         let root = updated_doc.root();
         let p_node = updated_doc.find_element_by_tag(root, "p").unwrap();
         assert_eq!(updated_doc.text_content(p_node), "Inserted Paragraph");
-        if let mango_html::dom::NodeData::Element(ref elem) = updated_doc.get(p_node).unwrap().data {
+        if let mango_html::dom::NodeData::Element(ref elem) = updated_doc.get(p_node).unwrap().data
+        {
             assert_eq!(elem.get_attribute("class"), Some("lead"));
         } else {
             panic!("Expected element node");
@@ -940,7 +1014,8 @@ mod tests {
 
     #[test]
     fn test_canvas_2d_and_web_animations() {
-        let doc = parse_html("<html><body><canvas id='c'></canvas><div id='box'></div></body></html>");
+        let doc =
+            parse_html("<html><body><canvas id='c'></canvas><div id='box'></div></body></html>");
         let mut rt = JsRuntime::new(doc, 800.0, 600.0);
 
         let script = r##"
@@ -1064,7 +1139,9 @@ mod tests {
 
     #[test]
     fn test_document_character_set_and_content_type() {
-        let mut doc = parse_html("<!DOCTYPE html><html><head><meta charset=\"windows-1252\"></head><body></body></html>");
+        let mut doc = parse_html(
+            "<!DOCTYPE html><html><head><meta charset=\"windows-1252\"></head><body></body></html>",
+        );
         assert_eq!(doc.character_set, "windows-1252");
         doc.content_type = "text/html".to_string();
 
@@ -1297,7 +1374,9 @@ mod tests {
 
     #[test]
     fn test_web_components_and_template_slot() {
-        let doc = parse_html("<html><body><div id='host'><slot>default</slot></div><template id='tmpl'><p>inside template</p></template></body></html>");
+        let doc = parse_html(
+            "<html><body><div id='host'><slot>default</slot></div><template id='tmpl'><p>inside template</p></template></body></html>",
+        );
         let mut rt = JsRuntime::new(doc, 800.0, 600.0);
 
         let script = r#"
@@ -2019,7 +2098,8 @@ mod tests {
 
     #[test]
     fn test_core_js_engine() {
-        let doc = parse_html("<!DOCTYPE html><html><body><div id='out'>initial</div></body></html>");
+        let doc =
+            parse_html("<!DOCTYPE html><html><body><div id='out'>initial</div></body></html>");
         let mut rt = JsRuntime::new(doc, 800.0, 600.0);
 
         let script = r##"
@@ -2210,18 +2290,14 @@ mod tests {
         let btn_id = {
             let doc = rt.document_ref();
             let root = doc.root();
-            doc.find_element_by_tag(root, "button").expect("button node")
+            doc.find_element_by_tag(root, "button")
+                .expect("button node")
         };
 
         // Dispatch click from host
-        let default_allowed = rt.dispatch_click(
-            Some(btn_id),
-            120.0,
-            240.0,
-            0,
-            1,
-            EventModifiers::NONE,
-        ).expect("dispatch_click");
+        let default_allowed = rt
+            .dispatch_click(Some(btn_id), 120.0, 240.0, 0, 1, EventModifiers::NONE)
+            .expect("dispatch_click");
         assert!(default_allowed);
 
         // Verify propagation sequence and options
@@ -2269,8 +2345,10 @@ mod tests {
         }
 
         // Test second click: once listener should NOT fire again
-        rt.dispatch_click(Some(btn_id), 120.0, 240.0, 0, 1, EventModifiers::NONE).unwrap();
-        let check_once2 = "if (window.onceCount !== 1) throw new Error('once listener fired twice');";
+        rt.dispatch_click(Some(btn_id), 120.0, 240.0, 0, 1, EventModifiers::NONE)
+            .unwrap();
+        let check_once2 =
+            "if (window.onceCount !== 1) throw new Error('once listener fired twice');";
         rt.execute_script(check_once2).unwrap();
 
         // Test stopPropagation
@@ -2376,13 +2454,20 @@ mod tests {
         rt.clear_dom_dirty();
 
         // Verify button and parent both have data-mango-hover="true"
-        assert_eq!(rt.get_node_attribute(btn_id, "data-mango-hover"), Some("true".to_string()));
+        assert_eq!(
+            rt.get_node_attribute(btn_id, "data-mango-hover"),
+            Some("true".to_string())
+        );
         let parent_id = {
             let doc = rt.document_ref();
             let root = doc.root();
-            doc.find_element_by_tag(root, "div").expect("parent div node")
+            doc.find_element_by_tag(root, "div")
+                .expect("parent div node")
         };
-        assert_eq!(rt.get_node_attribute(parent_id, "data-mango-hover"), Some("true".to_string()));
+        assert_eq!(
+            rt.get_node_attribute(parent_id, "data-mango-hover"),
+            Some("true".to_string())
+        );
 
         // Unhover
         assert!(rt.set_hover_state(None));
@@ -2391,8 +2476,14 @@ mod tests {
 
         // Test active state
         assert!(rt.set_active_state(Some(btn_id)));
-        assert_eq!(rt.get_node_attribute(btn_id, "data-mango-active"), Some("true".to_string()));
-        assert_eq!(rt.get_node_attribute(parent_id, "data-mango-active"), Some("true".to_string()));
+        assert_eq!(
+            rt.get_node_attribute(btn_id, "data-mango-active"),
+            Some("true".to_string())
+        );
+        assert_eq!(
+            rt.get_node_attribute(parent_id, "data-mango-active"),
+            Some("true".to_string())
+        );
         assert!(rt.set_active_state(None));
         assert_eq!(rt.get_node_attribute(btn_id, "data-mango-active"), None);
         assert_eq!(rt.get_node_attribute(parent_id, "data-mango-active"), None);
@@ -2646,7 +2737,8 @@ mod tests {
 
     #[test]
     fn test_dom_measurement_and_layout() {
-        let doc = parse_html(r#"
+        let doc = parse_html(
+            r#"
             <html>
             <head></head>
             <body>
@@ -2656,7 +2748,8 @@ mod tests {
               <div id="target" style="width: 200px; height: 50px;">Target</div>
             </body>
             </html>
-        "#);
+        "#,
+        );
         let mut rt = JsRuntime::new(doc, 800.0, 600.0);
 
         let parent_id = {
@@ -2881,7 +2974,10 @@ mod tests {
         "#;
 
         if let Err(e) = rt.execute_script(verify_observers) {
-            panic!("test_dom_measurement_and_layout verify_observers failed: {}", e);
+            panic!(
+                "test_dom_measurement_and_layout verify_observers failed: {}",
+                e
+            );
         }
     }
 
@@ -2889,7 +2985,8 @@ mod tests {
     fn test_csprng_and_storage_partitioning() {
         let doc_a = Document::new();
         let doc_b = Document::new();
-        let shared_storage = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        let shared_storage =
+            std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
         let mut rt_a = JsRuntime::new_with_url_and_storage(
             doc_a,
             800.0,
@@ -2928,26 +3025,34 @@ mod tests {
                 throw new Error("Invalid UUID format: " + uuid);
             }
         "#;
-        rt_a.execute_script(script_crypto).expect("Crypto test failed");
+        rt_a.execute_script(script_crypto)
+            .expect("Crypto test failed");
 
         // Test localStorage origin partitioning
         rt_a.execute_script("localStorage.setItem('secret', 'originA_data');")
             .expect("A setItem failed");
 
-        rt_b.execute_script(r#"
+        rt_b.execute_script(
+            r#"
             if (localStorage.getItem('secret') !== null) {
                 throw new Error("Cross-origin key leakage: origin B read origin A's key");
             }
             localStorage.removeItem('secret');
-        "#).expect("B read/remove failed");
+        "#,
+        )
+        .expect("B read/remove failed");
 
-        rt_a.execute_script(r#"
+        rt_a.execute_script(
+            r#"
             if (localStorage.getItem('secret') !== 'originA_data') {
                 throw new Error("Cross-origin deletion leakage: origin B deleted origin A's key");
             }
-        "#).expect("A verify key remains failed");
+        "#,
+        )
+        .expect("A verify key remains failed");
 
-        rt_b.execute_script("localStorage.clear();").expect("B clear failed");
+        rt_b.execute_script("localStorage.clear();")
+            .expect("B clear failed");
 
         rt_a.execute_script(r#"
             if (localStorage.getItem('secret') !== 'originA_data') {
@@ -3298,7 +3403,8 @@ mod tests {
             if (disabledClicked) throw new Error("Disabled button should not fire click");
         "##;
 
-        rt.execute_script(script).expect("Section 7.5 DOM manipulation test failed");
+        rt.execute_script(script)
+            .expect("Section 7.5 DOM manipulation test failed");
     }
 
     #[test]
@@ -3371,7 +3477,9 @@ mod tests {
             if (location.pathname !== "/replaced") throw new Error("location.replace failed");
             location.reload(); // Should execute safely
         "##;
-        rt_loc.execute_script(loc_script).expect("Location test failed");
+        rt_loc
+            .execute_script(loc_script)
+            .expect("Location test failed");
 
         // 2. Test History Object
         let mut rt_hist = JsRuntime::new_with_url_storage_session_and_cookies(
@@ -3452,7 +3560,9 @@ mod tests {
                 throw new Error("history.go(-1) failed to fire popstate or wrong state");
             }
         "##;
-        rt_hist.execute_script(hist_script).expect("History test failed");
+        rt_hist
+            .execute_script(hist_script)
+            .expect("History test failed");
 
         // 3. Test localStorage (Item methods, property proxy access, file persistence)
         let mut rt_storage = JsRuntime::new_with_url_storage_session_and_cookies(
@@ -3493,13 +3603,18 @@ mod tests {
             if (localStorage.getItem("customProp") !== null) throw new Error("delete localStorage.prop failed");
             if (localStorage.length !== 1) throw new Error("localStorage.length after removals should be 1, got: " + localStorage.length);
         "##;
-        rt_storage.execute_script(ls_script).expect("localStorage test failed");
+        rt_storage
+            .execute_script(ls_script)
+            .expect("localStorage test failed");
 
         // Persist localStorage to file
         rt_storage
             .persist_local_storage(&storage_file)
             .expect("Failed to persist localStorage to file");
-        assert!(storage_file.exists(), "Storage file was not written to disk");
+        assert!(
+            storage_file.exists(),
+            "Storage file was not written to disk"
+        );
 
         // Create a new fresh runtime simulating browser restart, and load from file
         let new_shared_ls = Arc::new(Mutex::new(HashMap::new()));
@@ -3587,8 +3702,3 @@ mod tests {
             .expect("sessionStorage Tab 2 isolation check failed");
     }
 }
-
-
-
-
-

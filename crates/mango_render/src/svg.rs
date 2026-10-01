@@ -48,10 +48,10 @@ pub fn render_svg(
     let cache_key = (svg_xml.to_string(), target_w, target_h, color_key);
 
     // 1. Check rendered pixmap cache (OPT-008)
-    if let Ok(cache) = svg_render_cache().read() {
-        if let Some(img) = cache.get(&cache_key) {
-            return Some(img.clone());
-        }
+    if let Ok(cache) = svg_render_cache().read()
+        && let Some(img) = cache.get(&cache_key)
+    {
+        return Some(img.clone());
     }
 
     // 2. Check parsed SVG DOM cache (OPT-008)
@@ -69,7 +69,10 @@ pub fn render_svg(
             let arc_doc = std::sync::Arc::new(parsed);
             if let Ok(mut cache) = svg_doc_cache().write() {
                 if cache.len() >= 512 {
-                    cache.clear();
+                    let keys_to_remove: Vec<_> = cache.keys().take(256).cloned().collect();
+                    for k in keys_to_remove {
+                        cache.remove(&k);
+                    }
                 }
                 cache.insert(svg_xml.to_string(), arc_doc.clone());
             }
@@ -138,7 +141,10 @@ pub fn render_svg(
     // Store in render cache
     if let Ok(mut cache) = svg_render_cache().write() {
         if cache.len() >= 512 {
-            cache.clear();
+            let keys_to_remove: Vec<_> = cache.keys().take(256).cloned().collect();
+            for k in keys_to_remove {
+                cache.remove(&k);
+            }
         }
         cache.insert(cache_key, decoded.clone());
     }
@@ -214,9 +220,19 @@ pub fn get_svg_intrinsic_dimensions(svg_xml: &str) -> (Option<f32>, Option<f32>)
         (None, None, None) => {}
     }
     for child in &doc.children {
-        if let SvgNode::Use { href, width, height, .. } = child {
+        if let SvgNode::Use {
+            href,
+            width,
+            height,
+            ..
+        } = child
+        {
             let sym_id = href.split('#').next_back().unwrap_or(href).trim();
-            let sym = doc.symbols.get(sym_id).cloned().or_else(|| get_global_svg_symbol(sym_id));
+            let sym = doc
+                .symbols
+                .get(sym_id)
+                .cloned()
+                .or_else(|| get_global_svg_symbol(sym_id));
             let sym_vb = sym.and_then(|s| s.view_box);
             match (*width, *height, sym_vb) {
                 (Some(w), Some(h), _) => return (Some(w), Some(h)),
@@ -409,7 +425,15 @@ fn parse_leaf_element(
             let rx = get_f32_attr(attrs, "rx").unwrap_or(0.0);
             let ry = get_f32_attr(attrs, "ry").unwrap_or(rx);
             if w > 0.0 && h > 0.0 {
-                Some(SvgNode::Rect { x, y, width: w, height: h, rx, ry, state })
+                Some(SvgNode::Rect {
+                    x,
+                    y,
+                    width: w,
+                    height: h,
+                    rx,
+                    ry,
+                    state,
+                })
             } else {
                 None
             }
@@ -430,7 +454,13 @@ fn parse_leaf_element(
             let rx = get_f32_attr(attrs, "rx").unwrap_or(0.0);
             let ry = get_f32_attr(attrs, "ry").unwrap_or(0.0);
             if rx > 0.0 && ry > 0.0 {
-                Some(SvgNode::Ellipse { cx, cy, rx, ry, state })
+                Some(SvgNode::Ellipse {
+                    cx,
+                    cy,
+                    rx,
+                    ry,
+                    state,
+                })
             } else {
                 None
             }
@@ -440,27 +470,34 @@ fn parse_leaf_element(
             let y1 = get_f32_attr(attrs, "y1").unwrap_or(0.0);
             let x2 = get_f32_attr(attrs, "x2").unwrap_or(0.0);
             let y2 = get_f32_attr(attrs, "y2").unwrap_or(0.0);
-            Some(SvgNode::Line { x1, y1, x2, y2, state })
+            Some(SvgNode::Line {
+                x1,
+                y1,
+                x2,
+                y2,
+                state,
+            })
         }
-        "polygon" => {
-            attrs.iter()
-                .find(|(k, _)| k.eq_ignore_ascii_case("points"))
-                .map(|(_, pts)| SvgNode::Polygon {
-                    points: parse_points(pts),
-                    state,
-                })
-        }
-        "polyline" => {
-            attrs.iter()
-                .find(|(k, _)| k.eq_ignore_ascii_case("points"))
-                .map(|(_, pts)| SvgNode::Polyline {
-                    points: parse_points(pts),
-                    state,
-                })
-        }
+        "polygon" => attrs
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("points"))
+            .map(|(_, pts)| SvgNode::Polygon {
+                points: parse_points(pts),
+                state,
+            }),
+        "polyline" => attrs
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("points"))
+            .map(|(_, pts)| SvgNode::Polyline {
+                points: parse_points(pts),
+                state,
+            }),
         "use" => {
-            let href = attrs.iter()
-                .find(|(k, _)| k.eq_ignore_ascii_case("href") || k.eq_ignore_ascii_case("xlink:href"))
+            let href = attrs
+                .iter()
+                .find(|(k, _)| {
+                    k.eq_ignore_ascii_case("href") || k.eq_ignore_ascii_case("xlink:href")
+                })
                 .map(|(_, v)| v.clone())
                 .unwrap_or_default();
             let x = get_f32_attr(attrs, "x").unwrap_or(0.0);
@@ -471,7 +508,15 @@ fn parse_leaf_element(
                 .iter()
                 .find(|(k, _)| k.eq_ignore_ascii_case("transform"))
                 .and_then(|(_, v)| parse_transform(v));
-            Some(SvgNode::Use { href, x, y, width, height, state, transform })
+            Some(SvgNode::Use {
+                href,
+                x,
+                y,
+                width,
+                height,
+                state,
+                transform,
+            })
         }
         _ => None,
     }
@@ -608,7 +653,13 @@ impl SvgDocument {
                 XmlToken::EndTag(name) => {
                     let tag_name = name.to_ascii_lowercase();
                     if tag_name == "g" {
-                        if let Some(SvgContainer::Group { children: grp_children, state, transform, id }) = container_stack.pop() {
+                        if let Some(SvgContainer::Group {
+                            children: grp_children,
+                            state,
+                            transform,
+                            id,
+                        }) = container_stack.pop()
+                        {
                             let grp_node = SvgNode::Group {
                                 children: grp_children,
                                 state: state.clone(),
@@ -628,7 +679,12 @@ impl SvgDocument {
                     } else if tag_name == "defs" {
                         container_stack.pop();
                     } else if tag_name == "symbol"
-                        && let Some(SvgContainer::Symbol { id, view_box, children: sym_children, state }) = container_stack.pop()
+                        && let Some(SvgContainer::Symbol {
+                            id,
+                            view_box,
+                            children: sym_children,
+                            state,
+                        }) = container_stack.pop()
                     {
                         let sym = SvgSymbol {
                             view_box,
@@ -659,17 +715,30 @@ impl SvgDocument {
         current_color: Color,
     ) {
         for child in &self.children {
-            child.render(pixmap, transform, parent_state, current_color, &self.symbols, 0);
+            child.render(
+                pixmap,
+                transform,
+                parent_state,
+                current_color,
+                &self.symbols,
+                0,
+            );
         }
     }
 }
 
 fn compose_state(node_state: &SvgRenderState, parent_state: &SvgRenderState) -> SvgRenderState {
     SvgRenderState {
-        fill: node_state.fill.clone().or_else(|| parent_state.fill.clone()),
+        fill: node_state
+            .fill
+            .clone()
+            .or_else(|| parent_state.fill.clone()),
         fill_rule: node_state.fill_rule,
         fill_opacity: node_state.fill_opacity * parent_state.fill_opacity,
-        stroke: node_state.stroke.clone().or_else(|| parent_state.stroke.clone()),
+        stroke: node_state
+            .stroke
+            .clone()
+            .or_else(|| parent_state.stroke.clone()),
         stroke_width: if node_state.stroke.is_some() {
             node_state.stroke_width
         } else {
@@ -697,7 +766,15 @@ impl SvgNode {
                 let effective = compose_state(state, parent_state);
                 draw_path_with_state(pixmap, path, &effective, transform, current_color);
             }
-            SvgNode::Rect { x, y, width, height, rx, ry, state } => {
+            SvgNode::Rect {
+                x,
+                y,
+                width,
+                height,
+                rx,
+                ry,
+                state,
+            } => {
                 let effective = compose_state(state, parent_state);
                 let mut pb = PathBuilder::new();
                 if *rx > 0.0 || *ry > 0.0 {
@@ -731,7 +808,13 @@ impl SvgNode {
                     draw_path_with_state(pixmap, &path, &effective, transform, current_color);
                 }
             }
-            SvgNode::Ellipse { cx, cy, rx, ry, state } => {
+            SvgNode::Ellipse {
+                cx,
+                cy,
+                rx,
+                ry,
+                state,
+            } => {
                 let effective = compose_state(state, parent_state);
                 let mut pb = PathBuilder::new();
                 add_ellipse_to_path(&mut pb, *cx, *cy, *rx, *ry);
@@ -739,7 +822,13 @@ impl SvgNode {
                     draw_path_with_state(pixmap, &path, &effective, transform, current_color);
                 }
             }
-            SvgNode::Line { x1, y1, x2, y2, state } => {
+            SvgNode::Line {
+                x1,
+                y1,
+                x2,
+                y2,
+                state,
+            } => {
                 let effective = compose_state(state, parent_state);
                 let mut pb = PathBuilder::new();
                 pb.move_to(*x1, *y1);
@@ -775,7 +864,11 @@ impl SvgNode {
                     }
                 }
             }
-            SvgNode::Group { children, state, transform: grp_transform } => {
+            SvgNode::Group {
+                children,
+                state,
+                transform: grp_transform,
+            } => {
                 let effective = compose_state(state, parent_state);
                 let mut cur_tf = transform;
                 if let Some(gt) = grp_transform {
@@ -785,7 +878,15 @@ impl SvgNode {
                     child.render(pixmap, cur_tf, &effective, current_color, symbols, depth);
                 }
             }
-            SvgNode::Use { href, x, y, width, height, state, transform: use_transform } => {
+            SvgNode::Use {
+                href,
+                x,
+                y,
+                width,
+                height,
+                state,
+                transform: use_transform,
+            } => {
                 if depth > 16 {
                     return;
                 }
@@ -793,7 +894,8 @@ impl SvgNode {
                 if sym_id.is_empty() {
                     return;
                 }
-                let symbol = symbols.get(sym_id)
+                let symbol = symbols
+                    .get(sym_id)
                     .cloned()
                     .or_else(|| get_global_svg_symbol(sym_id));
 
@@ -812,7 +914,8 @@ impl SvgNode {
                             let scale = scale_x.min(scale_y);
                             let offset_x = *x + (target_w - vb_w * scale) / 2.0;
                             let offset_y = *y + (target_h - vb_h * scale) / 2.0;
-                            cur_tf = cur_tf.pre_translate(offset_x, offset_y)
+                            cur_tf = cur_tf
+                                .pre_translate(offset_x, offset_y)
                                 .pre_scale(scale, scale)
                                 .pre_translate(-vb_x, -vb_y);
                         }
@@ -822,7 +925,14 @@ impl SvgNode {
 
                     let effective_use_state = compose_state(state, parent_state);
                     for child in &sym.children {
-                        child.render(pixmap, cur_tf, &effective_use_state, current_color, symbols, depth + 1);
+                        child.render(
+                            pixmap,
+                            cur_tf,
+                            &effective_use_state,
+                            current_color,
+                            symbols,
+                            depth + 1,
+                        );
                     }
                 }
             }
@@ -1235,9 +1345,21 @@ pub fn parse_svg_path(d: &str) -> Option<Path> {
                     tokens.next_f32(),
                     tokens.next_f32(),
                 ) {
-                    let (nx1, ny1) = if is_rel { (cur_x + x1, cur_y + y1) } else { (x1, y1) };
-                    let (nx2, ny2) = if is_rel { (cur_x + x2, cur_y + y2) } else { (x2, y2) };
-                    let (nx, ny) = if is_rel { (cur_x + x, cur_y + y) } else { (x, y) };
+                    let (nx1, ny1) = if is_rel {
+                        (cur_x + x1, cur_y + y1)
+                    } else {
+                        (x1, y1)
+                    };
+                    let (nx2, ny2) = if is_rel {
+                        (cur_x + x2, cur_y + y2)
+                    } else {
+                        (x2, y2)
+                    };
+                    let (nx, ny) = if is_rel {
+                        (cur_x + x, cur_y + y)
+                    } else {
+                        (x, y)
+                    };
 
                     pb.cubic_to(nx1, ny1, nx2, ny2, nx, ny);
                     last_cp_x = nx2;
@@ -1254,8 +1376,16 @@ pub fn parse_svg_path(d: &str) -> Option<Path> {
                     tokens.next_f32(),
                     tokens.next_f32(),
                 ) {
-                    let (nx2, ny2) = if is_rel { (cur_x + x2, cur_y + y2) } else { (x2, y2) };
-                    let (nx, ny) = if is_rel { (cur_x + x, cur_y + y) } else { (x, y) };
+                    let (nx2, ny2) = if is_rel {
+                        (cur_x + x2, cur_y + y2)
+                    } else {
+                        (x2, y2)
+                    };
+                    let (nx, ny) = if is_rel {
+                        (cur_x + x, cur_y + y)
+                    } else {
+                        (x, y)
+                    };
 
                     let (nx1, ny1) = if matches!(last_cmd, 'C' | 'c' | 'S' | 's') {
                         (2.0 * cur_x - last_cp_x, 2.0 * cur_y - last_cp_y)
@@ -1278,8 +1408,16 @@ pub fn parse_svg_path(d: &str) -> Option<Path> {
                     tokens.next_f32(),
                     tokens.next_f32(),
                 ) {
-                    let (nx1, ny1) = if is_rel { (cur_x + x1, cur_y + y1) } else { (x1, y1) };
-                    let (nx, ny) = if is_rel { (cur_x + x, cur_y + y) } else { (x, y) };
+                    let (nx1, ny1) = if is_rel {
+                        (cur_x + x1, cur_y + y1)
+                    } else {
+                        (x1, y1)
+                    };
+                    let (nx, ny) = if is_rel {
+                        (cur_x + x, cur_y + y)
+                    } else {
+                        (x, y)
+                    };
 
                     pb.quad_to(nx1, ny1, nx, ny);
                     last_cp_x = nx1;
@@ -1291,7 +1429,11 @@ pub fn parse_svg_path(d: &str) -> Option<Path> {
             'T' | 't' => {
                 let is_rel = cmd == 't';
                 while let (Some(x), Some(y)) = (tokens.next_f32(), tokens.next_f32()) {
-                    let (nx, ny) = if is_rel { (cur_x + x, cur_y + y) } else { (x, y) };
+                    let (nx, ny) = if is_rel {
+                        (cur_x + x, cur_y + y)
+                    } else {
+                        (x, y)
+                    };
                     let (nx1, ny1) = if matches!(last_cmd, 'Q' | 'q' | 'T' | 't') {
                         (2.0 * cur_x - last_cp_x, 2.0 * cur_y - last_cp_y)
                     } else {
@@ -1406,10 +1548,18 @@ fn add_svg_arc_to_path(
         ry *= factor;
     }
 
-    let sign = if large_arc_flag != sweep_flag { 1.0 } else { -1.0 };
+    let sign = if large_arc_flag != sweep_flag {
+        1.0
+    } else {
+        -1.0
+    };
     let numer = (rx * rx * ry * ry) - (rx * rx * y1_p * y1_p) - (ry * ry * x1_p * x1_p);
     let denom = (rx * rx * y1_p * y1_p) + (ry * ry * x1_p * x1_p);
-    let sq = if denom > 0.0 { (numer.max(0.0) / denom).sqrt() } else { 0.0 };
+    let sq = if denom > 0.0 {
+        (numer.max(0.0) / denom).sqrt()
+    } else {
+        0.0
+    };
 
     let cx_p = sign * sq * (rx * y1_p / ry);
     let cy_p = sign * sq * -(ry * x1_p / rx);
@@ -1540,7 +1690,9 @@ impl<'a> PathTokenizer<'a> {
                 self.idx += 1;
             } else if (c == b'e' || c == b'E') && has_digit {
                 self.idx += 1;
-                if self.idx < self.chars.len() && (self.chars[self.idx] == b'+' || self.chars[self.idx] == b'-') {
+                if self.idx < self.chars.len()
+                    && (self.chars[self.idx] == b'+' || self.chars[self.idx] == b'-')
+                {
                     self.idx += 1;
                 }
             } else {
@@ -1612,7 +1764,9 @@ impl<'a> XmlTokenizer<'a> {
             }
 
             // Check for processing instruction <? ... ?> or <! ... >
-            if self.pos + 2 <= bytes.len() && (bytes[self.pos + 1] == b'?' || bytes[self.pos + 1] == b'!') {
+            if self.pos + 2 <= bytes.len()
+                && (bytes[self.pos + 1] == b'?' || bytes[self.pos + 1] == b'!')
+            {
                 if let Some(end) = self.content[self.pos..].find('>') {
                     self.pos += end + 1;
                 } else {
@@ -1697,7 +1851,12 @@ fn parse_attributes(s: &str) -> Vec<(String, String)> {
 
         // Attribute name
         let name_start = i;
-        while i < bytes.len() && !bytes[i].is_ascii_whitespace() && bytes[i] != b'=' && bytes[i] != b'/' && bytes[i] != b'>' {
+        while i < bytes.len()
+            && !bytes[i].is_ascii_whitespace()
+            && bytes[i] != b'='
+            && bytes[i] != b'/'
+            && bytes[i] != b'>'
+        {
             i += 1;
         }
         let attr_name = match std::str::from_utf8(&bytes[name_start..i]) {
@@ -1730,7 +1889,11 @@ fn parse_attributes(s: &str) -> Vec<(String, String)> {
                 }
             } else {
                 let val_start = i;
-                while i < bytes.len() && !bytes[i].is_ascii_whitespace() && bytes[i] != b'/' && bytes[i] != b'>' {
+                while i < bytes.len()
+                    && !bytes[i].is_ascii_whitespace()
+                    && bytes[i] != b'/'
+                    && bytes[i] != b'>'
+                {
                     i += 1;
                 }
                 if let Ok(v) = std::str::from_utf8(&bytes[val_start..i]) {
@@ -1769,7 +1932,8 @@ mod tests {
 
     #[test]
     fn test_render_svg_path_current_color() {
-        let svg = r#"<svg viewBox="0 0 24 24"><path d="M0 0 H24 V24 H0 Z" fill="currentColor"/></svg>"#;
+        let svg =
+            r#"<svg viewBox="0 0 24 24"><path d="M0 0 H24 V24 H0 Z" fill="currentColor"/></svg>"#;
         let custom_color = Color::rgb(40, 120, 200);
         let img = render_svg(svg, 24, 24, custom_color).expect("SVG should render");
         let p = img.pixels[12 * 24 + 12];
@@ -1831,7 +1995,8 @@ mod tests {
             <use href="#global-star" x="0" y="0" width="40" height="40"/>
         </svg>
         "##;
-        let img = render_svg(consumer_svg, 40, 40, Color::BLACK).expect("Cross-SVG symbol should resolve");
+        let img = render_svg(consumer_svg, 40, 40, Color::BLACK)
+            .expect("Cross-SVG symbol should resolve");
         let center_idx = 20 * 40 + 20;
         let center_pixel = img.pixels[center_idx];
         let blue = center_pixel & 0xFF;
@@ -1882,7 +2047,8 @@ mod tests {
     fn test_svg_rendering_and_dom_caching() {
         let svg = r##"<svg viewBox="0 0 10 10"><rect x="0" y="0" width="10" height="10" fill="#123456"/></svg>"##;
         let img1 = render_svg(svg, 10, 10, Color::BLACK).expect("should render SVG");
-        let img2 = render_svg(svg, 10, 10, Color::BLACK).expect("should return cached rendered SVG");
+        let img2 =
+            render_svg(svg, 10, 10, Color::BLACK).expect("should return cached rendered SVG");
 
         assert_eq!(img1.width, img2.width);
         assert_eq!(img1.height, img2.height);

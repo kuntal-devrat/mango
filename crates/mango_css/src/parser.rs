@@ -1,17 +1,20 @@
 //! CSS parser for stylesheets, rules, selectors, and property declarations.
 
-use mango_core::Color;
 use crate::properties::Declaration;
 use crate::selectors::{
     AttributeOperator, Combinator, ComplexSelector, CompoundSelector, SelectorList, SimpleSelector,
 };
 use crate::tokenizer::{CssTokenizer, Token};
 use crate::values::{
-    AlignItems, BackgroundRepeat, BackgroundSize, BorderCollapse, BorderStyle, BoxSizing, BreakInside, CaptionSide, Clear, ColumnSpan, Cursor, Direction, Display,
-    FlexDirection, FlexWrap, Float, FontDisplay, FontFeatureSettings, FontStyle, FontVariationSettings, FontWeight, GridAutoFlow, GridPlacement, GridTrackSize,
-    Hyphens, JustifyContent, Length, LineClamp, ListStylePosition, ListStyleType, Overflow, OverflowWrap, Position, TableLayout, TextAlign,
-    TextDecoration, TextDecorationThickness, TextEmphasisStyle, TextOverflow, TextTransform, UnicodeBidi, Value, VerticalAlign, Visibility, WhiteSpace, WordBreak,
+    AlignItems, BackgroundRepeat, BackgroundSize, BorderCollapse, BorderStyle, BoxSizing,
+    BreakInside, CaptionSide, Clear, ColumnSpan, Cursor, Direction, Display, FlexDirection,
+    FlexWrap, Float, FontDisplay, FontFeatureSettings, FontStyle, FontVariationSettings,
+    FontWeight, GridAutoFlow, GridPlacement, GridTrackSize, Hyphens, JustifyContent, Length,
+    LineClamp, ListStylePosition, ListStyleType, Overflow, OverflowWrap, Position, TableLayout,
+    TextAlign, TextDecoration, TextDecorationThickness, TextEmphasisStyle, TextOverflow,
+    TextTransform, UnicodeBidi, Value, VerticalAlign, Visibility, WhiteSpace, WordBreak,
 };
+use mango_core::Color;
 
 /// A parsed CSS stylesheet containing style rules and at-rules.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -168,7 +171,9 @@ impl CssParser {
                                     self.advance();
                                 } else {
                                     // Unquoted url(...)
-                                    while *self.peek() != Token::CloseParen && *self.peek() != Token::Eof {
+                                    while *self.peek() != Token::CloseParen
+                                        && *self.peek() != Token::Eof
+                                    {
                                         let tok = self.advance();
                                         path.push_str(&self.token_to_string(&tok));
                                     }
@@ -251,7 +256,10 @@ impl CssParser {
                     continue;
                 }
 
-                if kw.eq_ignore_ascii_case("keyframes") || kw.eq_ignore_ascii_case("-webkit-keyframes") || kw.eq_ignore_ascii_case("-moz-keyframes") {
+                if kw.eq_ignore_ascii_case("keyframes")
+                    || kw.eq_ignore_ascii_case("-webkit-keyframes")
+                    || kw.eq_ignore_ascii_case("-moz-keyframes")
+                {
                     // Parse @keyframes name { ... } — store as KeyframesRule for animation use.
                     self.skip_whitespace_and_comments();
                     let mut anim_name = String::new();
@@ -283,7 +291,9 @@ impl CssParser {
                                         match kw2.to_ascii_lowercase().as_str() {
                                             "from" => selectors.push(0.0),
                                             "to" => selectors.push(100.0),
-                                            _ => { valid_selectors = false; }
+                                            _ => {
+                                                valid_selectors = false;
+                                            }
                                         };
                                     }
                                     Token::Percentage(p) => {
@@ -294,7 +304,10 @@ impl CssParser {
                                         selectors.push(n);
                                         self.advance();
                                     }
-                                    Token::Comma => { self.advance(); continue; }
+                                    Token::Comma => {
+                                        self.advance();
+                                        continue;
+                                    }
                                     _ => break,
                                 }
                             }
@@ -341,17 +354,30 @@ impl CssParser {
                     let mut depth = 0i32;
                     loop {
                         match self.peek().clone() {
-                            Token::OpenCurly => { depth += 1; self.advance(); if depth == 1 { break; } }
-                            Token::Semicolon => { self.advance(); break; }
+                            Token::OpenCurly => {
+                                depth += 1;
+                                self.advance();
+                                if depth == 1 {
+                                    break;
+                                }
+                            }
+                            Token::Semicolon => {
+                                self.advance();
+                                break;
+                            }
                             Token::Eof => break,
-                            _ => { self.advance(); }
+                            _ => {
+                                self.advance();
+                            }
                         }
                     }
                     if depth > 0 {
                         // Parse rules inside @supports as author rules
                         let mut support_rules = Vec::new();
                         self.parse_nested_style_rules_into(&mut support_rules);
-                        if *self.peek() == Token::CloseCurly { self.advance(); }
+                        if *self.peek() == Token::CloseCurly {
+                            self.advance();
+                        }
                         // Wrap as a media rule with "all" so cascade always applies it
                         rules.push(Rule::Media(MediaRule {
                             query: "all".to_string(),
@@ -385,7 +411,9 @@ impl CssParser {
             }
             if let Token::AtKeyword(inner_kw) = self.peek().clone() {
                 self.advance();
-                if inner_kw.eq_ignore_ascii_case("supports") || inner_kw.eq_ignore_ascii_case("layer") {
+                if inner_kw.eq_ignore_ascii_case("supports")
+                    || inner_kw.eq_ignore_ascii_case("layer")
+                {
                     let mut depth = 0i32;
                     loop {
                         match self.peek().clone() {
@@ -539,8 +567,14 @@ impl CssParser {
                             let mut format_hint = None;
 
                             // Check if followed by format(...)
-                            let mut k = if j < val_tokens.len() && val_tokens[j] == Token::CloseParen { j + 1 } else { j };
-                            while k < val_tokens.len() && matches!(val_tokens[k], Token::Whitespace) {
+                            let mut k =
+                                if j < val_tokens.len() && val_tokens[j] == Token::CloseParen {
+                                    j + 1
+                                } else {
+                                    j
+                                };
+                            while k < val_tokens.len() && matches!(val_tokens[k], Token::Whitespace)
+                            {
                                 k += 1;
                             }
                             if k < val_tokens.len()
@@ -558,7 +592,11 @@ impl CssParser {
                                     }
                                     m += 1;
                                 }
-                                let cleaned = fmt_str.trim().trim_matches('\'').trim_matches('"').to_ascii_lowercase();
+                                let cleaned = fmt_str
+                                    .trim()
+                                    .trim_matches('\'')
+                                    .trim_matches('"')
+                                    .to_ascii_lowercase();
                                 if !cleaned.is_empty() {
                                     format_hint = Some(cleaned);
                                 }
@@ -607,7 +645,8 @@ impl CssParser {
 
                     if !candidates.is_empty() {
                         let mut best_url = &candidates[0].0;
-                        let mut best_rank = format_rank(&candidates[0].0, candidates[0].1.as_deref());
+                        let mut best_rank =
+                            format_rank(&candidates[0].0, candidates[0].1.as_deref());
 
                         for (cand_url, cand_hint) in &candidates[1..] {
                             let rank = format_rank(cand_url, cand_hint.as_deref());
@@ -648,7 +687,8 @@ impl CssParser {
                 "font-style" => {
                     for tok in &val_tokens {
                         if let Token::Ident(s) = tok {
-                            if s.eq_ignore_ascii_case("italic") || s.eq_ignore_ascii_case("oblique") {
+                            if s.eq_ignore_ascii_case("italic") || s.eq_ignore_ascii_case("oblique")
+                            {
                                 font_style = FontStyle::Italic;
                                 break;
                             } else if s.eq_ignore_ascii_case("normal") {
@@ -660,11 +700,11 @@ impl CssParser {
                 }
                 "font-display" => {
                     for tok in &val_tokens {
-                        if let Token::Ident(s) = tok {
-                            if let Some(fd) = FontDisplay::parse(s) {
-                                font_display = fd;
-                                break;
-                            }
+                        if let Token::Ident(s) = tok
+                            && let Some(fd) = FontDisplay::parse(s)
+                        {
+                            font_display = fd;
+                            break;
                         }
                     }
                 }
@@ -782,7 +822,12 @@ impl CssParser {
                 _ if had_whitespace => {
                     if matches!(
                         self.peek(),
-                        Token::Ident(_) | Token::Hash(_) | Token::Delim('.') | Token::Delim('*') | Token::OpenBracket | Token::Colon
+                        Token::Ident(_)
+                            | Token::Hash(_)
+                            | Token::Delim('.')
+                            | Token::Delim('*')
+                            | Token::OpenBracket
+                            | Token::Colon
                     ) {
                         Combinator::Descendant
                     } else {
@@ -808,7 +853,10 @@ impl CssParser {
         while let Some(simple) = self.parse_simple_selector() {
             simples.push(simple);
             // Compound selectors must not be separated by whitespace
-            if matches!(self.peek(), Token::Whitespace | Token::Comma | Token::OpenCurly | Token::Eof) {
+            if matches!(
+                self.peek(),
+                Token::Whitespace | Token::Comma | Token::OpenCurly | Token::Eof
+            ) {
                 break;
             }
         }
@@ -862,7 +910,12 @@ impl CssParser {
                     if delim_char == '=' {
                         self.advance();
                         op = AttributeOperator::Exact;
-                    } else if delim_char == '~' || delim_char == '^' || delim_char == '$' || delim_char == '*' || delim_char == '|' {
+                    } else if delim_char == '~'
+                        || delim_char == '^'
+                        || delim_char == '$'
+                        || delim_char == '*'
+                        || delim_char == '|'
+                    {
                         self.advance();
                         if let Token::Delim('=') = self.peek() {
                             self.advance();
@@ -942,7 +995,16 @@ impl CssParser {
                 if let Token::Ident(pseudo) = self.advance() {
                     let mut lower = pseudo.to_ascii_lowercase();
                     // Legacy single-colon pseudo-elements
-                    if matches!(lower.as_str(), "before" | "after" | "first-line" | "first-letter" | "placeholder" | "selection" | "marker") {
+                    if matches!(
+                        lower.as_str(),
+                        "before"
+                            | "after"
+                            | "first-line"
+                            | "first-letter"
+                            | "placeholder"
+                            | "selection"
+                            | "marker"
+                    ) {
                         return Some(SimpleSelector::PseudoElement(lower));
                     }
                     // Handle functional pseudo-classes like :nth-child(2), :not(.foo), :where(:not(...))
@@ -1008,20 +1070,27 @@ impl CssParser {
             let mut important = false;
             let mut invalid_after_important = false;
 
-            while *self.peek() != Token::Semicolon && *self.peek() != stop_token && *self.peek() != Token::Eof {
+            while *self.peek() != Token::Semicolon
+                && *self.peek() != stop_token
+                && *self.peek() != Token::Eof
+            {
                 if *self.peek() == Token::Delim('!') {
                     self.advance();
                     self.skip_whitespace_and_comments();
                     if let Token::Ident(word) = self.peek()
-                        && word.eq_ignore_ascii_case("important") {
-                            important = true;
-                            self.advance();
-                            self.skip_whitespace_and_comments();
-                            if *self.peek() != Token::Semicolon && *self.peek() != stop_token && *self.peek() != Token::Eof {
-                                invalid_after_important = true;
-                            }
-                            continue;
+                        && word.eq_ignore_ascii_case("important")
+                    {
+                        important = true;
+                        self.advance();
+                        self.skip_whitespace_and_comments();
+                        if *self.peek() != Token::Semicolon
+                            && *self.peek() != stop_token
+                            && *self.peek() != Token::Eof
+                        {
+                            invalid_after_important = true;
                         }
+                        continue;
+                    }
                 }
                 if important {
                     invalid_after_important = true;
@@ -1048,17 +1117,21 @@ impl CssParser {
 
             // transition-* / animation-* properties are parsed into longhand declaration lists.
             if is_transition_animation_property(&prop_lower) {
-                let decls = self.parse_transition_animation_property(&prop_lower, &value_tokens, important);
+                let decls =
+                    self.parse_transition_animation_property(&prop_lower, &value_tokens, important);
                 declarations.extend(decls);
                 continue;
             }
 
             // CSS overflow shorthand (PRD 8.1)
             if prop_lower == "overflow" {
-                let idents: Vec<&str> = value_tokens.iter().filter_map(|t| match t {
-                    Token::Ident(s) => Some(s.as_str()),
-                    _ => None,
-                }).collect();
+                let idents: Vec<&str> = value_tokens
+                    .iter()
+                    .filter_map(|t| match t {
+                        Token::Ident(s) => Some(s.as_str()),
+                        _ => None,
+                    })
+                    .collect();
                 if !idents.is_empty() {
                     let parse_o = |s: &str| match s.to_ascii_lowercase().as_str() {
                         "visible" => Some(Value::Overflow(Overflow::Visible)),
@@ -1068,7 +1141,11 @@ impl CssParser {
                         _ => None,
                     };
                     let ox = parse_o(idents[0]);
-                    let oy = if idents.len() > 1 { parse_o(idents[1]) } else { ox.clone() };
+                    let oy = if idents.len() > 1 {
+                        parse_o(idents[1])
+                    } else {
+                        ox.clone()
+                    };
                     if let (Some(x_val), Some(y_val)) = (ox, oy) {
                         declarations.push(Declaration {
                             name: "overflow-x".to_string(),
@@ -1086,151 +1163,116 @@ impl CssParser {
             }
 
             let parsed_val = match prop_lower.as_str() {
-                "transform" | "-webkit-transform" | "-moz-transform" | "-ms-transform" | "-o-transform" => {
-                    self.try_parse_transform_list(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "text-shadow" => {
-                    self.try_parse_text_shadow(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "word-break" => {
-                    self.try_parse_word_break(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "overflow-wrap" | "word-wrap" => {
-                    self.try_parse_overflow_wrap(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "hyphens" => {
-                    self.try_parse_hyphens(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "line-clamp" | "-webkit-line-clamp" => {
-                    self.try_parse_line_clamp(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "font-variation-settings" => {
-                    self.try_parse_font_variation_settings(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "font-feature-settings" => {
-                    self.try_parse_font_feature_settings(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "text-emphasis-style" => {
-                    self.try_parse_text_emphasis_style(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "text-decoration-thickness" => {
-                    self.try_parse_text_decoration_thickness(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "filter" | "-webkit-filter" | "backdrop-filter" | "-webkit-backdrop-filter" => {
-                    self.try_parse_filter_list(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "clip-path" | "-webkit-clip-path" => {
-                    self.try_parse_clip_path(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "mix-blend-mode" => {
-                    self.try_parse_blend_mode(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "background-blend-mode" => {
-                    self.try_parse_background_blend_mode(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "background-attachment" => {
-                    self.try_parse_background_attachment(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "background-clip" | "-webkit-background-clip" => {
-                    self.try_parse_background_clip(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "border-image" | "border-image-source" => {
-                    self.try_parse_border_image(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "mask-composite" | "-webkit-mask-composite" => {
-                    self.try_parse_mask_composite(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "isolation" => {
-                    self.try_parse_isolation(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "background-image" => {
-                    self.try_parse_layered_background_images(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "mask-mode" | "-webkit-mask-mode" => {
-                    self.try_parse_mask_mode(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "will-change" => {
-                    self.try_parse_will_change(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "white-space" => {
-                    self.try_parse_white_space(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "box-shadow" => {
-                    self.parse_box_shadow(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "grid-template-columns" | "grid-template-rows" => {
-                    self.parse_grid_track_list(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "grid-template" => {
-                    self.parse_grid_template_shorthand(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "grid-template-areas" => {
-                    self.parse_grid_template_areas(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "grid-column" | "grid-row" | "grid-area" | "grid-column-start" | "grid-column-end"
-                | "grid-row-start" | "grid-row-end" => {
-                    self.parse_grid_placement_or_shorthand(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "grid-auto-flow" => {
-                    self.parse_grid_auto_flow(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "content" => {
-                    self.try_parse_content(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "counter-reset" => {
-                    self.try_parse_counter_actions(&value_tokens, 0)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "counter-increment" => {
-                    self.try_parse_counter_actions(&value_tokens, 1)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "quotes" => {
-                    self.try_parse_quotes(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "container-type" => {
-                    self.try_parse_container_type(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "container-name" => {
-                    self.try_parse_container_name(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
-                "container" => {
-                    self.try_parse_container_shorthand(&value_tokens)
-                        .or_else(|| self.parse_value_from_tokens(&value_tokens))
-                }
+                "transform" | "-webkit-transform" | "-moz-transform" | "-ms-transform"
+                | "-o-transform" => self
+                    .try_parse_transform_list(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "text-shadow" => self
+                    .try_parse_text_shadow(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "word-break" => self
+                    .try_parse_word_break(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "overflow-wrap" | "word-wrap" => self
+                    .try_parse_overflow_wrap(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "hyphens" => self
+                    .try_parse_hyphens(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "line-clamp" | "-webkit-line-clamp" => self
+                    .try_parse_line_clamp(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "font-variation-settings" => self
+                    .try_parse_font_variation_settings(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "font-feature-settings" => self
+                    .try_parse_font_feature_settings(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "text-emphasis-style" => self
+                    .try_parse_text_emphasis_style(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "text-decoration-thickness" => self
+                    .try_parse_text_decoration_thickness(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "filter" | "-webkit-filter" | "backdrop-filter" | "-webkit-backdrop-filter" => self
+                    .try_parse_filter_list(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "clip-path" | "-webkit-clip-path" => self
+                    .try_parse_clip_path(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "mix-blend-mode" => self
+                    .try_parse_blend_mode(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "background-blend-mode" => self
+                    .try_parse_background_blend_mode(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "background-attachment" => self
+                    .try_parse_background_attachment(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "background-clip" | "-webkit-background-clip" => self
+                    .try_parse_background_clip(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "border-image" | "border-image-source" => self
+                    .try_parse_border_image(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "mask-composite" | "-webkit-mask-composite" => self
+                    .try_parse_mask_composite(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "isolation" => self
+                    .try_parse_isolation(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "background-image" => self
+                    .try_parse_layered_background_images(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "mask-mode" | "-webkit-mask-mode" => self
+                    .try_parse_mask_mode(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "will-change" => self
+                    .try_parse_will_change(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "white-space" => self
+                    .try_parse_white_space(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "box-shadow" => self
+                    .parse_box_shadow(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "grid-template-columns" | "grid-template-rows" => self
+                    .parse_grid_track_list(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "grid-template" => self
+                    .parse_grid_template_shorthand(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "grid-template-areas" => self
+                    .parse_grid_template_areas(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "grid-column" | "grid-row" | "grid-area" | "grid-column-start"
+                | "grid-column-end" | "grid-row-start" | "grid-row-end" => self
+                    .parse_grid_placement_or_shorthand(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "grid-auto-flow" => self
+                    .parse_grid_auto_flow(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "content" => self
+                    .try_parse_content(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "counter-reset" => self
+                    .try_parse_counter_actions(&value_tokens, 0)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "counter-increment" => self
+                    .try_parse_counter_actions(&value_tokens, 1)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "quotes" => self
+                    .try_parse_quotes(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "container-type" => self
+                    .try_parse_container_type(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "container-name" => self
+                    .try_parse_container_name(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
+                "container" => self
+                    .try_parse_container_shorthand(&value_tokens)
+                    .or_else(|| self.parse_value_from_tokens(&value_tokens)),
                 "table-layout" => {
                     let first_ident = value_tokens.iter().find_map(|t| match t {
                         Token::Ident(s) => Some(s.to_ascii_lowercase()),
@@ -1297,12 +1339,12 @@ impl CssParser {
         }
 
         // Avoid breaking global keywords like inherit/initial/unset
-        if filtered.len() == 1 {
-            if let Token::Ident(kw) = filtered[0] {
-                let lower = kw.to_ascii_lowercase();
-                if matches!(lower.as_str(), "inherit" | "initial" | "unset" | "revert") {
-                    return Vec::new();
-                }
+        if filtered.len() == 1
+            && let Token::Ident(kw) = filtered[0]
+        {
+            let lower = kw.to_ascii_lowercase();
+            if matches!(lower.as_str(), "inherit" | "initial" | "unset" | "revert") {
+                return Vec::new();
             }
         }
 
@@ -1356,7 +1398,7 @@ impl CssParser {
                     }
                 }
                 Token::Number(n) => {
-                    if *n >= 100.0 && *n <= 900.0 && (*n as u16) % 100 == 0 {
+                    if *n >= 100.0 && *n <= 900.0 && (*n as u16).is_multiple_of(100) {
                         font_weight = Some(FontWeight::Numeric(*n as u16));
                         idx += 1;
                     } else if *n == 0.0 {
@@ -1447,16 +1489,28 @@ impl CssParser {
 
         let mut decls = Vec::new();
         if let Some(style) = font_style {
-            decls.push(Declaration::new("font-style", Value::FontStyle(style), important));
+            decls.push(Declaration::new(
+                "font-style",
+                Value::FontStyle(style),
+                important,
+            ));
         }
         if let Some(weight) = font_weight {
-            decls.push(Declaration::new("font-weight", Value::FontWeight(weight), important));
+            decls.push(Declaration::new(
+                "font-weight",
+                Value::FontWeight(weight),
+                important,
+            ));
         }
         decls.push(Declaration::new("font-size", fs, important));
         if let Some(lh) = line_height {
             decls.push(Declaration::new("line-height", lh, important));
         }
-        decls.push(Declaration::new("font-family", Value::String(family_str), important));
+        decls.push(Declaration::new(
+            "font-family",
+            Value::String(family_str),
+            important,
+        ));
 
         decls
     }
@@ -1542,10 +1596,10 @@ impl CssParser {
                         }
                         Value::Color(c) => color = *c,
                         Value::Var { fallback, .. } => {
-                            if let Some(fb) = fallback {
-                                if let Value::Color(c) = &**fb {
-                                    color = *c;
-                                }
+                            if let Some(fb) = fallback
+                                && let Value::Color(c) = &**fb
+                            {
+                                color = *c;
                             }
                         }
                         _ => {}
@@ -1569,7 +1623,10 @@ impl CssParser {
         }
     }
 
-    fn parse_raw_tracks_with_lines(&self, filtered: &[&Token]) -> (Vec<GridTrackSize>, Vec<(String, usize)>) {
+    fn parse_raw_tracks_with_lines(
+        &self,
+        filtered: &[&Token],
+    ) -> (Vec<GridTrackSize>, Vec<(String, usize)>) {
         let mut tracks = Vec::new();
         let mut lines = Vec::new();
         let mut i = 0;
@@ -1577,7 +1634,10 @@ impl CssParser {
         while i < filtered.len() {
             match filtered[i] {
                 Token::OpenBracket => {
-                    let close_idx = filtered.iter().enumerate().skip(i + 1)
+                    let close_idx = filtered
+                        .iter()
+                        .enumerate()
+                        .skip(i + 1)
                         .find(|(_, tok)| ***tok == Token::CloseBracket)
                         .map(|(j, _)| j);
                     if let Some(end) = close_idx {
@@ -1593,12 +1653,16 @@ impl CssParser {
                 }
                 Token::Ident(name) if name.eq_ignore_ascii_case("repeat") => {
                     if i + 1 < filtered.len() && *filtered[i + 1] == Token::OpenParen {
-                        let close_idx = filtered.iter().enumerate().skip(i + 2)
+                        let close_idx = filtered
+                            .iter()
+                            .enumerate()
+                            .skip(i + 2)
                             .find(|(_, tok)| ***tok == Token::CloseParen)
                             .map(|(j, _)| j);
                         if let Some(end) = close_idx {
                             let inner = &filtered[i + 2..end];
-                            if let Some(comma_idx) = inner.iter().position(|t| **t == Token::Comma) {
+                            if let Some(comma_idx) = inner.iter().position(|t| **t == Token::Comma)
+                            {
                                 let count_tokens = &inner[..comma_idx];
                                 let track_tokens = &inner[comma_idx + 1..];
                                 let is_auto_fill = count_tokens.iter().any(|tok| match tok {
@@ -1609,7 +1673,8 @@ impl CssParser {
                                     Token::Ident(name) => name.eq_ignore_ascii_case("auto-fit"),
                                     _ => false,
                                 });
-                                let (repeated_tracks, repeated_lines) = self.parse_raw_tracks_with_lines(track_tokens);
+                                let (repeated_tracks, repeated_lines) =
+                                    self.parse_raw_tracks_with_lines(track_tokens);
                                 if is_auto_fill {
                                     for t in repeated_tracks {
                                         tracks.push(GridTrackSize::RepeatAutoFill(Box::new(t)));
@@ -1639,18 +1704,29 @@ impl CssParser {
                 }
                 Token::Ident(name) if name.eq_ignore_ascii_case("minmax") => {
                     if i + 1 < filtered.len() && *filtered[i + 1] == Token::OpenParen {
-                        let close_idx = filtered.iter().enumerate().skip(i + 2)
+                        let close_idx = filtered
+                            .iter()
+                            .enumerate()
+                            .skip(i + 2)
                             .find(|(_, tok)| ***tok == Token::CloseParen)
                             .map(|(j, _)| j);
                         if let Some(end) = close_idx {
                             let inner = &filtered[i + 2..end];
-                            if let Some(comma_idx) = inner.iter().position(|t| **t == Token::Comma) {
+                            if let Some(comma_idx) = inner.iter().position(|t| **t == Token::Comma)
+                            {
                                 let min_tokens = &inner[..comma_idx];
                                 let max_tokens = &inner[comma_idx + 1..];
-                                if let (Some(min_tok), Some(max_tok)) = (min_tokens.first(), max_tokens.first())
-                                    && let (Some(min_t), Some(max_t)) = (self.parse_single_track(min_tok), self.parse_single_track(max_tok))
+                                if let (Some(min_tok), Some(max_tok)) =
+                                    (min_tokens.first(), max_tokens.first())
+                                    && let (Some(min_t), Some(max_t)) = (
+                                        self.parse_single_track(min_tok),
+                                        self.parse_single_track(max_tok),
+                                    )
                                 {
-                                    tracks.push(GridTrackSize::MinMax(Box::new(min_t), Box::new(max_t)));
+                                    tracks.push(GridTrackSize::MinMax(
+                                        Box::new(min_t),
+                                        Box::new(max_t),
+                                    ));
                                 }
                             }
                             i = end + 1;
@@ -1740,9 +1816,11 @@ impl CssParser {
         let rows_tokens = &tokens[..slash_pos];
         let cols_tokens = &tokens[slash_pos + 1..];
 
-        let rows = self.parse_grid_track_list(rows_tokens)
+        let rows = self
+            .parse_grid_track_list(rows_tokens)
             .unwrap_or(Value::GridTrackList(Vec::new()));
-        let cols = self.parse_grid_track_list(cols_tokens)
+        let cols = self
+            .parse_grid_track_list(cols_tokens)
             .unwrap_or(Value::GridTrackList(Vec::new()));
 
         Some(Value::List(vec![rows, cols]))
@@ -1754,7 +1832,9 @@ impl CssParser {
             .iter()
             .filter_map(|t| match t {
                 Token::String(s) => Some(Value::String(s.clone())),
-                Token::Ident(w) if w.eq_ignore_ascii_case("none") => Some(Value::Keyword("none".to_string())),
+                Token::Ident(w) if w.eq_ignore_ascii_case("none") => {
+                    Some(Value::Keyword("none".to_string()))
+                }
                 _ => None,
             })
             .collect();
@@ -1823,12 +1903,15 @@ impl CssParser {
         }
 
         if tokens.len() == 3 {
-            if let (Token::Ident(span_word), Token::Number(n), Token::Ident(_)) = (tokens[0], tokens[1], tokens[2])
+            if let (Token::Ident(span_word), Token::Number(n), Token::Ident(_)) =
+                (tokens[0], tokens[1], tokens[2])
                 && span_word.eq_ignore_ascii_case("span")
             {
                 return GridPlacement::Span((*n as u16).max(1));
             }
-            if let (Token::OpenBracket, Token::Ident(name), Token::CloseBracket) = (tokens[0], tokens[1], tokens[2]) {
+            if let (Token::OpenBracket, Token::Ident(name), Token::CloseBracket) =
+                (tokens[0], tokens[1], tokens[2])
+            {
                 return GridPlacement::Area(name.to_ascii_lowercase());
             }
         }
@@ -1926,7 +2009,13 @@ impl CssParser {
             None
         };
 
-        Some((Value::Var { name: var_name, fallback }, total_consumed))
+        Some((
+            Value::Var {
+                name: var_name,
+                fallback,
+            },
+            total_consumed,
+        ))
     }
 
     fn parse_color_fn(&self, tokens: &[Token]) -> Option<(Value, usize)> {
@@ -2034,7 +2123,11 @@ impl CssParser {
                 _ => url_str.push_str(&self.token_to_string(t)),
             }
         }
-        let url_str = url_str.trim().trim_matches('"').trim_matches('\'').to_string();
+        let url_str = url_str
+            .trim()
+            .trim_matches('"')
+            .trim_matches('\'')
+            .to_string();
         Some((Value::Url(url_str), close_idx + 1))
     }
 
@@ -2135,7 +2228,10 @@ impl CssParser {
         // Check if a single var(...) covers all non-whitespace tokens
         if let Some((var_val, consumed)) = self.parse_var_call(tokens) {
             let remaining = &tokens[consumed..];
-            if remaining.iter().all(|t| matches!(t, Token::Whitespace | Token::Comment(_))) {
+            if remaining
+                .iter()
+                .all(|t| matches!(t, Token::Whitespace | Token::Comment(_)))
+            {
                 return Some(var_val);
             }
         }
@@ -2143,7 +2239,10 @@ impl CssParser {
         // Check if a single url(...) covers all non-whitespace tokens
         if let Some((url_val, consumed)) = self.parse_url_fn(tokens) {
             let remaining = &tokens[consumed..];
-            if remaining.iter().all(|t| matches!(t, Token::Whitespace | Token::Comment(_))) {
+            if remaining
+                .iter()
+                .all(|t| matches!(t, Token::Whitespace | Token::Comment(_)))
+            {
                 return Some(url_val);
             }
         }
@@ -2151,7 +2250,10 @@ impl CssParser {
         // Check if a single calc(...) covers all non-whitespace tokens
         if let Some((calc_val, consumed)) = self.parse_calc_call(tokens) {
             let remaining = &tokens[consumed..];
-            if remaining.iter().all(|t| matches!(t, Token::Whitespace | Token::Comment(_))) {
+            if remaining
+                .iter()
+                .all(|t| matches!(t, Token::Whitespace | Token::Comment(_)))
+            {
                 return Some(calc_val);
             }
         }
@@ -2159,7 +2261,10 @@ impl CssParser {
         // Check for gradient functions: linear-gradient / radial-gradient
         if let Some((grad_val, consumed)) = self.parse_gradient_fn(tokens) {
             let remaining = &tokens[consumed..];
-            if remaining.iter().all(|t| matches!(t, Token::Whitespace | Token::Comment(_))) {
+            if remaining
+                .iter()
+                .all(|t| matches!(t, Token::Whitespace | Token::Comment(_)))
+            {
                 return Some(grad_val);
             }
         }
@@ -2238,10 +2343,9 @@ impl CssParser {
                 continue;
             }
 
-            if let Some(val) = self.parse_single_value(&tokens[i]) {
+            {
+                let val = self.parse_single_value(&tokens[i])?;
                 list.push(val);
-            } else {
-                return None;
             }
             i += 1;
         }
@@ -2393,7 +2497,9 @@ impl CssParser {
                     "embed" => return Some(Value::UnicodeBidi(UnicodeBidi::Embed)),
                     "isolate" => return Some(Value::UnicodeBidi(UnicodeBidi::Isolate)),
                     "bidi-override" => return Some(Value::UnicodeBidi(UnicodeBidi::BidiOverride)),
-                    "isolate-override" => return Some(Value::UnicodeBidi(UnicodeBidi::IsolateOverride)),
+                    "isolate-override" => {
+                        return Some(Value::UnicodeBidi(UnicodeBidi::IsolateOverride));
+                    }
                     "plaintext" => return Some(Value::UnicodeBidi(UnicodeBidi::Plaintext)),
                     _ => {}
                 }
@@ -2403,7 +2509,9 @@ impl CssParser {
                     "row" => return Some(Value::FlexDirection(FlexDirection::Row)),
                     "row-reverse" => return Some(Value::FlexDirection(FlexDirection::RowReverse)),
                     "column" => return Some(Value::FlexDirection(FlexDirection::Column)),
-                    "column-reverse" => return Some(Value::FlexDirection(FlexDirection::ColumnReverse)),
+                    "column-reverse" => {
+                        return Some(Value::FlexDirection(FlexDirection::ColumnReverse));
+                    }
                     _ => {}
                 }
 
@@ -2419,9 +2527,15 @@ impl CssParser {
                 match lower.as_str() {
                     "flex-start" => return Some(Value::JustifyContent(JustifyContent::FlexStart)),
                     "flex-end" => return Some(Value::JustifyContent(JustifyContent::FlexEnd)),
-                    "space-between" => return Some(Value::JustifyContent(JustifyContent::SpaceBetween)),
-                    "space-around" => return Some(Value::JustifyContent(JustifyContent::SpaceAround)),
-                    "space-evenly" => return Some(Value::JustifyContent(JustifyContent::SpaceEvenly)),
+                    "space-between" => {
+                        return Some(Value::JustifyContent(JustifyContent::SpaceBetween));
+                    }
+                    "space-around" => {
+                        return Some(Value::JustifyContent(JustifyContent::SpaceAround));
+                    }
+                    "space-evenly" => {
+                        return Some(Value::JustifyContent(JustifyContent::SpaceEvenly));
+                    }
                     _ => {}
                 }
 
@@ -2440,7 +2554,9 @@ impl CssParser {
                 }
 
                 // Clear
-                if lower.as_str() == "both" { return Some(Value::Clear(Clear::Both)) }
+                if lower.as_str() == "both" {
+                    return Some(Value::Clear(Clear::Both));
+                }
 
                 // Text align
                 match lower.as_str() {
@@ -2491,7 +2607,9 @@ impl CssParser {
                 // Text decoration
                 match lower.as_str() {
                     "underline" => return Some(Value::TextDecoration(TextDecoration::Underline)),
-                    "line-through" => return Some(Value::TextDecoration(TextDecoration::LineThrough)),
+                    "line-through" => {
+                        return Some(Value::TextDecoration(TextDecoration::LineThrough));
+                    }
                     _ => {}
                 }
 
@@ -2595,7 +2713,9 @@ impl CssParser {
                     "repeat" => return Some(Value::BackgroundRepeat(BackgroundRepeat::Repeat)),
                     "repeat-x" => return Some(Value::BackgroundRepeat(BackgroundRepeat::RepeatX)),
                     "repeat-y" => return Some(Value::BackgroundRepeat(BackgroundRepeat::RepeatY)),
-                    "no-repeat" => return Some(Value::BackgroundRepeat(BackgroundRepeat::NoRepeat)),
+                    "no-repeat" => {
+                        return Some(Value::BackgroundRepeat(BackgroundRepeat::NoRepeat));
+                    }
                     _ => {}
                 }
 
@@ -2609,7 +2729,9 @@ impl CssParser {
                 // ObjectFit
                 match lower.as_str() {
                     "fill" => return Some(Value::ObjectFit(crate::values::ObjectFit::Fill)),
-                    "scale-down" => return Some(Value::ObjectFit(crate::values::ObjectFit::ScaleDown)),
+                    "scale-down" => {
+                        return Some(Value::ObjectFit(crate::values::ObjectFit::ScaleDown));
+                    }
                     _ => {}
                 }
 
@@ -2645,8 +2767,12 @@ impl CssParser {
         }
         idx += 1; // consume function name
         // Consume whitespace then OpenParen
-        while idx < tokens.len() && matches!(tokens[idx], Token::Whitespace | Token::Comment(_)) { idx += 1; }
-        if idx >= tokens.len() || tokens[idx] != Token::OpenParen { return None; }
+        while idx < tokens.len() && matches!(tokens[idx], Token::Whitespace | Token::Comment(_)) {
+            idx += 1;
+        }
+        if idx >= tokens.len() || tokens[idx] != Token::OpenParen {
+            return None;
+        }
         idx += 1;
 
         // Collect all tokens up to the matching CloseParen
@@ -2654,14 +2780,23 @@ impl CssParser {
         let mut inner: Vec<Token> = Vec::new();
         while idx < tokens.len() {
             match &tokens[idx] {
-                Token::OpenParen => { depth += 1; inner.push(tokens[idx].clone()); idx += 1; }
+                Token::OpenParen => {
+                    depth += 1;
+                    inner.push(tokens[idx].clone());
+                    idx += 1;
+                }
                 Token::CloseParen => {
                     depth -= 1;
                     idx += 1;
-                    if depth == 0 { break; }
+                    if depth == 0 {
+                        break;
+                    }
                     inner.push(Token::CloseParen);
                 }
-                tok => { inner.push(tok.clone()); idx += 1; }
+                tok => {
+                    inner.push(tok.clone());
+                    idx += 1;
+                }
             }
         }
 
@@ -2688,11 +2823,27 @@ impl CssParser {
             return Some(Value::Transform(Transform::default()));
         }
         let has_transform = [
-            "translate(", "translatex(", "translatey(", "translatez(", "translate3d(",
-            "rotate(", "rotatex(", "rotatey(", "rotatez(", "rotate3d(",
-            "scale(", "scalex(", "scaley(", "scalez(", "scale3d(",
-            "skew(", "skewx(", "skewy(",
-            "matrix(", "matrix3d(", "perspective(",
+            "translate(",
+            "translatex(",
+            "translatey(",
+            "translatez(",
+            "translate3d(",
+            "rotate(",
+            "rotatex(",
+            "rotatey(",
+            "rotatez(",
+            "rotate3d(",
+            "scale(",
+            "scalex(",
+            "scaley(",
+            "scalez(",
+            "scale3d(",
+            "skew(",
+            "skewx(",
+            "skewy(",
+            "matrix(",
+            "matrix3d(",
+            "perspective(",
         ]
         .iter()
         .any(|f| text_lower.contains(f));
@@ -2776,16 +2927,14 @@ impl CssParser {
             } else {
                 args_str.split_whitespace().collect()
             };
-            let get_num = |idx: usize| -> f32 {
-                parts.get(idx).map(|s| parse_num(s)).unwrap_or(0.0)
-            };
-            let get_ang = |idx: usize| -> f32 {
-                parts.get(idx).map(|s| parse_angle(s)).unwrap_or(0.0)
-            };
+            let get_num =
+                |idx: usize| -> f32 { parts.get(idx).map(|s| parse_num(s)).unwrap_or(0.0) };
+            let get_ang =
+                |idx: usize| -> f32 { parts.get(idx).map(|s| parse_angle(s)).unwrap_or(0.0) };
 
             let f = match fn_name.as_str() {
                 "translate" => {
-                    let s0 = parts.get(0).copied().unwrap_or("");
+                    let s0 = parts.first().copied().unwrap_or("");
                     let s1 = parts.get(1).copied().unwrap_or("");
                     if is_len(s0) || is_len(s1) {
                         TransformFunction::TranslateLen(parse_len(s0), parse_len(s1))
@@ -2796,7 +2945,7 @@ impl CssParser {
                     }
                 }
                 "translatex" => {
-                    let s0 = parts.get(0).copied().unwrap_or("");
+                    let s0 = parts.first().copied().unwrap_or("");
                     if is_len(s0) {
                         TransformFunction::TranslateXLen(parse_len(s0))
                     } else {
@@ -2804,7 +2953,7 @@ impl CssParser {
                     }
                 }
                 "translatey" => {
-                    let s0 = parts.get(0).copied().unwrap_or("");
+                    let s0 = parts.first().copied().unwrap_or("");
                     if is_len(s0) {
                         TransformFunction::TranslateYLen(parse_len(s0))
                     } else {
@@ -2817,7 +2966,9 @@ impl CssParser {
                 "rotatex" => TransformFunction::RotateX(get_ang(0)),
                 "rotatey" => TransformFunction::RotateY(get_ang(0)),
                 "rotatez" => TransformFunction::RotateZ(get_ang(0)),
-                "rotate3d" => TransformFunction::Rotate3d(get_num(0), get_num(1), get_num(2), get_ang(3)),
+                "rotate3d" => {
+                    TransformFunction::Rotate3d(get_num(0), get_num(1), get_num(2), get_ang(3))
+                }
                 "scale" => {
                     let sx = get_num(0);
                     let sy = if parts.len() > 1 { get_num(1) } else { sx };
@@ -2835,7 +2986,12 @@ impl CssParser {
                 "skewx" => TransformFunction::Skew(get_ang(0), 0.0),
                 "skewy" => TransformFunction::Skew(0.0, get_ang(0)),
                 "matrix" => TransformFunction::Matrix(
-                    get_num(0), get_num(1), get_num(2), get_num(3), get_num(4), get_num(5),
+                    get_num(0),
+                    get_num(1),
+                    get_num(2),
+                    get_num(3),
+                    get_num(4),
+                    get_num(5),
                 ),
                 "matrix3d" => {
                     let mut m = [0.0f32; 16];
@@ -2862,10 +3018,22 @@ impl CssParser {
         use crate::values::TextShadow;
         let text: String = tokens.iter().map(|t| self.token_to_string(t)).collect();
         let lower = text.trim().to_ascii_lowercase();
-        if lower == "none" { return Some(Value::TextShadow(TextShadow { offset_x: 0.0, offset_y: 0.0, blur_radius: 0.0, color: mango_core::Color::TRANSPARENT })); }
+        if lower == "none" {
+            return Some(Value::TextShadow(TextShadow {
+                offset_x: 0.0,
+                offset_y: 0.0,
+                blur_radius: 0.0,
+                color: mango_core::Color::TRANSPARENT,
+            }));
+        }
         // Must have at least 2 length values; check for length tokens
-        let len_count = tokens.iter().filter(|t| matches!(t, Token::Dimension { .. })).count();
-        if len_count < 2 { return None; }
+        let len_count = tokens
+            .iter()
+            .filter(|t| matches!(t, Token::Dimension { .. }))
+            .count();
+        if len_count < 2 {
+            return None;
+        }
         let mut offset_x = None;
         let mut offset_y = None;
         let mut blur = 0.0f32;
@@ -2876,22 +3044,40 @@ impl CssParser {
             match &tokens[i] {
                 Token::Dimension { value, unit } => {
                     let px = match unit.to_ascii_lowercase().as_str() {
-                        "px" => *value, "em" => *value * 16.0, "rem" => *value * 16.0, _ => *value,
+                        "px" => *value,
+                        "em" => *value * 16.0,
+                        "rem" => *value * 16.0,
+                        _ => *value,
                     };
-                    match len_idx { 0 => offset_x = Some(px), 1 => offset_y = Some(px), 2 => blur = px, _ => {} }
+                    match len_idx {
+                        0 => offset_x = Some(px),
+                        1 => offset_y = Some(px),
+                        2 => blur = px,
+                        _ => {}
+                    }
                     len_idx += 1;
                 }
                 Token::Number(n) if *n == 0.0 => {
-                    match len_idx { 0 => offset_x = Some(0.0), 1 => offset_y = Some(0.0), _ => {} }
+                    match len_idx {
+                        0 => offset_x = Some(0.0),
+                        1 => offset_y = Some(0.0),
+                        _ => {}
+                    }
                     len_idx += 1;
                 }
                 Token::Hash(hex) => {
-                    if let Some(c) = Value::parse_color(&format!("#{hex}")) { color = c; }
+                    if let Some(c) = Value::parse_color(&format!("#{hex}")) {
+                        color = c;
+                    }
                 }
                 Token::Ident(name) => {
                     let lower = name.to_ascii_lowercase();
-                    if lower != "none" && lower != "inherit" && lower != "initial" {
-                        if let Some(c) = Value::parse_color(&lower) { color = c; }
+                    if lower != "none"
+                        && lower != "inherit"
+                        && lower != "initial"
+                        && let Some(c) = Value::parse_color(&lower)
+                    {
+                        color = c;
                     }
                 }
                 _ => {}
@@ -2899,7 +3085,12 @@ impl CssParser {
             i += 1;
         }
         if let (Some(ox), Some(oy)) = (offset_x, offset_y) {
-            Some(Value::TextShadow(TextShadow { offset_x: ox, offset_y: oy, blur_radius: blur, color }))
+            Some(Value::TextShadow(TextShadow {
+                offset_x: ox,
+                offset_y: oy,
+                blur_radius: blur,
+                color,
+            }))
         } else {
             None
         }
@@ -2952,14 +3143,20 @@ impl CssParser {
         use crate::values::FilterFunction;
         let raw: String = tokens.iter().map(|t| self.token_to_string(t)).collect();
         let raw = raw.trim();
-        if raw.eq_ignore_ascii_case("none") { return Some(Value::Filter(vec![])); }
+        if raw.eq_ignore_ascii_case("none") {
+            return Some(Value::Filter(vec![]));
+        }
         // Must have function-call syntax
-        if !raw.contains('(') { return None; }
+        if !raw.contains('(') {
+            return None;
+        }
         let mut funcs: Vec<FilterFunction> = Vec::new();
         let mut remaining = raw;
         loop {
             remaining = remaining.trim_start();
-            if remaining.is_empty() { break; }
+            if remaining.is_empty() {
+                break;
+            }
             let paren = match remaining.find('(') {
                 Some(p) => p,
                 None => break,
@@ -2969,13 +3166,31 @@ impl CssParser {
             let mut depth = 1;
             let mut end = args_start;
             for (i, ch) in remaining[args_start..].char_indices() {
-                match ch { '(' => depth += 1, ')' => { depth -= 1; if depth == 0 { end = args_start + i; break; } } _ => {} }
+                match ch {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = args_start + i;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
             }
-            let arg = remaining[args_start..end].trim().trim_end_matches("px").trim_end_matches('%').trim_end_matches("deg");
+            let arg = remaining[args_start..end]
+                .trim()
+                .trim_end_matches("px")
+                .trim_end_matches('%')
+                .trim_end_matches("deg");
             let val: f32 = arg.parse().unwrap_or(0.0);
             // Normalise percentage values for functions that expect 0..1
             let norm = |v: f32, is_pct: bool| -> f32 {
-                if is_pct || remaining[args_start..end].contains('%') { v / 100.0 } else { v }
+                if is_pct || remaining[args_start..end].contains('%') {
+                    v / 100.0
+                } else {
+                    v
+                }
             };
             if let Some(f) = match fn_name.as_str() {
                 "blur" => Some(FilterFunction::Blur(val)),
@@ -2993,14 +3208,26 @@ impl CssParser {
                     let ox = parts.first().map(|s| px(s)).unwrap_or(0.0);
                     let oy = parts.get(1).map(|s| px(s)).unwrap_or(0.0);
                     let blur = parts.get(2).map(|s| px(s)).unwrap_or(0.0);
-                    let color = parts.get(3).and_then(|s| Value::parse_color(s)).unwrap_or(mango_core::Color::rgba(0,0,0,128));
-                    Some(FilterFunction::DropShadow { offset_x: ox, offset_y: oy, blur, color })
+                    let color = parts
+                        .get(3)
+                        .and_then(|s| Value::parse_color(s))
+                        .unwrap_or(mango_core::Color::rgba(0, 0, 0, 128));
+                    Some(FilterFunction::DropShadow {
+                        offset_x: ox,
+                        offset_y: oy,
+                        blur,
+                        color,
+                    })
                 }
                 _ => None,
-            } { funcs.push(f); }
+            } {
+                funcs.push(f);
+            }
             remaining = remaining[end + 1..].trim_start_matches(|c: char| c.is_ascii_whitespace());
         }
-        if funcs.is_empty() { return None; }
+        if funcs.is_empty() {
+            return None;
+        }
         Some(Value::Filter(funcs))
     }
 
@@ -3014,7 +3241,10 @@ impl CssParser {
             return Some(Value::ClipPath(ClipPath::None));
         }
         if lower.starts_with("url(") && lower.ends_with(')') {
-            let inner = trimmed[4..trimmed.len() - 1].trim().trim_matches('"').trim_matches('\'');
+            let inner = trimmed[4..trimmed.len() - 1]
+                .trim()
+                .trim_matches('"')
+                .trim_matches('\'');
             return Some(Value::ClipPath(ClipPath::Url(inner.to_string())));
         }
 
@@ -3045,11 +3275,12 @@ impl CssParser {
 
         if lower.starts_with("circle(") && lower.ends_with(')') {
             let inner = trimmed[7..trimmed.len() - 1].trim();
-            let (radius_str, pos_str) = if let Some(at_idx) = inner.to_ascii_lowercase().find(" at ") {
-                (&inner[..at_idx], Some(&inner[at_idx + 4..]))
-            } else {
-                (inner, None)
-            };
+            let (radius_str, pos_str) =
+                if let Some(at_idx) = inner.to_ascii_lowercase().find(" at ") {
+                    (&inner[..at_idx], Some(&inner[at_idx + 4..]))
+                } else {
+                    (inner, None)
+                };
             let radius = if radius_str.is_empty() {
                 Length::Percent(50.0)
             } else {
@@ -3057,43 +3288,72 @@ impl CssParser {
             };
             let (cx, cy) = if let Some(p) = pos_str {
                 let parts: Vec<&str> = p.split_whitespace().collect();
-                let x = parts.first().map(|s| parse_len(s)).unwrap_or(Length::Percent(50.0));
-                let y = parts.get(1).map(|s| parse_len(s)).unwrap_or(Length::Percent(50.0));
+                let x = parts
+                    .first()
+                    .map(|s| parse_len(s))
+                    .unwrap_or(Length::Percent(50.0));
+                let y = parts
+                    .get(1)
+                    .map(|s| parse_len(s))
+                    .unwrap_or(Length::Percent(50.0));
                 (x, y)
             } else {
                 (Length::Percent(50.0), Length::Percent(50.0))
             };
-            return Some(Value::ClipPath(ClipPath::Circle { radius, center_x: cx, center_y: cy }));
+            return Some(Value::ClipPath(ClipPath::Circle {
+                radius,
+                center_x: cx,
+                center_y: cy,
+            }));
         }
 
         if lower.starts_with("ellipse(") && lower.ends_with(')') {
             let inner = trimmed[8..trimmed.len() - 1].trim();
-            let (radii_str, pos_str) = if let Some(at_idx) = inner.to_ascii_lowercase().find(" at ") {
+            let (radii_str, pos_str) = if let Some(at_idx) = inner.to_ascii_lowercase().find(" at ")
+            {
                 (&inner[..at_idx], Some(&inner[at_idx + 4..]))
             } else {
                 (inner, None)
             };
             let radii_parts: Vec<&str> = radii_str.split_whitespace().collect();
-            let rx = radii_parts.first().map(|s| parse_len(s)).unwrap_or(Length::Percent(50.0));
-            let ry = radii_parts.get(1).map(|s| parse_len(s)).unwrap_or(Length::Percent(50.0));
+            let rx = radii_parts
+                .first()
+                .map(|s| parse_len(s))
+                .unwrap_or(Length::Percent(50.0));
+            let ry = radii_parts
+                .get(1)
+                .map(|s| parse_len(s))
+                .unwrap_or(Length::Percent(50.0));
             let (cx, cy) = if let Some(p) = pos_str {
                 let parts: Vec<&str> = p.split_whitespace().collect();
-                let x = parts.first().map(|s| parse_len(s)).unwrap_or(Length::Percent(50.0));
-                let y = parts.get(1).map(|s| parse_len(s)).unwrap_or(Length::Percent(50.0));
+                let x = parts
+                    .first()
+                    .map(|s| parse_len(s))
+                    .unwrap_or(Length::Percent(50.0));
+                let y = parts
+                    .get(1)
+                    .map(|s| parse_len(s))
+                    .unwrap_or(Length::Percent(50.0));
                 (x, y)
             } else {
                 (Length::Percent(50.0), Length::Percent(50.0))
             };
-            return Some(Value::ClipPath(ClipPath::Ellipse { radius_x: rx, radius_y: ry, center_x: cx, center_y: cy }));
+            return Some(Value::ClipPath(ClipPath::Ellipse {
+                radius_x: rx,
+                radius_y: ry,
+                center_x: cx,
+                center_y: cy,
+            }));
         }
 
         if lower.starts_with("inset(") && lower.ends_with(')') {
             let inner = trimmed[6..trimmed.len() - 1].trim();
-            let (insets_str, round_str) = if let Some(r_idx) = inner.to_ascii_lowercase().find(" round ") {
-                (&inner[..r_idx], Some(&inner[r_idx + 7..]))
-            } else {
-                (inner, None)
-            };
+            let (insets_str, round_str) =
+                if let Some(r_idx) = inner.to_ascii_lowercase().find(" round ") {
+                    (&inner[..r_idx], Some(&inner[r_idx + 7..]))
+                } else {
+                    (inner, None)
+                };
             let parts: Vec<&str> = insets_str.split_whitespace().collect();
             let (t, r, b, l) = match parts.len() {
                 1 => {
@@ -3111,10 +3371,18 @@ impl CssParser {
                     let bot = parse_len(parts[2]);
                     (top, rl, bot, rl)
                 }
-                4.. => {
-                    (parse_len(parts[0]), parse_len(parts[1]), parse_len(parts[2]), parse_len(parts[3]))
-                }
-                _ => (Length::Px(0.0), Length::Px(0.0), Length::Px(0.0), Length::Px(0.0)),
+                4.. => (
+                    parse_len(parts[0]),
+                    parse_len(parts[1]),
+                    parse_len(parts[2]),
+                    parse_len(parts[3]),
+                ),
+                _ => (
+                    Length::Px(0.0),
+                    Length::Px(0.0),
+                    Length::Px(0.0),
+                    Length::Px(0.0),
+                ),
             };
             let round = round_str.map(|r_text| {
                 let r_parts: Vec<&str> = r_text.split_whitespace().collect();
@@ -3143,7 +3411,13 @@ impl CssParser {
                     _ => [Length::Px(0.0); 4],
                 }
             });
-            return Some(Value::ClipPath(ClipPath::Inset { top: t, right: r, bottom: b, left: l, round }));
+            return Some(Value::ClipPath(ClipPath::Inset {
+                top: t,
+                right: r,
+                bottom: b,
+                left: l,
+                round,
+            }));
         }
 
         if lower.starts_with("polygon(") && lower.ends_with(')') {
@@ -3313,7 +3587,12 @@ impl CssParser {
                     found_any = true;
                     i += 1;
                 }
-                Token::Ident(id) if matches!(id.to_ascii_lowercase().as_str(), "stretch" | "repeat" | "round" | "space") => {
+                Token::Ident(id)
+                    if matches!(
+                        id.to_ascii_lowercase().as_str(),
+                        "stretch" | "repeat" | "round" | "space"
+                    ) =>
+                {
                     if let Some(r) = crate::values::BorderImageRepeat::parse(id) {
                         bi.repeat_h = r;
                         bi.repeat_v = r;
@@ -3335,7 +3614,9 @@ impl CssParser {
                 }
                 Token::Delim('/') => {
                     i += 1;
-                    while i < tokens.len() && matches!(tokens[i], Token::Whitespace | Token::Comment(_)) {
+                    while i < tokens.len()
+                        && matches!(tokens[i], Token::Whitespace | Token::Comment(_))
+                    {
                         i += 1;
                     }
                     if i < tokens.len() {
@@ -3343,12 +3624,12 @@ impl CssParser {
                             let len = crate::values::Length::Px(*w);
                             bi.width = [len, len, len, len];
                             i += 1;
-                        } else if let Token::Dimension { value, unit } = &tokens[i] {
-                            if unit.eq_ignore_ascii_case("px") {
-                                let len = crate::values::Length::Px(*value);
-                                bi.width = [len, len, len, len];
-                                i += 1;
-                            }
+                        } else if let Token::Dimension { value, unit } = &tokens[i]
+                            && unit.eq_ignore_ascii_case("px")
+                        {
+                            let len = crate::values::Length::Px(*value);
+                            bi.width = [len, len, len, len];
+                            i += 1;
                         }
                     }
                 }
@@ -3393,7 +3674,9 @@ impl CssParser {
 
     /// Tries to parse `white-space` keywords (normal, nowrap, pre, pre-wrap, pre-line).
     fn try_parse_white_space(&self, tokens: &[Token]) -> Option<Value> {
-        let first = tokens.iter().find(|t| !matches!(t, Token::Whitespace | Token::Comment(_)))?;
+        let first = tokens
+            .iter()
+            .find(|t| !matches!(t, Token::Whitespace | Token::Comment(_)))?;
         if let Token::Ident(ident) = first {
             match ident.to_ascii_lowercase().as_str() {
                 "normal" => Some(Value::WhiteSpace(WhiteSpace::Normal)),
@@ -3419,12 +3702,11 @@ impl CssParser {
             return None;
         }
 
-        if filtered.len() == 1 {
-            if let Token::Ident(kw) = filtered[0] {
-                if kw.eq_ignore_ascii_case("none") || kw.eq_ignore_ascii_case("normal") {
-                    return Some(Value::Content(Vec::new()));
-                }
-            }
+        if filtered.len() == 1
+            && let Token::Ident(kw) = filtered[0]
+            && (kw.eq_ignore_ascii_case("none") || kw.eq_ignore_ascii_case("normal"))
+        {
+            return Some(Value::Content(Vec::new()));
         }
 
         use crate::values::ContentItem;
@@ -3457,12 +3739,16 @@ impl CssParser {
                     items.push(ContentItem::NoCloseQuote);
                     i += 1;
                 }
-                Token::Ident(id) if id.eq_ignore_ascii_case("none") || id.eq_ignore_ascii_case("normal") => {
+                Token::Ident(id)
+                    if id.eq_ignore_ascii_case("none") || id.eq_ignore_ascii_case("normal") =>
+                {
                     i += 1;
                 }
                 Token::Ident(fn_name) if fn_name.eq_ignore_ascii_case("attr") => {
                     let mut j = i + 1;
-                    while j < tokens.len() && matches!(tokens[j], Token::Whitespace | Token::Comment(_)) {
+                    while j < tokens.len()
+                        && matches!(tokens[j], Token::Whitespace | Token::Comment(_))
+                    {
                         j += 1;
                     }
                     if j < tokens.len() && tokens[j] == Token::OpenParen {
@@ -3487,7 +3773,9 @@ impl CssParser {
                 }
                 Token::Ident(fn_name) if fn_name.eq_ignore_ascii_case("counter") => {
                     let mut j = i + 1;
-                    while j < tokens.len() && matches!(tokens[j], Token::Whitespace | Token::Comment(_)) {
+                    while j < tokens.len()
+                        && matches!(tokens[j], Token::Whitespace | Token::Comment(_))
+                    {
                         j += 1;
                     }
                     if j < tokens.len() && tokens[j] == Token::OpenParen {
@@ -3523,7 +3811,9 @@ impl CssParser {
                 }
                 Token::Ident(fn_name) if fn_name.eq_ignore_ascii_case("counters") => {
                     let mut j = i + 1;
-                    while j < tokens.len() && matches!(tokens[j], Token::Whitespace | Token::Comment(_)) {
+                    while j < tokens.len()
+                        && matches!(tokens[j], Token::Whitespace | Token::Comment(_))
+                    {
                         j += 1;
                     }
                     if j < tokens.len() && tokens[j] == Token::OpenParen {
@@ -3542,10 +3832,8 @@ impl CssParser {
                                         style = Some(s.to_ascii_lowercase());
                                     }
                                 }
-                                Token::String(s) => {
-                                    if param_idx == 1 {
-                                        separator = s.clone();
-                                    }
+                                Token::String(s) if param_idx == 1 => {
+                                    separator = s.clone();
                                 }
                                 _ => {}
                             }
@@ -3589,12 +3877,11 @@ impl CssParser {
             return None;
         }
 
-        if filtered.len() == 1 {
-            if let Token::Ident(kw) = filtered[0] {
-                if kw.eq_ignore_ascii_case("none") {
-                    return Some(Value::CounterActions(Vec::new()));
-                }
-            }
+        if filtered.len() == 1
+            && let Token::Ident(kw) = filtered[0]
+            && kw.eq_ignore_ascii_case("none")
+        {
+            return Some(Value::CounterActions(Vec::new()));
         }
 
         let mut actions = Vec::new();
@@ -3610,11 +3897,10 @@ impl CssParser {
                     } else if i + 1 < filtered.len()
                         && matches!(filtered[i], Token::Delim('-'))
                         && matches!(filtered[i + 1], Token::Number(_))
+                        && let Token::Number(n) = filtered[i + 1]
                     {
-                        if let Token::Number(n) = filtered[i + 1] {
-                            val = -(*n as i32);
-                            i += 2;
-                        }
+                        val = -(*n as i32);
+                        i += 2;
                     }
                 }
                 actions.push(CounterAction {
@@ -3639,14 +3925,14 @@ impl CssParser {
             return None;
         }
 
-        if filtered.len() == 1 {
-            if let Token::Ident(kw) = filtered[0] {
-                if kw.eq_ignore_ascii_case("none") {
-                    return Some(Value::Quotes(Vec::new()));
-                }
-                if kw.eq_ignore_ascii_case("auto") {
-                    return Some(Value::Keyword("auto".to_string()));
-                }
+        if filtered.len() == 1
+            && let Token::Ident(kw) = filtered[0]
+        {
+            if kw.eq_ignore_ascii_case("none") {
+                return Some(Value::Quotes(Vec::new()));
+            }
+            if kw.eq_ignore_ascii_case("auto") {
+                return Some(Value::Keyword("auto".to_string()));
             }
         }
 
@@ -3708,17 +3994,24 @@ impl CssParser {
         let slash_pos = filtered.iter().position(|t| **t == Token::Delim('/'));
         if let Some(pos) = slash_pos {
             let name_tokens: Vec<Token> = filtered[..pos].iter().map(|t| (*t).clone()).collect();
-            let type_tokens: Vec<Token> = filtered[pos + 1..].iter().map(|t| (*t).clone()).collect();
+            let type_tokens: Vec<Token> =
+                filtered[pos + 1..].iter().map(|t| (*t).clone()).collect();
             let name_val = self.try_parse_container_name(&name_tokens)?;
             let type_val = self.try_parse_container_type(&type_tokens)?;
             Some(Value::List(vec![name_val, type_val]))
         } else {
             if let Some(type_val) = self.try_parse_container_type(tokens) {
-                Some(Value::List(vec![Value::Keyword("none".to_string()), type_val]))
-            } else if let Some(name_val) = self.try_parse_container_name(tokens) {
-                Some(Value::List(vec![name_val, Value::ContainerType(crate::values::ContainerType::Normal)]))
+                Some(Value::List(vec![
+                    Value::Keyword("none".to_string()),
+                    type_val,
+                ]))
             } else {
-                None
+                self.try_parse_container_name(tokens).map(|name_val| {
+                    Value::List(vec![
+                        name_val,
+                        Value::ContainerType(crate::values::ContainerType::Normal),
+                    ])
+                })
             }
         }
     }
@@ -3748,7 +4041,11 @@ impl CssParser {
         let mut fills: Vec<Value> = Vec::new();
         let mut states: Vec<Value> = Vec::new();
 
-        let longhand_prop = if is_animation { "animation-name" } else { "transition-property" };
+        let longhand_prop = if is_animation {
+            "animation-name"
+        } else {
+            "transition-property"
+        };
 
         for group in &groups {
             let mut name: Option<Value> = None;
@@ -3763,8 +4060,14 @@ impl CssParser {
 
             for tok in group {
                 match tok {
-                    Token::Dimension { value, unit } if unit.eq_ignore_ascii_case("s") || unit.eq_ignore_ascii_case("ms") => {
-                        let ms = if unit.eq_ignore_ascii_case("s") { value * 1000.0 } else { *value };
+                    Token::Dimension { value, unit }
+                        if unit.eq_ignore_ascii_case("s") || unit.eq_ignore_ascii_case("ms") =>
+                    {
+                        let ms = if unit.eq_ignore_ascii_case("s") {
+                            value * 1000.0
+                        } else {
+                            *value
+                        };
                         if time_count == 0 {
                             duration = Some(Value::Time(ms));
                         } else {
@@ -3789,7 +4092,9 @@ impl CssParser {
                             timing = Some(Value::TimingFunction(tf));
                         } else if is_animation {
                             match lower.as_str() {
-                                "infinite" => iteration = Some(Value::Keyword("infinite".to_string())),
+                                "infinite" => {
+                                    iteration = Some(Value::Keyword("infinite".to_string()))
+                                }
                                 "normal" | "reverse" | "alternate" | "alternate-reverse" => {
                                     direction = Some(Value::Keyword(lower.clone()))
                                 }
@@ -3799,8 +4104,6 @@ impl CssParser {
                                 "running" | "paused" => state = Some(Value::Keyword(lower.clone())),
                                 _ => name = Some(Value::Keyword(lower.clone())),
                             }
-                        } else if lower == "all" || lower == "none" {
-                            name = Some(Value::Keyword(lower.clone()));
                         } else {
                             name = Some(Value::Keyword(lower.clone()));
                         }
@@ -3815,7 +4118,10 @@ impl CssParser {
                     names.push(name.unwrap_or(Value::Keyword("all".to_string())));
                     continue;
                 }
-                "transition-duration" | "transition-delay" | "animation-duration" | "animation-delay" => {
+                "transition-duration"
+                | "transition-delay"
+                | "animation-duration"
+                | "animation-delay" => {
                     let v = duration.or(delay).unwrap_or(Value::Time(0.0));
                     if prop.ends_with("delay") {
                         delays.push(v);
@@ -3868,30 +4174,62 @@ impl CssParser {
 
         let mut decls = Vec::new();
         let single = |v: &[Value]| -> Value {
-            if v.len() == 1 { v[0].clone() } else { Value::List(v.to_vec()) }
+            if v.len() == 1 {
+                v[0].clone()
+            } else {
+                Value::List(v.to_vec())
+            }
         };
         if !names.is_empty() {
             decls.push(Declaration::new(longhand_prop, single(&names), important));
             decls.push(Declaration::new(
-                if is_animation { "animation-duration" } else { "transition-duration" },
+                if is_animation {
+                    "animation-duration"
+                } else {
+                    "transition-duration"
+                },
                 single(&durations),
                 important,
             ));
             decls.push(Declaration::new(
-                if is_animation { "animation-timing-function" } else { "transition-timing-function" },
+                if is_animation {
+                    "animation-timing-function"
+                } else {
+                    "transition-timing-function"
+                },
                 single(&timings),
                 important,
             ));
             decls.push(Declaration::new(
-                if is_animation { "animation-delay" } else { "transition-delay" },
+                if is_animation {
+                    "animation-delay"
+                } else {
+                    "transition-delay"
+                },
                 single(&delays),
                 important,
             ));
             if is_animation {
-                decls.push(Declaration::new("animation-iteration-count", single(&iterations), important));
-                decls.push(Declaration::new("animation-direction", single(&directions), important));
-                decls.push(Declaration::new("animation-fill-mode", single(&fills), important));
-                decls.push(Declaration::new("animation-play-state", single(&states), important));
+                decls.push(Declaration::new(
+                    "animation-iteration-count",
+                    single(&iterations),
+                    important,
+                ));
+                decls.push(Declaration::new(
+                    "animation-direction",
+                    single(&directions),
+                    important,
+                ));
+                decls.push(Declaration::new(
+                    "animation-fill-mode",
+                    single(&fills),
+                    important,
+                ));
+                decls.push(Declaration::new(
+                    "animation-play-state",
+                    single(&states),
+                    important,
+                ));
             }
         }
         decls
@@ -4005,7 +4343,11 @@ fn parse_linear_gradient_inner_repeating(inner: &str, repeating: bool) -> crate:
             stops.push(stop);
         }
     }
-    Gradient::Linear { angle_deg, stops, repeating }
+    Gradient::Linear {
+        angle_deg,
+        stops,
+        repeating,
+    }
 }
 
 /// Parses the inner content of `radial-gradient(...)`.
@@ -4016,9 +4358,14 @@ fn parse_radial_gradient_inner_repeating(inner: &str, repeating: bool) -> crate:
     for part in &parts {
         let part = part.trim();
         // Skip shape/size/position args
-        if part.starts_with("ellipse") || part.starts_with("circle") ||
-           part.starts_with("closest") || part.starts_with("farthest") ||
-           part.starts_with("at ") { continue; }
+        if part.starts_with("ellipse")
+            || part.starts_with("circle")
+            || part.starts_with("closest")
+            || part.starts_with("farthest")
+            || part.starts_with("at ")
+        {
+            continue;
+        }
         if let Some(stop) = parse_color_stop(part) {
             stops.push(stop);
         }
@@ -4035,9 +4382,10 @@ fn parse_conic_gradient_inner(inner: &str, repeating: bool) -> crate::values::Gr
     let mut first = true;
     for part in &parts {
         let part = part.trim();
-        if first && (part.to_ascii_lowercase().starts_with("from ")
-            || part.to_ascii_lowercase().starts_with("at ")
-            || part.contains(" from "))
+        if first
+            && (part.to_ascii_lowercase().starts_with("from ")
+                || part.to_ascii_lowercase().starts_with("at ")
+                || part.contains(" from "))
         {
             first = false;
             let lower = part.to_ascii_lowercase();
@@ -4052,7 +4400,11 @@ fn parse_conic_gradient_inner(inner: &str, repeating: bool) -> crate::values::Gr
             stops.push(stop);
         }
     }
-    Gradient::Conic { angle_deg, stops, repeating }
+    Gradient::Conic {
+        angle_deg,
+        stops,
+        repeating,
+    }
 }
 
 fn split_gradient_parts(inner: &str) -> Vec<String> {
@@ -4061,8 +4413,14 @@ fn split_gradient_parts(inner: &str) -> Vec<String> {
     let mut depth = 0i32;
     for ch in inner.chars() {
         match ch {
-            '(' => { depth += 1; current.push(ch); }
-            ')' => { depth -= 1; current.push(ch); }
+            '(' => {
+                depth += 1;
+                current.push(ch);
+            }
+            ')' => {
+                depth -= 1;
+                current.push(ch);
+            }
             ',' if depth == 0 => {
                 parts.push(current.trim().to_string());
                 current = String::new();
@@ -4070,7 +4428,9 @@ fn split_gradient_parts(inner: &str) -> Vec<String> {
             _ => current.push(ch),
         }
     }
-    if !current.trim().is_empty() { parts.push(current.trim().to_string()); }
+    if !current.trim().is_empty() {
+        parts.push(current.trim().to_string());
+    }
     parts
 }
 
@@ -4142,7 +4502,9 @@ fn split_commas(tokens: &[Token]) -> Vec<Vec<Token>> {
 fn parse_color_stop(s: &str) -> Option<crate::values::ColorStop> {
     use crate::values::ColorStop;
     let s = s.trim();
-    if s.is_empty() { return None; }
+    if s.is_empty() {
+        return None;
+    }
 
     // Find the trailing run of `<percentage>` / `<length>` position tokens.
     let mut position_parts: Vec<&str> = Vec::new();
@@ -4184,7 +4546,12 @@ fn parse_color_stop(s: &str) -> Option<crate::values::ColorStop> {
     };
     let position = position_parts.first().copied().and_then(to_pos);
     let end_position = position_parts.get(1).copied().and_then(to_pos);
-    Some(ColorStop { color, position, end_position, is_current_color })
+    Some(ColorStop {
+        color,
+        position,
+        end_position,
+        is_current_color,
+    })
 }
 
 /// Returns true when a token is a gradient stop position (`50%`, `12px`, `0`).
@@ -4217,7 +4584,6 @@ pub fn parse_selectors(css: &str) -> Option<SelectorList> {
     CssParser::parse_selector_list_str(css)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4242,8 +4608,11 @@ mod tests {
 
         if let Rule::Style(r1) = &sheet.rules[0] {
             assert_eq!(r1.selectors.selectors.len(), 1);
-            assert!(r1.declarations.iter().any(|d| d.name == "background-color"
-                && d.value == Value::Color(Color::WHITE)));
+            assert!(
+                r1.declarations
+                    .iter()
+                    .any(|d| d.name == "background-color" && d.value == Value::Color(Color::WHITE))
+            );
         } else {
             panic!("expected StyleRule");
         }
@@ -4316,11 +4685,25 @@ mod tests {
         let sheet = parse_stylesheet(css);
         assert_eq!(sheet.rules.len(), 2);
         if let Rule::Style(r1) = &sheet.rules[0] {
-            assert!(r1.declarations.iter().any(|d| d.name == "display" && d.value == Value::Display(Display::Flex)));
-            assert!(r1.declarations.iter().any(|d| d.name == "flex-direction" && d.value == Value::FlexDirection(FlexDirection::Row)));
-            assert!(r1.declarations.iter().any(|d| d.name == "justify-content" && d.value == Value::JustifyContent(JustifyContent::SpaceBetween)));
-            assert!(r1.declarations.iter().any(|d| d.name == "row-gap" && d.value == Value::Length(Length::Px(16.0))));
-            assert!(r1.declarations.iter().any(|d| d.name == "column-gap" && d.value == Value::Length(Length::Px(16.0))));
+            assert!(
+                r1.declarations
+                    .iter()
+                    .any(|d| d.name == "display" && d.value == Value::Display(Display::Flex))
+            );
+            assert!(r1.declarations.iter().any(|d| d.name == "flex-direction"
+                && d.value == Value::FlexDirection(FlexDirection::Row)));
+            assert!(r1.declarations.iter().any(|d| d.name == "justify-content"
+                && d.value == Value::JustifyContent(JustifyContent::SpaceBetween)));
+            assert!(
+                r1.declarations
+                    .iter()
+                    .any(|d| d.name == "row-gap" && d.value == Value::Length(Length::Px(16.0)))
+            );
+            assert!(
+                r1.declarations
+                    .iter()
+                    .any(|d| d.name == "column-gap" && d.value == Value::Length(Length::Px(16.0)))
+            );
         } else {
             panic!("expected StyleRule");
         }
@@ -4342,8 +4725,16 @@ mod tests {
         let sheet = parse_stylesheet(css);
         assert_eq!(sheet.rules.len(), 2);
         if let Rule::Media(m) = &sheet.rules[0] {
-            assert!(m.rules.iter().any(|r| r.declarations.iter().any(|d| d.name == "color" && d.value == Value::Color(Color::BLUE))));
-            assert!(m.rules.iter().any(|r| r.declarations.iter().any(|d| d.name == "color" && d.value == Value::Color(Color::RED))));
+            assert!(m.rules.iter().any(|r| {
+                r.declarations
+                    .iter()
+                    .any(|d| d.name == "color" && d.value == Value::Color(Color::BLUE))
+            }));
+            assert!(m.rules.iter().any(|r| {
+                r.declarations
+                    .iter()
+                    .any(|d| d.name == "color" && d.value == Value::Color(Color::RED))
+            }));
         } else {
             panic!("expected MediaRule");
         }
@@ -4366,7 +4757,11 @@ mod tests {
         assert_eq!(sheet.rules.len(), 2);
 
         if let Rule::Style(r1) = &sheet.rules[0] {
-            let cols = r1.declarations.iter().find(|d| d.name == "grid-template-columns").unwrap();
+            let cols = r1
+                .declarations
+                .iter()
+                .find(|d| d.name == "grid-template-columns")
+                .unwrap();
             assert_eq!(
                 cols.value,
                 Value::GridTrackList(vec![
@@ -4374,7 +4769,11 @@ mod tests {
                     GridTrackSize::Fr(1.0),
                 ])
             );
-            let rows = r1.declarations.iter().find(|d| d.name == "grid-template-rows").unwrap();
+            let rows = r1
+                .declarations
+                .iter()
+                .find(|d| d.name == "grid-template-rows")
+                .unwrap();
             assert_eq!(
                 rows.value,
                 Value::GridTrackList(vec![
@@ -4387,13 +4786,31 @@ mod tests {
         }
 
         if let Rule::Style(r2) = &sheet.rules[1] {
-            let col_start = r2.declarations.iter().find(|d| d.name == "grid-column-start").unwrap();
-            let col_end = r2.declarations.iter().find(|d| d.name == "grid-column-end").unwrap();
-            let row_start = r2.declarations.iter().find(|d| d.name == "grid-row-start").unwrap();
+            let col_start = r2
+                .declarations
+                .iter()
+                .find(|d| d.name == "grid-column-start")
+                .unwrap();
+            let col_end = r2
+                .declarations
+                .iter()
+                .find(|d| d.name == "grid-column-end")
+                .unwrap();
+            let row_start = r2
+                .declarations
+                .iter()
+                .find(|d| d.name == "grid-row-start")
+                .unwrap();
 
-            assert_eq!(col_start.value, Value::GridPlacement(GridPlacement::Line(1)));
+            assert_eq!(
+                col_start.value,
+                Value::GridPlacement(GridPlacement::Line(1))
+            );
             assert_eq!(col_end.value, Value::GridPlacement(GridPlacement::Line(2)));
-            assert_eq!(row_start.value, Value::GridPlacement(GridPlacement::Span(2)));
+            assert_eq!(
+                row_start.value,
+                Value::GridPlacement(GridPlacement::Span(2))
+            );
         } else {
             panic!("expected StyleRule");
         }
@@ -4410,8 +4827,16 @@ mod tests {
         let sheet_area = parse_stylesheet(css_area);
         assert_eq!(sheet_area.rules.len(), 2);
         if let Rule::Style(r) = &sheet_area.rules[0] {
-            let cols = r.declarations.iter().find(|d| d.name == "grid-template-columns").unwrap();
-            let rows = r.declarations.iter().find(|d| d.name == "grid-template-rows").unwrap();
+            let cols = r
+                .declarations
+                .iter()
+                .find(|d| d.name == "grid-template-columns")
+                .unwrap();
+            let rows = r
+                .declarations
+                .iter()
+                .find(|d| d.name == "grid-template-rows")
+                .unwrap();
             assert_eq!(
                 cols.value,
                 Value::GridTrackList(vec![
@@ -4426,7 +4851,11 @@ mod tests {
                     GridTrackSize::Fr(1.0),
                 ])
             );
-            let areas = r.declarations.iter().find(|d| d.name == "grid-template-areas").unwrap();
+            let areas = r
+                .declarations
+                .iter()
+                .find(|d| d.name == "grid-template-areas")
+                .unwrap();
             assert_eq!(
                 areas.value,
                 Value::List(vec![
@@ -4438,10 +4867,24 @@ mod tests {
             panic!("expected StyleRule");
         }
         if let Rule::Style(r) = &sheet_area.rules[1] {
-            let row_start = r.declarations.iter().find(|d| d.name == "grid-row-start").unwrap();
-            let col_start = r.declarations.iter().find(|d| d.name == "grid-column-start").unwrap();
-            assert_eq!(row_start.value, Value::GridPlacement(GridPlacement::Area("header".to_string())));
-            assert_eq!(col_start.value, Value::GridPlacement(GridPlacement::Area("header".to_string())));
+            let row_start = r
+                .declarations
+                .iter()
+                .find(|d| d.name == "grid-row-start")
+                .unwrap();
+            let col_start = r
+                .declarations
+                .iter()
+                .find(|d| d.name == "grid-column-start")
+                .unwrap();
+            assert_eq!(
+                row_start.value,
+                Value::GridPlacement(GridPlacement::Area("header".to_string()))
+            );
+            assert_eq!(
+                col_start.value,
+                Value::GridPlacement(GridPlacement::Area("header".to_string()))
+            );
         } else {
             panic!("expected StyleRule");
         }
@@ -4513,7 +4956,11 @@ mod tests {
                 other => panic!("expected calc length, got {:?}", other),
             }
 
-            let max_w = sr.declarations.iter().find(|d| d.name == "max-width").unwrap();
+            let max_w = sr
+                .declarations
+                .iter()
+                .find(|d| d.name == "max-width")
+                .unwrap();
             match &max_w.value {
                 Value::Length(Length::Calc(c)) => {
                     assert_eq!(c.vw, 50.0);
@@ -4522,7 +4969,11 @@ mod tests {
                 other => panic!("expected calc length, got {:?}", other),
             }
 
-            let ml = sr.declarations.iter().find(|d| d.name == "margin-left").unwrap();
+            let ml = sr
+                .declarations
+                .iter()
+                .find(|d| d.name == "margin-left")
+                .unwrap();
             match &ml.value {
                 Value::Length(Length::Calc(c)) => {
                     assert_eq!(c.rem, 2.0);
@@ -4545,7 +4996,11 @@ mod tests {
         let sheet = CssParser::parse_stylesheet(css);
         assert_eq!(sheet.rules.len(), 1);
         if let Rule::Style(sr) = &sheet.rules[0] {
-            let shadow = sr.declarations.iter().find(|d| d.name == "box-shadow").unwrap();
+            let shadow = sr
+                .declarations
+                .iter()
+                .find(|d| d.name == "box-shadow")
+                .unwrap();
             match &shadow.value {
                 Value::BoxShadow(bs) => {
                     assert_eq!(bs.offset_x, 2.0);
@@ -4576,10 +5031,24 @@ mod tests {
         if let Rule::Media(mr) = &sheet.rules[0] {
             assert_eq!(mr.query, "screen");
             assert_eq!(mr.rules.len(), 2);
-            let display_decls: Vec<&Value> = mr.rules.iter()
-                .map(|r| &r.declarations.iter().find(|d| d.name == "display").unwrap().value)
+            let display_decls: Vec<&Value> = mr
+                .rules
+                .iter()
+                .map(|r| {
+                    &r.declarations
+                        .iter()
+                        .find(|d| d.name == "display")
+                        .unwrap()
+                        .value
+                })
                 .collect();
-            assert_eq!(display_decls, vec![&Value::Keyword("none".to_string()), &Value::Display(Display::Block)]);
+            assert_eq!(
+                display_decls,
+                vec![
+                    &Value::Keyword("none".to_string()),
+                    &Value::Display(Display::Block)
+                ]
+            );
         } else {
             panic!("expected MediaRule");
         }
@@ -4602,7 +5071,10 @@ mod tests {
         match &sheet.rules[0] {
             Rule::FontFace(ff) => {
                 assert_eq!(ff.font_family, "TestFont");
-                assert_eq!(ff.src_url, "font.woff2", "Must prefer woff2 over woff, ttf, otf");
+                assert_eq!(
+                    ff.src_url, "font.woff2",
+                    "Must prefer woff2 over woff, ttf, otf"
+                );
                 assert_eq!(ff.font_display, crate::values::FontDisplay::Swap);
             }
             _ => panic!("expected FontFace rule"),
@@ -4620,7 +5092,11 @@ mod tests {
         let sheet = CssParser::parse_stylesheet(css);
         assert_eq!(sheet.rules.len(), 1);
         if let Rule::Style(sr) = &sheet.rules[0] {
-            let fvs = sr.declarations.iter().find(|d| d.name == "font-variation-settings").unwrap();
+            let fvs = sr
+                .declarations
+                .iter()
+                .find(|d| d.name == "font-variation-settings")
+                .unwrap();
             match &fvs.value {
                 Value::FontVariationSettings(crate::values::FontVariationSettings::Settings(s)) => {
                     assert_eq!(s.len(), 2);
@@ -4630,7 +5106,11 @@ mod tests {
                 _ => panic!("expected FontVariationSettings::Settings"),
             }
 
-            let ffs = sr.declarations.iter().find(|d| d.name == "font-feature-settings").unwrap();
+            let ffs = sr
+                .declarations
+                .iter()
+                .find(|d| d.name == "font-feature-settings")
+                .unwrap();
             match &ffs.value {
                 Value::FontFeatureSettings(crate::values::FontFeatureSettings::Features(f)) => {
                     assert_eq!(f.len(), 4);
@@ -4660,20 +5140,52 @@ mod tests {
         let sheet = CssParser::parse_stylesheet(css);
         assert_eq!(sheet.rules.len(), 1);
         if let Rule::Style(sr) = &sheet.rules[0] {
-            let wb = sr.declarations.iter().find(|d| d.name == "word-break").unwrap();
-            assert_eq!(wb.value, Value::WordBreak(crate::values::WordBreak::BreakAll));
+            let wb = sr
+                .declarations
+                .iter()
+                .find(|d| d.name == "word-break")
+                .unwrap();
+            assert_eq!(
+                wb.value,
+                Value::WordBreak(crate::values::WordBreak::BreakAll)
+            );
 
-            let ow = sr.declarations.iter().find(|d| d.name == "overflow-wrap").unwrap();
-            assert_eq!(ow.value, Value::OverflowWrap(crate::values::OverflowWrap::Anywhere));
+            let ow = sr
+                .declarations
+                .iter()
+                .find(|d| d.name == "overflow-wrap")
+                .unwrap();
+            assert_eq!(
+                ow.value,
+                Value::OverflowWrap(crate::values::OverflowWrap::Anywhere)
+            );
 
-            let hyp = sr.declarations.iter().find(|d| d.name == "hyphens").unwrap();
+            let hyp = sr
+                .declarations
+                .iter()
+                .find(|d| d.name == "hyphens")
+                .unwrap();
             assert_eq!(hyp.value, Value::Hyphens(crate::values::Hyphens::Auto));
 
-            let lc = sr.declarations.iter().find(|d| d.name == "line-clamp").unwrap();
-            assert_eq!(lc.value, Value::LineClamp(crate::values::LineClamp::Lines(3)));
+            let lc = sr
+                .declarations
+                .iter()
+                .find(|d| d.name == "line-clamp")
+                .unwrap();
+            assert_eq!(
+                lc.value,
+                Value::LineClamp(crate::values::LineClamp::Lines(3))
+            );
 
-            let wlc = sr.declarations.iter().find(|d| d.name == "-webkit-line-clamp").unwrap();
-            assert_eq!(wlc.value, Value::LineClamp(crate::values::LineClamp::Lines(2)));
+            let wlc = sr
+                .declarations
+                .iter()
+                .find(|d| d.name == "-webkit-line-clamp")
+                .unwrap();
+            assert_eq!(
+                wlc.value,
+                Value::LineClamp(crate::values::LineClamp::Lines(2))
+            );
         } else {
             panic!("expected StyleRule");
         }
@@ -4691,16 +5203,40 @@ mod tests {
         let sheet = CssParser::parse_stylesheet(css);
         assert_eq!(sheet.rules.len(), 1);
         if let Rule::Style(sr) = &sheet.rules[0] {
-            let tuo = sr.declarations.iter().find(|d| d.name == "text-underline-offset").unwrap();
+            let tuo = sr
+                .declarations
+                .iter()
+                .find(|d| d.name == "text-underline-offset")
+                .unwrap();
             assert_eq!(tuo.value, Value::Length(crate::values::Length::Px(4.0)));
 
-            let tdt = sr.declarations.iter().find(|d| d.name == "text-decoration-thickness").unwrap();
-            assert_eq!(tdt.value, Value::TextDecorationThickness(crate::values::TextDecorationThickness::Length(crate::values::Length::Px(2.0))));
+            let tdt = sr
+                .declarations
+                .iter()
+                .find(|d| d.name == "text-decoration-thickness")
+                .unwrap();
+            assert_eq!(
+                tdt.value,
+                Value::TextDecorationThickness(crate::values::TextDecorationThickness::Length(
+                    crate::values::Length::Px(2.0)
+                ))
+            );
 
-            let tes = sr.declarations.iter().find(|d| d.name == "text-emphasis-style").unwrap();
-            assert_eq!(tes.value, Value::TextEmphasisStyle(crate::values::TextEmphasisStyle::FilledCircle));
+            let tes = sr
+                .declarations
+                .iter()
+                .find(|d| d.name == "text-emphasis-style")
+                .unwrap();
+            assert_eq!(
+                tes.value,
+                Value::TextEmphasisStyle(crate::values::TextEmphasisStyle::FilledCircle)
+            );
 
-            let tec = sr.declarations.iter().find(|d| d.name == "text-emphasis-color").unwrap();
+            let tec = sr
+                .declarations
+                .iter()
+                .find(|d| d.name == "text-emphasis-color")
+                .unwrap();
             assert_eq!(tec.value, Value::Color(mango_core::Color::rgb(255, 0, 0)));
         } else {
             panic!("expected StyleRule");
@@ -4718,8 +5254,15 @@ mod tests {
         let sheet = CssParser::parse_stylesheet(css);
         assert_eq!(sheet.rules.len(), 1);
         if let Rule::Style(sr) = &sheet.rules[0] {
-            assert!(sr.declarations.iter().all(|d| d.name != "color"), "color with tokens after !important must be dropped");
-            assert!(sr.declarations.iter().any(|d| d.name == "background-color" && d.important));
+            assert!(
+                sr.declarations.iter().all(|d| d.name != "color"),
+                "color with tokens after !important must be dropped"
+            );
+            assert!(
+                sr.declarations
+                    .iter()
+                    .any(|d| d.name == "background-color" && d.important)
+            );
         } else {
             panic!("expected StyleRule");
         }
@@ -4737,7 +5280,11 @@ mod tests {
         let sheet = CssParser::parse_stylesheet(css);
         assert_eq!(sheet.rules.len(), 1);
         if let Rule::Keyframes(kf) = &sheet.rules[0] {
-            assert_eq!(kf.keyframes.len(), 2, "Only from and to should remain, invalid selector must be dropped");
+            assert_eq!(
+                kf.keyframes.len(),
+                2,
+                "Only from and to should remain, invalid selector must be dropped"
+            );
         } else {
             panic!("expected Keyframes");
         }
@@ -4766,11 +5313,14 @@ mod tests {
         let sheet = CssParser::parse_stylesheet(css);
         assert_eq!(sheet.rules.len(), 1);
         if let Rule::Style(sr) = &sheet.rules[0] {
-            assert_eq!(sr.declarations.len(), 1, "Only height: 200px should be kept");
+            assert_eq!(
+                sr.declarations.len(),
+                1,
+                "Only height: 200px should be kept"
+            );
             assert_eq!(sr.declarations[0].name, "height");
         } else {
             panic!("expected StyleRule");
         }
     }
 }
-

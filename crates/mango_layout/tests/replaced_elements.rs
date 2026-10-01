@@ -1,15 +1,17 @@
+#![allow(clippy::field_reassign_with_default)]
+
 use mango_core::Rect;
 use mango_css::parser::parse_stylesheet;
 use mango_css::values::{Length, ObjectFit};
 use mango_html::parse_html;
+use mango_layout::block_flow::layout_block;
 use mango_layout::box_model::BoxType;
 use mango_layout::box_tree::build_box_tree;
 use mango_layout::dimensions::Dimensions;
 use mango_layout::display_list::build_display_list;
-use mango_render::display_list::DisplayCommand;
 use mango_layout::float::FloatContext;
-use mango_layout::block_flow::layout_block;
 use mango_layout::style_tree::build_style_tree;
+use mango_render::display_list::DisplayCommand;
 
 #[test]
 fn test_image_with_only_width_maintains_aspect_ratio() {
@@ -31,7 +33,11 @@ fn test_image_with_only_width_maintains_aspect_ratio() {
     layout_block(&mut img_box, &cb, &mut float_ctx);
 
     assert_eq!(img_box.dimensions.content.width(), 300.0);
-    assert_eq!(img_box.dimensions.content.height(), 150.0, "300 / 2.0 = 150");
+    assert_eq!(
+        img_box.dimensions.content.height(),
+        150.0,
+        "300 / 2.0 = 150"
+    );
 }
 
 #[test]
@@ -78,7 +84,10 @@ fn test_css_aspect_ratio_overrides_intrinsic() {
     layout_block(&mut img_box, &cb, &mut float_ctx);
 
     assert_eq!(img_box.dimensions.content.width(), 320.0);
-    assert!((img_box.dimensions.content.height() - 180.0).abs() < 1.0, "320 / (16/9) = 180");
+    assert!(
+        (img_box.dimensions.content.height() - 180.0).abs() < 1.0,
+        "320 / (16/9) = 180"
+    );
 }
 
 #[test]
@@ -94,7 +103,10 @@ fn test_svg_viewbox_intrinsic_sizing() {
     let mut float_ctx = FloatContext::new();
     layout_block(&mut box_tree, &cb, &mut float_ctx);
 
-    fn find_tag<'a>(node: &'a mango_layout::box_tree::LayoutBox, tag: &str) -> Option<&'a mango_layout::box_tree::LayoutBox> {
+    fn find_tag<'a>(
+        node: &'a mango_layout::box_tree::LayoutBox,
+        tag: &str,
+    ) -> Option<&'a mango_layout::box_tree::LayoutBox> {
         if node.tag_name.as_deref() == Some(tag) {
             return Some(node);
         }
@@ -109,7 +121,11 @@ fn test_svg_viewbox_intrinsic_sizing() {
     let svg_box = find_tag(&box_tree, "svg").expect("svg box found in tree");
 
     assert_eq!(svg_box.dimensions.content.width(), 200.0);
-    assert_eq!(svg_box.dimensions.content.height(), 100.0, "viewBox 400x200 (2:1) preserves height = 100 for width = 200");
+    assert_eq!(
+        svg_box.dimensions.content.height(),
+        100.0,
+        "viewBox 400x200 (2:1) preserves height = 100 for width = 200"
+    );
 }
 
 #[test]
@@ -131,12 +147,20 @@ fn test_object_fit_and_object_position_display_commands() {
     img_box.style = Some(style_contain);
 
     let dl_contain = build_display_list(&img_box);
-    let cmd = dl_contain.iter().find(|c| matches!(c, DisplayCommand::DrawImage { .. }));
+    let cmd = dl_contain
+        .iter()
+        .find(|c| matches!(c, DisplayCommand::DrawImage { .. }));
     assert!(cmd.is_some());
-    if let Some(DisplayCommand::DrawImage { width, height, y, .. }) = cmd {
+    if let Some(DisplayCommand::DrawImage {
+        width, height, y, ..
+    }) = cmd
+    {
         assert_eq!(*width, 100.0);
         assert_eq!(*height, 50.0);
-        assert_eq!(*y, 25.0, "Centered vertically in 100px height: (100 - 50)/2 = 25");
+        assert_eq!(
+            *y, 25.0,
+            "Centered vertically in 100px height: (100 - 50)/2 = 25"
+        );
     }
 
     // 2. object-fit: cover (emits PushClip)
@@ -145,13 +169,23 @@ fn test_object_fit_and_object_position_display_commands() {
     img_box.style = Some(style_cover);
 
     let dl_cover = build_display_list(&img_box);
-    let has_clip = dl_cover.iter().any(|c| matches!(c, DisplayCommand::PushClip { .. }));
+    let has_clip = dl_cover
+        .iter()
+        .any(|c| matches!(c, DisplayCommand::PushClip { .. }));
     assert!(has_clip, "Cover must emit PushClip");
-    let cmd_cover = dl_cover.iter().find(|c| matches!(c, DisplayCommand::DrawImage { .. }));
-    if let Some(DisplayCommand::DrawImage { width, height, x, .. }) = cmd_cover {
+    let cmd_cover = dl_cover
+        .iter()
+        .find(|c| matches!(c, DisplayCommand::DrawImage { .. }));
+    if let Some(DisplayCommand::DrawImage {
+        width, height, x, ..
+    }) = cmd_cover
+    {
         assert_eq!(*width, 200.0);
         assert_eq!(*height, 100.0);
-        assert_eq!(*x, -50.0, "Centered horizontally overflow: (100 - 200)/2 = -50");
+        assert_eq!(
+            *x, -50.0,
+            "Centered horizontally overflow: (100 - 200)/2 = -50"
+        );
     }
 
     // 3. object-fit: scale-down and custom object-position: 0% 0% (top-left)
@@ -161,8 +195,17 @@ fn test_object_fit_and_object_position_display_commands() {
     img_box.style = Some(style_pos);
 
     let dl_pos = build_display_list(&img_box);
-    let cmd_pos = dl_pos.iter().find(|c| matches!(c, DisplayCommand::DrawImage { .. }));
-    if let Some(DisplayCommand::DrawImage { x, y, width, height, .. }) = cmd_pos {
+    let cmd_pos = dl_pos
+        .iter()
+        .find(|c| matches!(c, DisplayCommand::DrawImage { .. }));
+    if let Some(DisplayCommand::DrawImage {
+        x,
+        y,
+        width,
+        height,
+        ..
+    }) = cmd_pos
+    {
         assert_eq!(*width, 100.0);
         assert_eq!(*height, 50.0);
         assert_eq!(*x, 0.0, "Positioned at top-left x=0");

@@ -12,10 +12,7 @@ use crate::font::{FontFamily, FontStyle, FontWeight, TextDecoration};
 #[derive(Debug, Clone, PartialEq)]
 pub enum DisplayCommand {
     /// Fill a rectangle with a solid color.
-    FillRect {
-        rect: Rect,
-        color: Color,
-    },
+    FillRect { rect: Rect, color: Color },
 
     /// Fill a rounded rectangle with a solid color and corner radii [top-left, top-right, bottom-right, bottom-left].
     FillRoundedRect {
@@ -107,17 +104,13 @@ pub enum DisplayCommand {
     ///
     /// All subsequent drawing commands are mapped through the accumulated matrix
     /// until the matching [`DisplayCommand::PopTransform`].
-    PushTransform {
-        matrix: [f32; 6],
-    },
+    PushTransform { matrix: [f32; 6] },
 
     /// Pop the top transform from the transform stack.
     PopTransform,
 
     /// Push a clipping rectangle onto the clip stack.
-    PushClip {
-        rect: Rect,
-    },
+    PushClip { rect: Rect },
 
     /// Pop the top clipping rectangle from the clip stack.
     PopClip,
@@ -141,9 +134,7 @@ pub enum DisplayCommand {
     PopBackdropFilter,
 
     /// Push a blend mode for compositing subsequent commands.
-    PushBlendMode {
-        mode: mango_css::values::BlendMode,
-    },
+    PushBlendMode { mode: mango_css::values::BlendMode },
 
     /// Pop the top blend mode.
     PopBlendMode,
@@ -229,7 +220,12 @@ pub struct BorderWidths {
 
 impl BorderWidths {
     pub fn new(top: f32, right: f32, bottom: f32, left: f32) -> Self {
-        Self { top, right, bottom, left }
+        Self {
+            top,
+            right,
+            bottom,
+            left,
+        }
     }
 
     pub fn all(width: f32) -> Self {
@@ -264,14 +260,12 @@ impl DisplayCommand {
                     rect.height() + pad * 2.0,
                 ))
             }
-            DisplayCommand::DrawBorder { rect, widths, .. } => {
-                Some(Rect::new(
-                    rect.x() - widths.left,
-                    rect.y() - widths.top,
-                    rect.width() + widths.left + widths.right,
-                    rect.height() + widths.top + widths.bottom,
-                ))
-            }
+            DisplayCommand::DrawBorder { rect, widths, .. } => Some(Rect::new(
+                rect.x() - widths.left,
+                rect.y() - widths.top,
+                rect.width() + widths.left + widths.right,
+                rect.height() + widths.top + widths.bottom,
+            )),
             DisplayCommand::DrawText {
                 text,
                 x,
@@ -320,15 +314,19 @@ impl DisplayCommand {
                     font_size * 1.2 + blur_radius * 2.0,
                 ))
             }
-            DisplayCommand::DrawBorderImage { rect, widths, .. } => {
-                Some(Rect::new(
-                    rect.x() - widths.left,
-                    rect.y() - widths.top,
-                    rect.width() + widths.left + widths.right,
-                    rect.height() + widths.top + widths.bottom,
-                ))
-            }
-            DisplayCommand::DrawTextWithGradient { text, x, y, font_size, .. } => {
+            DisplayCommand::DrawBorderImage { rect, widths, .. } => Some(Rect::new(
+                rect.x() - widths.left,
+                rect.y() - widths.top,
+                rect.width() + widths.left + widths.right,
+                rect.height() + widths.top + widths.bottom,
+            )),
+            DisplayCommand::DrawTextWithGradient {
+                text,
+                x,
+                y,
+                font_size,
+                ..
+            } => {
                 let approx_w = (text.len() as f32) * font_size * 0.6;
                 Some(Rect::new(*x, *y, approx_w, *font_size * 1.2))
             }
@@ -354,7 +352,10 @@ pub enum DiffOp {
     /// Command at index is unchanged.
     Retain { count: usize },
     /// Commands were replaced or inserted at this index.
-    Insert { index: usize, command: DisplayCommand },
+    Insert {
+        index: usize,
+        command: DisplayCommand,
+    },
     /// Command was removed at this index.
     Remove { index: usize },
 }
@@ -382,7 +383,9 @@ impl DisplayListDiff {
     pub fn diff(old_list: &DisplayList, new_list: &DisplayList) -> Self {
         if old_list.commands == new_list.commands {
             return Self {
-                ops: vec![DiffOp::Retain { count: old_list.len() }],
+                ops: vec![DiffOp::Retain {
+                    count: old_list.len(),
+                }],
                 changed_count: 0,
                 damage_rect: None,
                 is_identical: true,
@@ -447,7 +450,9 @@ impl DisplayListDiff {
 
         let suffix_count = old_cmds.len() - old_suffix;
         if suffix_count > 0 {
-            ops.push(DiffOp::Retain { count: suffix_count });
+            ops.push(DiffOp::Retain {
+                count: suffix_count,
+            });
         }
 
         let changed_count = (old_suffix - prefix_len) + (new_suffix - prefix_len);

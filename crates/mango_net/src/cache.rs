@@ -220,7 +220,9 @@ impl ResourceCache {
             }
 
             // 1. Evict expired entries first
-            if inner.total_bytes + new_bytes > self.max_bytes || inner.entries.len() >= self.max_entries {
+            if inner.total_bytes + new_bytes > self.max_bytes
+                || inner.entries.len() >= self.max_entries
+            {
                 let mut expired_keys = Vec::new();
                 for (k, v) in inner.entries.iter() {
                     if v.is_expired() {
@@ -234,7 +236,8 @@ impl ResourceCache {
             }
 
             // 2. If still exceeding budget, evict least recently used entries
-            while (inner.total_bytes + new_bytes > self.max_bytes || inner.entries.len() >= self.max_entries)
+            while (inner.total_bytes + new_bytes > self.max_bytes
+                || inner.entries.len() >= self.max_entries)
                 && !inner.entries.is_empty()
             {
                 let oldest_key = inner
@@ -295,14 +298,7 @@ mod tests {
         let url = "https://example.com/style.css";
         let body = b"body { color: red; }".to_vec();
 
-        cache.insert(
-            url,
-            "text/css",
-            200,
-            HashMap::new(),
-            body.clone(),
-            None,
-        );
+        cache.insert(url, "text/css", 200, HashMap::new(), body.clone(), None);
 
         let cached = cache.get(url).expect("Should find cached item");
         assert_eq!(cached.status, 200);
@@ -338,17 +334,41 @@ mod tests {
         let body2 = vec![b'B'; 400];
         let body3 = vec![b'C'; 400];
 
-        cache.insert("http://a.com", "text/plain", 200, HashMap::new(), body1, None);
-        cache.insert("http://b.com", "text/plain", 200, HashMap::new(), body2, None);
+        cache.insert(
+            "http://a.com",
+            "text/plain",
+            200,
+            HashMap::new(),
+            body1,
+            None,
+        );
+        cache.insert(
+            "http://b.com",
+            "text/plain",
+            200,
+            HashMap::new(),
+            body2,
+            None,
+        );
 
         // Access a to make b least recently used
         assert!(cache.get("http://a.com").is_some());
 
         // Inserting c should evict b because a was accessed more recently
-        cache.insert("http://c.com", "text/plain", 200, HashMap::new(), body3, None);
+        cache.insert(
+            "http://c.com",
+            "text/plain",
+            200,
+            HashMap::new(),
+            body3,
+            None,
+        );
 
         assert!(cache.get("http://c.com").is_some());
-        assert!(cache.get("http://b.com").is_none(), "b should have been LRU evicted");
+        assert!(
+            cache.get("http://b.com").is_none(),
+            "b should have been LRU evicted"
+        );
     }
 
     #[test]
@@ -357,19 +377,41 @@ mod tests {
         let url = "https://example.com/script.js";
         let mut headers = HashMap::new();
         headers.insert("etag".to_string(), "\"abc123\"".to_string());
-        headers.insert("last-modified".to_string(), "Wed, 21 Oct 2025 07:28:00 GMT".to_string());
+        headers.insert(
+            "last-modified".to_string(),
+            "Wed, 21 Oct 2025 07:28:00 GMT".to_string(),
+        );
 
-        cache.insert(url, "application/javascript", 200, headers, b"console.log('hi');".to_vec(), None);
+        cache.insert(
+            url,
+            "application/javascript",
+            200,
+            headers,
+            b"console.log('hi');".to_vec(),
+            None,
+        );
 
-        let reval = cache.get_revalidation_headers(url).expect("Should have revalidation headers");
-        assert!(reval.iter().any(|(k, v)| k == "If-None-Match" && v == "\"abc123\""));
-        assert!(reval.iter().any(|(k, v)| k == "If-Modified-Since" && v == "Wed, 21 Oct 2025 07:28:00 GMT"));
+        let reval = cache
+            .get_revalidation_headers(url)
+            .expect("Should have revalidation headers");
+        assert!(
+            reval
+                .iter()
+                .any(|(k, v)| k == "If-None-Match" && v == "\"abc123\"")
+        );
+        assert!(
+            reval
+                .iter()
+                .any(|(k, v)| k == "If-Modified-Since" && v == "Wed, 21 Oct 2025 07:28:00 GMT")
+        );
 
         let mut new_headers = HashMap::new();
         new_headers.insert("etag".to_string(), "\"abc123\"".to_string());
         new_headers.insert("cache-control".to_string(), "max-age=3600".to_string());
 
-        let refreshed = cache.revalidate_304(url, &new_headers).expect("Should revalidate 304");
+        let refreshed = cache
+            .revalidate_304(url, &new_headers)
+            .expect("Should revalidate 304");
         assert_eq!(refreshed.ttl, Duration::from_secs(3600));
     }
 }

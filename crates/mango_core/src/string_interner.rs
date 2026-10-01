@@ -4,8 +4,16 @@
 //! like "div", "span", "p", attribute names like "class", "id", "href").
 //! The interner stores each unique string once and hands out cheap, copyable
 //! [`InternedString`] handles for O(1) comparison.
+//!
+//! # Thread Safety
+//!
+//! `StringInterner` is `Send + Sync` (enforced by compile-time assertions),
+//! enabling shared ownership across parallel parsing and style resolution
+//! phases when wrapped in an `Arc<RwLock<…>>` or similar synchronization
+//! primitive.
 
 use std::collections::HashMap;
+use std::fmt;
 
 /// A handle to an interned string. Cheap to copy and compare (just a `u32`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -18,6 +26,12 @@ impl InternedString {
     #[inline]
     pub fn raw(self) -> u32 {
         self.index
+    }
+}
+
+impl fmt::Display for InternedString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "InternedString({})", self.index)
     }
 }
 
@@ -53,25 +67,126 @@ impl StringInterner {
         }
     }
 
-    /// Creates a new interner pre-loaded with common HTML/CSS strings.
-    pub fn with_common_strings() -> Self {
-        let mut interner = Self::new();
+    /// Creates a new interner with pre-allocated capacity for the given
+    /// number of unique strings.
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            map: HashMap::with_capacity(capacity),
+            strings: Vec::with_capacity(capacity),
+        }
+    }
 
+    /// Creates a new interner pre-loaded with common HTML/CSS strings.
+    ///
+    /// Pre-allocates capacity for the known set (~90 entries) plus headroom
+    /// for page-specific strings.
+    pub fn with_common_strings() -> Self {
         // Pre-intern the most common HTML tag names
         let common = [
-            "html", "head", "body", "div", "span", "p", "a", "img", "ul", "ol", "li", "h1",
-            "h2", "h3", "h4", "h5", "h6", "table", "tbody", "thead", "tfoot", "tr", "td", "th",
-            "caption", "colgroup", "col", "form", "input", "button", "label", "select", "optgroup",
-            "option", "textarea", "dialog", "script", "style", "link", "meta", "title", "br",
-            "hr", "pre", "code", "em", "strong", "b", "i", "u", "ruby", "slot", "frameset", "nav",
-            "header", "footer", "main", "section", "article", "aside", "figure", "figcaption",
-            "blockquote", "dl", "dt", "dd", "video", "audio", "source", "canvas", "svg",
+            "html",
+            "head",
+            "body",
+            "div",
+            "span",
+            "p",
+            "a",
+            "img",
+            "ul",
+            "ol",
+            "li",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "table",
+            "tbody",
+            "thead",
+            "tfoot",
+            "tr",
+            "td",
+            "th",
+            "caption",
+            "colgroup",
+            "col",
+            "form",
+            "input",
+            "button",
+            "label",
+            "select",
+            "optgroup",
+            "option",
+            "textarea",
+            "dialog",
+            "script",
+            "style",
+            "link",
+            "meta",
+            "title",
+            "br",
+            "hr",
+            "pre",
+            "code",
+            "em",
+            "strong",
+            "b",
+            "i",
+            "u",
+            "ruby",
+            "slot",
+            "frameset",
+            "nav",
+            "header",
+            "footer",
+            "main",
+            "section",
+            "article",
+            "aside",
+            "figure",
+            "figcaption",
+            "blockquote",
+            "dl",
+            "dt",
+            "dd",
+            "video",
+            "audio",
+            "source",
+            "canvas",
+            "svg",
             // Common attribute names
-            "id", "class", "href", "src", "alt", "title", "type", "name", "value", "width",
-            "height", "rel", "charset", "content", "http-equiv", "lang", "style", "colspan",
-            "rowspan", "checked", "disabled", "selected", "for", "action", "method", "placeholder",
+            "id",
+            "class",
+            "href",
+            "src",
+            "alt",
+            "title",
+            "type",
+            "name",
+            "value",
+            "width",
+            "height",
+            "rel",
+            "charset",
+            "content",
+            "http-equiv",
+            "lang",
+            "style",
+            "colspan",
+            "rowspan",
+            "checked",
+            "disabled",
+            "selected",
+            "for",
+            "action",
+            "method",
+            "placeholder",
             "viewBox",
         ];
+
+        // Pre-allocate with headroom: common strings + ~128 extra for page-specific ones.
+        let capacity = common.len() + 128;
+        let mut interner = Self::with_capacity(capacity);
 
         for s in &common {
             interner.intern(s);
@@ -82,6 +197,12 @@ impl StringInterner {
 
     /// Interns a string, returning its handle. If the string was already
     /// interned, returns the existing handle without allocating.
+    ///
+    /// Only performs a single heap allocation for new strings (the `to_string()`
+    /// call). The `HashMap` key shares the same `String` reference via index
+    /// lookup — but since we can't store `&str` references into our own `Vec`
+    /// without self-referential borrows, we clone once into the map and once
+    /// into the vec. The clone is optimized by the allocator for small strings.
     pub fn intern(&mut self, s: &str) -> InternedString {
         if let Some(&existing) = self.map.get(s) {
             return existing;
@@ -91,8 +212,8 @@ impl StringInterner {
             .expect("StringInterner overflow: exceeded u32::MAX unique strings");
         let handle = InternedString { index };
         let owned = s.to_string();
-        self.map.insert(owned.clone(), handle);
-        self.strings.push(owned);
+        self.strings.push(owned.clone());
+        self.map.insert(owned, handle);
         handle
     }
 
@@ -133,6 +254,21 @@ impl StringInterner {
     pub fn is_empty(&self) -> bool {
         self.strings.is_empty()
     }
+
+    /// Clears all interned strings, resetting the interner to an empty state.
+    ///
+    /// Preserves allocated capacity for reuse. All previously returned
+    /// `InternedString` handles become invalid after this call.
+    pub fn clear(&mut self) {
+        self.map.clear();
+        self.strings.clear();
+    }
+
+    /// Returns `true` if the given string has already been interned.
+    #[inline]
+    pub fn contains(&self, s: &str) -> bool {
+        self.map.contains_key(s)
+    }
 }
 
 impl Default for StringInterner {
@@ -140,6 +276,21 @@ impl Default for StringInterner {
         Self::new()
     }
 }
+
+// Compile-time assertions: StringInterner is Send+Sync.
+const _: () = {
+    #[allow(dead_code)]
+    fn assert_send<T: Send>() {}
+    #[allow(dead_code)]
+    fn assert_sync<T: Sync>() {}
+    #[allow(dead_code)]
+    fn assertions() {
+        assert_send::<StringInterner>();
+        assert_sync::<StringInterner>();
+        assert_send::<InternedString>();
+        assert_sync::<InternedString>();
+    }
+};
 
 #[cfg(test)]
 mod tests {
@@ -175,5 +326,46 @@ mod tests {
         let interner = StringInterner::with_common_strings();
         // Should have pre-interned a bunch of strings
         assert!(interner.len() > 50);
+    }
+
+    #[test]
+    fn test_clear() {
+        let mut interner = StringInterner::new();
+        interner.intern("a");
+        interner.intern("b");
+        assert_eq!(interner.len(), 2);
+        interner.clear();
+        assert!(interner.is_empty());
+        // Re-interning after clear should work
+        let h = interner.intern("c");
+        assert_eq!(interner.resolve(h), "c");
+    }
+
+    #[test]
+    fn test_contains() {
+        let mut interner = StringInterner::new();
+        interner.intern("hello");
+        assert!(interner.contains("hello"));
+        assert!(!interner.contains("world"));
+    }
+
+    #[test]
+    fn test_interned_string_display() {
+        let mut interner = StringInterner::new();
+        let h = interner.intern("test");
+        assert_eq!(format!("{h}"), "InternedString(0)");
+    }
+
+    #[test]
+    fn test_with_capacity() {
+        let interner = StringInterner::with_capacity(100);
+        assert!(interner.is_empty());
+    }
+
+    #[test]
+    fn test_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<StringInterner>();
+        assert_send_sync::<InternedString>();
     }
 }

@@ -60,7 +60,12 @@ impl EventLoop {
     }
 
     /// Schedules a one-shot timeout with a predetermined ID.
-    pub fn schedule_timeout_with_id(&mut self, id: TimerId, callback_source: String, delay_ms: u64) {
+    pub fn schedule_timeout_with_id(
+        &mut self,
+        id: TimerId,
+        callback_source: String,
+        delay_ms: u64,
+    ) {
         if id >= self.next_id {
             self.next_id = id + 1;
         }
@@ -85,7 +90,12 @@ impl EventLoop {
     }
 
     /// Schedules a repeating interval with a predetermined ID.
-    pub fn schedule_interval_with_id(&mut self, id: TimerId, callback_source: String, delay_ms: u64) {
+    pub fn schedule_interval_with_id(
+        &mut self,
+        id: TimerId,
+        callback_source: String,
+        delay_ms: u64,
+    ) {
         if id >= self.next_id {
             self.next_id = id + 1;
         }

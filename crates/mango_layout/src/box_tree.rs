@@ -46,9 +46,20 @@ pub struct LayoutBox {
 #[derive(Debug, Clone, PartialEq)]
 pub enum AreaShape {
     Default,
-    Rect { left: f32, top: f32, right: f32, bottom: f32 },
-    Circle { cx: f32, cy: f32, r: f32 },
-    Poly { points: Vec<(f32, f32)> },
+    Rect {
+        left: f32,
+        top: f32,
+        right: f32,
+        bottom: f32,
+    },
+    Circle {
+        cx: f32,
+        cy: f32,
+        r: f32,
+    },
+    Poly {
+        points: Vec<(f32, f32)>,
+    },
 }
 
 impl AreaShape {
@@ -85,7 +96,12 @@ impl AreaShape {
                     let top = coords[1].min(coords[3]);
                     let right = coords[0].max(coords[2]);
                     let bottom = coords[1].max(coords[3]);
-                    AreaShape::Rect { left, top, right, bottom }
+                    AreaShape::Rect {
+                        left,
+                        top,
+                        right,
+                        bottom,
+                    }
                 } else {
                     AreaShape::Default
                 }
@@ -96,9 +112,12 @@ impl AreaShape {
     pub fn contains_point(&self, x: f32, y: f32) -> bool {
         match self {
             AreaShape::Default => true,
-            AreaShape::Rect { left, top, right, bottom } => {
-                x >= *left && x <= *right && y >= *top && y <= *bottom
-            }
+            AreaShape::Rect {
+                left,
+                top,
+                right,
+                bottom,
+            } => x >= *left && x <= *right && y >= *top && y <= *bottom,
             AreaShape::Circle { cx, cy, r } => {
                 let dx = x - cx;
                 let dy = y - cy;
@@ -113,8 +132,8 @@ impl AreaShape {
                 for i in 0..points.len() {
                     let (xi, yi) = points[i];
                     let (xj, yj) = points[j];
-                    let intersect = ((yi > y) != (yj > y))
-                        && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+                    let intersect =
+                        ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
                     if intersect {
                         inside = !inside;
                     }
@@ -142,10 +161,12 @@ pub struct MapArea {
     pub target: Option<String>,
 }
 
-static IMAGE_MAP_REGISTRY: std::sync::OnceLock<std::sync::RwLock<std::collections::HashMap<String, Vec<MapArea>>>> =
-    std::sync::OnceLock::new();
+static IMAGE_MAP_REGISTRY: std::sync::OnceLock<
+    std::sync::RwLock<std::collections::HashMap<String, Vec<MapArea>>>,
+> = std::sync::OnceLock::new();
 
-fn image_map_registry() -> &'static std::sync::RwLock<std::collections::HashMap<String, Vec<MapArea>>> {
+fn image_map_registry()
+-> &'static std::sync::RwLock<std::collections::HashMap<String, Vec<MapArea>>> {
     IMAGE_MAP_REGISTRY.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()))
 }
 
@@ -169,7 +190,6 @@ pub fn clear_image_maps() {
         reg.clear();
     }
 }
-
 
 /// Result of hit-testing an interactive form control in the box tree.
 #[derive(Debug, Clone, PartialEq)]
@@ -264,10 +284,12 @@ impl LayoutBox {
         let content_origin_y = self.dimensions.content.y();
 
         for child in &self.children {
-            let is_out_of_flow = child
-                .style
-                .as_ref()
-                .is_some_and(|s| matches!(s.position, mango_css::values::Position::Fixed | mango_css::values::Position::Absolute));
+            let is_out_of_flow = child.style.as_ref().is_some_and(|s| {
+                matches!(
+                    s.position,
+                    mango_css::values::Position::Fixed | mango_css::values::Position::Absolute
+                )
+            });
             if !is_out_of_flow {
                 let mb = child.dimensions.margin_box();
                 max_x = max_x.max(mb.right() - content_origin_x);
@@ -321,7 +343,13 @@ impl LayoutBox {
     /// If that container cannot consume the entire delta (reaches boundary),
     /// propagates the remainder up to outer nested scroll containers.
     /// Returns the total unconsumed (delta_x, delta_y) that can be applied to page scroll.
-    pub fn dispatch_nested_scroll(&mut self, x: f32, y: f32, mut delta_x: f32, mut delta_y: f32) -> (f32, f32) {
+    pub fn dispatch_nested_scroll(
+        &mut self,
+        x: f32,
+        y: f32,
+        mut delta_x: f32,
+        mut delta_y: f32,
+    ) -> (f32, f32) {
         let pad_box = self.dimensions.padding_box();
         if !pad_box.contains(mango_core::Point::new(x, y)) {
             return (delta_x, delta_y);
@@ -430,10 +458,10 @@ impl LayoutBox {
                 let rel_x = point.x - self.dimensions.content.x();
                 let rel_y = point.y - self.dimensions.content.y();
                 for area in &self.map_areas {
-                    if area.shape.contains_point(rel_x, rel_y) {
-                        if let Some(ref href) = area.href {
-                            return Some(href.as_str());
-                        }
+                    if area.shape.contains_point(rel_x, rel_y)
+                        && let Some(ref href) = area.href
+                    {
+                        return Some(href.as_str());
                     }
                 }
             }
@@ -454,7 +482,10 @@ impl LayoutBox {
             && let Some(ref tag) = self.tag_name
         {
             let tag_lower = tag.to_ascii_lowercase();
-            if matches!(tag_lower.as_str(), "input" | "button" | "select" | "textarea" | "summary" | "label") {
+            if matches!(
+                tag_lower.as_str(),
+                "input" | "button" | "select" | "textarea" | "summary" | "label"
+            ) {
                 let form_type = self
                     .get_attribute("type")
                     .unwrap_or(if tag_lower == "button" {
@@ -523,7 +554,8 @@ impl LayoutBox {
                         } else if rel_x > 36.0 {
                             let track_start = 110.0f32.min(content.width() * 0.3);
                             let track_end = (content.width() - 75.0).max(track_start + 10.0);
-                            let ratio = ((rel_x - track_start) / (track_end - track_start)).clamp(0.0, 1.0);
+                            let ratio =
+                                ((rel_x - track_start) / (track_end - track_start)).clamp(0.0, 1.0);
                             MediaClickAction::Seek(ratio * duration)
                         } else {
                             MediaClickAction::TogglePlayPause
@@ -681,10 +713,10 @@ pub fn build_box_tree(styled_node: &StyledNode) -> LayoutBox {
     }
 
     // Detect <object> elements — decode media or gracefully fall back to child nodes
-    if styled_node.tag_name.as_deref() == Some("object") {
-        if let Some(obj_box) = try_build_object_element(styled_node) {
-            return obj_box;
-        }
+    if styled_node.tag_name.as_deref() == Some("object")
+        && let Some(obj_box) = try_build_object_element(styled_node)
+    {
+        return obj_box;
     }
 
     // Detect <svg> elements — generate a ReplacedElement box with vector rasterization
@@ -714,7 +746,10 @@ pub fn build_box_tree(styled_node: &StyledNode) -> LayoutBox {
 
     // Detect <select> elements — extract selected option and suppress child option text flow
     if styled_node.tag_name.as_deref() == Some("select") {
-        let is_multiple = styled_node.attributes.iter().any(|(k, _)| k.eq_ignore_ascii_case("multiple"));
+        let is_multiple = styled_node
+            .attributes
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("multiple"));
         let mut selected_texts = Vec::new();
         let mut first_text = None;
 
@@ -744,7 +779,10 @@ pub fn build_box_tree(styled_node: &StyledNode) -> LayoutBox {
 
         for opt in all_options {
             let opt_text = extract_option_text(opt).trim().to_string();
-            let is_selected = opt.attributes.iter().any(|(k, _)| k.eq_ignore_ascii_case("selected"));
+            let is_selected = opt
+                .attributes
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("selected"));
             if is_selected && !opt_text.is_empty() {
                 selected_texts.push(opt_text.clone());
             }
@@ -763,15 +801,21 @@ pub fn build_box_tree(styled_node: &StyledNode) -> LayoutBox {
         root_box.attributes = styled_node.attributes.clone();
 
         if is_multiple {
-            root_box.attributes.push(("_mango_is_multiple".to_string(), "true".to_string()));
+            root_box
+                .attributes
+                .push(("_mango_is_multiple".to_string(), "true".to_string()));
             let text = if selected_texts.is_empty() {
                 String::new()
             } else {
                 selected_texts.join(", ")
             };
-            root_box.attributes.push(("_mango_selected_text".to_string(), text));
+            root_box
+                .attributes
+                .push(("_mango_selected_text".to_string(), text));
         } else if let Some(text) = selected_texts.into_iter().next().or(first_text) {
-            root_box.attributes.push(("_mango_selected_text".to_string(), text));
+            root_box
+                .attributes
+                .push(("_mango_selected_text".to_string(), text));
         }
         return root_box;
     }
@@ -794,8 +838,12 @@ pub fn build_box_tree(styled_node: &StyledNode) -> LayoutBox {
             | Display::TableColumn
             | Display::TableColumnGroup
             | Display::ListItem => BoxType::BlockNode,
-            Display::Inline | Display::Ruby | Display::RubyBase | Display::RubyText => BoxType::InlineNode,
-            Display::InlineBlock | Display::InlineFlex | Display::InlineGrid => BoxType::InlineBlock,
+            Display::Inline | Display::Ruby | Display::RubyBase | Display::RubyText => {
+                BoxType::InlineNode
+            }
+            Display::InlineBlock | Display::InlineFlex | Display::InlineGrid => {
+                BoxType::InlineBlock
+            }
             Display::None | Display::Contents => BoxType::AnonymousBlock, // Handled before reaching here
         }
     };
@@ -811,8 +859,10 @@ pub fn build_box_tree(styled_node: &StyledNode) -> LayoutBox {
         collect_child_boxes(child, &mut raw_children);
     }
 
-    let is_flex = styled_node.style.display == Display::Flex || styled_node.style.display == Display::InlineFlex;
-    let is_grid = styled_node.style.display == Display::Grid || styled_node.style.display == Display::InlineGrid;
+    let is_flex = styled_node.style.display == Display::Flex
+        || styled_node.style.display == Display::InlineFlex;
+    let is_grid = styled_node.style.display == Display::Grid
+        || styled_node.style.display == Display::InlineGrid;
     let is_table_context = matches!(
         styled_node.style.display,
         Display::Table
@@ -824,7 +874,12 @@ pub fn build_box_tree(styled_node: &StyledNode) -> LayoutBox {
             | Display::TableColumnGroup
     ) || matches!(
         styled_node.tag_name.as_deref(),
-        Some("table") | Some("tbody") | Some("thead") | Some("tfoot") | Some("tr") | Some("colgroup")
+        Some("table")
+            | Some("tbody")
+            | Some("thead")
+            | Some("tfoot")
+            | Some("tr")
+            | Some("colgroup")
     );
 
     if is_flex || is_grid {
@@ -861,7 +916,9 @@ pub fn build_box_tree(styled_node: &StyledNode) -> LayoutBox {
                 } else {
                     if let Some(anon) = current_anonymous.take() {
                         let is_all_empty = anon.children.iter().all(|c| {
-                            c.text().map(|t| t.chars().all(|ch| ch.is_ascii_whitespace())).unwrap_or(false)
+                            c.text()
+                                .map(|t| t.chars().all(|ch| ch.is_ascii_whitespace()))
+                                .unwrap_or(false)
                         });
                         if !is_all_empty {
                             final_children.push(anon);
@@ -873,7 +930,9 @@ pub fn build_box_tree(styled_node: &StyledNode) -> LayoutBox {
 
             if let Some(anon) = current_anonymous.take() {
                 let is_all_empty = anon.children.iter().all(|c| {
-                    c.text().map(|t| t.chars().all(|ch| ch.is_ascii_whitespace())).unwrap_or(false)
+                    c.text()
+                        .map(|t| t.chars().all(|ch| ch.is_ascii_whitespace()))
+                        .unwrap_or(false)
                 });
                 if !is_all_empty {
                     final_children.push(anon);
@@ -1031,7 +1090,9 @@ fn build_replaced_element(styled_node: &StyledNode) -> LayoutBox {
     }
 
     // Fallback: check srcset (candidates separated by commas)
-    if decoded.is_none() && let Some(srcset) = get_attr("srcset") {
+    if decoded.is_none()
+        && let Some(srcset) = get_attr("srcset")
+    {
         for candidate in parse_srcset_candidates(srcset) {
             let url = candidate.split_whitespace().next().unwrap_or("");
             if let Some(img) = lookup_image(url) {
@@ -1042,20 +1103,23 @@ fn build_replaced_element(styled_node: &StyledNode) -> LayoutBox {
     }
 
     // Fallback: check data-src
-    if decoded.is_none() && let Some(data_src) = get_attr("data-src") {
+    if decoded.is_none()
+        && let Some(data_src) = get_attr("data-src")
+    {
         decoded = lookup_image(data_src);
     }
 
     let (intrinsic_width, intrinsic_height, pixels) = if let Some(img) = decoded {
         let natural_w = img.width as f32;
         let natural_h = img.height as f32;
-        let aspect_ratio = if let Some(css_ratio) = styled_node.style.aspect_ratio.filter(|&r| r > 0.0) {
-            css_ratio
-        } else if natural_h > 0.0 {
-            natural_w / natural_h
-        } else {
-            1.0
-        };
+        let aspect_ratio =
+            if let Some(css_ratio) = styled_node.style.aspect_ratio.filter(|&r| r > 0.0) {
+                css_ratio
+            } else if natural_h > 0.0 {
+                natural_w / natural_h
+            } else {
+                1.0
+            };
 
         let (w, h) = match (explicit_w, explicit_h) {
             (Some(ew), Some(eh)) => (ew.max(1.0), eh.max(1.0)),
@@ -1078,7 +1142,11 @@ fn build_replaced_element(styled_node: &StyledNode) -> LayoutBox {
         (w, h, scaled.pixels)
     } else {
         // Use placeholder for missing/failed images
-        let aspect_ratio = styled_node.style.aspect_ratio.filter(|&r| r > 0.0).unwrap_or(4.0 / 3.0);
+        let aspect_ratio = styled_node
+            .style
+            .aspect_ratio
+            .filter(|&r| r > 0.0)
+            .unwrap_or(4.0 / 3.0);
         let (w, h) = match (explicit_w, explicit_h) {
             (Some(ew), Some(eh)) => (ew.max(1.0), eh.max(1.0)),
             (Some(ew), None) => (ew.max(1.0), (ew / aspect_ratio).max(1.0)),
@@ -1100,10 +1168,10 @@ fn build_replaced_element(styled_node: &StyledNode) -> LayoutBox {
     b.tag_name = styled_node.tag_name.clone();
     b.attributes = styled_node.attributes.clone();
 
-    if let Some(usemap) = get_attr("usemap") {
-        if let Some(areas) = get_image_map(usemap) {
-            b.map_areas = areas;
-        }
+    if let Some(usemap) = get_attr("usemap")
+        && let Some(areas) = get_image_map(usemap)
+    {
+        b.map_areas = areas;
     }
 
     b
@@ -1135,10 +1203,8 @@ fn build_embed_element(styled_node: &StyledNode) -> LayoutBox {
     let decoded = if !src.is_empty() {
         if let Some(img) = mango_render::image_decode::decode_data_uri(src) {
             Some(img)
-        } else if let Some(img) = mango_render::image_decode::get_cached_image(src) {
-            Some(img)
         } else {
-            None
+            mango_render::image_decode::get_cached_image(src)
         }
     } else {
         None
@@ -1182,10 +1248,8 @@ fn try_build_object_element(styled_node: &StyledNode) -> Option<LayoutBox> {
 
     let decoded = if let Some(img) = mango_render::image_decode::decode_data_uri(data) {
         Some(img)
-    } else if let Some(img) = mango_render::image_decode::get_cached_image(data) {
-        Some(img)
     } else {
-        None
+        mango_render::image_decode::get_cached_image(data)
     };
 
     let img = decoded?;
@@ -1201,7 +1265,8 @@ fn try_build_object_element(styled_node: &StyledNode) -> Option<LayoutBox> {
 
     let natural_w = img.width as f32;
     let natural_h = img.height as f32;
-    let aspect_ratio = if let Some(css_ratio) = styled_node.style.aspect_ratio.filter(|&r| r > 0.0) {
+    let aspect_ratio = if let Some(css_ratio) = styled_node.style.aspect_ratio.filter(|&r| r > 0.0)
+    {
         css_ratio
     } else if natural_h > 0.0 {
         natural_w / natural_h
@@ -1228,10 +1293,10 @@ fn try_build_object_element(styled_node: &StyledNode) -> Option<LayoutBox> {
     b.tag_name = styled_node.tag_name.clone();
     b.attributes = styled_node.attributes.clone();
 
-    if let Some(usemap) = get_attr("usemap") {
-        if let Some(areas) = get_image_map(usemap) {
-            b.map_areas = areas;
-        }
+    if let Some(usemap) = get_attr("usemap")
+        && let Some(areas) = get_image_map(usemap)
+    {
+        b.map_areas = areas;
     }
 
     Some(b)
@@ -1263,14 +1328,11 @@ fn build_svg_replaced_element(styled_node: &StyledNode) -> LayoutBox {
         _ => get_attr("height").and_then(|v| v.trim_end_matches("px").parse().ok()),
     };
 
-    let aspect_ratio = if let Some(css_ratio) = styled_node.style.aspect_ratio.filter(|&r| r > 0.0) {
+    let aspect_ratio = if let Some(css_ratio) = styled_node.style.aspect_ratio.filter(|&r| r > 0.0)
+    {
         Some(css_ratio)
     } else if let (Some(iw), Some(ih)) = (intrinsic_w_opt, intrinsic_h_opt) {
-        if ih > 0.0 {
-            Some(iw / ih)
-        } else {
-            None
-        }
+        if ih > 0.0 { Some(iw / ih) } else { None }
     } else {
         None
     };
@@ -1402,19 +1464,17 @@ pub fn build_iframe_element(styled_node: &StyledNode) -> LayoutBox {
     let mut intrinsic_width = 300.0f32;
     let mut intrinsic_height = 150.0f32;
 
-    if let Some(w_attr) = get_attr("width") {
-        if let Ok(w) = w_attr.trim_end_matches("px").parse::<f32>() {
-            if w > 0.0 {
-                intrinsic_width = w;
-            }
-        }
+    if let Some(w_attr) = get_attr("width")
+        && let Ok(w) = w_attr.trim_end_matches("px").parse::<f32>()
+        && w > 0.0
+    {
+        intrinsic_width = w;
     }
-    if let Some(h_attr) = get_attr("height") {
-        if let Ok(h) = h_attr.trim_end_matches("px").parse::<f32>() {
-            if h > 0.0 {
-                intrinsic_height = h;
-            }
-        }
+    if let Some(h_attr) = get_attr("height")
+        && let Ok(h) = h_attr.trim_end_matches("px").parse::<f32>()
+        && h > 0.0
+    {
+        intrinsic_height = h;
     }
 
     // Prefer CSS styled dimensions if specified in pixels
@@ -1480,7 +1540,10 @@ fn decode_data_uri_html(uri: &str) -> Option<String> {
     let payload = &rest[comma_pos + 1..];
 
     if metadata.contains(";base64") {
-        let clean: Vec<u8> = payload.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
+        let clean: Vec<u8> = payload
+            .bytes()
+            .filter(|b| !b.is_ascii_whitespace())
+            .collect();
         base64_decode_bytes(&clean).and_then(|bytes| String::from_utf8(bytes).ok())
     } else {
         Some(percent_decode_str(payload))
@@ -1493,7 +1556,9 @@ fn percent_decode_str(input: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(b) = u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16) {
+            if let Ok(b) =
+                u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16)
+            {
                 out.push(b);
                 i += 3;
                 continue;
@@ -1559,13 +1624,16 @@ pub fn build_video_element(styled_node: &StyledNode) -> LayoutBox {
     let mut src = get_attr("src").unwrap_or("").trim().to_string();
     if src.is_empty() {
         for child in &styled_node.children {
-            if child.tag_name.as_deref() == Some("source") {
-                if let Some((_, s)) = child.attributes.iter().find(|(k, _)| k.eq_ignore_ascii_case("src")) {
-                    let trimmed = s.trim();
-                    if !trimmed.is_empty() {
-                        src = trimmed.to_string();
-                        break;
-                    }
+            if child.tag_name.as_deref() == Some("source")
+                && let Some((_, s)) = child
+                    .attributes
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case("src"))
+            {
+                let trimmed = s.trim();
+                if !trimmed.is_empty() {
+                    src = trimmed.to_string();
+                    break;
                 }
             }
         }
@@ -1593,36 +1661,59 @@ pub fn build_video_element(styled_node: &StyledNode) -> LayoutBox {
 
     // 3. Flags and runtime state
     let has_controls = get_attr("controls").is_some()
-        || styled_node.attributes.iter().any(|(k, _)| k.eq_ignore_ascii_case("controls"));
+        || styled_node
+            .attributes
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("controls"));
     let autoplay = get_attr("autoplay").is_some()
-        || styled_node.attributes.iter().any(|(k, _)| k.eq_ignore_ascii_case("autoplay"));
+        || styled_node
+            .attributes
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("autoplay"));
     let is_loop = get_attr("loop").is_some()
-        || styled_node.attributes.iter().any(|(k, _)| k.eq_ignore_ascii_case("loop"));
+        || styled_node
+            .attributes
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("loop"));
     let is_muted = get_attr("muted").is_some()
         || get_attr("data-mango-muted") == Some("true")
-        || styled_node.attributes.iter().any(|(k, _)| k.eq_ignore_ascii_case("muted"));
+        || styled_node
+            .attributes
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("muted"));
 
-    let is_playing = get_attr("data-mango-playing") == Some("true") || (autoplay && get_attr("data-mango-playing") != Some("false"));
-    let current_time = get_attr("data-mango-time").and_then(|t| t.parse().ok()).unwrap_or(0.0f32);
-    let duration = get_attr("data-mango-duration").and_then(|d| d.parse().ok()).unwrap_or(if !src.is_empty() { 180.0f32 } else { 0.0f32 });
+    let is_playing = get_attr("data-mango-playing") == Some("true")
+        || (autoplay && get_attr("data-mango-playing") != Some("false"));
+    let current_time = get_attr("data-mango-time")
+        .and_then(|t| t.parse().ok())
+        .unwrap_or(0.0f32);
+    let duration = get_attr("data-mango-duration")
+        .and_then(|d| d.parse().ok())
+        .unwrap_or(if !src.is_empty() { 180.0f32 } else { 0.0f32 });
 
     // 4. Default dimensions (300x150 per HTML5 spec, or poster dimensions)
-    let mut intrinsic_width = if poster_width > 0 { poster_width as f32 } else { 300.0f32 };
-    let mut intrinsic_height = if poster_height > 0 { poster_height as f32 } else { 150.0f32 };
+    let mut intrinsic_width = if poster_width > 0 {
+        poster_width as f32
+    } else {
+        300.0f32
+    };
+    let mut intrinsic_height = if poster_height > 0 {
+        poster_height as f32
+    } else {
+        150.0f32
+    };
 
-    if let Some(w_attr) = get_attr("width") {
-        if let Ok(w) = w_attr.trim_end_matches("px").parse::<f32>() {
-            if w > 0.0 {
-                intrinsic_width = w;
-            }
-        }
+    if let Some(w_attr) = get_attr("width")
+        && let Ok(w) = w_attr.trim_end_matches("px").parse::<f32>()
+        && w > 0.0
+    {
+        intrinsic_width = w;
     }
-    if let Some(h_attr) = get_attr("height") {
-        if let Ok(h) = h_attr.trim_end_matches("px").parse::<f32>() {
-            if h > 0.0 {
-                intrinsic_height = h;
-            }
-        }
+    if let Some(h_attr) = get_attr("height")
+        && let Ok(h) = h_attr.trim_end_matches("px").parse::<f32>()
+        && h > 0.0
+    {
+        intrinsic_height = h;
     }
 
     match styled_node.style.width {
@@ -1681,31 +1772,51 @@ pub fn build_audio_element(styled_node: &StyledNode) -> LayoutBox {
     let mut src = get_attr("src").unwrap_or("").trim().to_string();
     if src.is_empty() {
         for child in &styled_node.children {
-            if child.tag_name.as_deref() == Some("source") {
-                if let Some((_, s)) = child.attributes.iter().find(|(k, _)| k.eq_ignore_ascii_case("src")) {
-                    let trimmed = s.trim();
-                    if !trimmed.is_empty() {
-                        src = trimmed.to_string();
-                        break;
-                    }
+            if child.tag_name.as_deref() == Some("source")
+                && let Some((_, s)) = child
+                    .attributes
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case("src"))
+            {
+                let trimmed = s.trim();
+                if !trimmed.is_empty() {
+                    src = trimmed.to_string();
+                    break;
                 }
             }
         }
     }
 
     let has_controls = get_attr("controls").is_some()
-        || styled_node.attributes.iter().any(|(k, _)| k.eq_ignore_ascii_case("controls"));
+        || styled_node
+            .attributes
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("controls"));
     let autoplay = get_attr("autoplay").is_some()
-        || styled_node.attributes.iter().any(|(k, _)| k.eq_ignore_ascii_case("autoplay"));
+        || styled_node
+            .attributes
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("autoplay"));
     let is_loop = get_attr("loop").is_some()
-        || styled_node.attributes.iter().any(|(k, _)| k.eq_ignore_ascii_case("loop"));
+        || styled_node
+            .attributes
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("loop"));
     let is_muted = get_attr("muted").is_some()
         || get_attr("data-mango-muted") == Some("true")
-        || styled_node.attributes.iter().any(|(k, _)| k.eq_ignore_ascii_case("muted"));
+        || styled_node
+            .attributes
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("muted"));
 
-    let is_playing = get_attr("data-mango-playing") == Some("true") || (autoplay && get_attr("data-mango-playing") != Some("false"));
-    let current_time = get_attr("data-mango-time").and_then(|t| t.parse().ok()).unwrap_or(0.0f32);
-    let duration = get_attr("data-mango-duration").and_then(|d| d.parse().ok()).unwrap_or(if !src.is_empty() { 210.0f32 } else { 0.0f32 });
+    let is_playing = get_attr("data-mango-playing") == Some("true")
+        || (autoplay && get_attr("data-mango-playing") != Some("false"));
+    let current_time = get_attr("data-mango-time")
+        .and_then(|t| t.parse().ok())
+        .unwrap_or(0.0f32);
+    let duration = get_attr("data-mango-duration")
+        .and_then(|d| d.parse().ok())
+        .unwrap_or(if !src.is_empty() { 210.0f32 } else { 0.0f32 });
 
     let mut intrinsic_width = if has_controls { 300.0f32 } else { 0.0f32 };
     let mut intrinsic_height = if has_controls { 36.0f32 } else { 0.0f32 };
@@ -1761,31 +1872,29 @@ pub fn build_canvas_element(styled_node: &StyledNode) -> LayoutBox {
     let mut width = 300u32;
     let mut height = 150u32;
 
-    if let Some(w_attr) = get_attr("width") {
-        if let Ok(w) = w_attr.trim_end_matches("px").parse::<u32>() {
-            if w > 0 {
-                width = w;
-            }
-        }
+    if let Some(w_attr) = get_attr("width")
+        && let Ok(w) = w_attr.trim_end_matches("px").parse::<u32>()
+        && w > 0
+    {
+        width = w;
     }
-    if let Some(h_attr) = get_attr("height") {
-        if let Ok(h) = h_attr.trim_end_matches("px").parse::<u32>() {
-            if h > 0 {
-                height = h;
-            }
-        }
+    if let Some(h_attr) = get_attr("height")
+        && let Ok(h) = h_attr.trim_end_matches("px").parse::<u32>()
+        && h > 0
+    {
+        height = h;
     }
 
     let node_idx = styled_node.node_id.map(|id| id.raw() as usize);
 
     // If canvas is already instantiated in CANVAS_REGISTRY, retrieve its actual buffer & dimensions
     let mut pixels = None;
-    if let Some(nid) = node_idx {
-        if let Some((cw, ch, c_pixels)) = mango_render::get_canvas_pixels(nid) {
-            width = cw;
-            height = ch;
-            pixels = Some(c_pixels);
-        }
+    if let Some(nid) = node_idx
+        && let Some((cw, ch, c_pixels)) = mango_render::get_canvas_pixels(nid)
+    {
+        width = cw;
+        height = ch;
+        pixels = Some(c_pixels);
     }
 
     let mut intrinsic_width = width as f32;
@@ -1869,13 +1978,22 @@ mod tests {
 
         let mut img_node = StyledNode::new(None, style);
         img_node.tag_name = Some("img".to_string());
-        img_node.attributes.push(("width".to_string(), "120".to_string()));
-        img_node.attributes.push(("height".to_string(), "80".to_string()));
+        img_node
+            .attributes
+            .push(("width".to_string(), "120".to_string()));
+        img_node
+            .attributes
+            .push(("height".to_string(), "80".to_string()));
         img_node.attributes.push(("src".to_string(), "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==".to_string()));
 
         let box_tree = build_box_tree(&img_node);
         assert!(box_tree.is_replaced());
-        if let BoxType::ReplacedElement { intrinsic_width, intrinsic_height, pixels } = &box_tree.box_type {
+        if let BoxType::ReplacedElement {
+            intrinsic_width,
+            intrinsic_height,
+            pixels,
+        } = &box_tree.box_type
+        {
             assert_eq!(*intrinsic_width, 120.0);
             assert_eq!(*intrinsic_height, 80.0);
             assert_eq!(pixels.len(), 120 * 80);
@@ -1891,10 +2009,19 @@ mod tests {
 
         let mut iframe_node = StyledNode::new(None, style);
         iframe_node.tag_name = Some("iframe".to_string());
-        iframe_node.attributes.push(("width".to_string(), "450".to_string()));
-        iframe_node.attributes.push(("height".to_string(), "250".to_string()));
-        iframe_node.attributes.push(("sandbox".to_string(), "allow-scripts allow-forms".to_string()));
-        iframe_node.attributes.push(("srcdoc".to_string(), "<p>Nested Document</p>".to_string()));
+        iframe_node
+            .attributes
+            .push(("width".to_string(), "450".to_string()));
+        iframe_node
+            .attributes
+            .push(("height".to_string(), "250".to_string()));
+        iframe_node.attributes.push((
+            "sandbox".to_string(),
+            "allow-scripts allow-forms".to_string(),
+        ));
+        iframe_node
+            .attributes
+            .push(("srcdoc".to_string(), "<p>Nested Document</p>".to_string()));
 
         let box_tree = build_box_tree(&iframe_node);
         assert!(box_tree.is_replaced());
@@ -1920,7 +2047,10 @@ mod tests {
         }
 
         // Inner document must be parsed and attached as child boxes
-        assert!(!box_tree.children.is_empty(), "Inner srcdoc must produce child layout boxes");
+        assert!(
+            !box_tree.children.is_empty(),
+            "Inner srcdoc must produce child layout boxes"
+        );
     }
 
     #[test]
@@ -1933,12 +2063,22 @@ mod tests {
         // 1x1 red PNG data URI
         let data_url = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==";
         let sources_attr = format!("{data_url}\t(min-width: 300px)\timage/png");
-        img_node.attributes.push(("_mango_picture_sources".to_string(), sources_attr));
-        img_node.attributes.push(("src".to_string(), "http://example.com/fallback.jpg".to_string()));
+        img_node
+            .attributes
+            .push(("_mango_picture_sources".to_string(), sources_attr));
+        img_node.attributes.push((
+            "src".to_string(),
+            "http://example.com/fallback.jpg".to_string(),
+        ));
 
         let box_tree = build_box_tree(&img_node);
         assert!(box_tree.is_replaced());
-        if let BoxType::ReplacedElement { intrinsic_width, intrinsic_height, pixels } = &box_tree.box_type {
+        if let BoxType::ReplacedElement {
+            intrinsic_width,
+            intrinsic_height,
+            pixels,
+        } = &box_tree.box_type
+        {
             assert_eq!(*intrinsic_width, 1.0);
             assert_eq!(*intrinsic_height, 1.0);
             assert_eq!(pixels.len(), 1);
@@ -1952,13 +2092,22 @@ mod tests {
         // Register an image map with rect, circle, poly, and default shapes
         let areas = vec![
             MapArea {
-                shape: AreaShape::Rect { left: 10.0, top: 10.0, right: 50.0, bottom: 50.0 },
+                shape: AreaShape::Rect {
+                    left: 10.0,
+                    top: 10.0,
+                    right: 50.0,
+                    bottom: 50.0,
+                },
                 href: Some("/rect-target".to_string()),
                 alt: Some("Rectangle".to_string()),
                 target: None,
             },
             MapArea {
-                shape: AreaShape::Circle { cx: 100.0, cy: 100.0, r: 20.0 },
+                shape: AreaShape::Circle {
+                    cx: 100.0,
+                    cy: 100.0,
+                    r: 20.0,
+                },
                 href: Some("/circle-target".to_string()),
                 alt: Some("Circle".to_string()),
                 target: None,
@@ -1984,9 +2133,15 @@ mod tests {
         img_style.display = Display::InlineBlock;
         let mut img_node = StyledNode::new(None, img_style);
         img_node.tag_name = Some("img".to_string());
-        img_node.attributes.push(("usemap".to_string(), "#navmap".to_string()));
-        img_node.attributes.push(("width".to_string(), "300".to_string()));
-        img_node.attributes.push(("height".to_string(), "200".to_string()));
+        img_node
+            .attributes
+            .push(("usemap".to_string(), "#navmap".to_string()));
+        img_node
+            .attributes
+            .push(("width".to_string(), "300".to_string()));
+        img_node
+            .attributes
+            .push(("height".to_string(), "200".to_string()));
 
         let mut img_box = build_box_tree(&img_node);
         assert_eq!(img_box.map_areas.len(), 4);
@@ -2020,15 +2175,21 @@ mod tests {
         // 1. Embed element produces replaced element
         let mut embed_node = StyledNode::new(None, ComputedStyle::default());
         embed_node.tag_name = Some("embed".to_string());
-        embed_node.attributes.push(("width".to_string(), "200".to_string()));
-        embed_node.attributes.push(("height".to_string(), "100".to_string()));
+        embed_node
+            .attributes
+            .push(("width".to_string(), "200".to_string()));
+        embed_node
+            .attributes
+            .push(("height".to_string(), "100".to_string()));
         let embed_box = build_box_tree(&embed_node);
         assert!(embed_box.is_replaced());
 
         // 2. Object with invalid data gracefully falls back to children
         let mut object_node = StyledNode::new(None, ComputedStyle::default());
         object_node.tag_name = Some("object".to_string());
-        object_node.attributes.push(("data".to_string(), "invalid://missing.swf".to_string()));
+        object_node
+            .attributes
+            .push(("data".to_string(), "invalid://missing.swf".to_string()));
 
         let mut child_p = StyledNode::new(None, ComputedStyle::default());
         child_p.tag_name = Some("p".to_string());
@@ -2039,7 +2200,10 @@ mod tests {
         // Falls through to render children!
         assert!(!object_box.is_replaced());
         assert_eq!(object_box.children.len(), 1);
-        assert_eq!(object_box.children[0].text(), Some("Flash plugin not supported"));
+        assert_eq!(
+            object_box.children[0].text(),
+            Some("Flash plugin not supported")
+        );
     }
 
     #[test]
@@ -2049,13 +2213,26 @@ mod tests {
         // Case 1: Pure viewBox "0 0 200 100" with no width/height attributes
         let mut svg_node1 = StyledNode::new(None, style.clone());
         svg_node1.tag_name = Some("svg".to_string());
-        svg_node1.attributes.push(("viewBox".to_string(), "0 0 200 100".to_string()));
+        svg_node1
+            .attributes
+            .push(("viewBox".to_string(), "0 0 200 100".to_string()));
 
         let box_tree1 = build_box_tree(&svg_node1);
         assert!(box_tree1.is_replaced());
-        if let BoxType::ReplacedElement { intrinsic_width, intrinsic_height, .. } = &box_tree1.box_type {
-            assert_eq!(*intrinsic_width, 200.0, "Intrinsic width should be taken from viewBox");
-            assert_eq!(*intrinsic_height, 100.0, "Intrinsic height should be taken from viewBox");
+        if let BoxType::ReplacedElement {
+            intrinsic_width,
+            intrinsic_height,
+            ..
+        } = &box_tree1.box_type
+        {
+            assert_eq!(
+                *intrinsic_width, 200.0,
+                "Intrinsic width should be taken from viewBox"
+            );
+            assert_eq!(
+                *intrinsic_height, 100.0,
+                "Intrinsic height should be taken from viewBox"
+            );
         } else {
             panic!("Expected ReplacedElement for SVG");
         }
@@ -2064,14 +2241,26 @@ mod tests {
         // Height should be derived from viewBox aspect ratio: 400 / (200/100) = 200
         let mut svg_node2 = StyledNode::new(None, style.clone());
         svg_node2.tag_name = Some("svg".to_string());
-        svg_node2.attributes.push(("viewBox".to_string(), "0 0 200 100".to_string()));
-        svg_node2.attributes.push(("width".to_string(), "400".to_string()));
+        svg_node2
+            .attributes
+            .push(("viewBox".to_string(), "0 0 200 100".to_string()));
+        svg_node2
+            .attributes
+            .push(("width".to_string(), "400".to_string()));
 
         let box_tree2 = build_box_tree(&svg_node2);
         assert!(box_tree2.is_replaced());
-        if let BoxType::ReplacedElement { intrinsic_width, intrinsic_height, .. } = &box_tree2.box_type {
+        if let BoxType::ReplacedElement {
+            intrinsic_width,
+            intrinsic_height,
+            ..
+        } = &box_tree2.box_type
+        {
             assert_eq!(*intrinsic_width, 400.0);
-            assert_eq!(*intrinsic_height, 200.0, "Height should be derived from viewBox aspect ratio");
+            assert_eq!(
+                *intrinsic_height, 200.0,
+                "Height should be derived from viewBox aspect ratio"
+            );
         } else {
             panic!("Expected ReplacedElement for SVG");
         }
@@ -2080,13 +2269,25 @@ mod tests {
         // Width should be derived from viewBox aspect ratio: 100 * (100/200) = 50
         let mut svg_node3 = StyledNode::new(None, style.clone());
         svg_node3.tag_name = Some("svg".to_string());
-        svg_node3.attributes.push(("viewBox".to_string(), "0 0 100 200".to_string()));
-        svg_node3.attributes.push(("height".to_string(), "100".to_string()));
+        svg_node3
+            .attributes
+            .push(("viewBox".to_string(), "0 0 100 200".to_string()));
+        svg_node3
+            .attributes
+            .push(("height".to_string(), "100".to_string()));
 
         let box_tree3 = build_box_tree(&svg_node3);
         assert!(box_tree3.is_replaced());
-        if let BoxType::ReplacedElement { intrinsic_width, intrinsic_height, .. } = &box_tree3.box_type {
-            assert_eq!(*intrinsic_width, 50.0, "Width should be derived from viewBox aspect ratio");
+        if let BoxType::ReplacedElement {
+            intrinsic_width,
+            intrinsic_height,
+            ..
+        } = &box_tree3.box_type
+        {
+            assert_eq!(
+                *intrinsic_width, 50.0,
+                "Width should be derived from viewBox aspect ratio"
+            );
             assert_eq!(*intrinsic_height, 100.0);
         } else {
             panic!("Expected ReplacedElement for SVG");
@@ -2095,7 +2296,9 @@ mod tests {
         // Case 4: SVG with viewBox "0 0 200 100" placed in block layout with CSS width: 600px, height: auto
         let mut svg_node4 = StyledNode::new(None, style);
         svg_node4.tag_name = Some("svg".to_string());
-        svg_node4.attributes.push(("viewBox".to_string(), "0 0 200 100".to_string()));
+        svg_node4
+            .attributes
+            .push(("viewBox".to_string(), "0 0 200 100".to_string()));
         let mut box_tree4 = build_box_tree(&svg_node4);
         let mut css_style = ComputedStyle::default();
         css_style.width = mango_css::Length::Px(600.0);
@@ -2107,8 +2310,10 @@ mod tests {
         crate::block_flow::layout_block(&mut box_tree4, &cb, &mut float_ctx);
 
         assert_eq!(box_tree4.dimensions.content.width(), 600.0);
-        assert_eq!(box_tree4.dimensions.content.height(), 300.0, "Auto height in block layout should preserve viewBox 2:1 ratio");
+        assert_eq!(
+            box_tree4.dimensions.content.height(),
+            300.0,
+            "Auto height in block layout should preserve viewBox 2:1 ratio"
+        );
     }
 }
-
-

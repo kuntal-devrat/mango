@@ -7,7 +7,12 @@ use mango_layout::flex_flow::layout_flex;
 use mango_layout::float::FloatContext;
 use mango_layout::style_tree::build_style_tree;
 
-fn layout_html_flex(html: &str, css: &str, cb_w: f32, cb_h: f32) -> mango_layout::box_tree::LayoutBox {
+fn layout_html_flex(
+    html: &str,
+    css: &str,
+    cb_w: f32,
+    cb_h: f32,
+) -> mango_layout::box_tree::LayoutBox {
     let doc = parse_html(html);
     let sheet = parse_stylesheet(css);
     let style_tree = build_style_tree(&doc, &[&sheet]).expect("failed to build style tree");
@@ -16,11 +21,16 @@ fn layout_html_flex(html: &str, css: &str, cb_w: f32, cb_h: f32) -> mango_layout
     let cb = Dimensions::new(Rect::new(0.0, 0.0, cb_w, cb_h));
     let mut float_ctx = FloatContext::new();
 
-    fn find_flex_mut<'a>(node: &'a mut mango_layout::box_tree::LayoutBox) -> Option<&'a mut mango_layout::box_tree::LayoutBox> {
-        if let Some(s) = &node.style {
-            if matches!(s.display, mango_css::values::Display::Flex | mango_css::values::Display::InlineFlex) {
-                return Some(node);
-            }
+    fn find_flex_mut(
+        node: &mut mango_layout::box_tree::LayoutBox,
+    ) -> Option<&mut mango_layout::box_tree::LayoutBox> {
+        if let Some(s) = &node.style
+            && matches!(
+                s.display,
+                mango_css::values::Display::Flex | mango_css::values::Display::InlineFlex
+            )
+        {
+            return Some(node);
         }
         for child in &mut node.children {
             if let Some(f) = find_flex_mut(child) {
@@ -52,7 +62,10 @@ fn test_flex_flow_shorthand_expansion() {
     "#;
     let container = layout_html_flex(html, css, 400.0, 400.0);
     let style = container.style.unwrap();
-    assert_eq!(style.flex_direction, mango_css::values::FlexDirection::Column);
+    assert_eq!(
+        style.flex_direction,
+        mango_css::values::FlexDirection::Column
+    );
     assert_eq!(style.flex_wrap, mango_css::values::FlexWrap::WrapReverse);
 }
 

@@ -652,11 +652,13 @@ impl<'a> Tokenizer<'a> {
                                 self.skip_whitespace();
                                 if let Some(q @ ('"' | '\'')) = self.peek() {
                                     self.advance();
-                                    self.current_doctype_public_id = Some(self.consume_quoted_string(q));
+                                    self.current_doctype_public_id =
+                                        Some(self.consume_quoted_string(q));
                                     self.skip_whitespace();
                                     if let Some(q2 @ ('"' | '\'')) = self.peek() {
                                         self.advance();
-                                        self.current_doctype_system_id = Some(self.consume_quoted_string(q2));
+                                        self.current_doctype_system_id =
+                                            Some(self.consume_quoted_string(q2));
                                     }
                                 } else {
                                     self.current_doctype_force_quirks = true;
@@ -665,7 +667,8 @@ impl<'a> Tokenizer<'a> {
                                 self.skip_whitespace();
                                 if let Some(q @ ('"' | '\'')) = self.peek() {
                                     self.advance();
-                                    self.current_doctype_system_id = Some(self.consume_quoted_string(q));
+                                    self.current_doctype_system_id =
+                                        Some(self.consume_quoted_string(q));
                                 } else {
                                     self.current_doctype_force_quirks = true;
                                 }
@@ -689,7 +692,7 @@ impl<'a> Tokenizer<'a> {
                             };
                         }
                     }
-                },
+                }
 
                 State::RawText { tag } => {
                     // Check if the current position matches `</tag>`
@@ -731,7 +734,9 @@ impl<'a> Tokenizer<'a> {
                         }
                     }
 
-                    if crate::elements::is_escapable_raw_text_element(tag) && self.peek() == Some('&') {
+                    if crate::elements::is_escapable_raw_text_element(tag)
+                        && self.peek() == Some('&')
+                    {
                         self.advance(); // consume '&'
                         let mut entity = String::from('&');
                         while let Some(ch) = self.peek() {
@@ -773,10 +778,8 @@ impl<'a> Tokenizer<'a> {
     fn finish_attribute(&mut self) {
         if !self.current_attr_name.is_empty() {
             let decoded_val = decode_entities(&self.current_attr_val);
-            self.current_attributes.push((
-                std::mem::take(&mut self.current_attr_name),
-                decoded_val,
-            ));
+            self.current_attributes
+                .push((std::mem::take(&mut self.current_attr_name), decoded_val));
             self.current_attr_val.clear();
         }
     }
@@ -806,12 +809,19 @@ mod tests {
         let mut tokenizer = Tokenizer::new(html);
 
         match tokenizer.next_token() {
-            Token::StartTag { name, attributes, self_closing } => {
+            Token::StartTag {
+                name,
+                attributes,
+                self_closing,
+            } => {
                 assert_eq!(name, "div");
-                assert_eq!(attributes, vec![
-                    ("class".to_string(), "container".to_string()),
-                    ("id".to_string(), "main".to_string())
-                ]);
+                assert_eq!(
+                    attributes,
+                    vec![
+                        ("class".to_string(), "container".to_string()),
+                        ("id".to_string(), "main".to_string())
+                    ]
+                );
                 assert!(!self_closing);
             }
             other => panic!("expected StartTag, got {:?}", other),
@@ -870,7 +880,11 @@ mod tests {
         let mut tokenizer = Tokenizer::new(html);
 
         match tokenizer.next_token() {
-            Token::StartTag { name, attributes, self_closing } => {
+            Token::StartTag {
+                name,
+                attributes,
+                self_closing,
+            } => {
                 assert_eq!(name, "img");
                 assert!(self_closing);
                 assert_eq!(attributes.len(), 2);

@@ -53,7 +53,10 @@ fn test_js_dom_manipulation_get_element() {
     let updated_doc = rt.document_snapshot();
     let root = updated_doc.root();
     let h1_node = updated_doc.find_element_by_tag(root, "h1").unwrap();
-    assert_eq!(updated_doc.text_content(h1_node), "Modified by Boa JavaScript!");
+    assert_eq!(
+        updated_doc.text_content(h1_node),
+        "Modified by Boa JavaScript!"
+    );
 
     let p_node = updated_doc.find_element_by_tag(root, "p").unwrap();
     assert_eq!(updated_doc.text_content(p_node), "Updated description!");
@@ -166,7 +169,10 @@ fn test_js_alert_and_window_properties() {
     "#;
     assert!(rt.execute_script(script).is_ok());
 
-    assert_eq!(rt.take_status_text(), Some("Alert: Welcome to Mango Browser!".to_string()));
+    assert_eq!(
+        rt.take_status_text(),
+        Some("Alert: Welcome to Mango Browser!".to_string())
+    );
 
     let logs = rt.drain_console_messages();
     assert_eq!(logs.len(), 2);
@@ -176,7 +182,9 @@ fn test_js_alert_and_window_properties() {
 
 #[test]
 fn test_js_window_self_top_parent_and_location() {
-    let doc = parse_html("<html><head><title>My Test Page</title></head><body><h1 id='title'>Test</h1></body></html>");
+    let doc = parse_html(
+        "<html><head><title>My Test Page</title></head><body><h1 id='title'>Test</h1></body></html>",
+    );
     let mut rt = JsRuntime::new_with_url(doc, 1024.0, 768.0, "https://example.com/search?q=rust");
 
     let script = r#"
@@ -267,30 +275,57 @@ fn test_js_dom_completeness_apis() {
         console.log('contains self:', host.contains(host), 'contains child:', host.contains(replaced), 'unknown:', host.contains(null));
         console.log('doc contains host:', document.contains(host));
     "#;
-    assert!(rt.execute_script(script).is_ok(), "DOM completeness script failed");
+    assert!(
+        rt.execute_script(script).is_ok(),
+        "DOM completeness script failed"
+    );
 
     let logs = rt.drain_console_messages();
     let find = |needle: &str| logs.iter().any(|m| m.text.contains(needle));
 
-    assert!(find("tag: DIV nodeType: 1 nodeName: DIV"), "nodes expose nodeType/nodeName");
-    assert!(find("dataset role: panel count: 3"), "dataset reads data-* camelCased");
-    assert!(find("dataset write: toolbar"), "dataset writes back to attributes");
+    assert!(
+        find("tag: DIV nodeType: 1 nodeName: DIV"),
+        "nodes expose nodeType/nodeName"
+    );
+    assert!(
+        find("dataset role: panel count: 3"),
+        "dataset reads data-* camelCased"
+    );
+    assert!(
+        find("dataset write: toolbar"),
+        "dataset writes back to attributes"
+    );
     // The script strips whitespace, which also removes attribute separators.
     assert!(
         find("innerHTML: <pid=\"para\">Hello</p>"),
         "innerHTML serializes markup; logs were: {:?}",
         logs.iter().map(|m| m.text.clone()).collect::<Vec<_>>()
     );
-    assert!(find("clone children: 1"), "cloneNode(true) copies descendants");
-    assert!(find("fragment nodeType: 11"), "createDocumentFragment returns a fragment");
+    assert!(
+        find("clone children: 1"),
+        "cloneNode(true) copies descendants"
+    );
+    assert!(
+        find("fragment nodeType: 11"),
+        "createDocumentFragment returns a fragment"
+    );
     assert!(
         find("host children after fragment: 3"),
         "fragment children are flattened in (1 <p> + 2 <span>); logs were: {:?}",
         logs.iter().map(|m| m.text.clone()).collect::<Vec<_>>()
     );
-    assert!(find("has para: false"), "replaceChild detaches the old child");
-    assert!(find("forms: 1 images: 1 links: 1"), "document collections resolve");
-    assert!(find("rect type: number offsetW: number"), "measurement APIs return numbers");
+    assert!(
+        find("has para: false"),
+        "replaceChild detaches the old child"
+    );
+    assert!(
+        find("forms: 1 images: 1 links: 1"),
+        "document collections resolve"
+    );
+    assert!(
+        find("rect type: number offsetW: number"),
+        "measurement APIs return numbers"
+    );
     assert!(
         find("contains self: true contains child: true unknown: false"),
         "contains walks ancestors; logs were: {:?}",
@@ -326,19 +361,27 @@ fn test_js_innerhtml_and_outerhtml_setters() {
     let div = updated.find_element_by_id(root, "root").unwrap();
     assert_eq!(updated.children(div).count(), 1, "one <ul> child");
     let ul = updated.children(div).next().unwrap().id;
-    assert_eq!(updated.children(ul).count(), 2, "two <li> children after innerHTML set");
+    assert_eq!(
+        updated.children(ul).count(),
+        2,
+        "two <li> children after innerHTML set"
+    );
 
     let logs = rt.drain_console_messages();
     let find = |needle: &str| logs.iter().any(|m| m.text.contains(needle));
     assert!(find("items: 2"), "innerHTML parses markup into real nodes");
     assert!(find("first class: One"), "parsed nodes are queryable");
-    assert!(find("replaced id: true"), "outerHTML setter replaces the node");
+    assert!(
+        find("replaced id: true"),
+        "outerHTML setter replaces the node"
+    );
     assert!(find("old gone: true"), "previous node is detached");
 }
 
 #[test]
 fn test_js_neverssl_redirect_simulation() {
-    let doc = parse_html("<html><head><script></script></head><body><h1>NeverSSL</h1></body></html>");
+    let doc =
+        parse_html("<html><head><script></script></head><body><h1>NeverSSL</h1></body></html>");
     let mut rt = JsRuntime::new_with_url(doc, 800.0, 600.0, "http://neverssl.com/");
 
     let script = r#"
@@ -348,7 +391,10 @@ fn test_js_neverssl_redirect_simulation() {
     assert!(rt.execute_script(script).is_ok());
 
     let pending = rt.take_pending_navigation();
-    assert_eq!(pending, Some("http://calmlove.neverssl.com/online".to_string()));
+    assert_eq!(
+        pending,
+        Some("http://calmlove.neverssl.com/online".to_string())
+    );
 }
 
 #[test]
@@ -378,7 +424,10 @@ fn test_js_rich_dom_apis() {
 
     let logs = rt.drain_console_messages();
     assert!(logs.iter().any(|m| m.text == "card className: box active"));
-    assert!(logs.iter().any(|m| m.text == "classList contains active: true"));
+    assert!(
+        logs.iter()
+            .any(|m| m.text == "classList contains active: true")
+    );
     assert!(logs.iter().any(|m| m.text == "document.body exists: true"));
     assert!(logs.iter().any(|m| m.text == "document.head exists: true"));
 }
@@ -431,15 +480,24 @@ fn test_js_form_control_api() {
         console.log('willValidate:', email.willValidate);
         console.log('validationMessage empty when valid:', email.validationMessage);
     "#;
-    assert!(rt.execute_script(script).is_ok(), "form-control script runs");
+    assert!(
+        rt.execute_script(script).is_ok(),
+        "form-control script runs"
+    );
 
     let logs = rt.drain_console_messages();
     let find = |needle: &str| logs.iter().any(|m| m.text == needle);
-    assert!(find("initial valid: false"), "required+empty input is invalid");
+    assert!(
+        find("initial valid: false"),
+        "required+empty input is invalid"
+    );
     assert!(find("bad type valid: false"), "bad email is invalid");
     assert!(find("typeMismatch: true"));
     assert!(find("good type valid: true"));
-    assert!(find("required value: ada@example.com"), "value setter sticks");
+    assert!(
+        find("required value: ada@example.com"),
+        "value setter sticks"
+    );
     assert!(find("checkbox valid: false"), "required checkbox unchecked");
     assert!(find("checked now: true"));
     assert!(find("checkbox valid after: true"));
@@ -479,7 +537,10 @@ fn test_document_cookie_is_shared_with_jar() {
         document.cookie = 'sid=; Path=/; Max-Age=0';
         console.log('after delete:', document.cookie);
     "#;
-    assert!(rt.execute_script(script).is_ok(), "document.cookie script runs");
+    assert!(
+        rt.execute_script(script).is_ok(),
+        "document.cookie script runs"
+    );
 
     let logs = rt.drain_console_messages();
     let get = |needle: &str| {
@@ -537,7 +598,8 @@ fn test_js_selection_api_on_input() {
     assert!(rt.execute_script(script).is_ok());
     let logs = rt.drain_console_messages();
     assert!(
-        logs.iter().any(|m| m.text.contains("sel start: 0") && m.text.contains("end: 5")),
+        logs.iter()
+            .any(|m| m.text.contains("sel start: 0") && m.text.contains("end: 5")),
         "select() covers the whole value: {:?}",
         logs.iter().map(|m| m.text.clone()).collect::<Vec<_>>()
     );
@@ -547,7 +609,9 @@ fn test_js_selection_api_on_input() {
 
 #[test]
 fn test_js_document_character_set_and_content_type() {
-    let mut doc = parse_html(r#"<!DOCTYPE html><html><head><meta charset="windows-1252"></head><body><h1>Encoding</h1></body></html>"#);
+    let mut doc = parse_html(
+        r#"<!DOCTYPE html><html><head><meta charset="windows-1252"></head><body><h1>Encoding</h1></body></html>"#,
+    );
     assert_eq!(doc.character_set, "windows-1252");
     doc.content_type = "text/html".to_string();
 
@@ -634,8 +698,14 @@ fn test_local_storage_origin_isolation() {
 
     // Direct check of underlying storage map:
     let map = storage.lock().unwrap();
-    assert_eq!(map.get("https://site-a.com\x1fuser").map(|s| s.as_str()), Some("Alice"));
-    assert_eq!(map.get("https://site-b.com\x1fuser").map(|s| s.as_str()), Some("Bob"));
+    assert_eq!(
+        map.get("https://site-a.com\x1fuser").map(|s| s.as_str()),
+        Some("Alice")
+    );
+    assert_eq!(
+        map.get("https://site-b.com\x1fuser").map(|s| s.as_str()),
+        Some("Bob")
+    );
 }
 
 #[test]
@@ -682,11 +752,20 @@ fn test_local_storage_proxy_property_access_and_storage_event() {
     assert!(logs.iter().any(|m| m.text == "item get: dark"));
     assert!(logs.iter().any(|m| m.text == "in operator: true"));
     assert!(logs.iter().any(|m| m.text == "event on set count: 1"));
-    assert!(logs.iter().any(|m| m.text == "event set key: theme new: dark"));
-    assert!(logs.iter().any(|m| m.text == "after delete prop: undefined"));
+    assert!(
+        logs.iter()
+            .any(|m| m.text == "event set key: theme new: dark")
+    );
+    assert!(
+        logs.iter()
+            .any(|m| m.text == "after delete prop: undefined")
+    );
     assert!(logs.iter().any(|m| m.text == "after delete item: null"));
     assert!(logs.iter().any(|m| m.text == "event on del count: 2"));
-    assert!(logs.iter().any(|m| m.text == "event del key: theme old: dark"));
+    assert!(
+        logs.iter()
+            .any(|m| m.text == "event del key: theme old: dark")
+    );
 }
 
 #[test]
@@ -731,7 +810,10 @@ fn test_indexeddb_basic_crud_and_persistence() {
         "#;
         assert!(rt.execute_script(script).is_ok());
         let logs = rt.drain_console_messages();
-        assert!(logs.iter().any(|m| m.text == "retrieved title: Mango Browser"));
+        assert!(
+            logs.iter()
+                .any(|m| m.text == "retrieved title: Mango Browser")
+        );
         assert!(logs.iter().any(|m| m.text == "retrieved fast: true"));
     }
 
@@ -739,9 +821,15 @@ fn test_indexeddb_basic_crud_and_persistence() {
     {
         let map = shared_storage.lock().unwrap();
         let idb_key = "https://myapp.com\x1f__idb__AppDB";
-        assert!(map.contains_key(idb_key), "IndexedDB was serialized into backing storage");
+        assert!(
+            map.contains_key(idb_key),
+            "IndexedDB was serialized into backing storage"
+        );
         let payload = map.get(idb_key).unwrap();
-        assert!(payload.contains("Mango Browser"), "Record found in IDB payload: {payload}");
+        assert!(
+            payload.contains("Mango Browser"),
+            "Record found in IDB payload: {payload}"
+        );
     }
 
     // Page 2: Re-open the database on the same origin; data must still be there!
@@ -780,7 +868,11 @@ fn test_indexeddb_basic_crud_and_persistence() {
         "#;
         assert!(rt2.execute_script(script2).is_ok());
         let logs2 = rt2.drain_console_messages();
-        assert!(logs2.iter().any(|m| m.text == "reloaded title: Mango Browser"));
+        assert!(
+            logs2
+                .iter()
+                .any(|m| m.text == "reloaded title: Mango Browser")
+        );
         assert!(logs2.iter().any(|m| m.text == "getAll count: 1"));
     }
 
@@ -807,7 +899,15 @@ fn test_indexeddb_basic_crud_and_persistence() {
         "#;
         assert!(rt3.execute_script(script3).is_ok());
         let logs3 = rt3.drain_console_messages();
-        assert!(logs3.iter().any(|m| m.text.contains("otherapp needed upgrade")));
-        assert!(logs3.iter().any(|m| m.text == "otherapp objectStoreNames length: 0"));
+        assert!(
+            logs3
+                .iter()
+                .any(|m| m.text.contains("otherapp needed upgrade"))
+        );
+        assert!(
+            logs3
+                .iter()
+                .any(|m| m.text == "otherapp objectStoreNames length: 0")
+        );
     }
 }

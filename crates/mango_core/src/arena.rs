@@ -7,7 +7,13 @@
 //! - Simple serialization
 //! - No reference counting overhead
 //! - Straightforward ownership (the arena owns everything)
+//!
+//! # Thread Safety
+//!
+//! `Arena<T>` is `Send + Sync` when `T` is, enabling parallel layout and style
+//! passes. Static assertions enforce this at compile time.
 
+use std::fmt;
 use std::marker::PhantomData;
 use std::ops::{Index, IndexMut};
 
@@ -46,11 +52,20 @@ impl<T> Eq for Id<T> {}
 impl<T> std::hash::Hash for Id<T> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.index.hash(state);
+        // Hash generation to avoid pathological collisions when slots are
+        // recycled. Generation-0 (wildcard) ids hash differently, but that
+        // is acceptable because wildcard ids should not be stored in
+        // HashMaps — they exist only for transient lookups.
+        self.generation.hash(state);
     }
 }
 
 impl<T> Id<T> {
     /// Creates a new `Id` from a raw index with wildcard (0) generation.
+    ///
+    /// Wildcard ids match any generation during lookups, but should **not** be
+    /// stored in `HashMap`s or `HashSet`s because their `Hash` output differs
+    /// from generation-bearing ids at the same index.
     #[inline]
     pub fn from_raw(index: u32) -> Self {
         Self {
@@ -80,6 +95,12 @@ impl<T> Id<T> {
     #[inline]
     pub fn generation(self) -> u32 {
         self.generation
+    }
+}
+
+impl<T> fmt::Display for Id<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Id({}:gen{})", self.index, self.generation)
     }
 }
 
@@ -136,7 +157,8 @@ impl<T> Arena<T> {
             self.active_count += 1;
             Id::from_raw_parts(free_idx, generation)
         } else {
-            let index = u32::try_from(self.items.len()).expect("Arena capacity overflow: exceeds u32::MAX elements");
+            let index = u32::try_from(self.items.len())
+                .expect("Arena capacity overflow: exceeds u32::MAX elements");
             self.items.push(Slot {
                 value: Some(item),
                 generation: 1,
@@ -161,7 +183,8 @@ impl<T> Arena<T> {
             self.active_count += 1;
             id
         } else {
-            let index = u32::try_from(self.items.len()).expect("Arena capacity overflow: exceeds u32::MAX elements");
+            let index = u32::try_from(self.items.len())
+                .expect("Arena capacity overflow: exceeds u32::MAX elements");
             let id = Id::from_raw_parts(index, 1);
             self.items.push(Slot {
                 value: Some(f(id)),
@@ -172,15 +195,18 @@ impl<T> Arena<T> {
         }
     }
 
-    /// Frees an item in the arena, placing its slot back onto the free-list
-    /// and incrementing the generation to invalidate stale handles.
+    /// Frees an item in the arena, placing its slot back onto the free-list.
+    ///
+    /// The generation is **not** bumped here — it is bumped in [`alloc`] when
+    /// the slot is reused. This avoids wasting half the generation space on a
+    /// free→alloc cycle (previously generation was bumped in both `free` and
+    /// `alloc`).
     pub fn free(&mut self, id: Id<T>) -> Option<T> {
         let slot = self.items.get_mut(id.index as usize)?;
         if id.generation != 0 && slot.generation != id.generation {
             return None; // Stale ID or already freed
         }
         if let Some(val) = slot.value.take() {
-            slot.generation = slot.generation.wrapping_add(1);
             self.free_list.push(id.index);
             self.active_count = self.active_count.saturating_sub(1);
             Some(val)
@@ -192,10 +218,10 @@ impl<T> Arena<T> {
     /// Returns `true` if the item at the given id is currently active (not freed or superseded).
     #[inline]
     pub fn is_alive(&self, id: Id<T>) -> bool {
-        if let Some(slot) = self.items.get(id.index as usize) {
-            if id.generation == 0 || slot.generation == id.generation {
-                return slot.value.is_some();
-            }
+        if let Some(slot) = self.items.get(id.index as usize)
+            && (id.generation == 0 || slot.generation == id.generation)
+        {
+            return slot.value.is_some();
         }
         false
     }
@@ -248,23 +274,64 @@ impl<T> Arena<T> {
 
     /// Returns an iterator over all active items with their generational ids.
     pub fn iter(&self) -> impl Iterator<Item = (Id<T>, &T)> {
-        self.items
-            .iter()
-            .enumerate()
-            .filter_map(|(i, slot)| {
-                slot.value.as_ref().map(|v| (Id::from_raw_parts(i as u32, slot.generation), v))
-            })
+        self.items.iter().enumerate().filter_map(|(i, slot)| {
+            slot.value
+                .as_ref()
+                .map(|v| (Id::from_raw_parts(i as u32, slot.generation), v))
+        })
     }
 
     /// Returns a mutable iterator over all active items with their generational ids.
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (Id<T>, &mut T)> {
-        self.items
-            .iter_mut()
-            .enumerate()
-            .filter_map(|(i, slot)| {
-                let generation = slot.generation;
-                slot.value.as_mut().map(|v| (Id::from_raw_parts(i as u32, generation), v))
-            })
+        self.items.iter_mut().enumerate().filter_map(|(i, slot)| {
+            let generation = slot.generation;
+            slot.value
+                .as_mut()
+                .map(|v| (Id::from_raw_parts(i as u32, generation), v))
+        })
+    }
+
+    /// Removes all items from the arena, resetting it to an empty state.
+    ///
+    /// This preserves the allocated capacity for reuse. Generations are
+    /// **not** reset, so stale `Id` handles from before the clear remain
+    /// correctly invalidated.
+    pub fn clear(&mut self) {
+        for slot in &mut self.items {
+            slot.value = None;
+        }
+        self.free_list.clear();
+        // Rebuild the free list from all slots so they can be reused.
+        // Iterate in reverse so that the lowest indices are popped first
+        // (LIFO), preserving allocation-order locality.
+        for i in (0..self.items.len()).rev() {
+            self.free_list.push(i as u32);
+        }
+        self.active_count = 0;
+    }
+
+    /// Retains only the items for which the predicate returns `true`.
+    ///
+    /// Items removed by the predicate are freed and their slots added to
+    /// the free list for reuse.
+    pub fn retain<F>(&mut self, mut predicate: F)
+    where
+        F: FnMut(Id<T>, &T) -> bool,
+    {
+        for i in 0..self.items.len() {
+            let slot = &self.items[i];
+            let dominated = if let Some(ref val) = slot.value {
+                let id = Id::from_raw_parts(i as u32, slot.generation);
+                !predicate(id, val)
+            } else {
+                false
+            };
+            if dominated {
+                self.items[i].value = None;
+                self.free_list.push(i as u32);
+                self.active_count = self.active_count.saturating_sub(1);
+            }
+        }
     }
 }
 
@@ -293,6 +360,21 @@ impl<T> IndexMut<Id<T>> for Arena<T> {
             .expect("Attempted to index a freed, stale, or unallocated Arena slot")
     }
 }
+
+// Compile-time assertions: Arena<T> is Send+Sync when T is.
+const _: () = {
+    #[allow(dead_code)]
+    fn assert_send<T: Send>() {}
+    #[allow(dead_code)]
+    fn assert_sync<T: Sync>() {}
+    #[allow(dead_code)]
+    fn assertions() {
+        assert_send::<Arena<String>>();
+        assert_sync::<Arena<String>>();
+        assert_send::<Id<String>>();
+        assert_sync::<Id<String>>();
+    }
+};
 
 #[cfg(test)]
 mod tests {
@@ -355,11 +437,62 @@ mod tests {
         // Allocate a new item — should recycle slot b
         let d = arena.alloc("recycled");
         assert_eq!(d.raw(), b.raw(), "Should reuse the freed slot index");
-        assert_ne!(d.generation(), b.generation(), "Generations must differ to invalidate stale handles");
+        assert_ne!(
+            d.generation(),
+            b.generation(),
+            "Generations must differ to invalidate stale handles"
+        );
         assert_eq!(arena[d], "recycled");
-        assert!(arena.get(b).is_none(), "Stale handle b must not access newly recycled item d");
+        assert!(
+            arena.get(b).is_none(),
+            "Stale handle b must not access newly recycled item d"
+        );
         assert_eq!(arena.len(), 3);
         assert_eq!(arena.free_slots(), 0);
         assert_eq!(arena.total_slots(), 3, "No new slot allocation needed");
+    }
+
+    #[test]
+    fn test_arena_clear() {
+        let mut arena = Arena::new();
+        let a = arena.alloc("one");
+        let _b = arena.alloc("two");
+        arena.clear();
+        assert_eq!(arena.len(), 0);
+        assert!(arena.is_empty());
+        assert!(arena.get(a).is_none());
+        // Slots are preserved for reuse
+        assert_eq!(arena.total_slots(), 2);
+        assert_eq!(arena.free_slots(), 2);
+        // New allocation reuses slot
+        let c = arena.alloc("three");
+        assert_eq!(arena[c], "three");
+        assert_eq!(arena.len(), 1);
+    }
+
+    #[test]
+    fn test_arena_retain() {
+        let mut arena = Arena::new();
+        arena.alloc(1);
+        arena.alloc(2);
+        arena.alloc(3);
+        arena.alloc(4);
+        arena.retain(|_, &v| v % 2 == 0);
+        assert_eq!(arena.len(), 2);
+        let values: Vec<i32> = arena.iter().map(|(_, v)| *v).collect();
+        assert_eq!(values, vec![2, 4]);
+    }
+
+    #[test]
+    fn test_id_display() {
+        let id: Id<i32> = Id::from_raw_parts(42, 3);
+        assert_eq!(format!("{id}"), "Id(42:gen3)");
+    }
+
+    #[test]
+    fn test_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<Arena<i32>>();
+        assert_send_sync::<Id<i32>>();
     }
 }

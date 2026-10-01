@@ -77,15 +77,15 @@ impl PixelBuffer {
 /// Creates the Mango browser window with default settings.
 ///
 /// Returns the window and a suggested initial size.
-pub fn create_window(
-    event_loop: &winit::event_loop::ActiveEventLoop,
-) -> Arc<Window> {
+pub fn create_window(event_loop: &winit::event_loop::ActiveEventLoop) -> Arc<Window> {
     let attrs = Window::default_attributes()
         .with_title("🥭 Mango")
         .with_inner_size(LogicalSize::new(1024.0, 768.0))
         .with_min_inner_size(LogicalSize::new(400.0, 300.0));
 
-    let window = event_loop.create_window(attrs).expect("failed to create window");
+    let window = event_loop
+        .create_window(attrs)
+        .expect("failed to create window");
     Arc::new(window)
 }
 

@@ -224,14 +224,15 @@ impl HttpClient {
 
         let response = req.call().map_err(|e| match e {
             ureq::Error::Timeout(_) => NetworkError::Timeout,
-            ureq::Error::HostNotFound => {
-                NetworkError::DnsResolutionFailed(format!("Host not found: {}", url.host.as_deref().unwrap_or("")))
+            ureq::Error::HostNotFound => NetworkError::DnsResolutionFailed(format!(
+                "Host not found: {}",
+                url.host.as_deref().unwrap_or("")
+            )),
+            ureq::Error::ConnectionFailed => {
+                NetworkError::ConnectionFailed("Connection failed".to_string())
             }
-            ureq::Error::ConnectionFailed => NetworkError::ConnectionFailed("Connection failed".to_string()),
             ureq::Error::Tls(msg) => NetworkError::TlsError(msg.to_string()),
-            ureq::Error::StatusCode(code) => {
-                NetworkError::HttpError(code, format!("HTTP {code}"))
-            }
+            ureq::Error::StatusCode(code) => NetworkError::HttpError(code, format!("HTTP {code}")),
             other => NetworkError::Other(other.to_string()),
         })?;
 
@@ -248,7 +249,11 @@ impl HttpClient {
         }
 
         let status = response.status().as_u16();
-        let status_text = response.status().canonical_reason().unwrap_or("").to_string();
+        let status_text = response
+            .status()
+            .canonical_reason()
+            .unwrap_or("")
+            .to_string();
 
         let mut headers = HashMap::new();
         for (name, val) in response.headers() {
@@ -344,16 +349,15 @@ impl HttpClient {
 
         let resp = req.send(body).map_err(|e| match e {
             ureq::Error::Timeout(_) => NetworkError::Timeout,
-            ureq::Error::HostNotFound => NetworkError::DnsResolutionFailed(
-                format!("Host not found: {}", url.host.as_deref().unwrap_or("")),
-            ),
+            ureq::Error::HostNotFound => NetworkError::DnsResolutionFailed(format!(
+                "Host not found: {}",
+                url.host.as_deref().unwrap_or("")
+            )),
             ureq::Error::ConnectionFailed => {
                 NetworkError::ConnectionFailed("Connection failed".to_string())
             }
             ureq::Error::Tls(msg) => NetworkError::TlsError(msg.to_string()),
-            ureq::Error::StatusCode(code) => {
-                NetworkError::HttpError(code, format!("HTTP {code}"))
-            }
+            ureq::Error::StatusCode(code) => NetworkError::HttpError(code, format!("HTTP {code}")),
             other => NetworkError::Other(other.to_string()),
         })?;
 
@@ -370,11 +374,7 @@ impl HttpClient {
         }
 
         let status = resp.status().as_u16();
-        let status_text = resp
-            .status()
-            .canonical_reason()
-            .unwrap_or("")
-            .to_string();
+        let status_text = resp.status().canonical_reason().unwrap_or("").to_string();
 
         let mut headers = HashMap::new();
         for (name, val) in resp.headers() {
@@ -386,16 +386,14 @@ impl HttpClient {
         // Handle Post/Redirect/Get (301, 302, 303)
         if (status == 301 || status == 302 || status == 303)
             && let Some(loc) = headers.get("location")
+            && let Ok(redirect_url) = url.resolve(loc)
         {
-            if let Ok(redirect_url) = url.resolve(loc) {
-                return self.fetch(&redirect_url);
-            }
+            return self.fetch(&redirect_url);
         }
 
-        let body_bytes = resp
-            .into_body()
-            .read_to_vec()
-            .map_err(|e| NetworkError::IoError(format!("Failed to read POST response body: {e}")))?;
+        let body_bytes = resp.into_body().read_to_vec().map_err(|e| {
+            NetworkError::IoError(format!("Failed to read POST response body: {e}"))
+        })?;
 
         Ok(HttpResponse {
             final_url: url.clone(),
@@ -422,48 +420,51 @@ impl HttpClient {
         let upper_method = method.trim().to_uppercase();
 
         let resp = if upper_method == "GET" && body.is_none() {
-            let mut req = self.agent
+            let mut req = self
+                .agent
                 .get(&url_str)
                 .header("User-Agent", &self.user_agent)
                 .header("Accept", "*/*")
                 .header("Accept-Language", "en-US,en;q=0.9")
                 .header("Accept-Encoding", "gzip, deflate, br");
-            if let Ok(jar) = self.cookie_jar.lock() {
-                if let Some(cookie_hdr) = jar.get_cookie_header_with_context(url, None, true, true) {
-                    req = req.header("Cookie", &cookie_hdr);
-                }
+            if let Ok(jar) = self.cookie_jar.lock()
+                && let Some(cookie_hdr) = jar.get_cookie_header_with_context(url, None, true, true)
+            {
+                req = req.header("Cookie", &cookie_hdr);
             }
             for (k, v) in custom_headers {
                 req = req.header(k.as_str(), v.as_str());
             }
             req.call()
         } else if upper_method == "HEAD" {
-            let mut req = self.agent
+            let mut req = self
+                .agent
                 .head(&url_str)
                 .header("User-Agent", &self.user_agent)
                 .header("Accept", "*/*")
                 .header("Accept-Language", "en-US,en;q=0.9")
                 .header("Accept-Encoding", "gzip, deflate, br");
-            if let Ok(jar) = self.cookie_jar.lock() {
-                if let Some(cookie_hdr) = jar.get_cookie_header_with_context(url, None, true, true) {
-                    req = req.header("Cookie", &cookie_hdr);
-                }
+            if let Ok(jar) = self.cookie_jar.lock()
+                && let Some(cookie_hdr) = jar.get_cookie_header_with_context(url, None, true, true)
+            {
+                req = req.header("Cookie", &cookie_hdr);
             }
             for (k, v) in custom_headers {
                 req = req.header(k.as_str(), v.as_str());
             }
             req.call()
         } else if upper_method == "DELETE" {
-            let mut req = self.agent
+            let mut req = self
+                .agent
                 .delete(&url_str)
                 .header("User-Agent", &self.user_agent)
                 .header("Accept", "*/*")
                 .header("Accept-Language", "en-US,en;q=0.9")
                 .header("Accept-Encoding", "gzip, deflate, br");
-            if let Ok(jar) = self.cookie_jar.lock() {
-                if let Some(cookie_hdr) = jar.get_cookie_header_with_context(url, None, true, true) {
-                    req = req.header("Cookie", &cookie_hdr);
-                }
+            if let Ok(jar) = self.cookie_jar.lock()
+                && let Some(cookie_hdr) = jar.get_cookie_header_with_context(url, None, true, true)
+            {
+                req = req.header("Cookie", &cookie_hdr);
             }
             for (k, v) in custom_headers {
                 req = req.header(k.as_str(), v.as_str());
@@ -480,10 +481,10 @@ impl HttpClient {
                 .header("Accept", "*/*")
                 .header("Accept-Language", "en-US,en;q=0.9")
                 .header("Accept-Encoding", "gzip, deflate, br");
-            if let Ok(jar) = self.cookie_jar.lock() {
-                if let Some(cookie_hdr) = jar.get_cookie_header_with_context(url, None, true, true) {
-                    req = req.header("Cookie", &cookie_hdr);
-                }
+            if let Ok(jar) = self.cookie_jar.lock()
+                && let Some(cookie_hdr) = jar.get_cookie_header_with_context(url, None, true, true)
+            {
+                req = req.header("Cookie", &cookie_hdr);
             }
             for (k, v) in custom_headers {
                 req = req.header(k.as_str(), v.as_str());
@@ -492,18 +493,18 @@ impl HttpClient {
                 Some(b) => req.send(b),
                 None => req.send_empty(),
             }
-        }.map_err(|e| match e {
+        }
+        .map_err(|e| match e {
             ureq::Error::Timeout(_) => NetworkError::Timeout,
-            ureq::Error::HostNotFound => NetworkError::DnsResolutionFailed(
-                format!("Host not found: {}", url.host.as_deref().unwrap_or("")),
-            ),
+            ureq::Error::HostNotFound => NetworkError::DnsResolutionFailed(format!(
+                "Host not found: {}",
+                url.host.as_deref().unwrap_or("")
+            )),
             ureq::Error::ConnectionFailed => {
                 NetworkError::ConnectionFailed("Connection failed".to_string())
             }
             ureq::Error::Tls(msg) => NetworkError::TlsError(msg.to_string()),
-            ureq::Error::StatusCode(code) => {
-                NetworkError::HttpError(code, format!("HTTP {code}"))
-            }
+            ureq::Error::StatusCode(code) => NetworkError::HttpError(code, format!("HTTP {code}")),
             other => NetworkError::Other(other.to_string()),
         })?;
 
@@ -520,11 +521,7 @@ impl HttpClient {
         }
 
         let status = resp.status().as_u16();
-        let status_text = resp
-            .status()
-            .canonical_reason()
-            .unwrap_or("")
-            .to_string();
+        let status_text = resp.status().canonical_reason().unwrap_or("").to_string();
 
         let mut headers = HashMap::new();
         for (name, val) in resp.headers() {
@@ -560,7 +557,10 @@ mod tests {
             "content-type".to_string(),
             "text/html; charset=UTF-8".to_string(),
         );
-        headers.insert("location".to_string(), "https://example.com/dest".to_string());
+        headers.insert(
+            "location".to_string(),
+            "https://example.com/dest".to_string(),
+        );
 
         let resp = HttpResponse {
             final_url: Url::parse("https://example.com").unwrap(),
@@ -583,14 +583,11 @@ mod tests {
         let mut jar = CookieJar::new();
         let url = Url::parse("https://duckduckgo.com/settings").unwrap();
 
-        let cookie1 = CookieJar::parse_set_cookie(
-            "p=1; Path=/; Domain=duckduckgo.com; Secure",
-            &url,
-        ).unwrap();
-        let cookie2 = CookieJar::parse_set_cookie(
-            "theme=dark; Path=/settings; HttpOnly",
-            &url,
-        ).unwrap();
+        let cookie1 =
+            CookieJar::parse_set_cookie("p=1; Path=/; Domain=duckduckgo.com; Secure", &url)
+                .unwrap();
+        let cookie2 =
+            CookieJar::parse_set_cookie("theme=dark; Path=/settings; HttpOnly", &url).unwrap();
 
         jar.store_cookie(cookie1);
         jar.store_cookie(cookie2);
@@ -613,7 +610,8 @@ mod tests {
         let delete_cookie = CookieJar::parse_set_cookie(
             "p=deleted; Max-Age=0; Domain=duckduckgo.com; Path=/",
             &url,
-        ).unwrap();
+        )
+        .unwrap();
         jar.store_cookie(delete_cookie);
 
         let after_delete = jar.get_cookie_header(&url).unwrap();

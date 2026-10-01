@@ -12,8 +12,7 @@ use image::{AnimationDecoder, GenericImageView};
 
 static DECODED_IMAGE_CACHE: std::sync::OnceLock<RwLock<HashMap<String, DecodedImage>>> =
     std::sync::OnceLock::new();
-static DECODE_IN_FLIGHT: std::sync::OnceLock<RwLock<HashSet<String>>> =
-    std::sync::OnceLock::new();
+static DECODE_IN_FLIGHT: std::sync::OnceLock<RwLock<HashSet<String>>> = std::sync::OnceLock::new();
 
 static SCALED_IMAGE_CACHE: std::sync::OnceLock<RwLock<HashMap<(String, u32, u32), DecodedImage>>> =
     std::sync::OnceLock::new();
@@ -47,14 +46,22 @@ pub fn get_scaled_image(key: &str, target_w: u32, target_h: u32) -> Option<Decod
 pub fn cache_scaled_image(key: &str, target_w: u32, target_h: u32, img: DecodedImage) {
     if let Ok(mut cache) = global_scaled_cache().write() {
         if cache.len() > 512 {
-            cache.clear();
+            let keys_to_remove: Vec<_> = cache.keys().take(256).cloned().collect();
+            for k in keys_to_remove {
+                cache.remove(&k);
+            }
         }
         cache.insert((key.to_string(), target_w, target_h), img);
     }
 }
 
 /// Gets an existing scaled image or scales the provided image and caches the result.
-pub fn get_or_resize_cached(key: &str, img: &DecodedImage, target_w: u32, target_h: u32) -> DecodedImage {
+pub fn get_or_resize_cached(
+    key: &str,
+    img: &DecodedImage,
+    target_w: u32,
+    target_h: u32,
+) -> DecodedImage {
     if let Some(scaled) = get_scaled_image(key, target_w, target_h) {
         return scaled;
     }
@@ -69,10 +76,10 @@ pub fn decode_image_async(key: String, bytes: Vec<u8>) {
     if get_cached_image(&key).is_some() {
         return;
     }
-    if let Ok(mut in_flight) = in_flight_set().write() {
-        if !in_flight.insert(key.clone()) {
-            return; // Decode already in progress
-        }
+    if let Ok(mut in_flight) = in_flight_set().write()
+        && !in_flight.insert(key.clone())
+    {
+        return; // Decode already in progress
     }
 
     std::thread::Builder::new()
@@ -127,7 +134,13 @@ pub fn get_cached_image(key: &str) -> Option<DecodedImage> {
             return Some(img.clone());
         }
     }
-    let clean_key = key.split('?').next().unwrap_or(key).split('#').next().unwrap_or(key);
+    let clean_key = key
+        .split('?')
+        .next()
+        .unwrap_or(key)
+        .split('#')
+        .next()
+        .unwrap_or(key);
     if let Some(img) = cache.get(clean_key) {
         return Some(img.clone());
     }
@@ -140,7 +153,6 @@ pub fn get_cached_image(key: &str) -> Option<DecodedImage> {
     }
     None
 }
-
 
 /// A decoded image ready for framebuffer blitting.
 #[derive(Debug, Clone)]
@@ -245,7 +257,12 @@ impl DecodedImage {
         if self.width == target_w && self.height == target_h {
             return self.clone();
         }
-        if target_w == 0 || target_h == 0 || self.width == 0 || self.height == 0 || self.pixels.is_empty() {
+        if target_w == 0
+            || target_h == 0
+            || self.width == 0
+            || self.height == 0
+            || self.pixels.is_empty()
+        {
             return DecodedImage {
                 width: target_w,
                 height: target_h,
@@ -389,7 +406,11 @@ fn compute_resample_weights(src_len: usize, dst_len: usize) -> Vec<ResampleContr
                 weights[0] = 1.0;
             }
 
-            contribs.push(ResampleContrib { start, end, weights });
+            contribs.push(ResampleContrib {
+                start,
+                end,
+                weights,
+            });
         }
     } else {
         // Upscaling: Bilinear interpolation
@@ -444,7 +465,11 @@ pub fn decode_data_uri(uri: &str) -> Option<DecodedImage> {
         .to_ascii_lowercase();
 
     if mime == "image/svg+xml"
-        || (!is_base64 && (data.starts_with("<svg") || data.starts_with("%3Csvg") || data.starts_with("%3C%21DOCTYPE") || data.starts_with("%3C%3Fxml")))
+        || (!is_base64
+            && (data.starts_with("<svg")
+                || data.starts_with("%3Csvg")
+                || data.starts_with("%3C%21DOCTYPE")
+                || data.starts_with("%3C%3Fxml")))
     {
         let svg_str = if is_base64 {
             let bytes = base64_decode(data)?;
@@ -538,8 +563,8 @@ pub fn is_progressive_jpeg(bytes: &[u8]) -> bool {
 /// Returns a sequence of progressive scan approximations (from coarse preview to final crisp image).
 pub fn decode_progressive_jpeg_scans(bytes: &[u8]) -> Result<Vec<ProgressiveScan>, String> {
     if !is_progressive_jpeg(bytes) {
-        let img = decode_image_bytes(bytes)
-            .ok_or_else(|| "Failed to decode JPEG bytes".to_string())?;
+        let img =
+            decode_image_bytes(bytes).ok_or_else(|| "Failed to decode JPEG bytes".to_string())?;
         return Ok(vec![ProgressiveScan {
             scan_index: 0,
             is_final: true,
@@ -649,10 +674,10 @@ pub fn decode_animated_gif(bytes: &[u8]) -> Option<AnimatedImage> {
 
 /// Decodes an animated image from raw bytes (GIF, APNG, WebP, or fallback single frame).
 pub fn decode_animated_image_bytes(bytes: &[u8]) -> Option<AnimatedImage> {
-    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
-        if let Some(anim) = decode_animated_gif(bytes) {
-            return Some(anim);
-        }
+    if (bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a"))
+        && let Some(anim) = decode_animated_gif(bytes)
+    {
+        return Some(anim);
     }
 
     let single = decode_image_bytes(bytes)?;
@@ -673,11 +698,14 @@ fn percent_decode(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len()
-            && let Ok(byte) = u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16) {
-                out.push(byte as char);
-                i += 3;
-                continue;
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let Ok(byte) =
+                u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16)
+        {
+            out.push(byte as char);
+            i += 3;
+            continue;
         }
         out.push(bytes[i] as char);
         i += 1;
@@ -772,7 +800,7 @@ pub fn base64_decode(input: &str) -> Option<Vec<u8>> {
 /// Simple base64 encoder.
 pub fn base64_encode(input: &[u8]) -> String {
     const CHARSET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity((input.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
     let mut chunks = input.chunks_exact(3);
     for chunk in chunks.by_ref() {
         let b0 = chunk[0] as usize;
@@ -874,7 +902,10 @@ mod tests {
     fn test_decode_svg_data_uri_with_charset() {
         let svg_data = "data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20'%3E%3Cpath d='M0 0h20v20H0z' fill='%23ff0000'/%3E%3C/svg%3E";
         let result = decode_data_uri(svg_data);
-        assert!(result.is_some(), "Should decode SVG data URI with charset=utf-8");
+        assert!(
+            result.is_some(),
+            "Should decode SVG data URI with charset=utf-8"
+        );
         let img = result.unwrap();
         assert_eq!(img.width, 20);
         assert_eq!(img.height, 20);
@@ -886,7 +917,10 @@ mod tests {
         let b64 = base64_encode(svg.as_bytes());
         let uri = format!("data:image/svg+xml;charset=utf-8;base64,{b64}");
         let result = decode_data_uri(&uri);
-        assert!(result.is_some(), "Should decode SVG data URI with charset and base64");
+        assert!(
+            result.is_some(),
+            "Should decode SVG data URI with charset and base64"
+        );
     }
 
     #[test]
@@ -916,10 +950,8 @@ mod tests {
             0xFF, 0xE0, 0x00, 0x10, // APP0 length 16
             0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00,
             0xFF, 0xC2, 0x00, 0x0B, // SOF2 (Progressive DCT), length 11
-            0x08, 0x00, 0x10, 0x00, 0x10, 0x03, 0x01, 0x11, 0x00,
-            0xFF, 0xDA, // SOS
-            0x00, 0x00,
-            0xFF, 0xD9, // EOI
+            0x08, 0x00, 0x10, 0x00, 0x10, 0x03, 0x01, 0x11, 0x00, 0xFF, 0xDA, // SOS
+            0x00, 0x00, 0xFF, 0xD9, // EOI
         ];
         assert!(is_progressive_jpeg(&progressive_header));
 
@@ -927,8 +959,7 @@ mod tests {
         let baseline_header = [
             0xFF, 0xD8, // SOI
             0xFF, 0xC0, 0x00, 0x0B, // SOF0 (Baseline DCT)
-            0x08, 0x00, 0x10, 0x00, 0x10, 0x03, 0x01, 0x11, 0x00,
-            0xFF, 0xD9, // EOI
+            0x08, 0x00, 0x10, 0x00, 0x10, 0x03, 0x01, 0x11, 0x00, 0xFF, 0xD9, // EOI
         ];
         assert!(!is_progressive_jpeg(&baseline_header));
 

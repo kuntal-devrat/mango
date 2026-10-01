@@ -1,8 +1,8 @@
+#![allow(clippy::field_reassign_with_default)]
+
 use mango_core::{EdgeSizes, Rect};
 use mango_css::computed::ComputedStyle;
-use mango_css::values::{
-    BreakInside, ColumnSpan, Length, Overflow, Position, WritingMode,
-};
+use mango_css::values::{BreakInside, ColumnSpan, Length, Overflow, Position, WritingMode};
 use mango_layout::box_model::BoxType;
 use mango_layout::box_tree::LayoutBox;
 use mango_layout::dimensions::Dimensions;
@@ -123,8 +123,14 @@ fn test_scroll_container_display_list_offset_and_scrollbars() {
     let dl = build_display_list_with_scroll(&container, 0.0);
 
     // Verify DisplayList has PushClip and PopClip around children
-    let has_push_clip = dl.as_slice().iter().any(|cmd| matches!(cmd, DisplayCommand::PushClip { .. }));
-    let has_pop_clip = dl.as_slice().iter().any(|cmd| matches!(cmd, DisplayCommand::PopClip));
+    let has_push_clip = dl
+        .as_slice()
+        .iter()
+        .any(|cmd| matches!(cmd, DisplayCommand::PushClip { .. }));
+    let has_pop_clip = dl
+        .as_slice()
+        .iter()
+        .any(|cmd| matches!(cmd, DisplayCommand::PopClip));
     assert!(has_push_clip);
     assert!(has_pop_clip);
 
@@ -176,7 +182,7 @@ fn test_position_sticky_4_directions() {
         _ => None,
     });
     // Ensure display list rendered
-    assert!(dl.len() > 0);
+    assert!(!dl.is_empty());
 }
 
 #[test]
@@ -271,7 +277,9 @@ fn test_block_fragmentation_with_break_avoid() {
     assert_eq!(container.children.len(), 2);
     // Because item 2 avoids breaking inside, when column 1 target is exceeded,
     // item 2 is pushed cleanly to column 2!
-    assert!(container.children[1].dimensions.content.x() > container.children[0].dimensions.content.x());
+    assert!(
+        container.children[1].dimensions.content.x() > container.children[0].dimensions.content.x()
+    );
 }
 
 #[test]
@@ -298,7 +306,9 @@ fn test_writing_mode_vertical_text_layout() {
     // In vertical layout, children are glyphs/lines running downward along Y
     assert!(container.children.len() >= 5);
     // Y coordinates should increase top to bottom
-    assert!(container.children[1].dimensions.content.y() > container.children[0].dimensions.content.y());
+    assert!(
+        container.children[1].dimensions.content.y() > container.children[0].dimensions.content.y()
+    );
     assert!(total_h > 0.0);
 
     // Test vertical-lr
@@ -318,9 +328,13 @@ fn test_writing_mode_vertical_text_layout() {
     container_lr.children.push(text_box_lr);
 
     let mut float_ctx_lr = FloatContext::new();
-    let total_h_lr = mango_layout::inline_flow::layout_inline_children(&mut container_lr, &mut float_ctx_lr);
+    let total_h_lr =
+        mango_layout::inline_flow::layout_inline_children(&mut container_lr, &mut float_ctx_lr);
 
     assert!(container_lr.children.len() >= 5);
-    assert!(container_lr.children[1].dimensions.content.y() > container_lr.children[0].dimensions.content.y());
+    assert!(
+        container_lr.children[1].dimensions.content.y()
+            > container_lr.children[0].dimensions.content.y()
+    );
     assert!(total_h_lr > 0.0);
 }

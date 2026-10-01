@@ -12,7 +12,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::{Window, WindowId};
 
 use mango_platform::input::{KeyEvent, KeyState, MangoKey, Modifiers};
-use mango_platform::window::{create_window, PixelBuffer};
+use mango_platform::window::{PixelBuffer, create_window};
 
 use crate::browser::BrowserChrome;
 
@@ -129,10 +129,9 @@ impl ApplicationHandler for MangoApp {
             }
         }
 
-        if needs_redraw
-            && let Some(window) = &self.window {
-                window.request_redraw();
-            }
+        if needs_redraw && let Some(window) = &self.window {
+            window.request_redraw();
+        }
     }
 
     fn window_event(

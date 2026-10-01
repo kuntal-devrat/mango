@@ -31,7 +31,9 @@ pub type LayoutBounds = Rc<RefCell<std::collections::HashMap<u32, [f32; 4]>>>;
 pub type CookieStore = std::sync::Arc<std::sync::Mutex<mango_net::CookieJar>>;
 
 fn jar_lock(store: &CookieStore) -> std::sync::MutexGuard<'_, mango_net::CookieJar> {
-    store.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Helper macro to create an unsafe NativeFunction::from_closure.
@@ -84,10 +86,10 @@ pub fn register_document_api(
         } else {
             NodeId::from_raw(scope_idx)
         };
-        if let Some(selectors) = mango_css::parse_selectors(&sel_str) {
-            if let Some(found) = find_first_matching_element(&document, scope_id, &selectors) {
-                return Ok(JsValue::from(found.raw() as i32));
-            }
+        if let Some(selectors) = mango_css::parse_selectors(&sel_str)
+            && let Some(found) = find_first_matching_element(&document, scope_id, &selectors)
+        {
+            return Ok(JsValue::from(found.raw() as i32));
         }
         match query_selector_simple(&document, scope_id, &sel_str) {
             Some(node_id) => Ok(JsValue::from(node_id.raw() as i32)),
@@ -117,7 +119,10 @@ pub fn register_document_api(
         if let Some(selectors) = mango_css::parse_selectors(&sel_str) {
             collect_matching_elements(&document, scope_id, &selectors, &mut matched);
         }
-        let values: Vec<JsValue> = matched.into_iter().map(|id| JsValue::from(id.raw() as i32)).collect();
+        let values: Vec<JsValue> = matched
+            .into_iter()
+            .map(|id| JsValue::from(id.raw() as i32))
+            .collect();
         let js_array = JsArray::from_iter(values, ctx);
         Ok(js_array.into())
     });
@@ -152,11 +157,27 @@ pub fn register_document_api(
 
     // Register document object with methods
     let doc_obj = boa_engine::object::ObjectInitializer::new(context)
-        .function(get_element_by_id, boa_engine::js_string!("getElementById"), 1)
-        .function(query_selector.clone(), boa_engine::js_string!("querySelector"), 1)
-        .function(query_selector_all.clone(), boa_engine::js_string!("querySelectorAll"), 1)
+        .function(
+            get_element_by_id,
+            boa_engine::js_string!("getElementById"),
+            1,
+        )
+        .function(
+            query_selector.clone(),
+            boa_engine::js_string!("querySelector"),
+            1,
+        )
+        .function(
+            query_selector_all.clone(),
+            boa_engine::js_string!("querySelectorAll"),
+            1,
+        )
         .function(create_element, boa_engine::js_string!("createElement"), 1)
-        .function(create_text_node, boa_engine::js_string!("createTextNode"), 1)
+        .function(
+            create_text_node,
+            boa_engine::js_string!("createTextNode"),
+            1,
+        )
         .build();
 
     context
@@ -182,7 +203,10 @@ pub fn register_document_api(
     let dirty_ref = dirty.clone();
     let set_text_content = native_fn!(move |_this, args, ctx| {
         let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let text = args.get_or_undefined(1).to_string(ctx)?.to_std_string_escaped();
+        let text = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         let node_id = NodeId::from_raw(node_idx);
         let mut document = doc_ref.borrow_mut();
         let children: Vec<NodeId> = document.children(node_id).map(|n| n.id).collect();
@@ -220,19 +244,26 @@ pub fn register_document_api(
     let dirty_ref = dirty.clone();
     let set_attribute = native_fn!(move |_this, args, ctx| {
         let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let name = args.get_or_undefined(1).to_string(ctx)?.to_std_string_escaped();
-        let value = args.get_or_undefined(2).to_string(ctx)?.to_std_string_escaped();
+        let name = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
+        let value = args
+            .get_or_undefined(2)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         let node_id = NodeId::from_raw(node_idx);
         let mut document = doc_ref.borrow_mut();
         if let Some(node) = document.get_mut(node_id)
-            && let NodeData::Element(ref mut elem) = node.data {
-                if let Some(attr) = elem.attributes.iter_mut().find(|(k, _)| k == &name) {
-                    attr.1 = value;
-                } else {
-                    elem.attributes.push((name, value));
-                }
-                *dirty_ref.borrow_mut() = true;
+            && let NodeData::Element(ref mut elem) = node.data
+        {
+            if let Some(attr) = elem.attributes.iter_mut().find(|(k, _)| k == &name) {
+                attr.1 = value;
+            } else {
+                elem.attributes.push((name, value));
             }
+            *dirty_ref.borrow_mut() = true;
+        }
         Ok(JsValue::undefined())
     });
 
@@ -240,28 +271,36 @@ pub fn register_document_api(
     let dirty_ref = dirty.clone();
     let remove_attribute = native_fn!(move |_this, args, ctx| {
         let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let name = args.get_or_undefined(1).to_string(ctx)?.to_std_string_escaped();
+        let name = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         let node_id = NodeId::from_raw(node_idx);
         let mut document = doc_ref.borrow_mut();
         if let Some(node) = document.get_mut(node_id)
-            && let NodeData::Element(ref mut elem) = node.data {
-                elem.attributes.retain(|(k, _)| k != &name);
-                *dirty_ref.borrow_mut() = true;
-            }
+            && let NodeData::Element(ref mut elem) = node.data
+        {
+            elem.attributes.retain(|(k, _)| k != &name);
+            *dirty_ref.borrow_mut() = true;
+        }
         Ok(JsValue::undefined())
     });
 
     let doc_ref = doc.clone();
     let get_attribute = native_fn!(move |_this, args, ctx| {
         let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let name = args.get_or_undefined(1).to_string(ctx)?.to_std_string_escaped();
+        let name = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         let node_id = NodeId::from_raw(node_idx);
         let document = doc_ref.borrow();
         if let Some(node) = document.get(node_id)
             && let NodeData::Element(ref elem) = node.data
-                && let Some(val) = elem.get_attribute(&name) {
-                    return Ok(JsValue::from(boa_engine::js_string!(val)));
-                }
+            && let Some(val) = elem.get_attribute(&name)
+        {
+            return Ok(JsValue::from(boa_engine::js_string!(val)));
+        }
         Ok(JsValue::null())
     });
 
@@ -271,39 +310,49 @@ pub fn register_document_api(
         let node_id = NodeId::from_raw(node_idx);
         let document = doc_ref.borrow();
         if let Some(node) = document.get(node_id)
-            && let NodeData::Element(ref elem) = node.data {
-                return Ok(JsValue::from(boa_engine::js_string!(elem.tag_name.to_uppercase())));
-            }
+            && let NodeData::Element(ref elem) = node.data
+        {
+            return Ok(JsValue::from(boa_engine::js_string!(
+                elem.tag_name.to_uppercase()
+            )));
+        }
         Ok(JsValue::from(boa_engine::js_string!("")))
     });
 
     let doc_ref = doc.clone();
     let element_matches = native_fn!(move |_this, args, ctx| {
         let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let sel_str = args.get_or_undefined(1).to_string(ctx)?.to_std_string_escaped();
+        let sel_str = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         let node_id = NodeId::from_raw(node_idx);
         let document = doc_ref.borrow();
         if let Some(selectors) = mango_css::parse_selectors(&sel_str) {
             return Ok(JsValue::from(selectors.matches(node_id, &document)));
         }
         if let Some(node) = document.get(node_id)
-            && let NodeData::Element(elem) = &node.data {
-                let s = sel_str.trim();
-                if let Some(id) = s.strip_prefix('#') {
-                    return Ok(JsValue::from(elem.id() == Some(id)));
-                }
-                if let Some(cls) = s.strip_prefix('.') {
-                    return Ok(JsValue::from(elem.has_class(cls)));
-                }
-                return Ok(JsValue::from(elem.tag_name.eq_ignore_ascii_case(s)));
+            && let NodeData::Element(elem) = &node.data
+        {
+            let s = sel_str.trim();
+            if let Some(id) = s.strip_prefix('#') {
+                return Ok(JsValue::from(elem.id() == Some(id)));
             }
+            if let Some(cls) = s.strip_prefix('.') {
+                return Ok(JsValue::from(elem.has_class(cls)));
+            }
+            return Ok(JsValue::from(elem.tag_name.eq_ignore_ascii_case(s)));
+        }
         Ok(JsValue::from(false))
     });
 
     let doc_ref = doc.clone();
     let element_closest = native_fn!(move |_this, args, ctx| {
         let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let sel_str = args.get_or_undefined(1).to_string(ctx)?.to_std_string_escaped();
+        let sel_str = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         let mut curr_id = Some(NodeId::from_raw(node_idx));
         let document = doc_ref.borrow();
         let selectors = mango_css::parse_selectors(&sel_str);
@@ -350,13 +399,17 @@ pub fn register_document_api(
     let doc_ref = doc.clone();
     let get_character_set = native_fn!(move |_this, _args, _ctx| {
         let document = doc_ref.borrow();
-        Ok(JsValue::from(boa_engine::js_string!(document.character_set.clone())))
+        Ok(JsValue::from(boa_engine::js_string!(
+            document.character_set.clone()
+        )))
     });
 
     let doc_ref = doc.clone();
     let get_content_type = native_fn!(move |_this, _args, _ctx| {
         let document = doc_ref.borrow();
-        Ok(JsValue::from(boa_engine::js_string!(document.content_type.clone())))
+        Ok(JsValue::from(boa_engine::js_string!(
+            document.content_type.clone()
+        )))
     });
 
     let doc_ref = doc.clone();
@@ -365,11 +418,12 @@ pub fn register_document_api(
         let node_id = NodeId::from_raw(node_idx);
         let document = doc_ref.borrow();
         if let Some(node) = document.get(node_id)
-            && let Some(parent) = node.parent {
-                if let Some(p_node) = document.get(parent) && matches!(p_node.data, NodeData::Element(_)) {
-                    return Ok(JsValue::from(parent.raw() as i32));
-                }
-            }
+            && let Some(parent) = node.parent
+            && let Some(p_node) = document.get(parent)
+            && matches!(p_node.data, NodeData::Element(_))
+        {
+            return Ok(JsValue::from(parent.raw() as i32));
+        }
         Ok(JsValue::null())
     });
 
@@ -475,7 +529,8 @@ pub fn register_document_api(
         let node_id = NodeId::from_raw(node_idx);
         let document = doc_ref.borrow();
         if let Some(node) = document.get(node_id)
-            && let Some(fc) = node.first_child {
+            && let Some(fc) = node.first_child
+        {
             Ok(JsValue::from(fc.raw() as i32))
         } else {
             Ok(JsValue::null())
@@ -488,7 +543,8 @@ pub fn register_document_api(
         let node_id = NodeId::from_raw(node_idx);
         let document = doc_ref.borrow();
         if let Some(node) = document.get(node_id)
-            && let Some(lc) = node.last_child {
+            && let Some(lc) = node.last_child
+        {
             Ok(JsValue::from(lc.raw() as i32))
         } else {
             Ok(JsValue::null())
@@ -501,7 +557,8 @@ pub fn register_document_api(
         let node_id = NodeId::from_raw(node_idx);
         let document = doc_ref.borrow();
         if let Some(node) = document.get(node_id)
-            && let Some(ns) = node.next_sibling {
+            && let Some(ns) = node.next_sibling
+        {
             Ok(JsValue::from(ns.raw() as i32))
         } else {
             Ok(JsValue::null())
@@ -514,7 +571,8 @@ pub fn register_document_api(
         let node_id = NodeId::from_raw(node_idx);
         let document = doc_ref.borrow();
         if let Some(node) = document.get(node_id)
-            && let Some(ps) = node.prev_sibling {
+            && let Some(ps) = node.prev_sibling
+        {
             Ok(JsValue::from(ps.raw() as i32))
         } else {
             Ok(JsValue::null())
@@ -628,18 +686,18 @@ pub fn register_document_api(
     let get_inner_html = native_fn!(move |_this, args, ctx| {
         let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
         let document = doc_ref.borrow();
-        Ok(JsValue::from(boa_engine::js_string!(document.serialize_children(
-            NodeId::from_raw(node_idx)
-        ))))
+        Ok(JsValue::from(boa_engine::js_string!(
+            document.serialize_children(NodeId::from_raw(node_idx))
+        )))
     });
 
     let doc_ref = doc.clone();
     let get_outer_html = native_fn!(move |_this, args, ctx| {
         let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
         let document = doc_ref.borrow();
-        Ok(JsValue::from(boa_engine::js_string!(document.serialize_html(
-            NodeId::from_raw(node_idx)
-        ))))
+        Ok(JsValue::from(boa_engine::js_string!(
+            document.serialize_html(NodeId::from_raw(node_idx))
+        )))
     });
 
     let doc_ref = doc.clone();
@@ -655,7 +713,10 @@ pub fn register_document_api(
     let dirty_ref = dirty.clone();
     let set_inner_html = native_fn!(move |_this, args, ctx| {
         let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let html = args.get_or_undefined(1).to_string(ctx)?.to_std_string_escaped();
+        let html = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         let mut document = doc_ref.borrow_mut();
         let node_id = NodeId::from_raw(node_idx);
         let children: Vec<NodeId> = document.children(node_id).map(|n| n.id).collect();
@@ -675,7 +736,10 @@ pub fn register_document_api(
     let dirty_ref = dirty.clone();
     let set_outer_html = native_fn!(move |_this, args, ctx| {
         let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let html = args.get_or_undefined(1).to_string(ctx)?.to_std_string_escaped();
+        let html = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         let mut document = doc_ref.borrow_mut();
         let node_id = NodeId::from_raw(node_idx);
         let Some(parent) = document.get(node_id).and_then(|n| n.parent) else {
@@ -727,19 +791,24 @@ pub fn register_document_api(
     let get_node_value = native_fn!(move |_this, args, ctx| {
         let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
         let document = doc_ref.borrow();
-        Ok(match document.get(NodeId::from_raw(node_idx)).map(|n| &n.data) {
-            Some(NodeData::Text(t)) | Some(NodeData::Comment(t)) => {
-                JsValue::from(boa_engine::js_string!(t.clone()))
-            }
-            _ => JsValue::null(),
-        })
+        Ok(
+            match document.get(NodeId::from_raw(node_idx)).map(|n| &n.data) {
+                Some(NodeData::Text(t)) | Some(NodeData::Comment(t)) => {
+                    JsValue::from(boa_engine::js_string!(t.clone()))
+                }
+                _ => JsValue::null(),
+            },
+        )
     });
 
     let doc_ref = doc.clone();
     let dirty_ref = dirty.clone();
     let set_node_value = native_fn!(move |_this, args, ctx| {
         let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let value = args.get_or_undefined(1).to_string(ctx)?.to_std_string_escaped();
+        let value = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         let mut document = doc_ref.borrow_mut();
         if let Some(node) = document.get_mut(NodeId::from_raw(node_idx)) {
             match &mut node.data {
@@ -773,24 +842,35 @@ pub fn register_document_api(
     let doc_ref = doc.clone();
     let get_dataset_value = native_fn!(move |_this, args, ctx| {
         let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let prop = args.get_or_undefined(1).to_string(ctx)?.to_std_string_escaped();
+        let prop = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         let attr = dataset_prop_to_attribute(&prop);
         let document = doc_ref.borrow();
-        Ok(match document.get(NodeId::from_raw(node_idx)).map(|n| &n.data) {
-            Some(NodeData::Element(el)) => match el.get_attribute(&attr) {
-                Some(v) => JsValue::from(boa_engine::js_string!(v.to_string())),
-                None => JsValue::undefined(),
+        Ok(
+            match document.get(NodeId::from_raw(node_idx)).map(|n| &n.data) {
+                Some(NodeData::Element(el)) => match el.get_attribute(&attr) {
+                    Some(v) => JsValue::from(boa_engine::js_string!(v.to_string())),
+                    None => JsValue::undefined(),
+                },
+                _ => JsValue::undefined(),
             },
-            _ => JsValue::undefined(),
-        })
+        )
     });
 
     let doc_ref = doc.clone();
     let dirty_ref = dirty.clone();
     let set_dataset_value = native_fn!(move |_this, args, ctx| {
         let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let prop = args.get_or_undefined(1).to_string(ctx)?.to_std_string_escaped();
-        let value = args.get_or_undefined(2).to_string(ctx)?.to_std_string_escaped();
+        let prop = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
+        let value = args
+            .get_or_undefined(2)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         let attr = dataset_prop_to_attribute(&prop);
         let mut document = doc_ref.borrow_mut();
         if let Some(node) = document.get_mut(NodeId::from_raw(node_idx))
@@ -806,13 +886,17 @@ pub fn register_document_api(
     let dirty_ref = dirty.clone();
     let remove_dataset_value = native_fn!(move |_this, args, ctx| {
         let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let prop = args.get_or_undefined(1).to_string(ctx)?.to_std_string_escaped();
+        let prop = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         let attr = dataset_prop_to_attribute(&prop);
         let mut document = doc_ref.borrow_mut();
         if let Some(node) = document.get_mut(NodeId::from_raw(node_idx))
             && let NodeData::Element(el) = &mut node.data
         {
-            el.attributes.retain(|(k, _)| !k.eq_ignore_ascii_case(&attr));
+            el.attributes
+                .retain(|(k, _)| !k.eq_ignore_ascii_case(&attr));
             *dirty_ref.borrow_mut() = true;
         }
         Ok(JsValue::undefined())
@@ -826,7 +910,7 @@ pub fn register_document_api(
             Some(NodeData::Element(el)) => el
                 .attributes
                 .iter()
-                .filter_map(|(k, _)| k.strip_prefix("data-").map(|s| camel_case_key(s)))
+                .filter_map(|(k, _)| k.strip_prefix("data-").map(camel_case_key))
                 .map(|k| JsValue::from(boa_engine::js_string!(k)))
                 .collect(),
             _ => Vec::new(),
@@ -837,11 +921,17 @@ pub fn register_document_api(
     // _getDocumentElements(kind) → array of node ids (forms/images/links/anchors/scripts)
     let doc_ref = doc.clone();
     let get_document_elements = native_fn!(move |_this, args, ctx| {
-        let kind = args.get_or_undefined(0).to_string(ctx)?.to_std_string_escaped();
+        let kind = args
+            .get_or_undefined(0)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         let document = doc_ref.borrow();
         let mut out = Vec::new();
         collect_elements_by_kind(&document, document.root(), &kind, &mut out);
-        let values: Vec<JsValue> = out.into_iter().map(|id| JsValue::from(id.raw() as i32)).collect();
+        let values: Vec<JsValue> = out
+            .into_iter()
+            .map(|id| JsValue::from(id.raw() as i32))
+            .collect();
         Ok(JsArray::from_iter(values, ctx).into())
     });
 
@@ -849,7 +939,10 @@ pub fn register_document_api(
     let doc_ref = doc.clone();
     let dirty_ref = dirty.clone();
     let create_comment_native = native_fn!(move |_this, args, ctx| {
-        let text = args.get_or_undefined(0).to_string(ctx)?.to_std_string_escaped();
+        let text = args
+            .get_or_undefined(0)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         let mut document = doc_ref.borrow_mut();
         let node_id = document.create_comment(&text);
         *dirty_ref.borrow_mut() = true;
@@ -881,7 +974,10 @@ pub fn register_document_api(
     let get_element_rect = native_fn!(move |_this, args, ctx| {
         let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
         let bounds = bounds_ref.borrow();
-        let rect = bounds.get(&node_idx).copied().unwrap_or([0.0, 0.0, 0.0, 0.0]);
+        let rect = bounds
+            .get(&node_idx)
+            .copied()
+            .unwrap_or([0.0, 0.0, 0.0, 0.0]);
         let values: Vec<JsValue> = rect.iter().map(|v| JsValue::from(*v)).collect();
         Ok(JsArray::from_iter(values, ctx).into())
     });
@@ -923,7 +1019,10 @@ pub fn register_document_api(
             }
         }
         matches.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-        let values: Vec<JsValue> = matches.into_iter().map(|(id, _)| JsValue::from(id as i32)).collect();
+        let values: Vec<JsValue> = matches
+            .into_iter()
+            .map(|(id, _)| JsValue::from(id as i32))
+            .collect();
         Ok(JsArray::from_iter(values, ctx).into())
     });
 
@@ -960,60 +1059,300 @@ pub fn register_document_api(
     });
 
     // Register all helper functions as globals
-    context.register_global_callable(boa_engine::js_string!("_getDocumentCookie"), 0, get_document_cookie).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_setDocumentCookie"), 1, set_document_cookie).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_getTextContent"), 1, get_text_content).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_setTextContent"), 2, set_text_content).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_appendChild"), 2, append_child).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_removeChild"), 2, remove_child).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_setAttribute"), 3, set_attribute).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_removeAttribute"), 2, remove_attribute).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_getAttribute"), 2, get_attribute).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_getTagName"), 1, get_tag_name).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_querySelector"), 2, query_selector).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_querySelectorAll"), 2, query_selector_all).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_elementMatches"), 2, element_matches).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_elementClosest"), 2, element_closest).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_getCompatMode"), 0, get_compat_mode).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_getCharacterSet"), 0, get_character_set).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_getContentType"), 0, get_content_type).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_getParent"), 1, get_parent).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_getChildren"), 1, get_children).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_getChildNodeIds"), 1, get_child_node_ids).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_getFirstChild"), 1, get_first_child).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_getLastChild"), 1, get_last_child).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_getNextSibling"), 1, get_next_sibling).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_getPreviousSibling"), 1, get_previous_sibling).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_getFirstElementChild"), 1, get_first_element_child).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_getLastElementChild"), 1, get_last_element_child).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_getNextElementSibling"), 1, get_next_element_sibling).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_getPreviousElementSibling"), 1, get_previous_element_sibling).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_cloneNode"), 2, clone_node).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_createFragment"), 0, create_fragment).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_attachShadow"), 1, attach_shadow_native).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_createComment"), 1, create_comment_native).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_insertBefore"), 3, insert_before_native).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_replaceChild"), 3, replace_child_native).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_elementContains"), 2, element_contains).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_getInnerHTML"), 1, get_inner_html).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_setInnerHTML"), 2, set_inner_html).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_getOuterHTML"), 1, get_outer_html).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_setOuterHTML"), 2, set_outer_html).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_getTemplateContent"), 1, get_template_content).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_getNodeType"), 1, get_node_type).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_getNodeName"), 1, get_node_name).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_getNodeValue"), 1, get_node_value).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_setNodeValue"), 2, set_node_value).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_getAttributeNames"), 1, get_attribute_names).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_getDatasetValue"), 2, get_dataset_value).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_setDatasetValue"), 3, set_dataset_value).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_removeDatasetValue"), 2, remove_dataset_value).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_getDatasetKeys"), 1, get_dataset_keys).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_getDocumentElements"), 1, get_document_elements).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_setFocusState"), 2, set_focus_state).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_getElementRect"), 1, get_element_rect).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_elementFromPoint"), 2, element_from_point).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_elementsFromPoint"), 2, elements_from_point).unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_getDocumentCookie"),
+            0,
+            get_document_cookie,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_setDocumentCookie"),
+            1,
+            set_document_cookie,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_getTextContent"),
+            1,
+            get_text_content,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_setTextContent"),
+            2,
+            set_text_content,
+        )
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_appendChild"), 2, append_child)
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_removeChild"), 2, remove_child)
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_setAttribute"), 3, set_attribute)
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_removeAttribute"),
+            2,
+            remove_attribute,
+        )
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_getAttribute"), 2, get_attribute)
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_getTagName"), 1, get_tag_name)
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_querySelector"), 2, query_selector)
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_querySelectorAll"),
+            2,
+            query_selector_all,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_elementMatches"),
+            2,
+            element_matches,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_elementClosest"),
+            2,
+            element_closest,
+        )
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_getCompatMode"), 0, get_compat_mode)
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_getCharacterSet"),
+            0,
+            get_character_set,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_getContentType"),
+            0,
+            get_content_type,
+        )
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_getParent"), 1, get_parent)
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_getChildren"), 1, get_children)
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_getChildNodeIds"),
+            1,
+            get_child_node_ids,
+        )
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_getFirstChild"), 1, get_first_child)
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_getLastChild"), 1, get_last_child)
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_getNextSibling"),
+            1,
+            get_next_sibling,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_getPreviousSibling"),
+            1,
+            get_previous_sibling,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_getFirstElementChild"),
+            1,
+            get_first_element_child,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_getLastElementChild"),
+            1,
+            get_last_element_child,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_getNextElementSibling"),
+            1,
+            get_next_element_sibling,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_getPreviousElementSibling"),
+            1,
+            get_previous_element_sibling,
+        )
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_cloneNode"), 2, clone_node)
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_createFragment"),
+            0,
+            create_fragment,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_attachShadow"),
+            1,
+            attach_shadow_native,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_createComment"),
+            1,
+            create_comment_native,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_insertBefore"),
+            3,
+            insert_before_native,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_replaceChild"),
+            3,
+            replace_child_native,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_elementContains"),
+            2,
+            element_contains,
+        )
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_getInnerHTML"), 1, get_inner_html)
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_setInnerHTML"), 2, set_inner_html)
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_getOuterHTML"), 1, get_outer_html)
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_setOuterHTML"), 2, set_outer_html)
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_getTemplateContent"),
+            1,
+            get_template_content,
+        )
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_getNodeType"), 1, get_node_type)
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_getNodeName"), 1, get_node_name)
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_getNodeValue"), 1, get_node_value)
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_setNodeValue"), 2, set_node_value)
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_getAttributeNames"),
+            1,
+            get_attribute_names,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_getDatasetValue"),
+            2,
+            get_dataset_value,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_setDatasetValue"),
+            3,
+            set_dataset_value,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_removeDatasetValue"),
+            2,
+            remove_dataset_value,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_getDatasetKeys"),
+            1,
+            get_dataset_keys,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_getDocumentElements"),
+            1,
+            get_document_elements,
+        )
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_setFocusState"), 2, set_focus_state)
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_getElementRect"),
+            1,
+            get_element_rect,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_elementFromPoint"),
+            2,
+            element_from_point,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_elementsFromPoint"),
+            2,
+            elements_from_point,
+        )
+        .unwrap();
 
     // Canvas native bindings
     let dirty_ref = dirty.clone();
@@ -1028,8 +1367,12 @@ pub fn register_document_api(
 
     let canvas_set_fill_style = native_fn!(move |_this, args, ctx| {
         let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let color_str = args.get_or_undefined(1).to_string(ctx)?.to_std_string_escaped();
-        let color = mango_render::color::parse_color(&color_str).unwrap_or(mango_core::Color::BLACK);
+        let color_str = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
+        let color =
+            mango_render::color::parse_color(&color_str).unwrap_or(mango_core::Color::BLACK);
         mango_render::with_canvas_mut(node_id, 300, 150, |c| {
             c.set_fill_style(color);
         });
@@ -1038,8 +1381,12 @@ pub fn register_document_api(
 
     let canvas_set_stroke_style = native_fn!(move |_this, args, ctx| {
         let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let color_str = args.get_or_undefined(1).to_string(ctx)?.to_std_string_escaped();
-        let color = mango_render::color::parse_color(&color_str).unwrap_or(mango_core::Color::BLACK);
+        let color_str = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
+        let color =
+            mango_render::color::parse_color(&color_str).unwrap_or(mango_core::Color::BLACK);
         mango_render::with_canvas_mut(node_id, 300, 150, |c| {
             c.set_stroke_style(color);
         });
@@ -1057,7 +1404,10 @@ pub fn register_document_api(
 
     let canvas_set_line_cap = native_fn!(move |_this, args, ctx| {
         let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let cap = args.get_or_undefined(1).to_string(ctx)?.to_std_string_escaped();
+        let cap = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         mango_render::with_canvas_mut(node_id, 300, 150, |c| {
             c.set_line_cap(&cap);
         });
@@ -1066,7 +1416,10 @@ pub fn register_document_api(
 
     let canvas_set_line_join = native_fn!(move |_this, args, ctx| {
         let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let join = args.get_or_undefined(1).to_string(ctx)?.to_std_string_escaped();
+        let join = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         mango_render::with_canvas_mut(node_id, 300, 150, |c| {
             c.set_line_join(&join);
         });
@@ -1093,7 +1446,10 @@ pub fn register_document_api(
 
     let canvas_set_font = native_fn!(move |_this, args, ctx| {
         let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let font_str = args.get_or_undefined(1).to_string(ctx)?.to_std_string_escaped();
+        let font_str = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         mango_render::with_canvas_mut(node_id, 300, 150, |c| {
             c.set_font(&font_str);
         });
@@ -1102,7 +1458,10 @@ pub fn register_document_api(
 
     let canvas_set_text_align = native_fn!(move |_this, args, ctx| {
         let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let align_str = args.get_or_undefined(1).to_string(ctx)?.to_std_string_escaped();
+        let align_str = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         mango_render::with_canvas_mut(node_id, 300, 150, |c| {
             c.set_text_align(&align_str);
         });
@@ -1111,7 +1470,10 @@ pub fn register_document_api(
 
     let canvas_set_text_baseline = native_fn!(move |_this, args, ctx| {
         let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let baseline_str = args.get_or_undefined(1).to_string(ctx)?.to_std_string_escaped();
+        let baseline_str = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         mango_render::with_canvas_mut(node_id, 300, 150, |c| {
             c.set_text_baseline(&baseline_str);
         });
@@ -1264,7 +1626,10 @@ pub fn register_document_api(
     let dirty_ref = dirty.clone();
     let canvas_fill = native_fn!(move |_this, args, ctx| {
         let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let _rule = args.get_or_undefined(1).to_string(ctx)?.to_std_string_escaped();
+        let _rule = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         mango_render::with_canvas_mut(node_id, 300, 150, |c| {
             c.fill();
         });
@@ -1366,14 +1731,18 @@ pub fn register_document_api(
     let dirty_ref = dirty.clone();
     let canvas_fill_text = native_fn!(move |_this, args, ctx| {
         let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let text = args.get_or_undefined(1).to_string(ctx)?.to_std_string_escaped();
+        let text = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         let x = args.get_or_undefined(2).to_number(ctx).unwrap_or(0.0) as f32;
         let y = args.get_or_undefined(3).to_number(ctx).unwrap_or(0.0) as f32;
-        let max_w = if !args.get_or_undefined(4).is_undefined() && !args.get_or_undefined(4).is_null() {
-            Some(args.get_or_undefined(4).to_number(ctx).unwrap_or(0.0) as f32)
-        } else {
-            None
-        };
+        let max_w =
+            if !args.get_or_undefined(4).is_undefined() && !args.get_or_undefined(4).is_null() {
+                Some(args.get_or_undefined(4).to_number(ctx).unwrap_or(0.0) as f32)
+            } else {
+                None
+            };
         mango_render::with_canvas_mut(node_id, 300, 150, |c| {
             c.fill_text(&text, x, y, max_w);
         });
@@ -1384,14 +1753,18 @@ pub fn register_document_api(
     let dirty_ref = dirty.clone();
     let canvas_stroke_text = native_fn!(move |_this, args, ctx| {
         let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let text = args.get_or_undefined(1).to_string(ctx)?.to_std_string_escaped();
+        let text = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
         let x = args.get_or_undefined(2).to_number(ctx).unwrap_or(0.0) as f32;
         let y = args.get_or_undefined(3).to_number(ctx).unwrap_or(0.0) as f32;
-        let max_w = if !args.get_or_undefined(4).is_undefined() && !args.get_or_undefined(4).is_null() {
-            Some(args.get_or_undefined(4).to_number(ctx).unwrap_or(0.0) as f32)
-        } else {
-            None
-        };
+        let max_w =
+            if !args.get_or_undefined(4).is_undefined() && !args.get_or_undefined(4).is_null() {
+                Some(args.get_or_undefined(4).to_number(ctx).unwrap_or(0.0) as f32)
+            } else {
+                None
+            };
         mango_render::with_canvas_mut(node_id, 300, 150, |c| {
             c.stroke_text(&text, x, y, max_w);
         });
@@ -1401,10 +1774,12 @@ pub fn register_document_api(
 
     let canvas_measure_text = native_fn!(move |_this, args, ctx| {
         let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let text = args.get_or_undefined(1).to_string(ctx)?.to_std_string_escaped();
-        let w = mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.measure_text(&text)
-        }).unwrap_or(0.0);
+        let text = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
+        let w = mango_render::with_canvas_mut(node_id, 300, 150, |c| c.measure_text(&text))
+            .unwrap_or(0.0);
         Ok(JsValue::from(w as f64))
     });
 
@@ -1414,9 +1789,9 @@ pub fn register_document_api(
         let sy = args.get_or_undefined(2).to_i32(ctx).unwrap_or(0);
         let sw = args.get_or_undefined(3).to_u32(ctx).unwrap_or(1);
         let sh = args.get_or_undefined(4).to_u32(ctx).unwrap_or(1);
-        let bytes = mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.get_image_data(sx, sy, sw, sh)
-        }).unwrap_or_else(|| vec![0u8; (sw * sh * 4) as usize]);
+        let bytes =
+            mango_render::with_canvas_mut(node_id, 300, 150, |c| c.get_image_data(sx, sy, sw, sh))
+                .unwrap_or_else(|| vec![0u8; (sw * sh * 4) as usize]);
         let values: Vec<JsValue> = bytes.into_iter().map(|b| JsValue::from(b as i32)).collect();
         let js_array = JsArray::from_iter(values, ctx);
         Ok(js_array.into())
@@ -1452,7 +1827,9 @@ pub fn register_document_api(
         }
 
         mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.put_image_data_with_stride(&byte_vec, src_width, dx, dy, dirty_x, dirty_y, dirty_w, dirty_h);
+            c.put_image_data_with_stride(
+                &byte_vec, src_width, dx, dy, dirty_x, dirty_y, dirty_w, dirty_h,
+            );
         });
         *dirty_ref.borrow_mut() = true;
         Ok(JsValue::undefined())
@@ -1460,52 +1837,236 @@ pub fn register_document_api(
 
     let canvas_to_data_url = native_fn!(move |_this, args, ctx| {
         let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let mime = args.get_or_undefined(1).to_string(ctx)?.to_std_string_escaped();
-        let url = mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.to_data_url(&mime)
-        }).unwrap_or_else(|| "data:image/png;base64,".to_string());
+        let mime = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
+        let url = mango_render::with_canvas_mut(node_id, 300, 150, |c| c.to_data_url(&mime))
+            .unwrap_or_else(|| "data:image/png;base64,".to_string());
         Ok(JsValue::from(boa_engine::js_string!(url)))
     });
 
-    context.register_global_callable(boa_engine::js_string!("_canvasResize"), 3, canvas_resize).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasSetFillStyle"), 2, canvas_set_fill_style).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasSetStrokeStyle"), 2, canvas_set_stroke_style).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasSetLineWidth"), 2, canvas_set_line_width).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasSetLineCap"), 2, canvas_set_line_cap).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasSetLineJoin"), 2, canvas_set_line_join).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasSetMiterLimit"), 2, canvas_set_miter_limit).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasSetGlobalAlpha"), 2, canvas_set_global_alpha).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasSetFont"), 2, canvas_set_font).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasSetTextAlign"), 2, canvas_set_text_align).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasSetTextBaseline"), 2, canvas_set_text_baseline).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasFillRect"), 5, canvas_fill_rect).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasStrokeRect"), 5, canvas_stroke_rect).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasClearRect"), 5, canvas_clear_rect).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasBeginPath"), 1, canvas_begin_path).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasClosePath"), 1, canvas_close_path).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasMoveTo"), 3, canvas_move_to).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasLineTo"), 3, canvas_line_to).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasRect"), 5, canvas_rect).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasArc"), 7, canvas_arc).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasArcTo"), 6, canvas_arc_to).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasBezierCurveTo"), 7, canvas_bezier_curve_to).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasQuadraticCurveTo"), 5, canvas_quadratic_curve_to).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasFill"), 2, canvas_fill).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasStroke"), 1, canvas_stroke).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasSave"), 1, canvas_save).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasRestore"), 1, canvas_restore).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasScale"), 3, canvas_scale).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasRotate"), 2, canvas_rotate).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasTranslate"), 3, canvas_translate).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasTransform"), 7, canvas_transform).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasSetTransform"), 7, canvas_set_transform).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasResetTransform"), 1, canvas_reset_transform).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasFillText"), 5, canvas_fill_text).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasStrokeText"), 5, canvas_stroke_text).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasMeasureText"), 2, canvas_measure_text).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasGetImageData"), 5, canvas_get_image_data).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasPutImageData"), 9, canvas_put_image_data).unwrap();
-    context.register_global_callable(boa_engine::js_string!("_canvasToDataUrl"), 2, canvas_to_data_url).unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_canvasResize"), 3, canvas_resize)
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_canvasSetFillStyle"),
+            2,
+            canvas_set_fill_style,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_canvasSetStrokeStyle"),
+            2,
+            canvas_set_stroke_style,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_canvasSetLineWidth"),
+            2,
+            canvas_set_line_width,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_canvasSetLineCap"),
+            2,
+            canvas_set_line_cap,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_canvasSetLineJoin"),
+            2,
+            canvas_set_line_join,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_canvasSetMiterLimit"),
+            2,
+            canvas_set_miter_limit,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_canvasSetGlobalAlpha"),
+            2,
+            canvas_set_global_alpha,
+        )
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_canvasSetFont"), 2, canvas_set_font)
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_canvasSetTextAlign"),
+            2,
+            canvas_set_text_align,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_canvasSetTextBaseline"),
+            2,
+            canvas_set_text_baseline,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_canvasFillRect"),
+            5,
+            canvas_fill_rect,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_canvasStrokeRect"),
+            5,
+            canvas_stroke_rect,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_canvasClearRect"),
+            5,
+            canvas_clear_rect,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_canvasBeginPath"),
+            1,
+            canvas_begin_path,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_canvasClosePath"),
+            1,
+            canvas_close_path,
+        )
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_canvasMoveTo"), 3, canvas_move_to)
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_canvasLineTo"), 3, canvas_line_to)
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_canvasRect"), 5, canvas_rect)
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_canvasArc"), 7, canvas_arc)
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_canvasArcTo"), 6, canvas_arc_to)
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_canvasBezierCurveTo"),
+            7,
+            canvas_bezier_curve_to,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_canvasQuadraticCurveTo"),
+            5,
+            canvas_quadratic_curve_to,
+        )
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_canvasFill"), 2, canvas_fill)
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_canvasStroke"), 1, canvas_stroke)
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_canvasSave"), 1, canvas_save)
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_canvasRestore"), 1, canvas_restore)
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_canvasScale"), 3, canvas_scale)
+        .unwrap();
+    context
+        .register_global_callable(boa_engine::js_string!("_canvasRotate"), 2, canvas_rotate)
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_canvasTranslate"),
+            3,
+            canvas_translate,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_canvasTransform"),
+            7,
+            canvas_transform,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_canvasSetTransform"),
+            7,
+            canvas_set_transform,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_canvasResetTransform"),
+            1,
+            canvas_reset_transform,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_canvasFillText"),
+            5,
+            canvas_fill_text,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_canvasStrokeText"),
+            5,
+            canvas_stroke_text,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_canvasMeasureText"),
+            2,
+            canvas_measure_text,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_canvasGetImageData"),
+            5,
+            canvas_get_image_data,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_canvasPutImageData"),
+            9,
+            canvas_put_image_data,
+        )
+        .unwrap();
+    context
+        .register_global_callable(
+            boa_engine::js_string!("_canvasToDataUrl"),
+            2,
+            canvas_to_data_url,
+        )
+        .unwrap();
 
     // Install JS shim that wraps raw node IDs into rich element-like objects
     let shim = r#"
@@ -4979,9 +5540,11 @@ fn clone_subtree(doc: &mut Document, node_id: NodeId, deep: bool) -> Option<Node
         NodeData::Text(t) => doc.create_text(&t),
         NodeData::Comment(c) => doc.create_comment(&c),
         NodeData::DocumentFragment => doc.create_fragment(),
-        NodeData::DocumentType { name, public_id, system_id } => {
-            doc.create_doctype(&name, &public_id, &system_id)
-        }
+        NodeData::DocumentType {
+            name,
+            public_id,
+            system_id,
+        } => doc.create_doctype(&name, &public_id, &system_id),
         NodeData::Document => return None,
     };
     if deep {
@@ -4991,15 +5554,14 @@ fn clone_subtree(doc: &mut Document, node_id: NodeId, deep: bool) -> Option<Node
                 doc.append_child(new_id, cloned);
             }
         }
-        if let Some(NodeData::Element(orig_el)) = doc.get(node_id).map(|n| &n.data) {
-            if let Some(orig_frag) = orig_el.template_contents {
-                if let Some(new_frag) = doc.template_contents(new_id) {
-                    let frag_children: Vec<NodeId> = doc.children(orig_frag).map(|n| n.id).collect();
-                    for fchild in frag_children {
-                        if let Some(cloned) = clone_subtree(doc, fchild, true) {
-                            doc.append_child(new_frag, cloned);
-                        }
-                    }
+        if let Some(NodeData::Element(orig_el)) = doc.get(node_id).map(|n| &n.data)
+            && let Some(orig_frag) = orig_el.template_contents
+            && let Some(new_frag) = doc.template_contents(new_id)
+        {
+            let frag_children: Vec<NodeId> = doc.children(orig_frag).map(|n| n.id).collect();
+            for fchild in frag_children {
+                if let Some(cloned) = clone_subtree(doc, fchild, true) {
+                    doc.append_child(new_frag, cloned);
                 }
             }
         }
@@ -5130,12 +5692,17 @@ fn collect_elements_by_kind(doc: &Document, node_id: NodeId, kind: &str, out: &m
 }
 
 /// Recursively finds an element by its `id` attribute.
-fn find_element_by_id_recursive(doc: &Document, node_id: NodeId, target_id: &str) -> Option<NodeId> {
+fn find_element_by_id_recursive(
+    doc: &Document,
+    node_id: NodeId,
+    target_id: &str,
+) -> Option<NodeId> {
     if let Some(node) = doc.get(node_id)
         && let NodeData::Element(ref elem) = node.data
-            && elem.id() == Some(target_id) {
-                return Some(node_id);
-            }
+        && elem.id() == Some(target_id)
+    {
+        return Some(node_id);
+    }
     for child in doc.children(node_id) {
         if let Some(found) = find_element_by_id_recursive(doc, child.id, target_id) {
             return Some(found);
@@ -5156,12 +5723,17 @@ fn query_selector_simple(doc: &Document, node_id: NodeId, selector: &str) -> Opt
     doc.find_element_by_tag(node_id, selector)
 }
 
-fn find_element_by_class_recursive(doc: &Document, node_id: NodeId, target_class: &str) -> Option<NodeId> {
+fn find_element_by_class_recursive(
+    doc: &Document,
+    node_id: NodeId,
+    target_class: &str,
+) -> Option<NodeId> {
     if let Some(node) = doc.get(node_id)
         && let NodeData::Element(ref elem) = node.data
-            && elem.has_class(target_class) {
-                return Some(node_id);
-            }
+        && elem.has_class(target_class)
+    {
+        return Some(node_id);
+    }
     for child in doc.children(node_id) {
         if let Some(found) = find_element_by_class_recursive(doc, child.id, target_class) {
             return Some(found);
@@ -5203,4 +5775,3 @@ fn collect_matching_elements(
         }
     }
 }
-

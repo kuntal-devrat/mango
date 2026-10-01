@@ -65,7 +65,9 @@ impl Tab {
             history: vec![initial_entry],
             history_idx: 0,
             contents: None,
-            session_storage: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            session_storage: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
         }
     }
 

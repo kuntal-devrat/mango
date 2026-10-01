@@ -51,21 +51,27 @@ fn calculate_table_width(table_box: &mut LayoutBox, containing_block: &Dimension
     let container_height = if containing_block.content.height() > 0.0 {
         containing_block.content.height()
     } else {
-        600.0
+        mango_css::get_current_viewport().1
     };
     let font_size = style.font_size;
-    let pad_top = style
-        .padding_top
-        .to_px_with_viewport(font_size, 16.0, container_width, container_height);
-    let pad_right = style
-        .padding_right
-        .to_px_with_viewport(font_size, 16.0, container_width, container_height);
-    let pad_bottom = style
-        .padding_bottom
-        .to_px_with_viewport(font_size, 16.0, container_width, container_height);
-    let pad_left = style
-        .padding_left
-        .to_px_with_viewport(font_size, 16.0, container_width, container_height);
+    let pad_top =
+        style
+            .padding_top
+            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
+    let pad_right =
+        style
+            .padding_right
+            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
+    let pad_bottom = style.padding_bottom.to_px_with_viewport(
+        font_size,
+        16.0,
+        container_width,
+        container_height,
+    );
+    let pad_left =
+        style
+            .padding_left
+            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
 
     let border_top = style.border_top_width;
     let border_right = style.border_right_width;
@@ -76,18 +82,22 @@ fn calculate_table_width(table_box: &mut LayoutBox, containing_block: &Dimension
     table_box.dimensions.border =
         EdgeSizes::new(border_top, border_right, border_bottom, border_left);
 
-    let margin_top = style
-        .margin_top
-        .to_px_with_viewport(font_size, 16.0, container_width, container_height);
-    let margin_bottom = style
-        .margin_bottom
-        .to_px_with_viewport(font_size, 16.0, container_width, container_height);
-    let mut margin_left = style
-        .margin_left
-        .to_px_with_viewport(font_size, 16.0, container_width, container_height);
-    let mut margin_right = style
-        .margin_right
-        .to_px_with_viewport(font_size, 16.0, container_width, container_height);
+    let margin_top =
+        style
+            .margin_top
+            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
+    let margin_bottom =
+        style
+            .margin_bottom
+            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
+    let mut margin_left =
+        style
+            .margin_left
+            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
+    let mut margin_right =
+        style
+            .margin_right
+            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
 
     let total_non_content_h = pad_left + pad_right + border_left + border_right;
 
@@ -100,10 +110,10 @@ fn calculate_table_width(table_box: &mut LayoutBox, containing_block: &Dimension
             }
         } else {
             let num_str = w_str.strip_suffix("px").unwrap_or(w_str).trim();
-            if let Ok(px) = num_str.parse::<f32>() {
-                if px > 0.0 {
-                    explicit_width = Some(px);
-                }
+            if let Ok(px) = num_str.parse::<f32>()
+                && px > 0.0
+            {
+                explicit_width = Some(px);
             }
         }
     }
@@ -223,10 +233,10 @@ fn extract_colgroup_specs(table_box: &LayoutBox, table_width: f32) -> Vec<Option
                 }
             } else {
                 let num_str = w_str.strip_suffix("px").unwrap_or(w_str).trim();
-                if let Ok(px) = num_str.parse::<f32>() {
-                    if px > 0.0 {
-                        return Some(px);
-                    }
+                if let Ok(px) = num_str.parse::<f32>()
+                    && px > 0.0
+                {
+                    return Some(px);
                 }
             }
         }
@@ -248,7 +258,8 @@ fn extract_colgroup_specs(table_box: &LayoutBox, table_width: f32) -> Vec<Option
                 specs.push(w);
             }
         } else if is_table_colgroup(child) {
-            let col_children: Vec<&LayoutBox> = child.children.iter().filter(|c| is_table_col(c)).collect();
+            let col_children: Vec<&LayoutBox> =
+                child.children.iter().filter(|c| is_table_col(c)).collect();
             if !col_children.is_empty() {
                 for col in col_children {
                     let span = parse_span(col);
@@ -322,10 +333,7 @@ pub(crate) fn measure_box_intrinsic_widths(
             }
             for word in line.split_whitespace() {
                 let word_w = crate::inline_flow::measure_text_width_with_style(
-                    word,
-                    font_size,
-                    weight,
-                    family,
+                    word, font_size, weight, family,
                 );
                 if word_w > max_word_w {
                     max_word_w = word_w;
@@ -350,18 +358,18 @@ pub(crate) fn measure_box_intrinsic_widths(
         let mut w = None;
         if let Some(w_attr) = node.get_attribute("width") {
             let trimmed = w_attr.trim().trim_end_matches("px");
-            if let Ok(val) = trimmed.parse::<f32>() {
-                if val > 0.0 {
-                    w = Some(val);
-                }
+            if let Ok(val) = trimmed.parse::<f32>()
+                && val > 0.0
+            {
+                w = Some(val);
             }
         }
-        if w.is_none() {
-            if let Some(style) = &node.style {
-                match style.width {
-                    Length::Px(px) if px > 0.0 => w = Some(px),
-                    _ => {}
-                }
+        if w.is_none()
+            && let Some(style) = &node.style
+        {
+            match style.width {
+                Length::Px(px) if px > 0.0 => w = Some(px),
+                _ => {}
             }
         }
         let fixed_w = w.unwrap_or(if node.dimensions.content.width() > 0.0 {
@@ -381,14 +389,21 @@ pub(crate) fn measure_box_intrinsic_widths(
     ) {
         let is_row = matches!(
             node.style.as_ref().map(|s| s.flex_direction),
-            Some(mango_css::values::FlexDirection::Row) | Some(mango_css::values::FlexDirection::RowReverse) | None
+            Some(mango_css::values::FlexDirection::Row)
+                | Some(mango_css::values::FlexDirection::RowReverse)
+                | None
         );
-        let col_gap = node.style.as_ref().map(|s| s.column_gap.to_px(font_size, font_size, 0.0)).unwrap_or(0.0);
+        let col_gap = node
+            .style
+            .as_ref()
+            .map(|s| s.column_gap.to_px(font_size, font_size, 0.0))
+            .unwrap_or(0.0);
         let mut min_w = 0.0f32;
         let mut max_w = 0.0f32;
         let mut child_count = 0;
         for child in &node.children {
-            let (c_min, c_max) = measure_box_intrinsic_widths(child, font_size, weight, family, memo);
+            let (c_min, c_max) =
+                measure_box_intrinsic_widths(child, font_size, weight, family, memo);
             if is_row {
                 min_w = min_w.max(c_min);
                 max_w += c_max;
@@ -417,18 +432,18 @@ pub(crate) fn measure_box_intrinsic_widths(
         let mut explicit_table_w = None;
         if let Some(w_attr) = node.get_attribute("width") {
             let trimmed = w_attr.trim().trim_end_matches("px");
-            if let Ok(val) = trimmed.parse::<f32>() {
-                if val > 0.0 {
-                    explicit_table_w = Some(val);
-                }
+            if let Ok(val) = trimmed.parse::<f32>()
+                && val > 0.0
+            {
+                explicit_table_w = Some(val);
             }
         }
-        if explicit_table_w.is_none() {
-            if let Some(style) = &node.style {
-                match style.width {
-                    Length::Px(px) if px > 0.0 => explicit_table_w = Some(px),
-                    _ => {}
-                }
+        if explicit_table_w.is_none()
+            && let Some(style) = &node.style
+        {
+            match style.width {
+                Length::Px(px) if px > 0.0 => explicit_table_w = Some(px),
+                _ => {}
             }
         }
 
@@ -516,20 +531,20 @@ fn cell_intrinsic_metrics(
             _ => {}
         }
     }
-    if explicit_w.is_none() {
-        if let Some(w_attr) = cell.get_attribute("width") {
-            let w_str = w_attr.trim();
-            if let Some(pct_str) = w_str.strip_suffix('%') {
-                if let Ok(pct) = pct_str.trim().parse::<f32>() {
-                    explicit_w = Some(table_width * (pct / 100.0));
-                }
-            } else {
-                let num_str = w_str.strip_suffix("px").unwrap_or(w_str).trim();
-                if let Ok(px) = num_str.parse::<f32>() {
-                    if px > 0.0 {
-                        explicit_w = Some(px);
-                    }
-                }
+    if explicit_w.is_none()
+        && let Some(w_attr) = cell.get_attribute("width")
+    {
+        let w_str = w_attr.trim();
+        if let Some(pct_str) = w_str.strip_suffix('%') {
+            if let Ok(pct) = pct_str.trim().parse::<f32>() {
+                explicit_w = Some(table_width * (pct / 100.0));
+            }
+        } else {
+            let num_str = w_str.strip_suffix("px").unwrap_or(w_str).trim();
+            if let Ok(px) = num_str.parse::<f32>()
+                && px > 0.0
+            {
+                explicit_w = Some(px);
             }
         }
     }
@@ -566,7 +581,9 @@ fn cell_intrinsic_metrics(
     let min_content = (content_min + h_padding).max(1.0);
     let max_content = (content_max + h_padding).max(min_content);
 
-    let final_min = explicit_w.map(|w| w.min(min_content)).unwrap_or(min_content);
+    let final_min = explicit_w
+        .map(|w| w.min(min_content))
+        .unwrap_or(min_content);
     let final_max = explicit_w.unwrap_or(max_content);
 
     (final_min, final_max, explicit_w)
@@ -919,20 +936,20 @@ fn layout_table_contents(
                             _ => {}
                         }
                     }
-                    if explicit_w.is_none() {
-                        if let Some(w_attr) = cell.get_attribute("width") {
-                            let w_str = w_attr.trim();
-                            if let Some(pct_str) = w_str.strip_suffix('%') {
-                                if let Ok(pct) = pct_str.trim().parse::<f32>() {
-                                    explicit_w = Some(available_w * (pct / 100.0));
-                                }
-                            } else {
-                                let num_str = w_str.strip_suffix("px").unwrap_or(w_str).trim();
-                                if let Ok(px) = num_str.parse::<f32>() {
-                                    if px > 0.0 {
-                                        explicit_w = Some(px);
-                                    }
-                                }
+                    if explicit_w.is_none()
+                        && let Some(w_attr) = cell.get_attribute("width")
+                    {
+                        let w_str = w_attr.trim();
+                        if let Some(pct_str) = w_str.strip_suffix('%') {
+                            if let Ok(pct) = pct_str.trim().parse::<f32>() {
+                                explicit_w = Some(available_w * (pct / 100.0));
+                            }
+                        } else {
+                            let num_str = w_str.strip_suffix("px").unwrap_or(w_str).trim();
+                            if let Ok(px) = num_str.parse::<f32>()
+                                && px > 0.0
+                            {
+                                explicit_w = Some(px);
                             }
                         }
                     }
@@ -1011,7 +1028,9 @@ fn layout_table_contents(
                 let actual_span = cell_ref.col_span;
                 let internal_spacing = (actual_span - 1) as f32 * border_spacing;
 
-                let span_min_sum: f32 = (0..actual_span).map(|k| col_min_widths[c_idx + k]).sum::<f32>()
+                let span_min_sum: f32 = (0..actual_span)
+                    .map(|k| col_min_widths[c_idx + k])
+                    .sum::<f32>()
                     + internal_spacing;
                 if c_min > span_min_sum {
                     let diff = (c_min - span_min_sum) / actual_span as f32;
@@ -1020,7 +1039,9 @@ fn layout_table_contents(
                     }
                 }
 
-                let span_max_sum: f32 = (0..actual_span).map(|k| col_max_widths[c_idx + k]).sum::<f32>()
+                let span_max_sum: f32 = (0..actual_span)
+                    .map(|k| col_max_widths[c_idx + k])
+                    .sum::<f32>()
                     + internal_spacing;
                 if c_max > span_max_sum {
                     let diff = (c_max - span_max_sum) / actual_span as f32;
@@ -1132,24 +1153,25 @@ fn layout_table_contents(
             vec![vec![BorderSide::default(); num_cols]; num_rows.saturating_sub(1)];
         for r in 0..num_rows.saturating_sub(1) {
             for c in 0..num_cols {
-                if let (Some(top_cell_ref), Some(bot_cell_ref)) = (grid[r][c], grid[r + 1][c]) {
-                    if top_cell_ref.start_row != bot_cell_ref.start_row
-                        || top_cell_ref.start_col != bot_cell_ref.start_col
-                    {
-                        let top_cell = if let Some(gi) = top_cell_ref.group_idx {
-                            &table_box.children[gi].children[top_cell_ref.row_idx].children[top_cell_ref.cell_idx]
-                        } else {
-                            &table_box.children[top_cell_ref.row_idx].children[top_cell_ref.cell_idx]
-                        };
-                        let bot_cell = if let Some(gi) = bot_cell_ref.group_idx {
-                            &table_box.children[gi].children[bot_cell_ref.row_idx].children[bot_cell_ref.cell_idx]
-                        } else {
-                            &table_box.children[bot_cell_ref.row_idx].children[bot_cell_ref.cell_idx]
-                        };
-                        let side_top = extract_cell_border(top_cell, "bottom");
-                        let side_bot = extract_cell_border(bot_cell, "top");
-                        horiz_edges[r][c] = resolve_border_conflict(side_top, side_bot);
-                    }
+                if let (Some(top_cell_ref), Some(bot_cell_ref)) = (grid[r][c], grid[r + 1][c])
+                    && (top_cell_ref.start_row != bot_cell_ref.start_row
+                        || top_cell_ref.start_col != bot_cell_ref.start_col)
+                {
+                    let top_cell = if let Some(gi) = top_cell_ref.group_idx {
+                        &table_box.children[gi].children[top_cell_ref.row_idx].children
+                            [top_cell_ref.cell_idx]
+                    } else {
+                        &table_box.children[top_cell_ref.row_idx].children[top_cell_ref.cell_idx]
+                    };
+                    let bot_cell = if let Some(gi) = bot_cell_ref.group_idx {
+                        &table_box.children[gi].children[bot_cell_ref.row_idx].children
+                            [bot_cell_ref.cell_idx]
+                    } else {
+                        &table_box.children[bot_cell_ref.row_idx].children[bot_cell_ref.cell_idx]
+                    };
+                    let side_top = extract_cell_border(top_cell, "bottom");
+                    let side_bot = extract_cell_border(bot_cell, "top");
+                    horiz_edges[r][c] = resolve_border_conflict(side_top, side_bot);
                 }
             }
         }
@@ -1159,24 +1181,26 @@ fn layout_table_contents(
             vec![vec![BorderSide::default(); num_cols.saturating_sub(1)]; num_rows];
         for r in 0..num_rows {
             for c in 0..num_cols.saturating_sub(1) {
-                if let (Some(left_cell_ref), Some(right_cell_ref)) = (grid[r][c], grid[r][c + 1]) {
-                    if left_cell_ref.start_row != right_cell_ref.start_row
-                        || left_cell_ref.start_col != right_cell_ref.start_col
-                    {
-                        let left_cell = if let Some(gi) = left_cell_ref.group_idx {
-                            &table_box.children[gi].children[left_cell_ref.row_idx].children[left_cell_ref.cell_idx]
-                        } else {
-                            &table_box.children[left_cell_ref.row_idx].children[left_cell_ref.cell_idx]
-                        };
-                        let right_cell = if let Some(gi) = right_cell_ref.group_idx {
-                            &table_box.children[gi].children[right_cell_ref.row_idx].children[right_cell_ref.cell_idx]
-                        } else {
-                            &table_box.children[right_cell_ref.row_idx].children[right_cell_ref.cell_idx]
-                        };
-                        let side_left = extract_cell_border(left_cell, "right");
-                        let side_right = extract_cell_border(right_cell, "left");
-                        vert_edges[r][c] = resolve_border_conflict(side_left, side_right);
-                    }
+                if let (Some(left_cell_ref), Some(right_cell_ref)) = (grid[r][c], grid[r][c + 1])
+                    && (left_cell_ref.start_row != right_cell_ref.start_row
+                        || left_cell_ref.start_col != right_cell_ref.start_col)
+                {
+                    let left_cell = if let Some(gi) = left_cell_ref.group_idx {
+                        &table_box.children[gi].children[left_cell_ref.row_idx].children
+                            [left_cell_ref.cell_idx]
+                    } else {
+                        &table_box.children[left_cell_ref.row_idx].children[left_cell_ref.cell_idx]
+                    };
+                    let right_cell = if let Some(gi) = right_cell_ref.group_idx {
+                        &table_box.children[gi].children[right_cell_ref.row_idx].children
+                            [right_cell_ref.cell_idx]
+                    } else {
+                        &table_box.children[right_cell_ref.row_idx].children
+                            [right_cell_ref.cell_idx]
+                    };
+                    let side_left = extract_cell_border(left_cell, "right");
+                    let side_right = extract_cell_border(right_cell, "left");
+                    vert_edges[r][c] = resolve_border_conflict(side_left, side_right);
                 }
             }
         }
@@ -1186,54 +1210,56 @@ fn layout_table_contents(
         // Left edge of internal boundary stays on left cell right border; right cell left border becomes 0.
         for r in 0..num_rows {
             for c in 0..num_cols {
-                if let Some(cell_ref) = grid[r][c] {
-                    if r == cell_ref.start_row && c == cell_ref.start_col {
-                        let cell = if let Some(gi) = cell_ref.group_idx {
-                            &mut table_box.children[gi].children[cell_ref.row_idx].children[cell_ref.cell_idx]
-                        } else {
-                            &mut table_box.children[cell_ref.row_idx].children[cell_ref.cell_idx]
-                        };
+                if let Some(cell_ref) = grid[r][c]
+                    && r == cell_ref.start_row
+                    && c == cell_ref.start_col
+                {
+                    let cell = if let Some(gi) = cell_ref.group_idx {
+                        &mut table_box.children[gi].children[cell_ref.row_idx].children
+                            [cell_ref.cell_idx]
+                    } else {
+                        &mut table_box.children[cell_ref.row_idx].children[cell_ref.cell_idx]
+                    };
 
-                        // Bottom border update
-                        let bot_boundary_r = cell_ref.start_row + cell_ref.row_span - 1;
-                        if bot_boundary_r < num_rows.saturating_sub(1) {
-                            let resolved = horiz_edges[bot_boundary_r][cell_ref.start_col];
-                            cell.dimensions.border.bottom = resolved.width;
-                            if let Some(s) = cell.style.as_mut() {
-                                s.border_bottom_width = resolved.width;
-                                s.border_bottom_style = resolved.style;
-                                s.border_bottom_color = resolved.color;
-                            }
+                    // Bottom border update
+                    let bot_boundary_r = cell_ref.start_row + cell_ref.row_span - 1;
+                    if bot_boundary_r < num_rows.saturating_sub(1) {
+                        let resolved = horiz_edges[bot_boundary_r][cell_ref.start_col];
+                        cell.dimensions.border.bottom = resolved.width;
+                        if let Some(s) = cell.style.as_mut() {
+                            s.border_bottom_width = resolved.width;
+                            s.border_bottom_style = resolved.style;
+                            s.border_bottom_color = resolved.color;
                         }
+                    }
 
-                        // Top border update: if not row 0, set top border to 0
-                        if cell_ref.start_row > 0 {
-                            cell.dimensions.border.top = 0.0;
-                            if let Some(s) = cell.style.as_mut() {
-                                s.border_top_width = 0.0;
-                                s.border_top_style = BorderStyle::None;
-                            }
+                    // Top border update: if not row 0, set top border to 0
+                    if cell_ref.start_row > 0 {
+                        cell.dimensions.border.top = 0.0;
+                        if let Some(s) = cell.style.as_mut() {
+                            s.border_top_width = 0.0;
+                            s.border_top_style = BorderStyle::None;
                         }
+                    }
 
-                        // Right border update
-                        let right_boundary_c = cell_ref.start_col + cell_ref.col_span - 1;
-                        if right_boundary_c < num_cols.saturating_sub(1) {
-                            let resolved = vert_edges[cell_ref.start_row][right_boundary_c];
-                            cell.dimensions.border.right = resolved.width;
-                            if let Some(s) = cell.style.as_mut() {
-                                s.border_right_width = resolved.width;
-                                s.border_right_style = resolved.style;
-                                s.border_right_color = resolved.color;
-                            }
+                    // Right border update
+                    let right_boundary_c = cell_ref.start_col + cell_ref.col_span - 1;
+                    if right_boundary_c < num_cols.saturating_sub(1) {
+                        let resolved = vert_edges[cell_ref.start_row][right_boundary_c];
+                        cell.dimensions.border.right = resolved.width;
+                        if let Some(s) = cell.style.as_mut() {
+                            s.border_right_width = resolved.width;
+                            s.border_right_style = resolved.style;
+                            s.border_right_color = resolved.color;
                         }
+                    }
 
-                        // Left border update: if not col 0, set left border to 0
-                        if cell_ref.start_col > 0 {
-                            cell.dimensions.border.left = 0.0;
-                            if let Some(s) = cell.style.as_mut() {
-                                s.border_left_width = 0.0;
-                                s.border_left_style = BorderStyle::None;
-                            }
+                    // Left border update: if not col 0, set left border to 0
+                    if cell_ref.start_col > 0 {
+                        cell.dimensions.border.left = 0.0;
+                        if let Some(s) = cell.style.as_mut() {
+                            s.border_left_width = 0.0;
+                            s.border_left_style = BorderStyle::None;
                         }
                     }
                 }
@@ -1260,15 +1286,15 @@ fn layout_table_contents(
                 _ => {}
             }
         }
-        if spec_h.is_none() {
-            if let Some(h_attr) = row.get_attribute("height") {
-                let h_str = h_attr.trim();
-                let num_str = h_str.strip_suffix("px").unwrap_or(h_str).trim();
-                if let Ok(px) = num_str.parse::<f32>() {
-                    if px >= 0.0 {
-                        spec_h = Some(px);
-                    }
-                }
+        if spec_h.is_none()
+            && let Some(h_attr) = row.get_attribute("height")
+        {
+            let h_str = h_attr.trim();
+            let num_str = h_str.strip_suffix("px").unwrap_or(h_str).trim();
+            if let Ok(px) = num_str.parse::<f32>()
+                && px >= 0.0
+            {
+                spec_h = Some(px);
             }
         }
         if let Some(sh) = spec_h {
@@ -1349,23 +1375,23 @@ fn layout_table_contents(
             _ => {}
         }
     }
-    if explicit_table_h.is_none() {
-        if let Some(h_attr) = table_box.get_attribute("height") {
-            let h_str = h_attr.trim();
-            if let Some(pct_str) = h_str.strip_suffix('%') {
-                if let Ok(pct) = pct_str.trim().parse::<f32>() {
-                    let cb_h = containing_block.content.height();
-                    if cb_h > 0.0 {
-                        explicit_table_h = Some(cb_h * (pct / 100.0));
-                    }
+    if explicit_table_h.is_none()
+        && let Some(h_attr) = table_box.get_attribute("height")
+    {
+        let h_str = h_attr.trim();
+        if let Some(pct_str) = h_str.strip_suffix('%') {
+            if let Ok(pct) = pct_str.trim().parse::<f32>() {
+                let cb_h = containing_block.content.height();
+                if cb_h > 0.0 {
+                    explicit_table_h = Some(cb_h * (pct / 100.0));
                 }
-            } else {
-                let num_str = h_str.strip_suffix("px").unwrap_or(h_str).trim();
-                if let Ok(px) = num_str.parse::<f32>() {
-                    if px > 0.0 {
-                        explicit_table_h = Some(px);
-                    }
-                }
+            }
+        } else {
+            let num_str = h_str.strip_suffix("px").unwrap_or(h_str).trim();
+            if let Ok(px) = num_str.parse::<f32>()
+                && px > 0.0
+            {
+                explicit_table_h = Some(px);
             }
         }
     }
@@ -1383,11 +1409,11 @@ fn layout_table_contents(
             } else {
                 &table_box.children[r_idx]
             };
-            if let Some(s) = &row.style {
-                if let Length::Percent(pct) = s.height {
-                    let row_pct_h = available_grid_h * (pct / 100.0);
-                    row_natural_heights[r] = row_natural_heights[r].max(row_pct_h);
-                }
+            if let Some(s) = &row.style
+                && let Length::Percent(pct) = s.height
+            {
+                let row_pct_h = available_grid_h * (pct / 100.0);
+                row_natural_heights[r] = row_natural_heights[r].max(row_pct_h);
             }
         }
 
@@ -1444,7 +1470,7 @@ fn layout_table_contents(
                     .iter()
                     .filter(|c| is_table_row(c))
                     .map(|c| c.dimensions.content.origin.y + c.dimensions.content.size.height)
-                    .last()
+                    .next_back()
                     .unwrap_or(first_row_y);
 
                 group.dimensions.content.origin = Point::new(table_x, first_row_y);

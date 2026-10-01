@@ -79,10 +79,30 @@ pub fn layout_flex(
     let root_font_size = style.root_font_size;
 
     // 1. Resolve container padding, borders, and margins
-    let pad_top = style.padding_top.to_px_with_viewport(font_size, root_font_size, container_width, container_height);
-    let pad_right = style.padding_right.to_px_with_viewport(font_size, root_font_size, container_width, container_height);
-    let pad_bottom = style.padding_bottom.to_px_with_viewport(font_size, root_font_size, container_width, container_height);
-    let pad_left = style.padding_left.to_px_with_viewport(font_size, root_font_size, container_width, container_height);
+    let pad_top = style.padding_top.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
+    let pad_right = style.padding_right.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
+    let pad_bottom = style.padding_bottom.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
+    let pad_left = style.padding_left.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
 
     let border_top = style.border_top_width;
     let border_right = style.border_right_width;
@@ -90,26 +110,52 @@ pub fn layout_flex(
     let border_left = style.border_left_width;
 
     container.dimensions.padding = EdgeSizes::new(pad_top, pad_right, pad_bottom, pad_left);
-    container.dimensions.border = EdgeSizes::new(border_top, border_right, border_bottom, border_left);
+    container.dimensions.border =
+        EdgeSizes::new(border_top, border_right, border_bottom, border_left);
 
-    let margin_top = style.margin_top.to_px_with_viewport(font_size, root_font_size, container_width, container_height);
-    let margin_bottom = style.margin_bottom.to_px_with_viewport(font_size, root_font_size, container_width, container_height);
+    let margin_top = style.margin_top.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
+    let margin_bottom = style.margin_bottom.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
 
     let is_width_auto = style.width == Length::Auto;
     let is_margin_left_auto = style.margin_left == Length::Auto;
     let is_margin_right_auto = style.margin_right == Length::Auto;
 
-    let mut margin_left = style.margin_left.to_px_with_viewport(font_size, root_font_size, container_width, container_height);
-    let mut margin_right = style.margin_right.to_px_with_viewport(font_size, root_font_size, container_width, container_height);
+    let mut margin_left = style.margin_left.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
+    let mut margin_right = style.margin_right.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
 
     let total_non_content_h = pad_left + pad_right + border_left + border_right;
     let total_non_content_v = pad_top + pad_bottom + border_top + border_bottom;
 
-    let is_percent_indefinite = matches!(style.height, Length::Percent(_))
-        && containing_block.content.height() <= 0.0;
+    let is_percent_indefinite =
+        matches!(style.height, Length::Percent(_)) && containing_block.content.height() <= 0.0;
 
     let content_height = if style.height != Length::Auto && !is_percent_indefinite {
-        let raw_h = style.height.to_px_with_viewport(font_size, root_font_size, container_height, container_height);
+        let raw_h = style.height.to_px_with_viewport(
+            font_size,
+            root_font_size,
+            container_height,
+            container_height,
+        );
         if style.box_sizing == BoxSizing::BorderBox {
             (raw_h - total_non_content_v).max(0.0)
         } else {
@@ -117,7 +163,11 @@ pub fn layout_flex(
         }
     } else if containing_block.content.height() > 0.0
         && container.dimensions.content.size.height > 0.0
-        && (containing_block.content.height() - total_non_content_v - container.dimensions.content.size.height).abs() < 0.5
+        && (containing_block.content.height()
+            - total_non_content_v
+            - container.dimensions.content.size.height)
+            .abs()
+            < 0.5
     {
         container.dimensions.content.size.height
     } else {
@@ -129,9 +179,14 @@ pub fn layout_flex(
         Length::MinContent | Length::MaxContent | Length::FitContent | Length::Content
     );
     let (intrinsic_min, intrinsic_max) = if is_width_content
-        || matches!(style.max_width, Length::MinContent | Length::MaxContent | Length::FitContent | Length::Content)
-        || matches!(style.min_width, Length::MinContent | Length::MaxContent | Length::FitContent | Length::Content)
-    {
+        || matches!(
+            style.max_width,
+            Length::MinContent | Length::MaxContent | Length::FitContent | Length::Content
+        )
+        || matches!(
+            style.min_width,
+            Length::MinContent | Length::MaxContent | Length::FitContent | Length::Content
+        ) {
         let mut memo = std::collections::HashMap::new();
         crate::table_flow::measure_box_intrinsic_widths(
             container,
@@ -157,7 +212,8 @@ pub fn layout_flex(
             Length::MinContent => (intrinsic_min - total_non_content_h).max(0.0),
             Length::MaxContent | Length::Content => (intrinsic_max - total_non_content_h).max(0.0),
             Length::FitContent => {
-                let avail = (container_width - total_non_content_h - margin_left - margin_right).max(0.0);
+                let avail =
+                    (container_width - total_non_content_h - margin_left - margin_right).max(0.0);
                 let max_c = (intrinsic_max - total_non_content_h).max(0.0);
                 let min_c = (intrinsic_min - total_non_content_h).max(0.0);
                 avail.min(max_c).max(min_c)
@@ -165,7 +221,12 @@ pub fn layout_flex(
             _ => (container_width - total_non_content_h).max(0.0),
         }
     } else {
-        let raw_w = style.width.to_px_with_viewport(font_size, root_font_size, container_width, container_height);
+        let raw_w = style.width.to_px_with_viewport(
+            font_size,
+            root_font_size,
+            container_width,
+            container_height,
+        );
         if style.box_sizing == BoxSizing::BorderBox {
             (raw_w - total_non_content_h).max(0.0)
         } else {
@@ -178,13 +239,19 @@ pub fn layout_flex(
             Length::MinContent => (intrinsic_min - total_non_content_h).max(0.0),
             Length::MaxContent | Length::Content => (intrinsic_max - total_non_content_h).max(0.0),
             Length::FitContent => {
-                let avail = (container_width - total_non_content_h - margin_left - margin_right).max(0.0);
+                let avail =
+                    (container_width - total_non_content_h - margin_left - margin_right).max(0.0);
                 let max_c = (intrinsic_max - total_non_content_h).max(0.0);
                 let min_c = (intrinsic_min - total_non_content_h).max(0.0);
                 avail.min(max_c).max(min_c)
             }
             _ => {
-                let raw_max = style.max_width.to_px_with_viewport(font_size, root_font_size, container_width, container_height);
+                let raw_max = style.max_width.to_px_with_viewport(
+                    font_size,
+                    root_font_size,
+                    container_width,
+                    container_height,
+                );
                 if style.box_sizing == BoxSizing::BorderBox {
                     (raw_max - total_non_content_h).max(0.0)
                 } else {
@@ -199,13 +266,19 @@ pub fn layout_flex(
             Length::MinContent => (intrinsic_min - total_non_content_h).max(0.0),
             Length::MaxContent | Length::Content => (intrinsic_max - total_non_content_h).max(0.0),
             Length::FitContent => {
-                let avail = (container_width - total_non_content_h - margin_left - margin_right).max(0.0);
+                let avail =
+                    (container_width - total_non_content_h - margin_left - margin_right).max(0.0);
                 let max_c = (intrinsic_max - total_non_content_h).max(0.0);
                 let min_c = (intrinsic_min - total_non_content_h).max(0.0);
                 avail.min(max_c).max(min_c)
             }
             _ => {
-                let raw_min = style.min_width.to_px_with_viewport(font_size, root_font_size, container_width, container_height);
+                let raw_min = style.min_width.to_px_with_viewport(
+                    font_size,
+                    root_font_size,
+                    container_width,
+                    container_height,
+                );
                 if style.box_sizing == BoxSizing::BorderBox {
                     (raw_min - total_non_content_h).max(0.0)
                 } else {
@@ -216,7 +289,8 @@ pub fn layout_flex(
         content_width = content_width.max(min_content_w);
     }
 
-    let underflow = container_width - (content_width + total_non_content_h + margin_left + margin_right);
+    let underflow =
+        container_width - (content_width + total_non_content_h + margin_left + margin_right);
 
     if is_margin_left_auto && is_margin_right_auto {
         margin_left = (underflow / 2.0).max(0.0);
@@ -229,12 +303,16 @@ pub fn layout_flex(
         margin_right += underflow;
     }
 
-    container.dimensions.margin = EdgeSizes::new(margin_top, margin_right, margin_bottom, margin_left);
+    container.dimensions.margin =
+        EdgeSizes::new(margin_top, margin_right, margin_bottom, margin_left);
     container.dimensions.content.size.width = content_width;
 
     // Position container in parent
     let (container_x, container_y) = if container.dimensions.content.origin != Point::ZERO {
-        (container.dimensions.content.origin.x, container.dimensions.content.origin.y)
+        (
+            container.dimensions.content.origin.x,
+            container.dimensions.content.origin.y,
+        )
     } else {
         (
             containing_block.content.x() + margin_left + border_left + pad_left,
@@ -261,19 +339,41 @@ pub fn layout_flex(
     let is_wrap_reverse = style.flex_wrap == FlexWrap::WrapReverse;
 
     let main_gap = if is_row {
-        style.column_gap.to_px_with_viewport(font_size, root_font_size, content_width, container_height)
+        style.column_gap.to_px_with_viewport(
+            font_size,
+            root_font_size,
+            content_width,
+            container_height,
+        )
     } else {
-        style.row_gap.to_px_with_viewport(font_size, root_font_size, content_width, container_height)
+        style.row_gap.to_px_with_viewport(
+            font_size,
+            root_font_size,
+            content_width,
+            container_height,
+        )
     };
 
     let cross_gap = if is_row {
-        style.row_gap.to_px_with_viewport(font_size, root_font_size, content_width, container_height)
+        style.row_gap.to_px_with_viewport(
+            font_size,
+            root_font_size,
+            content_width,
+            container_height,
+        )
     } else {
-        style.column_gap.to_px_with_viewport(font_size, root_font_size, content_width, container_height)
+        style.column_gap.to_px_with_viewport(
+            font_size,
+            root_font_size,
+            content_width,
+            container_height,
+        )
     };
 
     // 3. Sort children by `order` (stable sort)
-    container.children.sort_by_key(|c| c.style.as_ref().map(|s| s.order).unwrap_or(0));
+    container
+        .children
+        .sort_by_key(|c| c.style.as_ref().map(|s| s.order).unwrap_or(0));
 
     // 4. Measure hypothetical main and cross sizes of each item
     struct ItemMetric {
@@ -298,20 +398,60 @@ pub fn layout_flex(
         let c_fs = child_style.font_size;
         let c_root_fs = child_style.root_font_size;
 
-        let p_top = child_style.padding_top.to_px_with_viewport(c_fs, c_root_fs, content_width, container_height);
-        let p_right = child_style.padding_right.to_px_with_viewport(c_fs, c_root_fs, content_width, container_height);
-        let p_bottom = child_style.padding_bottom.to_px_with_viewport(c_fs, c_root_fs, content_width, container_height);
-        let p_left = child_style.padding_left.to_px_with_viewport(c_fs, c_root_fs, content_width, container_height);
+        let p_top = child_style.padding_top.to_px_with_viewport(
+            c_fs,
+            c_root_fs,
+            content_width,
+            container_height,
+        );
+        let p_right = child_style.padding_right.to_px_with_viewport(
+            c_fs,
+            c_root_fs,
+            content_width,
+            container_height,
+        );
+        let p_bottom = child_style.padding_bottom.to_px_with_viewport(
+            c_fs,
+            c_root_fs,
+            content_width,
+            container_height,
+        );
+        let p_left = child_style.padding_left.to_px_with_viewport(
+            c_fs,
+            c_root_fs,
+            content_width,
+            container_height,
+        );
 
         let b_top = child_style.border_top_width;
         let b_right = child_style.border_right_width;
         let b_bottom = child_style.border_bottom_width;
         let b_left = child_style.border_left_width;
 
-        let m_top = child_style.margin_top.to_px_with_viewport(c_fs, c_root_fs, content_width, container_height);
-        let m_right = child_style.margin_right.to_px_with_viewport(c_fs, c_root_fs, content_width, container_height);
-        let m_bottom = child_style.margin_bottom.to_px_with_viewport(c_fs, c_root_fs, content_width, container_height);
-        let m_left = child_style.margin_left.to_px_with_viewport(c_fs, c_root_fs, content_width, container_height);
+        let m_top = child_style.margin_top.to_px_with_viewport(
+            c_fs,
+            c_root_fs,
+            content_width,
+            container_height,
+        );
+        let m_right = child_style.margin_right.to_px_with_viewport(
+            c_fs,
+            c_root_fs,
+            content_width,
+            container_height,
+        );
+        let m_bottom = child_style.margin_bottom.to_px_with_viewport(
+            c_fs,
+            c_root_fs,
+            content_width,
+            container_height,
+        );
+        let m_left = child_style.margin_left.to_px_with_viewport(
+            c_fs,
+            c_root_fs,
+            content_width,
+            container_height,
+        );
 
         child.dimensions.padding = EdgeSizes::new(p_top, p_right, p_bottom, p_left);
         child.dimensions.border = EdgeSizes::new(b_top, b_right, b_bottom, b_left);
@@ -410,24 +550,64 @@ pub fn layout_flex(
                 (fit - pad_main - border_main).max(0.0)
             } else if child_style.width != Length::Auto {
                 is_main_explicit = true;
-                child_style.width.to_px_with_viewport(c_fs, c_root_fs, content_width, container_height)
-            } else if let Some(ratio) = child_style.aspect_ratio && ratio > 0.0 && child_style.height != Length::Auto {
-                let h = child_style.height.to_px_with_viewport(c_fs, c_root_fs, container_height, container_height);
+                child_style.width.to_px_with_viewport(
+                    c_fs,
+                    c_root_fs,
+                    content_width,
+                    container_height,
+                )
+            } else if let Some(ratio) = child_style.aspect_ratio
+                && ratio > 0.0
+                && child_style.height != Length::Auto
+            {
+                let h = child_style.height.to_px_with_viewport(
+                    c_fs,
+                    c_root_fs,
+                    container_height,
+                    container_height,
+                );
                 (h * ratio).max(0.0)
             } else {
                 match &child.box_type {
-                    BoxType::ReplacedElement { intrinsic_width, intrinsic_height, .. }
-                    | BoxType::IFrame { intrinsic_width, intrinsic_height, .. }
-                    | BoxType::Video { intrinsic_width, intrinsic_height, .. }
-                    | BoxType::Audio { intrinsic_width, intrinsic_height, .. }
-                    | BoxType::Canvas { intrinsic_width, intrinsic_height, .. } => {
+                    BoxType::ReplacedElement {
+                        intrinsic_width,
+                        intrinsic_height,
+                        ..
+                    }
+                    | BoxType::IFrame {
+                        intrinsic_width,
+                        intrinsic_height,
+                        ..
+                    }
+                    | BoxType::Video {
+                        intrinsic_width,
+                        intrinsic_height,
+                        ..
+                    }
+                    | BoxType::Audio {
+                        intrinsic_width,
+                        intrinsic_height,
+                        ..
+                    }
+                    | BoxType::Canvas {
+                        intrinsic_width,
+                        intrinsic_height,
+                        ..
+                    } => {
                         if child_style.height != Length::Auto && *intrinsic_height > 0.0 {
-                            let ratio = if let Some(r) = child_style.aspect_ratio && r > 0.0 {
+                            let ratio = if let Some(r) = child_style.aspect_ratio
+                                && r > 0.0
+                            {
                                 r
                             } else {
                                 *intrinsic_width / *intrinsic_height
                             };
-                            let h = child_style.height.to_px_with_viewport(c_fs, c_root_fs, container_height, container_height);
+                            let h = child_style.height.to_px_with_viewport(
+                                c_fs,
+                                c_root_fs,
+                                container_height,
+                                container_height,
+                            );
                             (h * ratio).max(0.0)
                         } else {
                             *intrinsic_width
@@ -436,31 +616,80 @@ pub fn layout_flex(
                     _ => 0.0,
                 }
             }
-        } else if is_basis_min_content || is_basis_max_content || is_basis_content || is_basis_fit_content {
+        } else if is_basis_min_content
+            || is_basis_max_content
+            || is_basis_content
+            || is_basis_fit_content
+        {
             0.0
         } else if !is_basis_auto {
             is_main_explicit = true;
             basis.to_px_with_viewport(c_fs, c_root_fs, container_height, container_height)
-        } else if child_style.height != Length::Auto && !matches!(child_style.height, Length::MinContent | Length::MaxContent | Length::FitContent | Length::Content) {
+        } else if child_style.height != Length::Auto
+            && !matches!(
+                child_style.height,
+                Length::MinContent | Length::MaxContent | Length::FitContent | Length::Content
+            )
+        {
             is_main_explicit = true;
-            child_style.height.to_px_with_viewport(c_fs, c_root_fs, container_height, container_height)
-        } else if let Some(ratio) = child_style.aspect_ratio && ratio > 0.0 && child_style.width != Length::Auto {
-            let w = child_style.width.to_px_with_viewport(c_fs, c_root_fs, content_width, container_height);
+            child_style.height.to_px_with_viewport(
+                c_fs,
+                c_root_fs,
+                container_height,
+                container_height,
+            )
+        } else if let Some(ratio) = child_style.aspect_ratio
+            && ratio > 0.0
+            && child_style.width != Length::Auto
+        {
+            let w = child_style.width.to_px_with_viewport(
+                c_fs,
+                c_root_fs,
+                content_width,
+                container_height,
+            );
             (w / ratio).max(0.0)
         } else {
             match &child.box_type {
-                BoxType::ReplacedElement { intrinsic_width, intrinsic_height, .. }
-                | BoxType::IFrame { intrinsic_width, intrinsic_height, .. }
-                | BoxType::Video { intrinsic_width, intrinsic_height, .. }
-                | BoxType::Audio { intrinsic_width, intrinsic_height, .. }
-                | BoxType::Canvas { intrinsic_width, intrinsic_height, .. } => {
+                BoxType::ReplacedElement {
+                    intrinsic_width,
+                    intrinsic_height,
+                    ..
+                }
+                | BoxType::IFrame {
+                    intrinsic_width,
+                    intrinsic_height,
+                    ..
+                }
+                | BoxType::Video {
+                    intrinsic_width,
+                    intrinsic_height,
+                    ..
+                }
+                | BoxType::Audio {
+                    intrinsic_width,
+                    intrinsic_height,
+                    ..
+                }
+                | BoxType::Canvas {
+                    intrinsic_width,
+                    intrinsic_height,
+                    ..
+                } => {
                     if child_style.width != Length::Auto && *intrinsic_width > 0.0 {
-                        let ratio = if let Some(r) = child_style.aspect_ratio && r > 0.0 {
+                        let ratio = if let Some(r) = child_style.aspect_ratio
+                            && r > 0.0
+                        {
                             r
                         } else {
                             *intrinsic_width / *intrinsic_height
                         };
-                        let w = child_style.width.to_px_with_viewport(c_fs, c_root_fs, content_width, container_height);
+                        let w = child_style.width.to_px_with_viewport(
+                            c_fs,
+                            c_root_fs,
+                            content_width,
+                            container_height,
+                        );
                         (w / ratio).max(0.0)
                     } else {
                         *intrinsic_height
@@ -468,12 +697,22 @@ pub fn layout_flex(
                 }
                 _ => {
                     let item_w = if child_style.width != Length::Auto {
-                        child_style.width.to_px_with_viewport(c_fs, c_root_fs, content_width, container_height)
+                        child_style.width.to_px_with_viewport(
+                            c_fs,
+                            c_root_fs,
+                            content_width,
+                            container_height,
+                        )
                     } else {
                         (content_width - pad_cross - border_cross - margin_cross).max(0.0)
                     };
                     child.dimensions.content.size.width = item_w;
-                    let item_cb = Dimensions::new(Rect::new(0.0, 0.0, item_w + pad_cross + border_cross, 0.0));
+                    let item_cb = Dimensions::new(Rect::new(
+                        0.0,
+                        0.0,
+                        item_w + pad_cross + border_cross,
+                        0.0,
+                    ));
                     let mut item_float_ctx = FloatContext::new();
                     layout_flex_item(child, &item_cb, &mut item_float_ctx, c_fs);
                     child.dimensions.content.size.height.max(c_fs * 1.3)
@@ -484,28 +723,64 @@ pub fn layout_flex(
         // In CSS, percentage height against an indefinite (auto) container height computes to auto
         let is_child_height_auto = child_style.height == Length::Auto
             || (matches!(child_style.height, Length::Percent(_))
-                && (container_height <= 0.0 || container.style.as_ref().map(|s| s.height == Length::Auto).unwrap_or(true)));
+                && (container_height <= 0.0
+                    || container
+                        .style
+                        .as_ref()
+                        .map(|s| s.height == Length::Auto)
+                        .unwrap_or(true)));
 
         // Resolve cross size
         let mut cross_size = if is_row {
             if !is_child_height_auto {
-                let h = child_style.height.to_px_with_viewport(c_fs, c_root_fs, container_height, container_height);
+                let h = child_style.height.to_px_with_viewport(
+                    c_fs,
+                    c_root_fs,
+                    container_height,
+                    container_height,
+                );
                 if child_style.box_sizing == BoxSizing::BorderBox {
                     (h - pad_cross - border_cross).max(0.0)
                 } else {
                     h
                 }
-            } else if let Some(ratio) = child_style.aspect_ratio && ratio > 0.0 && explicit_main > 0.0 {
+            } else if let Some(ratio) = child_style.aspect_ratio
+                && ratio > 0.0
+                && explicit_main > 0.0
+            {
                 (explicit_main / ratio).max(0.0)
             } else {
                 match &child.box_type {
-                    BoxType::ReplacedElement { intrinsic_height, intrinsic_width, .. }
-                    | BoxType::IFrame { intrinsic_height, intrinsic_width, .. }
-                    | BoxType::Video { intrinsic_height, intrinsic_width, .. }
-                    | BoxType::Audio { intrinsic_height, intrinsic_width, .. }
-                    | BoxType::Canvas { intrinsic_height, intrinsic_width, .. } => {
-                        if explicit_main > 0.0 && *intrinsic_width > 0.0 && *intrinsic_height > 0.0 {
-                            let ratio = if let Some(r) = child_style.aspect_ratio && r > 0.0 {
+                    BoxType::ReplacedElement {
+                        intrinsic_height,
+                        intrinsic_width,
+                        ..
+                    }
+                    | BoxType::IFrame {
+                        intrinsic_height,
+                        intrinsic_width,
+                        ..
+                    }
+                    | BoxType::Video {
+                        intrinsic_height,
+                        intrinsic_width,
+                        ..
+                    }
+                    | BoxType::Audio {
+                        intrinsic_height,
+                        intrinsic_width,
+                        ..
+                    }
+                    | BoxType::Canvas {
+                        intrinsic_height,
+                        intrinsic_width,
+                        ..
+                    } => {
+                        if explicit_main > 0.0 && *intrinsic_width > 0.0 && *intrinsic_height > 0.0
+                        {
+                            let ratio = if let Some(r) = child_style.aspect_ratio
+                                && r > 0.0
+                            {
                                 r
                             } else {
                                 *intrinsic_width / *intrinsic_height
@@ -527,12 +802,22 @@ pub fn layout_flex(
                         let item_w = if explicit_main > 0.0 {
                             explicit_main
                         } else if child_style.width != Length::Auto {
-                            child_style.width.to_px_with_viewport(c_fs, c_root_fs, content_width, container_height)
+                            child_style.width.to_px_with_viewport(
+                                c_fs,
+                                c_root_fs,
+                                content_width,
+                                container_height,
+                            )
                         } else {
                             (content_width - pad_main - border_main - margin_main).max(0.0)
                         };
                         child.dimensions.content.size.width = item_w;
-                        let item_cb = Dimensions::new(Rect::new(0.0, 0.0, item_w + pad_main + border_main, 0.0));
+                        let item_cb = Dimensions::new(Rect::new(
+                            0.0,
+                            0.0,
+                            item_w + pad_main + border_main,
+                            0.0,
+                        ));
                         let mut item_float_ctx = FloatContext::new();
                         layout_flex_item(child, &item_cb, &mut item_float_ctx, c_fs);
                         child.dimensions.content.size.height.max(c_fs * 1.3)
@@ -540,22 +825,52 @@ pub fn layout_flex(
                 }
             }
         } else if child_style.width != Length::Auto {
-            let w = child_style.width.to_px_with_viewport(c_fs, c_root_fs, content_width, container_height);
+            let w = child_style.width.to_px_with_viewport(
+                c_fs,
+                c_root_fs,
+                content_width,
+                container_height,
+            );
             if child_style.box_sizing == BoxSizing::BorderBox {
                 (w - pad_cross - border_cross).max(0.0)
             } else {
                 w
             }
-        } else if let Some(ratio) = child_style.aspect_ratio && ratio > 0.0 && explicit_main > 0.0 {
+        } else if let Some(ratio) = child_style.aspect_ratio
+            && ratio > 0.0
+            && explicit_main > 0.0
+        {
             (explicit_main * ratio).max(0.0)
         } else if let Some(w) = match &child.box_type {
-            BoxType::ReplacedElement { intrinsic_width, intrinsic_height, .. }
-            | BoxType::IFrame { intrinsic_width, intrinsic_height, .. }
-            | BoxType::Video { intrinsic_width, intrinsic_height, .. }
-            | BoxType::Audio { intrinsic_width, intrinsic_height, .. }
-            | BoxType::Canvas { intrinsic_width, intrinsic_height, .. } => {
+            BoxType::ReplacedElement {
+                intrinsic_width,
+                intrinsic_height,
+                ..
+            }
+            | BoxType::IFrame {
+                intrinsic_width,
+                intrinsic_height,
+                ..
+            }
+            | BoxType::Video {
+                intrinsic_width,
+                intrinsic_height,
+                ..
+            }
+            | BoxType::Audio {
+                intrinsic_width,
+                intrinsic_height,
+                ..
+            }
+            | BoxType::Canvas {
+                intrinsic_width,
+                intrinsic_height,
+                ..
+            } => {
                 if explicit_main > 0.0 && *intrinsic_width > 0.0 && *intrinsic_height > 0.0 {
-                    let ratio = if let Some(r) = child_style.aspect_ratio && r > 0.0 {
+                    let ratio = if let Some(r) = child_style.aspect_ratio
+                        && r > 0.0
+                    {
                         r
                     } else {
                         *intrinsic_width / *intrinsic_height
@@ -587,7 +902,12 @@ pub fn layout_flex(
         // Clamp cross size by min/max cross constraints
         if is_row {
             if child_style.max_height != Length::Auto {
-                let max_h = child_style.max_height.to_px_with_viewport(c_fs, c_root_fs, container_height, container_height);
+                let max_h = child_style.max_height.to_px_with_viewport(
+                    c_fs,
+                    c_root_fs,
+                    container_height,
+                    container_height,
+                );
                 let max_content_h = if child_style.box_sizing == BoxSizing::BorderBox {
                     (max_h - pad_cross - border_cross).max(0.0)
                 } else {
@@ -596,7 +916,12 @@ pub fn layout_flex(
                 cross_size = cross_size.min(max_content_h);
             }
             if child_style.min_height != Length::Auto {
-                let min_h = child_style.min_height.to_px_with_viewport(c_fs, c_root_fs, container_height, container_height);
+                let min_h = child_style.min_height.to_px_with_viewport(
+                    c_fs,
+                    c_root_fs,
+                    container_height,
+                    container_height,
+                );
                 let min_content_h = if child_style.box_sizing == BoxSizing::BorderBox {
                     (min_h - pad_cross - border_cross).max(0.0)
                 } else {
@@ -606,7 +931,12 @@ pub fn layout_flex(
             }
         } else {
             if child_style.max_width != Length::Auto {
-                let max_w = child_style.max_width.to_px_with_viewport(c_fs, c_root_fs, content_width, container_height);
+                let max_w = child_style.max_width.to_px_with_viewport(
+                    c_fs,
+                    c_root_fs,
+                    content_width,
+                    container_height,
+                );
                 let max_content_w = if child_style.box_sizing == BoxSizing::BorderBox {
                     (max_w - pad_cross - border_cross).max(0.0)
                 } else {
@@ -615,7 +945,12 @@ pub fn layout_flex(
                 cross_size = cross_size.min(max_content_w);
             }
             if child_style.min_width != Length::Auto {
-                let min_w = child_style.min_width.to_px_with_viewport(c_fs, c_root_fs, content_width, container_height);
+                let min_w = child_style.min_width.to_px_with_viewport(
+                    c_fs,
+                    c_root_fs,
+                    content_width,
+                    container_height,
+                );
                 let min_content_w = if child_style.box_sizing == BoxSizing::BorderBox {
                     (min_w - pad_cross - border_cross).max(0.0)
                 } else {
@@ -645,21 +980,42 @@ pub fn layout_flex(
                     );
                     if is_row { w } else { c_fs * 1.3 }
                 }
-                BoxType::ReplacedElement { intrinsic_width, intrinsic_height, .. }
-                | BoxType::IFrame { intrinsic_width, intrinsic_height, .. }
-                | BoxType::Video { intrinsic_width, intrinsic_height, .. }
-                | BoxType::Audio { intrinsic_width, intrinsic_height, .. }
-                | BoxType::Canvas { intrinsic_width, intrinsic_height, .. } => {
-                    if is_row { *intrinsic_width } else { *intrinsic_height }
+                BoxType::ReplacedElement {
+                    intrinsic_width,
+                    intrinsic_height,
+                    ..
+                }
+                | BoxType::IFrame {
+                    intrinsic_width,
+                    intrinsic_height,
+                    ..
+                }
+                | BoxType::Video {
+                    intrinsic_width,
+                    intrinsic_height,
+                    ..
+                }
+                | BoxType::Audio {
+                    intrinsic_width,
+                    intrinsic_height,
+                    ..
+                }
+                | BoxType::Canvas {
+                    intrinsic_width,
+                    intrinsic_height,
+                    ..
+                } => {
+                    if is_row {
+                        *intrinsic_width
+                    } else {
+                        *intrinsic_height
+                    }
                 }
                 _ => {
                     if is_row {
-                        let fit_w = crate::block_flow::calculate_shrink_to_fit_width(child, content_width);
-                        if fit_w > 0.0 {
-                            fit_w
-                        } else {
-                            60.0
-                        }
+                        let fit_w =
+                            crate::block_flow::calculate_shrink_to_fit_width(child, content_width);
+                        if fit_w > 0.0 { fit_w } else { 60.0 }
                     } else {
                         // Lay out column item at cross_size to get its actual content height on a clone
                         let mut child_clone = child.clone();
@@ -676,7 +1032,12 @@ pub fn layout_flex(
         // Clamp main size by min/max main constraints
         if is_row {
             if child_style.max_width != Length::Auto {
-                let max_w = child_style.max_width.to_px_with_viewport(c_fs, c_root_fs, content_width, container_height);
+                let max_w = child_style.max_width.to_px_with_viewport(
+                    c_fs,
+                    c_root_fs,
+                    content_width,
+                    container_height,
+                );
                 let max_content_w = if child_style.box_sizing == BoxSizing::BorderBox {
                     (max_w - pad_main - border_main).max(0.0)
                 } else {
@@ -685,7 +1046,12 @@ pub fn layout_flex(
                 base_main = base_main.min(max_content_w);
             }
             if child_style.min_width != Length::Auto {
-                let min_w = child_style.min_width.to_px_with_viewport(c_fs, c_root_fs, content_width, container_height);
+                let min_w = child_style.min_width.to_px_with_viewport(
+                    c_fs,
+                    c_root_fs,
+                    content_width,
+                    container_height,
+                );
                 let min_content_w = if child_style.box_sizing == BoxSizing::BorderBox {
                     (min_w - pad_main - border_main).max(0.0)
                 } else {
@@ -695,7 +1061,12 @@ pub fn layout_flex(
             }
         } else {
             if child_style.max_height != Length::Auto {
-                let max_h = child_style.max_height.to_px_with_viewport(c_fs, c_root_fs, container_height, container_height);
+                let max_h = child_style.max_height.to_px_with_viewport(
+                    c_fs,
+                    c_root_fs,
+                    container_height,
+                    container_height,
+                );
                 let max_content_h = if child_style.box_sizing == BoxSizing::BorderBox {
                     (max_h - pad_main - border_main).max(0.0)
                 } else {
@@ -704,7 +1075,12 @@ pub fn layout_flex(
                 base_main = base_main.min(max_content_h);
             }
             if child_style.min_height != Length::Auto {
-                let min_h = child_style.min_height.to_px_with_viewport(c_fs, c_root_fs, container_height, container_height);
+                let min_h = child_style.min_height.to_px_with_viewport(
+                    c_fs,
+                    c_root_fs,
+                    container_height,
+                    container_height,
+                );
                 let min_content_h = if child_style.box_sizing == BoxSizing::BorderBox {
                     (min_h - pad_main - border_main).max(0.0)
                 } else {
@@ -736,24 +1112,39 @@ pub fn layout_flex(
     } else {
         content_height > 0.0 || (style.height != Length::Auto && !is_percent_indefinite)
     };
-    let container_main_size = if is_row { content_width } else { content_height };
+    let container_main_size = if is_row {
+        content_width
+    } else {
+        content_height
+    };
 
     let mut lines: Vec<Vec<usize>> = Vec::new();
     let mut current_line: Vec<usize> = Vec::new();
     let mut current_line_main = 0.0f32;
 
-
-
     for (metric_idx, metric) in item_metrics.iter().enumerate() {
-        let outer_item_main = metric.base_main + metric.pad_main + metric.border_main + metric.margin_main;
-        let item_gap = if current_line.is_empty() { 0.0 } else { main_gap };
+        let outer_item_main =
+            metric.base_main + metric.pad_main + metric.border_main + metric.margin_main;
+        let item_gap = if current_line.is_empty() {
+            0.0
+        } else {
+            main_gap
+        };
 
-        if is_wrap && is_container_main_definite && !current_line.is_empty() && (current_line_main + item_gap + outer_item_main > container_main_size + 0.5) {
+        if is_wrap
+            && is_container_main_definite
+            && !current_line.is_empty()
+            && (current_line_main + item_gap + outer_item_main > container_main_size + 0.5)
+        {
             lines.push(std::mem::take(&mut current_line));
             current_line_main = 0.0;
         }
 
-        current_line_main += if current_line.is_empty() { 0.0 } else { main_gap } + outer_item_main;
+        current_line_main += if current_line.is_empty() {
+            0.0
+        } else {
+            main_gap
+        } + outer_item_main;
         current_line.push(metric_idx);
     }
     if !current_line.is_empty() {
@@ -804,7 +1195,8 @@ pub fn layout_flex(
                 for &idx in line {
                     let m = &mut item_metrics[idx];
                     if m.flex_shrink > 0.0 {
-                        let sub = (free_space.abs()) * (m.flex_shrink * m.base_main / sum_scaled_shrink);
+                        let sub =
+                            (free_space.abs()) * (m.flex_shrink * m.base_main / sum_scaled_shrink);
                         m.final_main = (m.final_main - sub).max(0.0);
                     }
                 }
@@ -819,10 +1211,20 @@ pub fn layout_flex(
                 let child_style = child.style.clone().unwrap_or_default();
                 let is_child_h_auto = child_style.height == Length::Auto
                     || (matches!(child_style.height, Length::Percent(_))
-                        && (container_height <= 0.0 || container.style.as_ref().map(|s| s.height == Length::Auto).unwrap_or(true)));
+                        && (container_height <= 0.0
+                            || container
+                                .style
+                                .as_ref()
+                                .map(|s| s.height == Length::Auto)
+                                .unwrap_or(true)));
                 if is_child_h_auto {
                     child.dimensions.content.size.width = m.final_main;
-                    let item_cb = Dimensions::new(Rect::new(0.0, 0.0, m.final_main + m.pad_main + m.border_main, 0.0));
+                    let item_cb = Dimensions::new(Rect::new(
+                        0.0,
+                        0.0,
+                        m.final_main + m.pad_main + m.border_main,
+                        0.0,
+                    ));
                     let mut item_float_ctx = FloatContext::new();
                     let c_fs = child_style.font_size;
                     layout_flex_item(child, &item_cb, &mut item_float_ctx, c_fs);
@@ -860,7 +1262,11 @@ pub fn layout_flex(
 
     let line_count = lines.len();
     let total_lines_cross: f32 = line_cross_sizes.iter().sum::<f32>()
-        + if line_count > 1 { (line_count - 1) as f32 * cross_gap } else { 0.0 };
+        + if line_count > 1 {
+            (line_count - 1) as f32 * cross_gap
+        } else {
+            0.0
+        };
 
     let free_cross = if is_wrap && container_cross_size > total_lines_cross {
         container_cross_size - total_lines_cross
@@ -932,27 +1338,44 @@ pub fn layout_flex(
             let ch = &container.children[item_metrics[idx].index];
             if let Some(cs) = &ch.style {
                 if is_row {
-                    if cs.margin_left == Length::Auto { main_auto_margin_count += 1; }
-                    if cs.margin_right == Length::Auto { main_auto_margin_count += 1; }
+                    if cs.margin_left == Length::Auto {
+                        main_auto_margin_count += 1;
+                    }
+                    if cs.margin_right == Length::Auto {
+                        main_auto_margin_count += 1;
+                    }
                 } else {
-                    if cs.margin_top == Length::Auto { main_auto_margin_count += 1; }
-                    if cs.margin_bottom == Length::Auto { main_auto_margin_count += 1; }
+                    if cs.margin_top == Length::Auto {
+                        main_auto_margin_count += 1;
+                    }
+                    if cs.margin_bottom == Length::Auto {
+                        main_auto_margin_count += 1;
+                    }
                 }
             }
         }
 
         // Compute item main offsets via auto margins or justify-content
-        let (mut main_cursor, item_spacing) = if main_auto_margin_count > 0 && remaining_free > 0.0 {
+        let (mut main_cursor, item_spacing) = if main_auto_margin_count > 0 && remaining_free > 0.0
+        {
             let auto_margin_add = remaining_free / main_auto_margin_count as f32;
             for &idx in line {
                 let ch = &mut container.children[item_metrics[idx].index];
                 if let Some(cs) = &ch.style {
                     if is_row {
-                        if cs.margin_left == Length::Auto { ch.dimensions.margin.left = auto_margin_add; }
-                        if cs.margin_right == Length::Auto { ch.dimensions.margin.right = auto_margin_add; }
+                        if cs.margin_left == Length::Auto {
+                            ch.dimensions.margin.left = auto_margin_add;
+                        }
+                        if cs.margin_right == Length::Auto {
+                            ch.dimensions.margin.right = auto_margin_add;
+                        }
                     } else {
-                        if cs.margin_top == Length::Auto { ch.dimensions.margin.top = auto_margin_add; }
-                        if cs.margin_bottom == Length::Auto { ch.dimensions.margin.bottom = auto_margin_add; }
+                        if cs.margin_top == Length::Auto {
+                            ch.dimensions.margin.top = auto_margin_add;
+                        }
+                        if cs.margin_bottom == Length::Auto {
+                            ch.dimensions.margin.bottom = auto_margin_add;
+                        }
                     }
                 }
             }
@@ -964,7 +1387,10 @@ pub fn layout_flex(
                 JustifyContent::Center => (remaining_free / 2.0, main_gap),
                 JustifyContent::SpaceBetween => {
                     if line_item_count > 1 {
-                        (0.0, main_gap + remaining_free / (line_item_count - 1) as f32)
+                        (
+                            0.0,
+                            main_gap + remaining_free / (line_item_count - 1) as f32,
+                        )
                     } else {
                         (0.0, main_gap)
                     }
@@ -1009,11 +1435,16 @@ pub fn layout_flex(
 
             let is_child_h_auto = child_style.height == Length::Auto
                 || (matches!(child_style.height, Length::Percent(_))
-                    && container.style.as_ref().map(|s| s.height == Length::Auto).unwrap_or(true));
+                    && container
+                        .style
+                        .as_ref()
+                        .map(|s| s.height == Length::Auto)
+                        .unwrap_or(true));
 
             let mut item_cross = m.cross;
             if item_align == AlignItems::Stretch && is_child_h_auto && is_row {
-                item_cross = (line_cross_size - m.pad_cross - m.border_cross - m.margin_cross).max(0.0);
+                item_cross =
+                    (line_cross_size - m.pad_cross - m.border_cross - m.margin_cross).max(0.0);
             }
 
             let has_cross_auto_margin = if is_row {
@@ -1024,7 +1455,9 @@ pub fn layout_flex(
 
             let mut cross_offset = 0.0;
             if has_cross_auto_margin {
-                let free_cross = (line_cross_size - (item_cross + m.pad_cross + m.border_cross + m.margin_cross)).max(0.0);
+                let free_cross = (line_cross_size
+                    - (item_cross + m.pad_cross + m.border_cross + m.margin_cross))
+                    .max(0.0);
                 if is_row {
                     let is_top_auto = child_style.margin_top == Length::Auto;
                     let is_bottom_auto = child_style.margin_bottom == Length::Auto;
@@ -1052,10 +1485,13 @@ pub fn layout_flex(
                 cross_offset = match item_align {
                     AlignItems::FlexStart | AlignItems::Stretch | AlignItems::Baseline => 0.0,
                     AlignItems::FlexEnd => {
-                        line_cross_size - (item_cross + m.pad_cross + m.border_cross + m.margin_cross)
+                        line_cross_size
+                            - (item_cross + m.pad_cross + m.border_cross + m.margin_cross)
                     }
                     AlignItems::Center => {
-                        (line_cross_size - (item_cross + m.pad_cross + m.border_cross + m.margin_cross)) / 2.0
+                        (line_cross_size
+                            - (item_cross + m.pad_cross + m.border_cross + m.margin_cross))
+                            / 2.0
                     }
                 };
             }
@@ -1064,18 +1500,41 @@ pub fn layout_flex(
             let old_y = child.dimensions.content.y();
 
             if is_row {
-                let x = container_x + main_cursor + child.dimensions.margin.left + child.dimensions.border.left + child.dimensions.padding.left;
-                let y = container_y + cross_cursor + cross_offset + child.dimensions.margin.top + child.dimensions.border.top + child.dimensions.padding.top;
+                let x = container_x
+                    + main_cursor
+                    + child.dimensions.margin.left
+                    + child.dimensions.border.left
+                    + child.dimensions.padding.left;
+                let y = container_y
+                    + cross_cursor
+                    + cross_offset
+                    + child.dimensions.margin.top
+                    + child.dimensions.border.top
+                    + child.dimensions.padding.top;
                 child.dimensions.content = Rect::new(x, y, m.final_main, item_cross);
-                main_cursor += m.final_main + m.pad_main + m.border_main + m.margin_main + item_spacing;
+                main_cursor +=
+                    m.final_main + m.pad_main + m.border_main + m.margin_main + item_spacing;
             } else {
-                let x = container_x + cross_cursor + cross_offset + child.dimensions.margin.left + child.dimensions.border.left + child.dimensions.padding.left;
-                let y = container_y + main_cursor + child.dimensions.margin.top + child.dimensions.border.top + child.dimensions.padding.top;
+                let x = container_x
+                    + cross_cursor
+                    + cross_offset
+                    + child.dimensions.margin.left
+                    + child.dimensions.border.left
+                    + child.dimensions.padding.left;
+                let y = container_y
+                    + main_cursor
+                    + child.dimensions.margin.top
+                    + child.dimensions.border.top
+                    + child.dimensions.padding.top;
                 child.dimensions.content = Rect::new(x, y, item_cross, m.final_main);
-                main_cursor += m.final_main + m.pad_main + m.border_main + m.margin_main + item_spacing;
+                main_cursor +=
+                    m.final_main + m.pad_main + m.border_main + m.margin_main + item_spacing;
             }
 
-            let was_stretched = item_align == AlignItems::Stretch && is_child_h_auto && is_row && (item_cross - m.cross).abs() > 0.5;
+            let was_stretched = item_align == AlignItems::Stretch
+                && is_child_h_auto
+                && is_row
+                && (item_cross - m.cross).abs() > 0.5;
             if !was_stretched && (is_child_h_auto && is_row) {
                 // Already laid out in row measurement pass (lines 570-588) at this exact height; shift descendants to final placed position
                 let dx = child.dimensions.content.x() - old_x;
@@ -1102,9 +1561,15 @@ pub fn layout_flex(
 
     // 7. Calculate container final height
     if style.height != Length::Auto && !is_percent_indefinite {
-        let h = style.height.to_px_with_viewport(font_size, root_font_size, container_height, container_height);
+        let h = style.height.to_px_with_viewport(
+            font_size,
+            root_font_size,
+            container_height,
+            container_height,
+        );
         if style.box_sizing == BoxSizing::BorderBox {
-            container.dimensions.content.size.height = (h - pad_top - pad_bottom - border_top - border_bottom).max(0.0);
+            container.dimensions.content.size.height =
+                (h - pad_top - pad_bottom - border_top - border_bottom).max(0.0);
         } else {
             container.dimensions.content.size.height = h;
         }

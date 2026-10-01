@@ -7,9 +7,9 @@
 //! role resolution (implicit HTML + explicit ARIA), state extraction, and
 //! spatial bounding boxes for assistive technologies.
 
+use crate::box_tree::LayoutBox;
 use mango_core::Rect;
 use mango_html::dom::{Document, NodeData, NodeId};
-use crate::box_tree::LayoutBox;
 
 /// ARIA and HTML standard accessibility roles.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -205,7 +205,9 @@ fn build_node(
                 name: title,
                 description: None,
                 state: A11yState::default(),
-                bounds: layout_root.map(|b| b.dimensions.border_box()).unwrap_or(Rect::ZERO),
+                bounds: layout_root
+                    .map(|b| b.dimensions.border_box())
+                    .unwrap_or(Rect::ZERO),
                 children,
             })
         }
@@ -230,13 +232,18 @@ fn build_node(
         }
         NodeData::Element(elem) => {
             // Check aria-hidden="true" or hidden attribute
-            if elem.get_attribute("aria-hidden") == Some("true") || elem.get_attribute("hidden").is_some() {
+            if elem.get_attribute("aria-hidden") == Some("true")
+                || elem.get_attribute("hidden").is_some()
+            {
                 return None;
             }
 
             // Suppress non-rendered tags
             let tag = elem.tag_name.to_ascii_lowercase();
-            if matches!(tag.as_str(), "head" | "script" | "style" | "meta" | "link" | "template") {
+            if matches!(
+                tag.as_str(),
+                "head" | "script" | "style" | "meta" | "link" | "template"
+            ) {
                 return None;
             }
 
@@ -260,7 +267,10 @@ fn build_node(
                 node_id: Some(node_id),
                 role,
                 name,
-                description: elem.get_attribute("aria-description").or_else(|| elem.get_attribute("title")).map(|s| s.to_string()),
+                description: elem
+                    .get_attribute("aria-description")
+                    .or_else(|| elem.get_attribute("title"))
+                    .map(|s| s.to_string()),
                 state,
                 bounds,
                 children,
@@ -344,7 +354,10 @@ fn resolve_role(tag: &str, elem: &mango_html::dom::ElementData) -> A11yRole {
         "th" => A11yRole::ColumnHeader,
         "dialog" => A11yRole::Dialog,
         "input" => {
-            let input_type = elem.get_attribute("type").unwrap_or("text").to_ascii_lowercase();
+            let input_type = elem
+                .get_attribute("type")
+                .unwrap_or("text")
+                .to_ascii_lowercase();
             match input_type.as_str() {
                 "button" | "submit" | "reset" => A11yRole::Button,
                 "checkbox" => A11yRole::Checkbox,
@@ -363,9 +376,12 @@ fn resolve_role(tag: &str, elem: &mango_html::dom::ElementData) -> A11yRole {
 fn resolve_state(elem: &mango_html::dom::ElementData) -> A11yState {
     let mut state = A11yState::default();
 
-    state.disabled = elem.get_attribute("disabled").is_some() || elem.get_attribute("aria-disabled") == Some("true");
-    state.readonly = elem.get_attribute("readonly").is_some() || elem.get_attribute("aria-readonly") == Some("true");
-    state.required = elem.get_attribute("required").is_some() || elem.get_attribute("aria-required") == Some("true");
+    state.disabled = elem.get_attribute("disabled").is_some()
+        || elem.get_attribute("aria-disabled") == Some("true");
+    state.readonly = elem.get_attribute("readonly").is_some()
+        || elem.get_attribute("aria-readonly") == Some("true");
+    state.required = elem.get_attribute("required").is_some()
+        || elem.get_attribute("aria-required") == Some("true");
 
     if let Some(v) = elem.get_attribute("aria-expanded") {
         state.expanded = Some(v == "true");
@@ -385,9 +401,18 @@ fn resolve_state(elem: &mango_html::dom::ElementData) -> A11yState {
         state.value = Some(v.to_string());
     }
 
-    state.value_min = elem.get_attribute("aria-valuemin").and_then(|v| v.parse().ok()).or_else(|| elem.get_attribute("min").and_then(|v| v.parse().ok()));
-    state.value_max = elem.get_attribute("aria-valuemax").and_then(|v| v.parse().ok()).or_else(|| elem.get_attribute("max").and_then(|v| v.parse().ok()));
-    state.value_now = elem.get_attribute("aria-valuenow").and_then(|v| v.parse().ok()).or_else(|| elem.get_attribute("value").and_then(|v| v.parse().ok()));
+    state.value_min = elem
+        .get_attribute("aria-valuemin")
+        .and_then(|v| v.parse().ok())
+        .or_else(|| elem.get_attribute("min").and_then(|v| v.parse().ok()));
+    state.value_max = elem
+        .get_attribute("aria-valuemax")
+        .and_then(|v| v.parse().ok())
+        .or_else(|| elem.get_attribute("max").and_then(|v| v.parse().ok()));
+    state.value_now = elem
+        .get_attribute("aria-valuenow")
+        .and_then(|v| v.parse().ok())
+        .or_else(|| elem.get_attribute("value").and_then(|v| v.parse().ok()));
 
     state
 }
@@ -432,20 +457,23 @@ fn compute_accessible_name(
             }
         }
         "input" => {
-            let input_type = elem.get_attribute("type").unwrap_or("text").to_ascii_lowercase();
-            if matches!(input_type.as_str(), "button" | "submit" | "reset") {
-                if let Some(val) = elem.get_attribute("value") {
-                    return val.trim().to_string();
-                }
+            let input_type = elem
+                .get_attribute("type")
+                .unwrap_or("text")
+                .to_ascii_lowercase();
+            if matches!(input_type.as_str(), "button" | "submit" | "reset")
+                && let Some(val) = elem.get_attribute("value")
+            {
+                return val.trim().to_string();
             }
             if let Some(placeholder) = elem.get_attribute("placeholder") {
                 return placeholder.trim().to_string();
             }
             // Check associated <label for="...">
-            if let Some(id) = elem.id() {
-                if let Some(label_text) = find_label_for_id(doc, doc.root(), id) {
-                    return label_text;
-                }
+            if let Some(id) = elem.id()
+                && let Some(label_text) = find_label_for_id(doc, doc.root(), id)
+            {
+                return label_text;
             }
         }
         "button" | "a" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
@@ -469,13 +497,14 @@ fn compute_accessible_name(
 /// Finds text of a `<label for="...">` matching an input ID.
 fn find_label_for_id(doc: &Document, root: NodeId, target_id: &str) -> Option<String> {
     for child in doc.children(root) {
-        if let NodeData::Element(elem) = &child.data {
-            if elem.tag_name.eq_ignore_ascii_case("label") && elem.get_attribute("for") == Some(target_id) {
-                let text = doc.text_content(child.id);
-                let trimmed = text.trim();
-                if !trimmed.is_empty() {
-                    return Some(trimmed.to_string());
-                }
+        if let NodeData::Element(elem) = &child.data
+            && elem.tag_name.eq_ignore_ascii_case("label")
+            && elem.get_attribute("for") == Some(target_id)
+        {
+            let text = doc.text_content(child.id);
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
             }
         }
         if let Some(found) = find_label_for_id(doc, child.id, target_id) {
@@ -487,10 +516,10 @@ fn find_label_for_id(doc: &Document, root: NodeId, target_id: &str) -> Option<St
 
 /// Finds the layout bounding box for a given DOM node ID.
 fn find_bounds_for_node(node_id: NodeId, layout_root: Option<&LayoutBox>) -> Rect {
-    if let Some(root) = layout_root {
-        if let Some(layout_box) = root.find_box_for_node(node_id) {
-            return layout_box.dimensions.border_box();
-        }
+    if let Some(root) = layout_root
+        && let Some(layout_box) = root.find_box_for_node(node_id)
+    {
+        return layout_box.dimensions.border_box();
     }
     Rect::ZERO
 }
@@ -563,7 +592,10 @@ mod tests {
 
         // Hidden content should not be present
         let hidden = a11y_tree.find_by_name("Hidden text");
-        assert!(hidden.is_empty(), "aria-hidden elements must not appear in the accessibility tree");
+        assert!(
+            hidden.is_empty(),
+            "aria-hidden elements must not appear in the accessibility tree"
+        );
 
         // Dump tree check
         let dump = a11y_tree.dump_tree();

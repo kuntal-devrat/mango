@@ -67,7 +67,12 @@ pub struct SmoothScrollAnimation {
 
 impl SmoothScrollAnimation {
     /// Creates a new smooth scroll animation towards `target_y`.
-    pub fn new(current_y: f32, target_y: f32, max_scroll: f32, duration: std::time::Duration) -> Self {
+    pub fn new(
+        current_y: f32,
+        target_y: f32,
+        max_scroll: f32,
+        duration: std::time::Duration,
+    ) -> Self {
         let clamped_target = target_y.clamp(0.0, max_scroll);
         Self {
             start_y: current_y,
@@ -248,12 +253,8 @@ mod tests {
 
     #[test]
     fn test_smooth_scroll_animation() {
-        let mut anim = SmoothScrollAnimation::new(
-            0.0,
-            200.0,
-            500.0,
-            std::time::Duration::from_millis(300),
-        );
+        let mut anim =
+            SmoothScrollAnimation::new(0.0, 200.0, 500.0, std::time::Duration::from_millis(300));
         assert!(anim.active);
         assert_eq!(anim.start_y, 0.0);
         assert_eq!(anim.target_y, 200.0);
@@ -280,4 +281,3 @@ mod tests {
         assert_eq!(anim.target_y, 400.0);
     }
 }
-

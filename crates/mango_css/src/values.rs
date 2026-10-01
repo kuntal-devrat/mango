@@ -34,8 +34,7 @@ impl CalcLength {
 }
 
 /// A CSS length or dimension value.
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum Length {
     /// Exact length in pixels (e.g. `16px`).
     Px(f32),
@@ -67,21 +66,21 @@ pub enum Length {
     #[default]
     Auto,
 }
-
 thread_local! {
     static CURRENT_VIEWPORT: std::cell::Cell<(f32, f32)> = const { std::cell::Cell::new((800.0, 600.0)) };
 }
 
 /// Sets the active viewport width and height used for resolving viewport units (`vw`, `vh`, etc.).
+///
+/// Uses thread-local storage so that concurrent layouts (e.g. multiple tabs or parallel tests)
+/// maintain isolated viewport contexts without race conditions.
 pub fn set_current_viewport(width: f32, height: f32) {
-    CURRENT_VIEWPORT.with(|cell| {
-        cell.set((width, height));
-    });
+    CURRENT_VIEWPORT.with(|v| v.set((width, height)));
 }
 
-/// Returns the active viewport width and height.
+/// Returns the active viewport width and height for the current thread.
 pub fn get_current_viewport() -> (f32, f32) {
-    CURRENT_VIEWPORT.with(|cell| cell.get())
+    CURRENT_VIEWPORT.with(|v| v.get())
 }
 
 impl Length {
@@ -107,20 +106,23 @@ impl Length {
         }
         if let Some(num) = trimmed.strip_suffix("px") {
             num.trim().parse::<f32>().ok().map(Length::Px)
+        } else if let Some(num) = trimmed.strip_suffix("rem") {
+            // Must check `rem` before `em` — "1rem".strip_suffix("em") would
+            // incorrectly match, yielding "1r" which fails to parse.
+            num.trim().parse::<f32>().ok().map(Length::Rem)
         } else if let Some(num) = trimmed.strip_suffix("em") {
             num.trim().parse::<f32>().ok().map(Length::Em)
-        } else if let Some(num) = trimmed.strip_suffix("rem") {
-            num.trim().parse::<f32>().ok().map(Length::Rem)
         } else if let Some(num) = trimmed.strip_suffix('%') {
             num.trim().parse::<f32>().ok().map(Length::Percent)
+        } else if let Some(num) = trimmed.strip_suffix("vmin") {
+            // Must check `vmin`/`vmax` before `vw`/`vh` for the same suffix reason.
+            num.trim().parse::<f32>().ok().map(Length::Vmin)
+        } else if let Some(num) = trimmed.strip_suffix("vmax") {
+            num.trim().parse::<f32>().ok().map(Length::Vmax)
         } else if let Some(num) = trimmed.strip_suffix("vw") {
             num.trim().parse::<f32>().ok().map(Length::Vw)
         } else if let Some(num) = trimmed.strip_suffix("vh") {
             num.trim().parse::<f32>().ok().map(Length::Vh)
-        } else if let Some(num) = trimmed.strip_suffix("vmin") {
-            num.trim().parse::<f32>().ok().map(Length::Vmin)
-        } else if let Some(num) = trimmed.strip_suffix("vmax") {
-            num.trim().parse::<f32>().ok().map(Length::Vmax)
         } else if let Ok(n) = trimmed.parse::<f32>() {
             Some(Length::Px(n))
         } else {
@@ -199,7 +201,6 @@ impl Length {
     }
 }
 
-
 /// CSS `display` property values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Display {
@@ -235,7 +236,13 @@ impl Display {
     pub fn is_inline_level(&self) -> bool {
         matches!(
             self,
-            Display::Inline | Display::InlineBlock | Display::InlineFlex | Display::InlineGrid | Display::Ruby | Display::RubyBase | Display::RubyText
+            Display::Inline
+                | Display::InlineBlock
+                | Display::InlineFlex
+                | Display::InlineGrid
+                | Display::Ruby
+                | Display::RubyBase
+                | Display::RubyText
         )
     }
 }
@@ -321,8 +328,7 @@ pub enum CaptionSide {
 }
 
 /// CSS `font-weight` property values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FontWeight {
     #[default]
     Normal,
@@ -331,7 +337,6 @@ pub enum FontWeight {
     Lighter,
     Numeric(u16),
 }
-
 
 impl FontWeight {
     /// Returns the numeric weight representation (400 for normal, 700 for bold).
@@ -929,10 +934,7 @@ impl Transform {
             out
         };
         let mut mat4 = [
-            1.0f32, 0.0, 0.0, 0.0,
-            0.0, 1.0, 0.0, 0.0,
-            0.0, 0.0, 1.0, 0.0,
-            0.0, 0.0, 0.0, 1.0,
+            1.0f32, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
         ];
         for func in &self.0 {
             let n = match func {
@@ -978,12 +980,18 @@ impl Transform {
                 }
                 TransformFunction::TranslateZ(tz) => {
                     // 3D translation: z translation is stored for perspective calculation
-                    let mat = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, *tz, 1.0];
+                    let mat = [
+                        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, *tz,
+                        1.0,
+                    ];
                     mat4 = mul4(mat4, mat);
                     continue;
                 }
                 TransformFunction::Translate3d(tx, ty, tz) => {
-                    let mat = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, *tx, *ty, *tz, 1.0];
+                    let mat = [
+                        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, *tx, *ty, *tz,
+                        1.0,
+                    ];
                     mat4 = mul4(mat4, mat);
                     continue;
                 }
@@ -995,14 +1003,18 @@ impl Transform {
                 TransformFunction::RotateX(deg) => {
                     let r = deg.to_radians();
                     let (s, c) = r.sin_cos();
-                    let mat = [1.0, 0.0, 0.0, 0.0, 0.0, c, s, 0.0, 0.0, -s, c, 0.0, 0.0, 0.0, 0.0, 1.0];
+                    let mat = [
+                        1.0, 0.0, 0.0, 0.0, 0.0, c, s, 0.0, 0.0, -s, c, 0.0, 0.0, 0.0, 0.0, 1.0,
+                    ];
                     mat4 = mul4(mat4, mat);
                     continue;
                 }
                 TransformFunction::RotateY(deg) => {
                     let r = deg.to_radians();
                     let (s, c) = r.sin_cos();
-                    let mat = [c, 0.0, -s, 0.0, 0.0, 1.0, 0.0, 0.0, s, 0.0, c, 0.0, 0.0, 0.0, 0.0, 1.0];
+                    let mat = [
+                        c, 0.0, -s, 0.0, 0.0, 1.0, 0.0, 0.0, s, 0.0, c, 0.0, 0.0, 0.0, 0.0, 1.0,
+                    ];
                     mat4 = mul4(mat4, mat);
                     continue;
                 }
@@ -1028,12 +1040,18 @@ impl Transform {
                 TransformFunction::ScaleX(sx) => [*sx, 0.0, 0.0, 1.0, 0.0, 0.0],
                 TransformFunction::ScaleY(sy) => [1.0, 0.0, 0.0, *sy, 0.0, 0.0],
                 TransformFunction::ScaleZ(sz) => {
-                    let mat = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, *sz, 0.0, 0.0, 0.0, 0.0, 1.0];
+                    let mat = [
+                        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, *sz, 0.0, 0.0, 0.0, 0.0,
+                        1.0,
+                    ];
                     mat4 = mul4(mat4, mat);
                     continue;
                 }
                 TransformFunction::Scale3d(sx, sy, sz) => {
-                    let mat = [*sx, 0.0, 0.0, 0.0, 0.0, *sy, 0.0, 0.0, 0.0, 0.0, *sz, 0.0, 0.0, 0.0, 0.0, 1.0];
+                    let mat = [
+                        *sx, 0.0, 0.0, 0.0, 0.0, *sy, 0.0, 0.0, 0.0, 0.0, *sz, 0.0, 0.0, 0.0, 0.0,
+                        1.0,
+                    ];
                     mat4 = mul4(mat4, mat);
                     continue;
                 }
@@ -1045,15 +1063,32 @@ impl Transform {
                 TransformFunction::Matrix(a, b, c, d, e, f) => [*a, *b, *c, *d, *e, *f],
                 TransformFunction::Matrix3d(m) => {
                     let mut mat = [0.0f32; 16];
-                    for i in 0..16 {
-                        mat[i] = *m.get(i).unwrap_or(if i % 5 == 0 { &1.0 } else { &0.0 });
+                    for (i, item) in mat.iter_mut().enumerate() {
+                        *item = *m.get(i).unwrap_or(if i % 5 == 0 { &1.0 } else { &0.0 });
                     }
                     mat4 = mul4(mat4, mat);
                     continue;
                 }
                 TransformFunction::Perspective(d) => {
                     if *d > 0.0 {
-                        let mat = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, -1.0 / *d, 0.0, 0.0, 0.0, 1.0];
+                        let mat = [
+                            1.0,
+                            0.0,
+                            0.0,
+                            0.0,
+                            0.0,
+                            1.0,
+                            0.0,
+                            0.0,
+                            0.0,
+                            0.0,
+                            1.0,
+                            -1.0 / *d,
+                            0.0,
+                            0.0,
+                            0.0,
+                            1.0,
+                        ];
                         mat4 = mul4(mat4, mat);
                     }
                     continue;
@@ -1061,10 +1096,8 @@ impl Transform {
             };
             // Embed 2D affine [a, b, c, d, e, f] into 4x4 and multiply
             let mat = [
-                n[0], n[1], 0.0, 0.0,
-                n[2], n[3], 0.0, 0.0,
-                0.0, 0.0, 1.0, 0.0,
-                n[4], n[5], 0.0, 1.0,
+                n[0], n[1], 0.0, 0.0, n[2], n[3], 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, n[4], n[5], 0.0,
+                1.0,
             ];
             mat4 = mul4(mat4, mat);
         }
@@ -1166,8 +1199,14 @@ impl Gradient {
         let w = width as f32;
         let h = height as f32;
         match self {
-            Gradient::Linear { angle_deg, stops, repeating } => {
-                if stops.is_empty() { return pixels; }
+            Gradient::Linear {
+                angle_deg,
+                stops,
+                repeating,
+            } => {
+                if stops.is_empty() {
+                    return pixels;
+                }
                 // Resolve positions
                 let resolved = resolve_stops(stops);
                 let (a_pos, _) = resolved[0];
@@ -1193,7 +1232,9 @@ impl Gradient {
                 }
             }
             Gradient::Radial { stops, repeating } => {
-                if stops.is_empty() { return pixels; }
+                if stops.is_empty() {
+                    return pixels;
+                }
                 let resolved = resolve_stops(stops);
                 let (a_pos, _) = resolved[0];
                 let (z_pos, _) = resolved[resolved.len() - 1];
@@ -1214,8 +1255,14 @@ impl Gradient {
                     }
                 }
             }
-            Gradient::Conic { angle_deg, stops, repeating } => {
-                if stops.is_empty() { return pixels; }
+            Gradient::Conic {
+                angle_deg,
+                stops,
+                repeating,
+            } => {
+                if stops.is_empty() {
+                    return pixels;
+                }
                 let resolved = resolve_stops(stops);
                 let (a_pos, _) = resolved[0];
                 let (z_pos, _) = resolved[resolved.len() - 1];
@@ -1257,9 +1304,10 @@ pub enum StepPosition {
 }
 
 /// CSS `<easing-function>`: how an animation/transition progresses over time.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum TimingFunction {
     Linear,
+    #[default]
     Ease,
     EaseIn,
     EaseOut,
@@ -1268,12 +1316,6 @@ pub enum TimingFunction {
     CubicBezier(f32, f32, f32, f32),
     /// `steps(n, position)`
     Steps(u32, StepPosition),
-}
-
-impl Default for TimingFunction {
-    fn default() -> Self {
-        TimingFunction::Ease
-    }
 }
 
 impl TimingFunction {
@@ -1299,9 +1341,7 @@ impl TimingFunction {
                             (((t * steps).floor()) / (steps - 1.0).max(1.0)).clamp(0.0, 1.0)
                         }
                     }
-                    StepPosition::JumpBoth => {
-                        ((t * (steps + 1.0)).floor() / steps).clamp(0.0, 1.0)
-                    }
+                    StepPosition::JumpBoth => ((t * (steps + 1.0)).floor() / steps).clamp(0.0, 1.0),
                 }
             }
         }
@@ -1447,13 +1487,18 @@ pub fn parse_timing_function(s: &str) -> Option<TimingFunction> {
         "step-end" => return Some(TimingFunction::Steps(1, StepPosition::JumpEnd)),
         _ => {}
     }
-    if let Some(inner) = t.strip_prefix("cubic-bezier(").and_then(|s| s.strip_suffix(')')) {
+    if let Some(inner) = t
+        .strip_prefix("cubic-bezier(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
         let nums: Vec<f32> = inner
             .split(',')
             .filter_map(|p| p.trim().parse::<f32>().ok())
             .collect();
         if nums.len() == 4 {
-            return Some(TimingFunction::CubicBezier(nums[0], nums[1], nums[2], nums[3]));
+            return Some(TimingFunction::CubicBezier(
+                nums[0], nums[1], nums[2], nums[3],
+            ));
         }
         return None;
     }
@@ -1475,7 +1520,11 @@ fn resolve_stops(stops: &[ColorStop]) -> Vec<(f32, Color)> {
     let n = stops.len();
     let mut out: Vec<(f32, Color)> = Vec::with_capacity(n);
     for (i, stop) in stops.iter().enumerate() {
-        let default_pos = if n == 1 { 0.5 } else { i as f32 / (n - 1) as f32 };
+        let default_pos = if n == 1 {
+            0.5
+        } else {
+            i as f32 / (n - 1) as f32
+        };
         let start = stop.position.unwrap_or(default_pos);
         out.push((start, stop.color));
         if let Some(end) = stop.end_position {
@@ -1494,7 +1543,9 @@ fn resolve_stops(stops: &[ColorStop]) -> Vec<(f32, Color)> {
 }
 
 fn sample_stops(stops: &[(f32, Color)], t: f32) -> u32 {
-    if stops.is_empty() { return 0; }
+    if stops.is_empty() {
+        return 0;
+    }
     if stops.len() == 1 {
         let c = stops[0].1;
         return ((c.a as u32) << 24) | ((c.r as u32) << 16) | ((c.g as u32) << 8) | (c.b as u32);
@@ -1552,7 +1603,12 @@ pub enum FilterFunction {
     Sepia(f32),
     HueRotate(f32),
     Invert(f32),
-    DropShadow { offset_x: f32, offset_y: f32, blur: f32, color: Color },
+    DropShadow {
+        offset_x: f32,
+        offset_y: f32,
+        blur: f32,
+        color: Color,
+    },
 }
 
 /// CSS `object-fit` property values.
@@ -1763,10 +1819,7 @@ pub enum ContentItem {
     /// `attr(attribute-name)` resolved from the originating element.
     Attr(String),
     /// `counter(name, style?)` formatted from the current counter value.
-    Counter {
-        name: String,
-        style: Option<String>,
-    },
+    Counter { name: String, style: Option<String> },
     /// `counters(name, separator, style?)` formatted from all counter scopes.
     Counters {
         name: String,
@@ -2016,10 +2069,8 @@ impl TextDecorationThickness {
             Some(Self::Auto)
         } else if trimmed.eq_ignore_ascii_case("from-font") {
             Some(Self::FromFont)
-        } else if let Some(l) = Length::parse(trimmed) {
-            Some(Self::Length(l))
         } else {
-            None
+            Length::parse(trimmed).map(Self::Length)
         }
     }
 }
@@ -2146,8 +2197,9 @@ impl BlendMode {
 }
 
 /// CSS `clip-path` shapes per CSS Masking Module Level 1.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum ClipPath {
+    #[default]
     None,
     Circle {
         radius: Length,
@@ -2169,12 +2221,6 @@ pub enum ClipPath {
     },
     Polygon(Vec<(Length, Length)>),
     Url(String),
-}
-
-impl Default for ClipPath {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 /// CSS `mask-mode` values.
@@ -2253,9 +2299,9 @@ pub fn display_p3_to_srgb(r: f32, g: f32, b: f32) -> (u8, u8, u8) {
     let g_lin = srgb_to_linear(g);
     let b_lin = srgb_to_linear(b);
 
-    let r_srgb_lin = 1.224940179 * r_lin - 0.224940179 * g_lin + 0.0 * b_lin;
-    let g_srgb_lin = -0.042056916 * r_lin + 1.042056916 * g_lin + 0.0 * b_lin;
-    let b_srgb_lin = -0.019637554 * r_lin - 0.078636046 * g_lin + 1.098273600 * b_lin;
+    let r_srgb_lin = 1.224_940_2 * r_lin - 0.224_940_18 * g_lin + 0.0 * b_lin;
+    let g_srgb_lin = -0.042056916 * r_lin + 1.042_056_9 * g_lin + 0.0 * b_lin;
+    let b_srgb_lin = -0.019637554 * r_lin - 0.078_636_04 * g_lin + 1.098_273_6 * b_lin;
 
     let r_out = (linear_to_srgb(r_srgb_lin).clamp(0.0, 1.0) * 255.0).round() as u8;
     let g_out = (linear_to_srgb(g_srgb_lin).clamp(0.0, 1.0) * 255.0).round() as u8;
@@ -2266,13 +2312,13 @@ pub fn display_p3_to_srgb(r: f32, g: f32, b: f32) -> (u8, u8, u8) {
 
 /// Converts Oklab coordinates `(L, a, b)` to standard sRGB `(r, g, b)` bytes.
 pub fn oklab_to_srgb(l: f32, a: f32, b: f32) -> (u8, u8, u8) {
-    let l_ = (l + 0.3963377774 * a + 0.2158037573 * b).powi(3);
-    let m_ = (l - 0.1055613458 * a - 0.0638541728 * b).powi(3);
-    let s_ = (l - 0.0894841775 * a - 1.2914855480 * b).powi(3);
+    let l_ = (l + 0.396_337_78 * a + 0.215_803_76 * b).powi(3);
+    let m_ = (l - 0.105_561_346 * a - 0.063_854_17 * b).powi(3);
+    let s_ = (l - 0.089_484_18 * a - 1.291_485_5 * b).powi(3);
 
-    let r_lin = 4.0767434036 * l_ - 3.3077115913 * m_ + 0.2309699292 * s_;
-    let g_lin = -1.2684380046 * l_ + 2.6097574011 * m_ - 0.3413193965 * s_;
-    let b_lin = -0.0041960863 * l_ - 0.7034186147 * m_ + 1.7076147010 * s_;
+    let r_lin = 4.076_743_6 * l_ - 3.307_711_6 * m_ + 0.230_969_94 * s_;
+    let g_lin = -1.268_438 * l_ + 2.609_757_4 * m_ - 0.341_319_38 * s_;
+    let b_lin = -0.0041960863 * l_ - 0.703_418_6 * m_ + 1.707_614_7 * s_;
 
     let r = (linear_to_srgb(r_lin).clamp(0.0, 1.0) * 255.0).round() as u8;
     let g = (linear_to_srgb(g_lin).clamp(0.0, 1.0) * 255.0).round() as u8;
@@ -2287,13 +2333,13 @@ pub fn srgb_to_oklab(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
     let g_lin = srgb_to_linear(g as f32 / 255.0);
     let b_lin = srgb_to_linear(b as f32 / 255.0);
 
-    let l = (0.4122214708 * r_lin + 0.5363325363 * g_lin + 0.0514459929 * b_lin).cbrt();
-    let m = (0.2119034982 * r_lin + 0.6806995451 * g_lin + 0.1073969566 * b_lin).cbrt();
-    let s = (0.0883024619 * r_lin + 0.2817188376 * g_lin + 0.6299787005 * b_lin).cbrt();
+    let l = (0.412_221_46 * r_lin + 0.536_332_55 * g_lin + 0.051_445_995 * b_lin).cbrt();
+    let m = (0.211_903_5 * r_lin + 0.680_699_5 * g_lin + 0.107_396_96 * b_lin).cbrt();
+    let s = (0.088_302_46 * r_lin + 0.281_718_85 * g_lin + 0.629_978_7 * b_lin).cbrt();
 
-    let l_out = 0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s;
-    let a_out = 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s;
-    let b_out = 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s;
+    let l_out = 0.210_454_26 * l + 0.793_617_8 * m - 0.004_072_047 * s;
+    let a_out = 1.977_998_5 * l - 2.428_592_2 * m + 0.450_593_7 * s;
+    let b_out = 0.025_904_037 * l + 0.782_771_77 * m - 0.808_675_77 * s;
 
     (l_out, a_out, b_out)
 }
@@ -2322,8 +2368,14 @@ fn split_commas_depth0(s: &str) -> Vec<String> {
     let mut depth = 0i32;
     for ch in s.chars() {
         match ch {
-            '(' => { depth += 1; cur.push(ch); }
-            ')' => { depth -= 1; cur.push(ch); }
+            '(' => {
+                depth += 1;
+                cur.push(ch);
+            }
+            ')' => {
+                depth -= 1;
+                cur.push(ch);
+            }
             ',' if depth == 0 => {
                 parts.push(cur.trim().to_string());
                 cur = String::new();
@@ -2353,14 +2405,12 @@ fn parse_color_mix_inner(inner: &str) -> Option<Color> {
 
     let parse_color_and_pct = |s: &str| -> Option<(Color, Option<f32>)> {
         let s = s.trim();
-        if let Some((col_str, pct_str)) = s.rsplit_once(char::is_whitespace) {
-            if let Some(pct) = pct_str.strip_suffix('%') {
-                if let Ok(val) = pct.trim().parse::<f32>() {
-                    if let Some(c) = Value::parse_color(col_str) {
-                        return Some((c, Some(val / 100.0)));
-                    }
-                }
-            }
+        if let Some((col_str, pct_str)) = s.rsplit_once(char::is_whitespace)
+            && let Some(pct) = pct_str.strip_suffix('%')
+            && let Ok(val) = pct.trim().parse::<f32>()
+            && let Some(c) = Value::parse_color(col_str)
+        {
+            return Some((c, Some(val / 100.0)));
         }
         Value::parse_color(s).map(|c| (c, None))
     };
@@ -2371,7 +2421,11 @@ fn parse_color_mix_inner(inner: &str) -> Option<Color> {
     let (w1, w2, a_mult) = match (p1_opt, p2_opt) {
         (Some(p1), Some(p2)) => {
             let sum = p1 + p2;
-            if sum <= 0.0 { (0.5, 0.5, 1.0) } else { (p1 / sum, p2 / sum, sum.min(1.0)) }
+            if sum <= 0.0 {
+                (0.5, 0.5, 1.0)
+            } else {
+                (p1 / sum, p2 / sum, sum.min(1.0))
+            }
         }
         (Some(p1), None) => {
             let w1 = p1.clamp(0.0, 1.0);
@@ -2384,7 +2438,9 @@ fn parse_color_mix_inner(inner: &str) -> Option<Color> {
         (None, None) => (0.5, 0.5, 1.0),
     };
 
-    let alpha = ((c1.a as f32 * w1 + c2.a as f32 * w2) * a_mult).clamp(0.0, 255.0).round() as u8;
+    let alpha = ((c1.a as f32 * w1 + c2.a as f32 * w2) * a_mult)
+        .clamp(0.0, 255.0)
+        .round() as u8;
 
     if space == "oklab" {
         let (l1, a1, b1) = srgb_to_oklab(c1.r, c1.g, c1.b);
@@ -2402,16 +2458,21 @@ fn parse_color_mix_inner(inner: &str) -> Option<Color> {
         let l = ok_l1 * w1 + ok_l2 * w2;
         let c = c_val1 * w1 + c_val2 * w2;
         let mut diff = (h2 - h1).rem_euclid(360.0);
-        if diff > 180.0 { diff -= 360.0; }
+        if diff > 180.0 {
+            diff -= 360.0;
+        }
         let h = (h1 + diff * w2).rem_euclid(360.0);
         let (lab_l, lab_a, lab_b) = oklch_to_oklab(l, c, h);
         let (r, g, b) = oklab_to_srgb(lab_l, lab_a, lab_b);
         Some(Color::rgba(r, g, b, alpha))
     } else {
         // srgb, display-p3, linear srgb interpolation
-        let r_lin = srgb_to_linear(c1.r as f32 / 255.0) * w1 + srgb_to_linear(c2.r as f32 / 255.0) * w2;
-        let g_lin = srgb_to_linear(c1.g as f32 / 255.0) * w1 + srgb_to_linear(c2.g as f32 / 255.0) * w2;
-        let b_lin = srgb_to_linear(c1.b as f32 / 255.0) * w1 + srgb_to_linear(c2.b as f32 / 255.0) * w2;
+        let r_lin =
+            srgb_to_linear(c1.r as f32 / 255.0) * w1 + srgb_to_linear(c2.r as f32 / 255.0) * w2;
+        let g_lin =
+            srgb_to_linear(c1.g as f32 / 255.0) * w1 + srgb_to_linear(c2.g as f32 / 255.0) * w2;
+        let b_lin =
+            srgb_to_linear(c1.b as f32 / 255.0) * w1 + srgb_to_linear(c2.b as f32 / 255.0) * w2;
         let r = (linear_to_srgb(r_lin).clamp(0.0, 1.0) * 255.0).round() as u8;
         let g = (linear_to_srgb(g_lin).clamp(0.0, 1.0) * 255.0).round() as u8;
         let b = (linear_to_srgb(b_lin).clamp(0.0, 1.0) * 255.0).round() as u8;
@@ -2592,7 +2653,9 @@ impl Value {
                     }
                 };
 
-                if let (Some(c1), Some(c2), Some(c3)) = (parse_f(parts[1]), parse_f(parts[2]), parse_f(parts[3])) {
+                if let (Some(c1), Some(c2), Some(c3)) =
+                    (parse_f(parts[1]), parse_f(parts[2]), parse_f(parts[3]))
+                {
                     let alpha_f = if let Some(a_s) = alpha_part {
                         parse_f(a_s).unwrap_or(1.0)
                     } else if parts.len() >= 5 {
@@ -2664,7 +2727,9 @@ impl Value {
             };
 
             if parts.len() == 3 {
-                if let (Some(l), Some(a_val), Some(b_val)) = (parse_l(parts[0]), parse_ab(parts[1]), parse_ab(parts[2])) {
+                if let (Some(l), Some(a_val), Some(b_val)) =
+                    (parse_l(parts[0]), parse_ab(parts[1]), parse_ab(parts[2]))
+                {
                     let a = if let Some(a_s) = alpha_part {
                         parse_alpha(a_s).unwrap_or(255)
                     } else {
@@ -2673,11 +2738,17 @@ impl Value {
                     let (r, g, b) = oklab_to_srgb(l, a_val, b_val);
                     return Some(Color::rgba(r, g, b, a));
                 }
-            } else if parts.len() == 4 && alpha_part.is_none() {
-                if let (Some(l), Some(a_val), Some(b_val), Some(a)) = (parse_l(parts[0]), parse_ab(parts[1]), parse_ab(parts[2]), parse_alpha(parts[3])) {
-                    let (r, g, b) = oklab_to_srgb(l, a_val, b_val);
-                    return Some(Color::rgba(r, g, b, a));
-                }
+            } else if parts.len() == 4
+                && alpha_part.is_none()
+                && let (Some(l), Some(a_val), Some(b_val), Some(a)) = (
+                    parse_l(parts[0]),
+                    parse_ab(parts[1]),
+                    parse_ab(parts[2]),
+                    parse_alpha(parts[3]),
+                )
+            {
+                let (r, g, b) = oklab_to_srgb(l, a_val, b_val);
+                return Some(Color::rgba(r, g, b, a));
             }
         }
 
@@ -2744,7 +2815,9 @@ impl Value {
             };
 
             if parts.len() == 3 {
-                if let (Some(l), Some(c), Some(h)) = (parse_l(parts[0]), parse_c(parts[1]), parse_hue(parts[2])) {
+                if let (Some(l), Some(c), Some(h)) =
+                    (parse_l(parts[0]), parse_c(parts[1]), parse_hue(parts[2]))
+                {
                     let a = if let Some(a_s) = alpha_part {
                         parse_alpha(a_s).unwrap_or(255)
                     } else {
@@ -2754,12 +2827,18 @@ impl Value {
                     let (r, g, b) = oklab_to_srgb(ok_l, ok_a, ok_b);
                     return Some(Color::rgba(r, g, b, a));
                 }
-            } else if parts.len() == 4 && alpha_part.is_none() {
-                if let (Some(l), Some(c), Some(h), Some(a)) = (parse_l(parts[0]), parse_c(parts[1]), parse_hue(parts[2]), parse_alpha(parts[3])) {
-                    let (ok_l, ok_a, ok_b) = oklch_to_oklab(l, c, h);
-                    let (r, g, b) = oklab_to_srgb(ok_l, ok_a, ok_b);
-                    return Some(Color::rgba(r, g, b, a));
-                }
+            } else if parts.len() == 4
+                && alpha_part.is_none()
+                && let (Some(l), Some(c), Some(h), Some(a)) = (
+                    parse_l(parts[0]),
+                    parse_c(parts[1]),
+                    parse_hue(parts[2]),
+                    parse_alpha(parts[3]),
+                )
+            {
+                let (ok_l, ok_a, ok_b) = oklch_to_oklab(l, c, h);
+                let (r, g, b) = oklab_to_srgb(ok_l, ok_a, ok_b);
+                return Some(Color::rgba(r, g, b, a));
             }
         }
 
@@ -2767,10 +2846,9 @@ impl Value {
         if let Some(inner) = trimmed
             .strip_prefix("color-mix(")
             .and_then(|s| s.strip_suffix(')'))
+            && let Some(col) = parse_color_mix_inner(inner)
         {
-            if let Some(col) = parse_color_mix_inner(inner) {
-                return Some(col);
-            }
+            return Some(col);
         }
 
         // Full CSS 148 standard named colors (CSS Color Module Level 3/4)
@@ -2930,8 +3008,14 @@ mod tests {
     fn test_text_transform() {
         assert_eq!(TextTransform::Uppercase.apply("hello world"), "HELLO WORLD");
         assert_eq!(TextTransform::Lowercase.apply("HELLO WORLD"), "hello world");
-        assert_eq!(TextTransform::Capitalize.apply("hello world"), "Hello World");
-        assert_eq!(TextTransform::Capitalize.apply("foo-bar_baz"), "Foo-Bar_Baz");
+        assert_eq!(
+            TextTransform::Capitalize.apply("hello world"),
+            "Hello World"
+        );
+        assert_eq!(
+            TextTransform::Capitalize.apply("foo-bar_baz"),
+            "Foo-Bar_Baz"
+        );
         assert_eq!(TextTransform::None.apply("Hello World"), "Hello World");
     }
 
@@ -2942,9 +3026,18 @@ mod tests {
         assert_eq!(Length::Rem(2.0).to_px(16.0, 14.0, 1000.0), 28.0);
         assert_eq!(Length::Percent(50.0).to_px(16.0, 16.0, 800.0), 400.0);
         assert!((Length::Vw(60.0).to_px(16.0, 16.0, 800.0) - 480.0).abs() < 0.001);
-        assert_eq!(Length::Vh(15.0).to_px_with_viewport(16.0, 16.0, 800.0, 600.0), 90.0);
-        assert_eq!(Length::Vw(10.0).to_px_with_viewports(16.0, 16.0, 200.0, 800.0, 600.0), 80.0);
-        assert_eq!(Length::Vw(10.0).to_px_with_viewport(16.0, 16.0, 200.0, 600.0), 80.0);
+        assert_eq!(
+            Length::Vh(15.0).to_px_with_viewport(16.0, 16.0, 800.0, 600.0),
+            90.0
+        );
+        assert_eq!(
+            Length::Vw(10.0).to_px_with_viewports(16.0, 16.0, 200.0, 800.0, 600.0),
+            80.0
+        );
+        assert_eq!(
+            Length::Vw(10.0).to_px_with_viewport(16.0, 16.0, 200.0, 600.0),
+            80.0
+        );
     }
 
     #[test]
@@ -2960,18 +3053,12 @@ mod tests {
 
     #[test]
     fn test_parse_color_rgb() {
-        assert_eq!(
-            Value::parse_color("rgb(255, 0, 0)"),
-            Some(Color::RED)
-        );
+        assert_eq!(Value::parse_color("rgb(255, 0, 0)"), Some(Color::RED));
         assert_eq!(
             Value::parse_color("rgba(0, 0, 0, 0)"),
             Some(Color::TRANSPARENT)
         );
-        assert_eq!(
-            Value::parse_color("rgb(255 0 0)"),
-            Some(Color::RED)
-        );
+        assert_eq!(Value::parse_color("rgb(255 0 0)"), Some(Color::RED));
         assert_eq!(
             Value::parse_color("rgb(255 0 0 / 0.5)"),
             Some(Color::rgba(255, 0, 0, 128))
@@ -2987,17 +3074,32 @@ mod tests {
         assert_eq!(Value::parse_color("blue"), Some(Color::BLUE));
         assert_eq!(Value::parse_color("orange"), Some(Color::MANGO_ORANGE));
         assert_eq!(Value::parse_color("transparent"), Some(Color::TRANSPARENT));
-        assert_eq!(Value::parse_color("cornflowerblue"), Some(Color::rgb(100, 149, 237)));
-        assert_eq!(Value::parse_color("rebeccapurple"), Some(Color::rgb(102, 51, 153)));
-        assert_eq!(Value::parse_color("gainsboro"), Some(Color::rgb(220, 220, 220)));
+        assert_eq!(
+            Value::parse_color("cornflowerblue"),
+            Some(Color::rgb(100, 149, 237))
+        );
+        assert_eq!(
+            Value::parse_color("rebeccapurple"),
+            Some(Color::rgb(102, 51, 153))
+        );
+        assert_eq!(
+            Value::parse_color("gainsboro"),
+            Some(Color::rgb(220, 220, 220))
+        );
     }
 
     #[test]
     fn test_parse_color_display_p3_and_srgb() {
         // sRGB
         assert_eq!(Value::parse_color("color(srgb 1 0 0)"), Some(Color::RED));
-        assert_eq!(Value::parse_color("color(srgb 0 1 0 / 0.5)"), Some(Color::rgba(0, 255, 0, 128)));
-        assert_eq!(Value::parse_color("color(srgb 100% 100% 0%)"), Some(Color::rgb(255, 255, 0)));
+        assert_eq!(
+            Value::parse_color("color(srgb 0 1 0 / 0.5)"),
+            Some(Color::rgba(0, 255, 0, 128))
+        );
+        assert_eq!(
+            Value::parse_color("color(srgb 100% 100% 0%)"),
+            Some(Color::rgb(255, 255, 0))
+        );
 
         // display-p3
         let p3_red = Value::parse_color("color(display-p3 1 0 0)").unwrap();
@@ -3042,7 +3144,10 @@ mod tests {
         assert_eq!(mixed.a, 255);
 
         // 100% red in srgb
-        assert_eq!(Value::parse_color("color-mix(in srgb, red 100%, blue 0%)"), Some(Color::RED));
+        assert_eq!(
+            Value::parse_color("color-mix(in srgb, red 100%, blue 0%)"),
+            Some(Color::RED)
+        );
 
         // color-mix in oklab
         let ok_mixed = Value::parse_color("color-mix(in oklab, red 50%, blue 50%)").unwrap();
@@ -3051,7 +3156,10 @@ mod tests {
         assert_eq!(ok_mixed.a, 255);
 
         // color-mix with alpha
-        let alpha_mix = Value::parse_color("color-mix(in srgb, rgba(255, 0, 0, 0.5) 50%, rgba(0, 0, 255, 0.5) 50%)").unwrap();
+        let alpha_mix = Value::parse_color(
+            "color-mix(in srgb, rgba(255, 0, 0, 0.5) 50%, rgba(0, 0, 255, 0.5) 50%)",
+        )
+        .unwrap();
         assert_eq!(alpha_mix.a, 128);
     }
 
@@ -3141,4 +3249,3 @@ mod tests {
         assert!(radial_pixels.iter().any(|&p| p != 0));
     }
 }
-

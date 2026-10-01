@@ -77,7 +77,11 @@ pub fn omnibox_rect(window_width: f32) -> Rect {
 }
 
 /// Renders the Chrome status bar at the bottom of the window.
-pub fn render_status_bar(window_width: f32, window_height: f32, status_text: &str) -> Vec<DisplayCommand> {
+pub fn render_status_bar(
+    window_width: f32,
+    window_height: f32,
+    status_text: &str,
+) -> Vec<DisplayCommand> {
     let mut cmds = Vec::with_capacity(3);
     let status_y = window_height - STATUS_BAR_HEIGHT;
 
@@ -118,7 +122,7 @@ mod tests {
     #[test]
     fn test_tab_strip_metrics() {
         let tab_w = calculate_tab_width(800.0, 4);
-        assert!(tab_w >= 80.0 && tab_w <= 210.0);
+        assert!((80.0..=210.0).contains(&tab_w));
 
         let many_tabs_w = calculate_tab_width(800.0, 20);
         assert_eq!(many_tabs_w, 80.0);

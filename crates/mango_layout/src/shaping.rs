@@ -99,12 +99,36 @@ fn arabic_forms(ch: char) -> Option<(char, char, char, char)> {
 
 /// Returns true if a character joins with the character on its left (in cursive reading direction).
 fn joins_left(ch: char) -> bool {
-    matches!(ch,
-        '\u{0626}' | '\u{0628}' | '\u{062A}' | '\u{062B}' | '\u{062C}' | '\u{062D}'
-        | '\u{062E}' | '\u{0633}' | '\u{0634}' | '\u{0635}' | '\u{0636}' | '\u{0637}'
-        | '\u{0638}' | '\u{0639}' | '\u{063A}' | '\u{0641}' | '\u{0642}' | '\u{0643}'
-        | '\u{0644}' | '\u{0645}' | '\u{0646}' | '\u{0647}' | '\u{064A}'
-        | '\u{067E}' | '\u{0686}' | '\u{06AF}' | '\u{06A9}' | '\u{06CC}'
+    matches!(
+        ch,
+        '\u{0626}'
+            | '\u{0628}'
+            | '\u{062A}'
+            | '\u{062B}'
+            | '\u{062C}'
+            | '\u{062D}'
+            | '\u{062E}'
+            | '\u{0633}'
+            | '\u{0634}'
+            | '\u{0635}'
+            | '\u{0636}'
+            | '\u{0637}'
+            | '\u{0638}'
+            | '\u{0639}'
+            | '\u{063A}'
+            | '\u{0641}'
+            | '\u{0642}'
+            | '\u{0643}'
+            | '\u{0644}'
+            | '\u{0645}'
+            | '\u{0646}'
+            | '\u{0647}'
+            | '\u{064A}'
+            | '\u{067E}'
+            | '\u{0686}'
+            | '\u{06AF}'
+            | '\u{06A9}'
+            | '\u{06CC}'
     )
 }
 
@@ -154,7 +178,7 @@ pub fn shape_arabic(text: &str) -> String {
                         break;
                     }
                 }
-                let prev_joins = prev_base.map_or(false, |pb| joins_left(pb) && joins_right(ch));
+                let prev_joins = prev_base.is_some_and(|pb| joins_left(pb) && joins_right(ch));
 
                 let lig = match next {
                     '\u{0622}' => Some(if prev_joins { '\u{FEF6}' } else { '\u{FEF5}' }),
@@ -196,8 +220,8 @@ pub fn shape_arabic(text: &str) -> String {
                 n += 1;
             }
 
-            let prev_joins = prev_base.map_or(false, |pb| joins_left(pb) && joins_right(ch));
-            let next_joins = next_base.map_or(false, |nb| joins_left(ch) && joins_right(nb));
+            let prev_joins = prev_base.is_some_and(|pb| joins_left(pb) && joins_right(ch));
+            let next_joins = next_base.is_some_and(|nb| joins_left(ch) && joins_right(nb));
 
             let glyph = match (prev_joins, next_joins) {
                 (true, true) => forms.3,   // Medial
@@ -347,7 +371,8 @@ pub fn shape_thai(text: &str) -> String {
     while i < chars.len() {
         let ch = chars[i];
         // If tone mark precedes above vowel, normalize canonical order
-        if is_thai_tone_or_diacritic(ch) && i + 1 < chars.len() && is_thai_above_vowel(chars[i + 1]) {
+        if is_thai_tone_or_diacritic(ch) && i + 1 < chars.len() && is_thai_above_vowel(chars[i + 1])
+        {
             out.push(chars[i + 1]);
             out.push(ch);
             i += 2;
@@ -442,7 +467,11 @@ mod tests {
     fn test_arabic_tashkeel_transparency() {
         // "بِ" (Baa with Kasra) + "س" -> Baa should still take initial form even with Kasra!
         let shaped = shape_arabic("بِس");
-        assert!(shaped.starts_with('\u{FE91}'), "Baa must join across Kasra: got {}", shaped);
+        assert!(
+            shaped.starts_with('\u{FE91}'),
+            "Baa must join across Kasra: got {}",
+            shaped
+        );
     }
 
     #[test]
@@ -455,7 +484,11 @@ mod tests {
         // "स्थि" -> 'स' + virama + 'थ' + 'ि' -> 'ि' must move before the entire conjunct cluster!
         let cluster = "\u{0938}\u{094D}\u{0925}\u{093F}";
         let shaped_cluster = shape_devanagari(cluster);
-        assert!(shaped_cluster.starts_with('\u{093F}'), "Matra must precede conjunct: got {}", shaped_cluster);
+        assert!(
+            shaped_cluster.starts_with('\u{093F}'),
+            "Matra must precede conjunct: got {}",
+            shaped_cluster
+        );
     }
 
     #[test]
@@ -475,6 +508,10 @@ mod tests {
         // Syllable segmentation
         let phrase = "ภาษาไทย";
         let syllables = segment_thai_syllables(phrase);
-        assert!(syllables.len() >= 2, "Thai phrase must be segmented into syllables: got {:?}", syllables);
+        assert!(
+            syllables.len() >= 2,
+            "Thai phrase must be segmented into syllables: got {:?}",
+            syllables
+        );
     }
 }

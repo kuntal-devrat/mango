@@ -10,11 +10,13 @@ use mango_html::dom::{Document, NodeId};
 
 use crate::parser::Stylesheet;
 use crate::values::{
-    AlignContent, AlignItems, AlignSelf, Appearance, BackgroundAttachment, BackgroundClip, BackgroundLayer, BackgroundRepeat, BackgroundSize,
-    BorderCollapse, BorderImage, BorderStyle, BoxShadow, BoxSizing, CaptionSide, Clear, Cursor,
-    Direction, Display, FlexDirection, FlexWrap, Float, FontStyle, FontWeight, GridAutoFlow, GridPlacement, GridTrackSize,
-    Isolation, JustifyContent, Length, ListStylePosition, ListStyleType, MaskComposite, Overflow, Position, TableLayout, TextAlign,
-    TextDecoration, TextOverflow, TextTransform, UnicodeBidi, Value, VerticalAlign, Visibility, WhiteSpace,
+    AlignContent, AlignItems, AlignSelf, Appearance, BackgroundAttachment, BackgroundClip,
+    BackgroundLayer, BackgroundRepeat, BackgroundSize, BorderCollapse, BorderImage, BorderStyle,
+    BoxShadow, BoxSizing, CaptionSide, Clear, Cursor, Direction, Display, FlexDirection, FlexWrap,
+    Float, FontStyle, FontWeight, GridAutoFlow, GridPlacement, GridTrackSize, Isolation,
+    JustifyContent, Length, ListStylePosition, ListStyleType, MaskComposite, Overflow, Position,
+    TableLayout, TextAlign, TextDecoration, TextOverflow, TextTransform, UnicodeBidi, Value,
+    VerticalAlign, Visibility, WhiteSpace,
 };
 /// Fully resolved, typed computed styles for a single DOM element.
 #[derive(Debug, Clone, PartialEq)]
@@ -473,10 +475,15 @@ fn resolve_value_vars(
             }
             visited.insert(name.clone());
             let res = if let Some(target_val) = custom_props.get(name) {
-                resolve_value_vars(target_val, custom_props, visited)
-                    .or_else(|| fallback.as_ref().and_then(|fb| resolve_value_vars(fb, custom_props, visited)))
+                resolve_value_vars(target_val, custom_props, visited).or_else(|| {
+                    fallback
+                        .as_ref()
+                        .and_then(|fb| resolve_value_vars(fb, custom_props, visited))
+                })
             } else {
-                fallback.as_ref().and_then(|fb| resolve_value_vars(fb, custom_props, visited))
+                fallback
+                    .as_ref()
+                    .and_then(|fb| resolve_value_vars(fb, custom_props, visited))
             };
             visited.remove(name);
             res
@@ -587,7 +594,12 @@ pub fn compute_pseudo_style_with_index(
     host_style: &ComputedStyle,
     pseudo: &str,
 ) -> Option<ComputedStyle> {
-    let cascaded = crate::cascade::resolve_pseudo_element_cascade_with_index(node_id, doc, author_index, pseudo);
+    let cascaded = crate::cascade::resolve_pseudo_element_cascade_with_index(
+        node_id,
+        doc,
+        author_index,
+        pseudo,
+    );
     if cascaded.is_empty() {
         return None;
     }
@@ -645,7 +657,11 @@ pub fn compute_style(
     parent_style: Option<&ComputedStyle>,
 ) -> ComputedStyle {
     let mut order = 1000;
-    let author_index = crate::cascade::RuleIndex::from_stylesheets(author_stylesheets, crate::cascade::Origin::Author, &mut order);
+    let author_index = crate::cascade::RuleIndex::from_stylesheets(
+        author_stylesheets,
+        crate::cascade::Origin::Author,
+        &mut order,
+    );
     compute_style_with_index(node_id, doc, &author_index, parent_style)
 }
 
@@ -658,7 +674,11 @@ pub fn compute_pseudo_style(
     pseudo: &str,
 ) -> Option<ComputedStyle> {
     let mut order = 1000;
-    let author_index = crate::cascade::RuleIndex::from_stylesheets(author_stylesheets, crate::cascade::Origin::Author, &mut order);
+    let author_index = crate::cascade::RuleIndex::from_stylesheets(
+        author_stylesheets,
+        crate::cascade::Origin::Author,
+        &mut order,
+    );
     compute_pseudo_style_with_index(node_id, doc, &author_index, host_style, pseudo)
 }
 
@@ -736,8 +756,9 @@ pub fn apply_cascaded_properties(
                 style.color = c;
             }
         } else if is_current_color(val)
-            && let Some(p) = parent_style {
-                style.color = p.color;
+            && let Some(p) = parent_style
+        {
+            style.color = p.color;
         }
     }
 
@@ -779,21 +800,19 @@ pub fn apply_cascaded_properties(
                     style.float = *f;
                 }
             }
-            "clear" => {
-                match val {
-                    Value::Clear(c) => style.clear = *c,
-                    Value::Float(Float::Left) => style.clear = Clear::Left,
-                    Value::Float(Float::Right) => style.clear = Clear::Right,
-                    Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
-                        "left" => style.clear = Clear::Left,
-                        "right" => style.clear = Clear::Right,
-                        "both" => style.clear = Clear::Both,
-                        "none" => style.clear = Clear::None,
-                        _ => {}
-                    },
+            "clear" => match val {
+                Value::Clear(c) => style.clear = *c,
+                Value::Float(Float::Left) => style.clear = Clear::Left,
+                Value::Float(Float::Right) => style.clear = Clear::Right,
+                Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
+                    "left" => style.clear = Clear::Left,
+                    "right" => style.clear = Clear::Right,
+                    "both" => style.clear = Clear::Both,
+                    "none" => style.clear = Clear::None,
                     _ => {}
-                }
-            }
+                },
+                _ => {}
+            },
             "color" => {
                 if let Value::Color(c) = val {
                     style.color = *c;
@@ -802,8 +821,9 @@ pub fn apply_cascaded_properties(
                         style.color = c;
                     }
                 } else if is_current_color(val)
-                    && let Some(p) = parent_style {
-                        style.color = p.color;
+                    && let Some(p) = parent_style
+                {
+                    style.color = p.color;
                 }
             }
             "background-color" => {
@@ -905,24 +925,34 @@ pub fn apply_cascaded_properties(
             "background-repeat" => match val {
                 Value::BackgroundRepeat(r) => {
                     style.background_repeat = *r;
-                    for layer in &mut style.background_layers { layer.repeat = *r; }
+                    for layer in &mut style.background_layers {
+                        layer.repeat = *r;
+                    }
                 }
                 Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
                     "repeat" => {
                         style.background_repeat = BackgroundRepeat::Repeat;
-                        for layer in &mut style.background_layers { layer.repeat = BackgroundRepeat::Repeat; }
+                        for layer in &mut style.background_layers {
+                            layer.repeat = BackgroundRepeat::Repeat;
+                        }
                     }
                     "repeat-x" => {
                         style.background_repeat = BackgroundRepeat::RepeatX;
-                        for layer in &mut style.background_layers { layer.repeat = BackgroundRepeat::RepeatX; }
+                        for layer in &mut style.background_layers {
+                            layer.repeat = BackgroundRepeat::RepeatX;
+                        }
                     }
                     "repeat-y" => {
                         style.background_repeat = BackgroundRepeat::RepeatY;
-                        for layer in &mut style.background_layers { layer.repeat = BackgroundRepeat::RepeatY; }
+                        for layer in &mut style.background_layers {
+                            layer.repeat = BackgroundRepeat::RepeatY;
+                        }
                     }
                     "no-repeat" => {
                         style.background_repeat = BackgroundRepeat::NoRepeat;
-                        for layer in &mut style.background_layers { layer.repeat = BackgroundRepeat::NoRepeat; }
+                        for layer in &mut style.background_layers {
+                            layer.repeat = BackgroundRepeat::NoRepeat;
+                        }
                     }
                     _ => {}
                 },
@@ -939,10 +969,10 @@ pub fn apply_cascaded_properties(
                             },
                             _ => None,
                         };
-                        if let Some(r) = rep {
-                            if i < style.background_layers.len() {
-                                style.background_layers[i].repeat = r;
-                            }
+                        if let Some(r) = rep
+                            && i < style.background_layers.len()
+                        {
+                            style.background_layers[i].repeat = r;
                         }
                     }
                 }
@@ -951,27 +981,37 @@ pub fn apply_cascaded_properties(
             "background-size" => match val {
                 Value::BackgroundSize(s) => {
                     style.background_size = *s;
-                    for layer in &mut style.background_layers { layer.size = *s; }
+                    for layer in &mut style.background_layers {
+                        layer.size = *s;
+                    }
                 }
                 Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
                     "auto" => {
                         style.background_size = BackgroundSize::Auto;
-                        for layer in &mut style.background_layers { layer.size = BackgroundSize::Auto; }
+                        for layer in &mut style.background_layers {
+                            layer.size = BackgroundSize::Auto;
+                        }
                     }
                     "cover" => {
                         style.background_size = BackgroundSize::Cover;
-                        for layer in &mut style.background_layers { layer.size = BackgroundSize::Cover; }
+                        for layer in &mut style.background_layers {
+                            layer.size = BackgroundSize::Cover;
+                        }
                     }
                     "contain" => {
                         style.background_size = BackgroundSize::Contain;
-                        for layer in &mut style.background_layers { layer.size = BackgroundSize::Contain; }
+                        for layer in &mut style.background_layers {
+                            layer.size = BackgroundSize::Contain;
+                        }
                     }
                     _ => {}
                 },
                 Value::Length(len) => {
                     let s = BackgroundSize::Explicit(*len, Length::Auto);
                     style.background_size = s;
-                    for layer in &mut style.background_layers { layer.size = s; }
+                    for layer in &mut style.background_layers {
+                        layer.size = s;
+                    }
                 }
                 Value::List(items) if items.len() >= 2 => {
                     let parse_dim = |v: &Value| match v {
@@ -982,7 +1022,9 @@ pub fn apply_cascaded_properties(
                     if let (Some(w), Some(h)) = (parse_dim(&items[0]), parse_dim(&items[1])) {
                         let s = BackgroundSize::Explicit(w, h);
                         style.background_size = s;
-                        for layer in &mut style.background_layers { layer.size = s; }
+                        for layer in &mut style.background_layers {
+                            layer.size = s;
+                        }
                     }
                 }
                 _ => {}
@@ -990,18 +1032,24 @@ pub fn apply_cascaded_properties(
             "background-position" => {
                 if let Some(pos) = parse_position_val(val) {
                     style.background_position = pos;
-                    for layer in &mut style.background_layers { layer.position = pos; }
+                    for layer in &mut style.background_layers {
+                        layer.position = pos;
+                    }
                 }
             }
             "background-attachment" => match val {
                 Value::BackgroundAttachment(a) => {
                     style.background_attachment = *a;
-                    for layer in &mut style.background_layers { layer.attachment = *a; }
+                    for layer in &mut style.background_layers {
+                        layer.attachment = *a;
+                    }
                 }
                 Value::Keyword(k) => {
                     if let Some(a) = BackgroundAttachment::parse(k) {
                         style.background_attachment = a;
-                        for layer in &mut style.background_layers { layer.attachment = a; }
+                        for layer in &mut style.background_layers {
+                            layer.attachment = a;
+                        }
                     }
                 }
                 Value::List(items) => {
@@ -1011,10 +1059,10 @@ pub fn apply_cascaded_properties(
                             Value::Keyword(k) => BackgroundAttachment::parse(k),
                             _ => None,
                         };
-                        if let Some(a) = att {
-                            if i < style.background_layers.len() {
-                                style.background_layers[i].attachment = a;
-                            }
+                        if let Some(a) = att
+                            && i < style.background_layers.len()
+                        {
+                            style.background_layers[i].attachment = a;
                         }
                     }
                     if let Some(first) = style.background_layers.first() {
@@ -1026,12 +1074,16 @@ pub fn apply_cascaded_properties(
             "background-clip" | "-webkit-background-clip" => match val {
                 Value::BackgroundClip(c) => {
                     style.background_clip = *c;
-                    for layer in &mut style.background_layers { layer.clip = *c; }
+                    for layer in &mut style.background_layers {
+                        layer.clip = *c;
+                    }
                 }
                 Value::Keyword(k) => {
                     if let Some(c) = BackgroundClip::parse(k) {
                         style.background_clip = c;
-                        for layer in &mut style.background_layers { layer.clip = c; }
+                        for layer in &mut style.background_layers {
+                            layer.clip = c;
+                        }
                     }
                 }
                 Value::List(items) => {
@@ -1041,10 +1093,10 @@ pub fn apply_cascaded_properties(
                             Value::Keyword(k) => BackgroundClip::parse(k),
                             _ => None,
                         };
-                        if let Some(c) = cl {
-                            if i < style.background_layers.len() {
-                                style.background_layers[i].clip = c;
-                            }
+                        if let Some(c) = cl
+                            && i < style.background_layers.len()
+                        {
+                            style.background_layers[i].clip = c;
                         }
                     }
                     if let Some(first) = style.background_layers.first() {
@@ -1053,10 +1105,11 @@ pub fn apply_cascaded_properties(
                 }
                 _ => {}
             },
-            "border-image" => match val {
-                Value::BorderImage(bi) => style.border_image = Some(bi.clone()),
-                _ => {}
-            },
+            "border-image" => {
+                if let Value::BorderImage(bi) = val {
+                    style.border_image = Some(bi.clone())
+                }
+            }
             "border-image-source" => match val {
                 Value::Url(url) => {
                     let bi = style.border_image.get_or_insert_with(BorderImage::default);
@@ -1110,7 +1163,9 @@ pub fn apply_cascaded_properties(
                     "contain" => style.mask_size = Some(BackgroundSize::Contain),
                     _ => {}
                 },
-                Value::Length(len) => style.mask_size = Some(BackgroundSize::Explicit(*len, Length::Auto)),
+                Value::Length(len) => {
+                    style.mask_size = Some(BackgroundSize::Explicit(*len, Length::Auto))
+                }
                 Value::List(items) if items.len() >= 2 => {
                     let w = match &items[0] {
                         Value::Length(len) => *len,
@@ -1172,16 +1227,15 @@ pub fn apply_cascaded_properties(
                 },
                 _ => {}
             },
-            "appearance" | "-webkit-appearance" | "-moz-appearance" | "-ms-appearance" | "-o-appearance" => {
-                match val {
-                    Value::Keyword(k) | Value::String(k) => match k.to_ascii_lowercase().as_str() {
-                        "none" => style.appearance = Appearance::None,
-                        "auto" => style.appearance = Appearance::Auto,
-                        _ => {}
-                    },
+            "appearance" | "-webkit-appearance" | "-moz-appearance" | "-ms-appearance"
+            | "-o-appearance" => match val {
+                Value::Keyword(k) | Value::String(k) => match k.to_ascii_lowercase().as_str() {
+                    "none" => style.appearance = Appearance::None,
+                    "auto" => style.appearance = Appearance::Auto,
                     _ => {}
-                }
-            }
+                },
+                _ => {}
+            },
             "font-family" => match val {
                 Value::String(s) | Value::Keyword(s) => style.font_family = s.clone(),
                 Value::List(items) => {
@@ -1205,23 +1259,21 @@ pub fn apply_cascaded_properties(
                 }
                 _ => {}
             },
-            "text-align" => {
-                match val {
-                    Value::TextAlign(ta) => style.text_align = *ta,
-                    Value::Float(Float::Left) => style.text_align = TextAlign::Left,
-                    Value::Float(Float::Right) => style.text_align = TextAlign::Right,
-                    Value::Clear(Clear::Left) => style.text_align = TextAlign::Left,
-                    Value::Clear(Clear::Right) => style.text_align = TextAlign::Right,
-                    Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
-                        "left" => style.text_align = TextAlign::Left,
-                        "right" => style.text_align = TextAlign::Right,
-                        "center" => style.text_align = TextAlign::Center,
-                        "justify" => style.text_align = TextAlign::Justify,
-                        _ => {}
-                    },
+            "text-align" => match val {
+                Value::TextAlign(ta) => style.text_align = *ta,
+                Value::Float(Float::Left) => style.text_align = TextAlign::Left,
+                Value::Float(Float::Right) => style.text_align = TextAlign::Right,
+                Value::Clear(Clear::Left) => style.text_align = TextAlign::Left,
+                Value::Clear(Clear::Right) => style.text_align = TextAlign::Right,
+                Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
+                    "left" => style.text_align = TextAlign::Left,
+                    "right" => style.text_align = TextAlign::Right,
+                    "center" => style.text_align = TextAlign::Center,
+                    "justify" => style.text_align = TextAlign::Justify,
                     _ => {}
-                }
-            }
+                },
+                _ => {}
+            },
             "text-decoration" => {
                 if let Value::TextDecoration(td) = val {
                     style.text_decoration = *td;
@@ -1241,13 +1293,17 @@ pub fn apply_cascaded_properties(
             "letter-spacing" => match val {
                 Value::Length(l) => style.letter_spacing = *l,
                 Value::Number(n) if *n == 0.0 => style.letter_spacing = Length::Px(0.0),
-                Value::Keyword(k) if k.eq_ignore_ascii_case("normal") => style.letter_spacing = Length::Px(0.0),
+                Value::Keyword(k) if k.eq_ignore_ascii_case("normal") => {
+                    style.letter_spacing = Length::Px(0.0)
+                }
                 _ => {}
             },
             "word-spacing" => match val {
                 Value::Length(l) => style.word_spacing = *l,
                 Value::Number(n) if *n == 0.0 => style.word_spacing = Length::Px(0.0),
-                Value::Keyword(k) if k.eq_ignore_ascii_case("normal") => style.word_spacing = Length::Px(0.0),
+                Value::Keyword(k) if k.eq_ignore_ascii_case("normal") => {
+                    style.word_spacing = Length::Px(0.0)
+                }
                 _ => {}
             },
             "text-indent" => match val {
@@ -1277,90 +1333,78 @@ pub fn apply_cascaded_properties(
             },
 
             // Dimensions
-            "width" => {
-                match val {
-                    Value::Length(l) => style.width = *l,
-                    Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
-                        "auto" => style.width = Length::Auto,
-                        "content" => style.width = Length::Content,
-                        "min-content" => style.width = Length::MinContent,
-                        "max-content" => style.width = Length::MaxContent,
-                        "fit-content" => style.width = Length::FitContent,
-                        _ => {}
-                    },
+            "width" => match val {
+                Value::Length(l) => style.width = *l,
+                Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
+                    "auto" => style.width = Length::Auto,
+                    "content" => style.width = Length::Content,
+                    "min-content" => style.width = Length::MinContent,
+                    "max-content" => style.width = Length::MaxContent,
+                    "fit-content" => style.width = Length::FitContent,
                     _ => {}
-                }
-            }
-            "height" => {
-                match val {
-                    Value::Length(l) => style.height = *l,
-                    Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
-                        "auto" => style.height = Length::Auto,
-                        "content" => style.height = Length::Content,
-                        "min-content" => style.height = Length::MinContent,
-                        "max-content" => style.height = Length::MaxContent,
-                        "fit-content" => style.height = Length::FitContent,
-                        _ => {}
-                    },
+                },
+                _ => {}
+            },
+            "height" => match val {
+                Value::Length(l) => style.height = *l,
+                Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
+                    "auto" => style.height = Length::Auto,
+                    "content" => style.height = Length::Content,
+                    "min-content" => style.height = Length::MinContent,
+                    "max-content" => style.height = Length::MaxContent,
+                    "fit-content" => style.height = Length::FitContent,
                     _ => {}
-                }
-            }
-            "min-width" => {
-                match val {
-                    Value::Length(l) => style.min_width = *l,
-                    Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
-                        "auto" => style.min_width = Length::Auto,
-                        "content" => style.min_width = Length::Content,
-                        "min-content" => style.min_width = Length::MinContent,
-                        "max-content" => style.min_width = Length::MaxContent,
-                        "fit-content" => style.min_width = Length::FitContent,
-                        _ => {}
-                    },
+                },
+                _ => {}
+            },
+            "min-width" => match val {
+                Value::Length(l) => style.min_width = *l,
+                Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
+                    "auto" => style.min_width = Length::Auto,
+                    "content" => style.min_width = Length::Content,
+                    "min-content" => style.min_width = Length::MinContent,
+                    "max-content" => style.min_width = Length::MaxContent,
+                    "fit-content" => style.min_width = Length::FitContent,
                     _ => {}
-                }
-            }
-            "max-width" => {
-                match val {
-                    Value::Length(l) => style.max_width = *l,
-                    Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
-                        "auto" => style.max_width = Length::Auto,
-                        "content" => style.max_width = Length::Content,
-                        "min-content" => style.max_width = Length::MinContent,
-                        "max-content" => style.max_width = Length::MaxContent,
-                        "fit-content" => style.max_width = Length::FitContent,
-                        _ => {}
-                    },
+                },
+                _ => {}
+            },
+            "max-width" => match val {
+                Value::Length(l) => style.max_width = *l,
+                Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
+                    "auto" => style.max_width = Length::Auto,
+                    "content" => style.max_width = Length::Content,
+                    "min-content" => style.max_width = Length::MinContent,
+                    "max-content" => style.max_width = Length::MaxContent,
+                    "fit-content" => style.max_width = Length::FitContent,
                     _ => {}
-                }
-            }
-            "min-height" => {
-                match val {
-                    Value::Length(l) => style.min_height = *l,
-                    Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
-                        "auto" => style.min_height = Length::Auto,
-                        "content" => style.min_height = Length::Content,
-                        "min-content" => style.min_height = Length::MinContent,
-                        "max-content" => style.min_height = Length::MaxContent,
-                        "fit-content" => style.min_height = Length::FitContent,
-                        _ => {}
-                    },
+                },
+                _ => {}
+            },
+            "min-height" => match val {
+                Value::Length(l) => style.min_height = *l,
+                Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
+                    "auto" => style.min_height = Length::Auto,
+                    "content" => style.min_height = Length::Content,
+                    "min-content" => style.min_height = Length::MinContent,
+                    "max-content" => style.min_height = Length::MaxContent,
+                    "fit-content" => style.min_height = Length::FitContent,
                     _ => {}
-                }
-            }
-            "max-height" => {
-                match val {
-                    Value::Length(l) => style.max_height = *l,
-                    Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
-                        "auto" => style.max_height = Length::Auto,
-                        "content" => style.max_height = Length::Content,
-                        "min-content" => style.max_height = Length::MinContent,
-                        "max-content" => style.max_height = Length::MaxContent,
-                        "fit-content" => style.max_height = Length::FitContent,
-                        _ => {}
-                    },
+                },
+                _ => {}
+            },
+            "max-height" => match val {
+                Value::Length(l) => style.max_height = *l,
+                Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
+                    "auto" => style.max_height = Length::Auto,
+                    "content" => style.max_height = Length::Content,
+                    "min-content" => style.max_height = Length::MinContent,
+                    "max-content" => style.max_height = Length::MaxContent,
+                    "fit-content" => style.max_height = Length::FitContent,
                     _ => {}
-                }
-            }
+                },
+                _ => {}
+            },
 
             // Margins
             "margin-top" => {
@@ -1535,110 +1579,104 @@ pub fn apply_cascaded_properties(
                     style.flex_wrap = *fw;
                 }
             }
-            "justify-content" => {
-                match val {
-                    Value::JustifyContent(jc) => style.justify_content = *jc,
-                    Value::TextAlign(TextAlign::Center) => style.justify_content = JustifyContent::Center,
-                    Value::Keyword(kw) => {
-                        match kw.to_ascii_lowercase().as_str() {
-                            "center" => style.justify_content = JustifyContent::Center,
-                            "flex-start" => style.justify_content = JustifyContent::FlexStart,
-                            "flex-end" => style.justify_content = JustifyContent::FlexEnd,
-                            "space-between" => style.justify_content = JustifyContent::SpaceBetween,
-                            "space-around" => style.justify_content = JustifyContent::SpaceAround,
-                            "space-evenly" => style.justify_content = JustifyContent::SpaceEvenly,
-                            _ => {}
-                        }
-                    }
-                    _ => {}
+            "justify-content" => match val {
+                Value::JustifyContent(jc) => style.justify_content = *jc,
+                Value::TextAlign(TextAlign::Center) => {
+                    style.justify_content = JustifyContent::Center
                 }
-            }
-            "align-items" => {
-                match val {
-                    Value::AlignItems(ai) => style.align_items = *ai,
-                    Value::TextAlign(TextAlign::Center) => style.align_items = AlignItems::Center,
-                    Value::JustifyContent(JustifyContent::FlexStart) => style.align_items = AlignItems::FlexStart,
-                    Value::JustifyContent(JustifyContent::FlexEnd) => style.align_items = AlignItems::FlexEnd,
-                    Value::Keyword(kw) => {
-                        match kw.to_ascii_lowercase().as_str() {
-                            "center" => style.align_items = AlignItems::Center,
-                            "flex-start" => style.align_items = AlignItems::FlexStart,
-                            "flex-end" => style.align_items = AlignItems::FlexEnd,
-                            "stretch" => style.align_items = AlignItems::Stretch,
-                            "baseline" => style.align_items = AlignItems::Baseline,
-                            _ => {}
-                        }
-                    }
+                Value::Keyword(kw) => match kw.to_ascii_lowercase().as_str() {
+                    "center" => style.justify_content = JustifyContent::Center,
+                    "flex-start" => style.justify_content = JustifyContent::FlexStart,
+                    "flex-end" => style.justify_content = JustifyContent::FlexEnd,
+                    "space-between" => style.justify_content = JustifyContent::SpaceBetween,
+                    "space-around" => style.justify_content = JustifyContent::SpaceAround,
+                    "space-evenly" => style.justify_content = JustifyContent::SpaceEvenly,
                     _ => {}
+                },
+                _ => {}
+            },
+            "align-items" => match val {
+                Value::AlignItems(ai) => style.align_items = *ai,
+                Value::TextAlign(TextAlign::Center) => style.align_items = AlignItems::Center,
+                Value::JustifyContent(JustifyContent::FlexStart) => {
+                    style.align_items = AlignItems::FlexStart
                 }
-            }
-            "align-self" => {
-                match val {
-                    Value::AlignSelf(as_val) => style.align_self = *as_val,
-                    Value::AlignItems(ai) => {
-                        style.align_self = match ai {
-                            AlignItems::Stretch => AlignSelf::Stretch,
-                            AlignItems::FlexStart => AlignSelf::FlexStart,
-                            AlignItems::FlexEnd => AlignSelf::FlexEnd,
-                            AlignItems::Center => AlignSelf::Center,
-                            AlignItems::Baseline => AlignSelf::Baseline,
-                        };
-                    }
-                    Value::TextAlign(TextAlign::Center) => style.align_self = AlignSelf::Center,
-                    Value::JustifyContent(JustifyContent::FlexStart) => style.align_self = AlignSelf::FlexStart,
-                    Value::JustifyContent(JustifyContent::FlexEnd) => style.align_self = AlignSelf::FlexEnd,
-                    Value::Keyword(kw) => {
-                        match kw.to_ascii_lowercase().as_str() {
-                            "auto" => style.align_self = AlignSelf::Auto,
-                            "center" => style.align_self = AlignSelf::Center,
-                            "flex-start" => style.align_self = AlignSelf::FlexStart,
-                            "flex-end" => style.align_self = AlignSelf::FlexEnd,
-                            "stretch" => style.align_self = AlignSelf::Stretch,
-                            "baseline" => style.align_self = AlignSelf::Baseline,
-                            _ => {}
-                        }
-                    }
+                Value::JustifyContent(JustifyContent::FlexEnd) => {
+                    style.align_items = AlignItems::FlexEnd
+                }
+                Value::Keyword(kw) => match kw.to_ascii_lowercase().as_str() {
+                    "center" => style.align_items = AlignItems::Center,
+                    "flex-start" => style.align_items = AlignItems::FlexStart,
+                    "flex-end" => style.align_items = AlignItems::FlexEnd,
+                    "stretch" => style.align_items = AlignItems::Stretch,
+                    "baseline" => style.align_items = AlignItems::Baseline,
                     _ => {}
+                },
+                _ => {}
+            },
+            "align-self" => match val {
+                Value::AlignSelf(as_val) => style.align_self = *as_val,
+                Value::AlignItems(ai) => {
+                    style.align_self = match ai {
+                        AlignItems::Stretch => AlignSelf::Stretch,
+                        AlignItems::FlexStart => AlignSelf::FlexStart,
+                        AlignItems::FlexEnd => AlignSelf::FlexEnd,
+                        AlignItems::Center => AlignSelf::Center,
+                        AlignItems::Baseline => AlignSelf::Baseline,
+                    };
                 }
-            }
-            "align-content" => {
-                match val {
-                    Value::AlignContent(ac) => style.align_content = *ac,
-                    Value::JustifyContent(jc) => {
-                        style.align_content = match jc {
-                            JustifyContent::FlexStart => AlignContent::FlexStart,
-                            JustifyContent::FlexEnd => AlignContent::FlexEnd,
-                            JustifyContent::Center => AlignContent::Center,
-                            JustifyContent::SpaceBetween => AlignContent::SpaceBetween,
-                            JustifyContent::SpaceAround => AlignContent::SpaceAround,
-                            JustifyContent::SpaceEvenly => AlignContent::SpaceEvenly,
-                        };
-                    }
-                    Value::AlignItems(ai) => {
-                        style.align_content = match ai {
-                            AlignItems::Stretch => AlignContent::Stretch,
-                            AlignItems::FlexStart => AlignContent::FlexStart,
-                            AlignItems::FlexEnd => AlignContent::FlexEnd,
-                            AlignItems::Center => AlignContent::Center,
-                            _ => AlignContent::Stretch,
-                        };
-                    }
-                    Value::TextAlign(TextAlign::Center) => style.align_content = AlignContent::Center,
-                    Value::Keyword(kw) => {
-                        match kw.to_ascii_lowercase().as_str() {
-                            "stretch" | "normal" => style.align_content = AlignContent::Stretch,
-                            "flex-start" | "start" => style.align_content = AlignContent::FlexStart,
-                            "flex-end" | "end" => style.align_content = AlignContent::FlexEnd,
-                            "center" => style.align_content = AlignContent::Center,
-                            "space-between" => style.align_content = AlignContent::SpaceBetween,
-                            "space-around" => style.align_content = AlignContent::SpaceAround,
-                            "space-evenly" => style.align_content = AlignContent::SpaceEvenly,
-                            _ => {}
-                        }
-                    }
+                Value::TextAlign(TextAlign::Center) => style.align_self = AlignSelf::Center,
+                Value::JustifyContent(JustifyContent::FlexStart) => {
+                    style.align_self = AlignSelf::FlexStart
+                }
+                Value::JustifyContent(JustifyContent::FlexEnd) => {
+                    style.align_self = AlignSelf::FlexEnd
+                }
+                Value::Keyword(kw) => match kw.to_ascii_lowercase().as_str() {
+                    "auto" => style.align_self = AlignSelf::Auto,
+                    "center" => style.align_self = AlignSelf::Center,
+                    "flex-start" => style.align_self = AlignSelf::FlexStart,
+                    "flex-end" => style.align_self = AlignSelf::FlexEnd,
+                    "stretch" => style.align_self = AlignSelf::Stretch,
+                    "baseline" => style.align_self = AlignSelf::Baseline,
                     _ => {}
+                },
+                _ => {}
+            },
+            "align-content" => match val {
+                Value::AlignContent(ac) => style.align_content = *ac,
+                Value::JustifyContent(jc) => {
+                    style.align_content = match jc {
+                        JustifyContent::FlexStart => AlignContent::FlexStart,
+                        JustifyContent::FlexEnd => AlignContent::FlexEnd,
+                        JustifyContent::Center => AlignContent::Center,
+                        JustifyContent::SpaceBetween => AlignContent::SpaceBetween,
+                        JustifyContent::SpaceAround => AlignContent::SpaceAround,
+                        JustifyContent::SpaceEvenly => AlignContent::SpaceEvenly,
+                    };
                 }
-            }
+                Value::AlignItems(ai) => {
+                    style.align_content = match ai {
+                        AlignItems::Stretch => AlignContent::Stretch,
+                        AlignItems::FlexStart => AlignContent::FlexStart,
+                        AlignItems::FlexEnd => AlignContent::FlexEnd,
+                        AlignItems::Center => AlignContent::Center,
+                        _ => AlignContent::Stretch,
+                    };
+                }
+                Value::TextAlign(TextAlign::Center) => style.align_content = AlignContent::Center,
+                Value::Keyword(kw) => match kw.to_ascii_lowercase().as_str() {
+                    "stretch" | "normal" => style.align_content = AlignContent::Stretch,
+                    "flex-start" | "start" => style.align_content = AlignContent::FlexStart,
+                    "flex-end" | "end" => style.align_content = AlignContent::FlexEnd,
+                    "center" => style.align_content = AlignContent::Center,
+                    "space-between" => style.align_content = AlignContent::SpaceBetween,
+                    "space-around" => style.align_content = AlignContent::SpaceAround,
+                    "space-evenly" => style.align_content = AlignContent::SpaceEvenly,
+                    _ => {}
+                },
+                _ => {}
+            },
             "flex-grow" => {
                 if let Value::Number(n) = val {
                     style.flex_grow = (*n).max(0.0);
@@ -1653,29 +1691,27 @@ pub fn apply_cascaded_properties(
                     style.flex_shrink = (*px).max(0.0);
                 }
             }
-            "flex-basis" => {
-                match val {
-                    Value::Length(l) => style.flex_basis = *l,
-                    Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
-                        "content" => style.flex_basis = Length::Content,
-                        "min-content" => style.flex_basis = Length::MinContent,
-                        "max-content" => style.flex_basis = Length::MaxContent,
-                        "fit-content" => style.flex_basis = Length::FitContent,
-                        "auto" => style.flex_basis = Length::Auto,
-                        _ => {}
-                    },
+            "flex-basis" => match val {
+                Value::Length(l) => style.flex_basis = *l,
+                Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
+                    "content" => style.flex_basis = Length::Content,
+                    "min-content" => style.flex_basis = Length::MinContent,
+                    "max-content" => style.flex_basis = Length::MaxContent,
+                    "fit-content" => style.flex_basis = Length::FitContent,
+                    "auto" => style.flex_basis = Length::Auto,
                     _ => {}
-                }
-            }
+                },
+                _ => {}
+            },
             "row-gap" => {
                 if let Value::Length(l) = val {
                     style.row_gap = *l;
                 } else if let Value::Number(n) = val {
                     style.row_gap = Length::Px(*n);
-                } else if let Value::Keyword(k) = val {
-                    if k.eq_ignore_ascii_case("normal") {
-                        style.row_gap = Length::Px(0.0);
-                    }
+                } else if let Value::Keyword(k) = val
+                    && k.eq_ignore_ascii_case("normal")
+                {
+                    style.row_gap = Length::Px(0.0);
                 }
             }
             "column-gap" => {
@@ -1683,10 +1719,10 @@ pub fn apply_cascaded_properties(
                     style.column_gap = *l;
                 } else if let Value::Number(n) = val {
                     style.column_gap = Length::Px(*n);
-                } else if let Value::Keyword(k) = val {
-                    if k.eq_ignore_ascii_case("normal") {
-                        style.column_gap = Length::Px(16.0);
-                    }
+                } else if let Value::Keyword(k) = val
+                    && k.eq_ignore_ascii_case("normal")
+                {
+                    style.column_gap = Length::Px(16.0);
                 }
             }
             "order" => {
@@ -1772,26 +1808,44 @@ pub fn apply_cascaded_properties(
                 Value::Number(n) => style.opacity = (*n).clamp(0.0, 1.0),
                 Value::Percentage(pct) => style.opacity = (*pct / 100.0).clamp(0.0, 1.0),
                 Value::Length(Length::Px(px)) => style.opacity = (*px).clamp(0.0, 1.0),
-                Value::Length(Length::Percent(pct)) => style.opacity = (*pct / 100.0).clamp(0.0, 1.0),
+                Value::Length(Length::Percent(pct)) => {
+                    style.opacity = (*pct / 100.0).clamp(0.0, 1.0)
+                }
                 _ => {}
             },
             "border-top-left-radius" => match val {
-                Value::Length(len) => style.border_top_left_radius = len.to_px_with_viewport(style.font_size, style.root_font_size, 0.0, 0.0).max(0.0),
+                Value::Length(len) => {
+                    style.border_top_left_radius = len
+                        .to_px_with_viewport(style.font_size, style.root_font_size, 0.0, 0.0)
+                        .max(0.0)
+                }
                 Value::Number(n) => style.border_top_left_radius = (*n).max(0.0),
                 _ => {}
             },
             "border-top-right-radius" => match val {
-                Value::Length(len) => style.border_top_right_radius = len.to_px_with_viewport(style.font_size, style.root_font_size, 0.0, 0.0).max(0.0),
+                Value::Length(len) => {
+                    style.border_top_right_radius = len
+                        .to_px_with_viewport(style.font_size, style.root_font_size, 0.0, 0.0)
+                        .max(0.0)
+                }
                 Value::Number(n) => style.border_top_right_radius = (*n).max(0.0),
                 _ => {}
             },
             "border-bottom-right-radius" => match val {
-                Value::Length(len) => style.border_bottom_right_radius = len.to_px_with_viewport(style.font_size, style.root_font_size, 0.0, 0.0).max(0.0),
+                Value::Length(len) => {
+                    style.border_bottom_right_radius = len
+                        .to_px_with_viewport(style.font_size, style.root_font_size, 0.0, 0.0)
+                        .max(0.0)
+                }
                 Value::Number(n) => style.border_bottom_right_radius = (*n).max(0.0),
                 _ => {}
             },
             "border-bottom-left-radius" => match val {
-                Value::Length(len) => style.border_bottom_left_radius = len.to_px_with_viewport(style.font_size, style.root_font_size, 0.0, 0.0).max(0.0),
+                Value::Length(len) => {
+                    style.border_bottom_left_radius = len
+                        .to_px_with_viewport(style.font_size, style.root_font_size, 0.0, 0.0)
+                        .max(0.0)
+                }
                 Value::Number(n) => style.border_bottom_left_radius = (*n).max(0.0),
                 _ => {}
             },
@@ -1900,7 +1954,9 @@ pub fn apply_cascaded_properties(
             "caption-side" => match val {
                 Value::CaptionSide(cs) => style.caption_side = *cs,
                 Value::VerticalAlign(VerticalAlign::Top) => style.caption_side = CaptionSide::Top,
-                Value::VerticalAlign(VerticalAlign::Bottom) => style.caption_side = CaptionSide::Bottom,
+                Value::VerticalAlign(VerticalAlign::Bottom) => {
+                    style.caption_side = CaptionSide::Bottom
+                }
                 Value::Keyword(k) => match k.as_str() {
                     "top" => style.caption_side = CaptionSide::Top,
                     "bottom" => style.caption_side = CaptionSide::Bottom,
@@ -1909,45 +1965,39 @@ pub fn apply_cascaded_properties(
                 _ => {}
             },
 
-            "column-count" => {
-                match val {
-                    Value::Number(n) => {
-                        if *n >= 1.0 {
-                            style.column_count = Some(*n as usize);
-                        } else {
-                            style.column_count = None;
-                        }
-                    }
-                    Value::Keyword(k) if k.eq_ignore_ascii_case("auto") => {
+            "column-count" => match val {
+                Value::Number(n) => {
+                    if *n >= 1.0 {
+                        style.column_count = Some(*n as usize);
+                    } else {
                         style.column_count = None;
                     }
-                    _ => {}
                 }
-            }
-            "column-width" => {
-                match val {
-                    Value::Length(len) => {
-                        style.column_width = Some(len.clone());
-                    }
-                    Value::Keyword(k) if k.eq_ignore_ascii_case("auto") => {
-                        style.column_width = None;
-                    }
-                    _ => {}
+                Value::Keyword(k) if k.eq_ignore_ascii_case("auto") => {
+                    style.column_count = None;
                 }
-            }
-            "column-rule-width" => {
-                match val {
-                    Value::Length(len) => style.column_rule_width = *len,
-                    Value::Number(n) => style.column_rule_width = Length::Px(*n),
-                    Value::Keyword(k) => match k.as_str() {
-                        "thin" => style.column_rule_width = Length::Px(1.0),
-                        "medium" => style.column_rule_width = Length::Px(3.0),
-                        "thick" => style.column_rule_width = Length::Px(5.0),
-                        _ => {}
-                    },
-                    _ => {}
+                _ => {}
+            },
+            "column-width" => match val {
+                Value::Length(len) => {
+                    style.column_width = Some(*len);
                 }
-            }
+                Value::Keyword(k) if k.eq_ignore_ascii_case("auto") => {
+                    style.column_width = None;
+                }
+                _ => {}
+            },
+            "column-rule-width" => match val {
+                Value::Length(len) => style.column_rule_width = *len,
+                Value::Number(n) => style.column_rule_width = Length::Px(*n),
+                Value::Keyword(k) => match k.as_str() {
+                    "thin" => style.column_rule_width = Length::Px(1.0),
+                    "medium" => style.column_rule_width = Length::Px(3.0),
+                    "thick" => style.column_rule_width = Length::Px(5.0),
+                    _ => {}
+                },
+                _ => {}
+            },
             "column-rule-style" => {
                 if let Some(bs) = parse_border_style_value(val) {
                     style.column_rule_style = bs;
@@ -1958,10 +2008,10 @@ pub fn apply_cascaded_properties(
                     style.column_rule_color = style.color;
                 } else if let Value::Color(c) = val {
                     style.column_rule_color = *c;
-                } else if let Value::Keyword(k) = val {
-                    if let Some(c) = Value::parse_color(k) {
-                        style.column_rule_color = c;
-                    }
+                } else if let Value::Keyword(k) = val
+                    && let Some(c) = Value::parse_color(k)
+                {
+                    style.column_rule_color = c;
                 }
             }
             "column-span" => match val {
@@ -2031,33 +2081,35 @@ pub fn apply_cascaded_properties(
                     };
                 }
             }
-            "scrollbar-color" => {
-                match val {
-                    Value::List(list) if list.len() >= 2 => {
-                        let c1 = match &list[0] {
-                            Value::Color(c) => Some(*c),
-                            Value::CurrentColor => Some(style.color),
-                            Value::Keyword(k) if k.eq_ignore_ascii_case("currentcolor") => Some(style.color),
-                            Value::Keyword(k) => Value::parse_color(k),
-                            _ => None,
-                        };
-                        let c2 = match &list[1] {
-                            Value::Color(c) => Some(*c),
-                            Value::CurrentColor => Some(style.color),
-                            Value::Keyword(k) if k.eq_ignore_ascii_case("currentcolor") => Some(style.color),
-                            Value::Keyword(k) => Value::parse_color(k),
-                            _ => None,
-                        };
-                        if let (Some(thumb), Some(track)) = (c1, c2) {
-                            style.scrollbar_color = Some((thumb, track));
+            "scrollbar-color" => match val {
+                Value::List(list) if list.len() >= 2 => {
+                    let c1 = match &list[0] {
+                        Value::Color(c) => Some(*c),
+                        Value::CurrentColor => Some(style.color),
+                        Value::Keyword(k) if k.eq_ignore_ascii_case("currentcolor") => {
+                            Some(style.color)
                         }
+                        Value::Keyword(k) => Value::parse_color(k),
+                        _ => None,
+                    };
+                    let c2 = match &list[1] {
+                        Value::Color(c) => Some(*c),
+                        Value::CurrentColor => Some(style.color),
+                        Value::Keyword(k) if k.eq_ignore_ascii_case("currentcolor") => {
+                            Some(style.color)
+                        }
+                        Value::Keyword(k) => Value::parse_color(k),
+                        _ => None,
+                    };
+                    if let (Some(thumb), Some(track)) = (c1, c2) {
+                        style.scrollbar_color = Some((thumb, track));
                     }
-                    Value::Keyword(k) if k.eq_ignore_ascii_case("auto") => {
-                        style.scrollbar_color = None;
-                    }
-                    _ => {}
                 }
-            }
+                Value::Keyword(k) if k.eq_ignore_ascii_case("auto") => {
+                    style.scrollbar_color = None;
+                }
+                _ => {}
+            },
 
             "outline-width" => {
                 let px = match val {
@@ -2078,20 +2130,18 @@ pub fn apply_cascaded_properties(
                     style.outline_style = bs;
                 }
             }
-            "outline-color" => {
-                match val {
-                    Value::Color(c) => style.outline_color = *c,
-                    Value::CurrentColor => style.outline_color = style.color,
-                    Value::Keyword(k) => {
-                        if k.eq_ignore_ascii_case("invert") {
-                            style.outline_color = Color::BLACK;
-                        } else if let Some(c) = Value::parse_color(k) {
-                            style.outline_color = c;
-                        }
+            "outline-color" => match val {
+                Value::Color(c) => style.outline_color = *c,
+                Value::CurrentColor => style.outline_color = style.color,
+                Value::Keyword(k) => {
+                    if k.eq_ignore_ascii_case("invert") {
+                        style.outline_color = Color::BLACK;
+                    } else if let Some(c) = Value::parse_color(k) {
+                        style.outline_color = c;
                     }
-                    _ => {}
                 }
-            }
+                _ => {}
+            },
             "outline-offset" => {
                 if let Value::Length(len) = val {
                     style.outline_offset = len.to_px(style.font_size, 16.0, 0.0);
@@ -2131,8 +2181,12 @@ pub fn apply_cascaded_properties(
                 Value::GridAutoFlow(flow) => style.grid_auto_flow = *flow,
                 Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
                     "column" => style.grid_auto_flow = GridAutoFlow::Column,
-                    "column dense" | "dense column" => style.grid_auto_flow = GridAutoFlow::ColumnDense,
-                    "row dense" | "dense row" | "dense" => style.grid_auto_flow = GridAutoFlow::RowDense,
+                    "column dense" | "dense column" => {
+                        style.grid_auto_flow = GridAutoFlow::ColumnDense
+                    }
+                    "row dense" | "dense row" | "dense" => {
+                        style.grid_auto_flow = GridAutoFlow::RowDense
+                    }
                     _ => style.grid_auto_flow = GridAutoFlow::Row,
                 },
                 _ => {}
@@ -2176,7 +2230,11 @@ pub fn apply_cascaded_properties(
                                 static_text.push_str(s);
                             }
                         }
-                        style.content = if static_text.is_empty() { None } else { Some(static_text) };
+                        style.content = if static_text.is_empty() {
+                            None
+                        } else {
+                            Some(static_text)
+                        };
                         style.content_items = Some(items.clone());
                     }
                 }
@@ -2184,7 +2242,9 @@ pub fn apply_cascaded_properties(
                     style.content = Some(s.clone());
                     style.content_items = Some(vec![crate::values::ContentItem::String(s.clone())]);
                 }
-                Value::Keyword(k) if k.eq_ignore_ascii_case("none") || k.eq_ignore_ascii_case("normal") => {
+                Value::Keyword(k)
+                    if k.eq_ignore_ascii_case("none") || k.eq_ignore_ascii_case("normal") =>
+                {
                     style.content = None;
                     style.content_items = Some(Vec::new());
                 }
@@ -2244,7 +2304,9 @@ pub fn apply_cascaded_properties(
                 Value::Length(l) => style.transform_origin_x = *l,
                 Value::Float(Float::Left) => style.transform_origin_x = Length::Percent(0.0),
                 Value::Float(Float::Right) => style.transform_origin_x = Length::Percent(100.0),
-                Value::TextAlign(TextAlign::Center) => style.transform_origin_x = Length::Percent(50.0),
+                Value::TextAlign(TextAlign::Center) => {
+                    style.transform_origin_x = Length::Percent(50.0)
+                }
                 Value::Keyword(k) | Value::String(k) => match k.to_ascii_lowercase().as_str() {
                     "left" => style.transform_origin_x = Length::Percent(0.0),
                     "center" => style.transform_origin_x = Length::Percent(50.0),
@@ -2255,9 +2317,15 @@ pub fn apply_cascaded_properties(
             },
             "transform-origin-y" => match val {
                 Value::Length(l) => style.transform_origin_y = *l,
-                Value::TextAlign(TextAlign::Center) => style.transform_origin_y = Length::Percent(50.0),
-                Value::VerticalAlign(VerticalAlign::Top) => style.transform_origin_y = Length::Percent(0.0),
-                Value::VerticalAlign(VerticalAlign::Bottom) => style.transform_origin_y = Length::Percent(100.0),
+                Value::TextAlign(TextAlign::Center) => {
+                    style.transform_origin_y = Length::Percent(50.0)
+                }
+                Value::VerticalAlign(VerticalAlign::Top) => {
+                    style.transform_origin_y = Length::Percent(0.0)
+                }
+                Value::VerticalAlign(VerticalAlign::Bottom) => {
+                    style.transform_origin_y = Length::Percent(100.0)
+                }
                 Value::Keyword(k) | Value::String(k) => match k.to_ascii_lowercase().as_str() {
                     "top" => style.transform_origin_y = Length::Percent(0.0),
                     "center" => style.transform_origin_y = Length::Percent(50.0),
@@ -2373,20 +2441,29 @@ pub fn apply_cascaded_properties(
                         }
                         if let Value::Length(z) = item3 {
                             style.transform_origin_z = *z;
-                        } else if let Value::Number(n) = item3 {
-                            if *n == 0.0 {
-                                style.transform_origin_z = Length::Px(0.0);
-                            }
+                        } else if let Value::Number(n) = item3
+                            && *n == 0.0
+                        {
+                            style.transform_origin_z = Length::Px(0.0);
                         }
                     }
                     _ => {}
                 }
             }
-            "transition-property" | "transition-duration" | "transition-timing-function" | "transition-delay" => {
+            "transition-property"
+            | "transition-duration"
+            | "transition-timing-function"
+            | "transition-delay" => {
                 apply_transition_longhand(style, prop, val);
             }
-            "animation-name" | "animation-duration" | "animation-timing-function" | "animation-delay"
-            | "animation-iteration-count" | "animation-direction" | "animation-fill-mode" | "animation-play-state" => {
+            "animation-name"
+            | "animation-duration"
+            | "animation-timing-function"
+            | "animation-delay"
+            | "animation-iteration-count"
+            | "animation-direction"
+            | "animation-fill-mode"
+            | "animation-play-state" => {
                 apply_animation_longhand(style, prop, val);
             }
             "will-change" => match val {
@@ -2401,10 +2478,10 @@ pub fn apply_cascaded_properties(
                 Value::List(items) => {
                     let mut props = Vec::new();
                     for item in items {
-                        if let Value::Keyword(k) = item {
-                            if !k.eq_ignore_ascii_case("auto") {
-                                props.push(k.clone());
-                            }
+                        if let Value::Keyword(k) = item
+                            && !k.eq_ignore_ascii_case("auto")
+                        {
+                            props.push(k.clone());
                         }
                     }
                     style.will_change = !props.is_empty();
@@ -2426,7 +2503,9 @@ pub fn apply_cascaded_properties(
             },
             "backdrop-filter" | "-webkit-backdrop-filter" => match val {
                 Value::Filter(fns) => style.backdrop_filter = fns.clone(),
-                Value::Keyword(k) if k.eq_ignore_ascii_case("none") => style.backdrop_filter.clear(),
+                Value::Keyword(k) if k.eq_ignore_ascii_case("none") => {
+                    style.backdrop_filter.clear()
+                }
                 _ => {}
             },
             "mix-blend-mode" => match val {
@@ -2449,7 +2528,9 @@ pub fn apply_cascaded_properties(
             },
             "clip-path" | "-webkit-clip-path" => match val {
                 Value::ClipPath(cp) => style.clip_path = cp.clone(),
-                Value::Keyword(k) if k.eq_ignore_ascii_case("none") => style.clip_path = crate::values::ClipPath::None,
+                Value::Keyword(k) if k.eq_ignore_ascii_case("none") => {
+                    style.clip_path = crate::values::ClipPath::None
+                }
                 _ => {}
             },
             "mask-mode" | "-webkit-mask-mode" => match val {
@@ -2466,8 +2547,11 @@ pub fn apply_cascaded_properties(
                 Value::Keyword(k) if k.eq_ignore_ascii_case("auto") => style.aspect_ratio = None,
                 Value::List(items) if items.len() >= 2 => {
                     // e.g. "16 / 9" → items [Number(16), Number(9)]
-                    if let (Value::Number(w), Value::Number(h)) = (&items[0], &items[items.len()-1]) {
-                        if *h > 0.0 { style.aspect_ratio = Some(*w / *h); }
+                    if let (Value::Number(w), Value::Number(h)) =
+                        (&items[0], &items[items.len() - 1])
+                        && *h > 0.0
+                    {
+                        style.aspect_ratio = Some(*w / *h);
                     }
                 }
                 _ => {}
@@ -2524,8 +2608,12 @@ pub fn apply_cascaded_properties(
             },
             "line-clamp" | "-webkit-line-clamp" => match val {
                 Value::LineClamp(lc) => style.line_clamp = *lc,
-                Value::Number(n) if *n >= 1.0 => style.line_clamp = crate::values::LineClamp::Lines(*n as u32),
-                Value::Keyword(k) if k.eq_ignore_ascii_case("none") => style.line_clamp = crate::values::LineClamp::None,
+                Value::Number(n) if *n >= 1.0 => {
+                    style.line_clamp = crate::values::LineClamp::Lines(*n as u32)
+                }
+                Value::Keyword(k) if k.eq_ignore_ascii_case("none") => {
+                    style.line_clamp = crate::values::LineClamp::None
+                }
                 Value::Keyword(k) => {
                     if let Some(lc) = crate::values::LineClamp::parse(k) {
                         style.line_clamp = lc;
@@ -2535,14 +2623,26 @@ pub fn apply_cascaded_properties(
             },
             "text-underline-offset" => match val {
                 Value::Length(l) => style.text_underline_offset = *l,
-                Value::Keyword(k) if k.eq_ignore_ascii_case("auto") => style.text_underline_offset = Length::Auto,
+                Value::Keyword(k) if k.eq_ignore_ascii_case("auto") => {
+                    style.text_underline_offset = Length::Auto
+                }
                 _ => {}
             },
             "text-decoration-thickness" => match val {
-                Value::TextDecorationThickness(tdt) => style.text_decoration_thickness = tdt.clone(),
-                Value::Length(l) => style.text_decoration_thickness = crate::values::TextDecorationThickness::Length(*l),
-                Value::Keyword(k) if k.eq_ignore_ascii_case("auto") => style.text_decoration_thickness = crate::values::TextDecorationThickness::Auto,
-                Value::Keyword(k) if k.eq_ignore_ascii_case("from-font") => style.text_decoration_thickness = crate::values::TextDecorationThickness::FromFont,
+                Value::TextDecorationThickness(tdt) => {
+                    style.text_decoration_thickness = tdt.clone()
+                }
+                Value::Length(l) => {
+                    style.text_decoration_thickness =
+                        crate::values::TextDecorationThickness::Length(*l)
+                }
+                Value::Keyword(k) if k.eq_ignore_ascii_case("auto") => {
+                    style.text_decoration_thickness = crate::values::TextDecorationThickness::Auto
+                }
+                Value::Keyword(k) if k.eq_ignore_ascii_case("from-font") => {
+                    style.text_decoration_thickness =
+                        crate::values::TextDecorationThickness::FromFont
+                }
                 _ => {}
             },
             "text-emphasis-style" => match val {
@@ -2556,7 +2656,9 @@ pub fn apply_cascaded_properties(
             },
             "text-emphasis-color" => match val {
                 Value::Color(c) => style.text_emphasis_color = Some(*c),
-                Value::Keyword(k) if k.eq_ignore_ascii_case("currentcolor") => style.text_emphasis_color = None,
+                Value::Keyword(k) if k.eq_ignore_ascii_case("currentcolor") => {
+                    style.text_emphasis_color = None
+                }
                 Value::Keyword(k) => {
                     if let Some(c) = Value::parse_color(k) {
                         style.text_emphasis_color = Some(c);
@@ -2566,7 +2668,9 @@ pub fn apply_cascaded_properties(
             },
             "font-feature-settings" => match val {
                 Value::FontFeatureSettings(ffs) => style.font_feature_settings = ffs.clone(),
-                Value::Keyword(k) if k.eq_ignore_ascii_case("normal") => style.font_feature_settings = crate::values::FontFeatureSettings::Normal,
+                Value::Keyword(k) if k.eq_ignore_ascii_case("normal") => {
+                    style.font_feature_settings = crate::values::FontFeatureSettings::Normal
+                }
                 Value::Keyword(k) | Value::String(k) => {
                     if let Some(ffs) = crate::values::FontFeatureSettings::parse(k) {
                         style.font_feature_settings = ffs;
@@ -2576,7 +2680,9 @@ pub fn apply_cascaded_properties(
             },
             "font-variation-settings" => match val {
                 Value::FontVariationSettings(fvs) => style.font_variation_settings = fvs.clone(),
-                Value::Keyword(k) if k.eq_ignore_ascii_case("normal") => style.font_variation_settings = crate::values::FontVariationSettings::Normal,
+                Value::Keyword(k) if k.eq_ignore_ascii_case("normal") => {
+                    style.font_variation_settings = crate::values::FontVariationSettings::Normal
+                }
                 Value::Keyword(k) | Value::String(k) => {
                     if let Some(fvs) = crate::values::FontVariationSettings::parse(k) {
                         style.font_variation_settings = fvs;
@@ -2638,16 +2744,28 @@ pub fn apply_cascaded_properties(
     }
 
     // CSS 2.1 § 8.5.1: If the border style is 'none' or 'hidden', the computed border width is zero.
-    if matches!(style.border_top_style, BorderStyle::None | BorderStyle::Hidden) {
+    if matches!(
+        style.border_top_style,
+        BorderStyle::None | BorderStyle::Hidden
+    ) {
         style.border_top_width = 0.0;
     }
-    if matches!(style.border_right_style, BorderStyle::None | BorderStyle::Hidden) {
+    if matches!(
+        style.border_right_style,
+        BorderStyle::None | BorderStyle::Hidden
+    ) {
         style.border_right_width = 0.0;
     }
-    if matches!(style.border_bottom_style, BorderStyle::None | BorderStyle::Hidden) {
+    if matches!(
+        style.border_bottom_style,
+        BorderStyle::None | BorderStyle::Hidden
+    ) {
         style.border_bottom_width = 0.0;
     }
-    if matches!(style.border_left_style, BorderStyle::None | BorderStyle::Hidden) {
+    if matches!(
+        style.border_left_style,
+        BorderStyle::None | BorderStyle::Hidden
+    ) {
         style.border_left_width = 0.0;
     }
 }
@@ -2667,7 +2785,9 @@ fn apply_transition_longhand(style: &mut ComputedStyle, prop: &str, val: &Value)
         return;
     }
     if style.transitions.len() < values.len() {
-        style.transitions.resize(values.len(), Transition::default());
+        style
+            .transitions
+            .resize(values.len(), Transition::default());
     }
 
     let time_ms = |v: &Value| -> Option<f32> {
@@ -2680,7 +2800,11 @@ fn apply_transition_longhand(style: &mut ComputedStyle, prop: &str, val: &Value)
 
     for (i, value) in values.iter().enumerate() {
         // CSS repeats the shorter lists to match the longest one.
-        let idx = if i < style.transitions.len() { i } else { i % style.transitions.len() };
+        let idx = if i < style.transitions.len() {
+            i
+        } else {
+            i % style.transitions.len()
+        };
         let entry = &mut style.transitions[idx];
         match prop {
             "transition-property" => {
@@ -2714,7 +2838,10 @@ fn apply_transition_longhand(style: &mut ComputedStyle, prop: &str, val: &Value)
 
 /// Builds up `style.animations` from one `animation-*` longhand declaration.
 fn apply_animation_longhand(style: &mut ComputedStyle, prop: &str, val: &Value) {
-    use crate::values::{Animation, AnimationDirection, AnimationFillMode, AnimationIterationCount, AnimationPlayState};
+    use crate::values::{
+        Animation, AnimationDirection, AnimationFillMode, AnimationIterationCount,
+        AnimationPlayState,
+    };
 
     // `animation: none` clears the animation list entirely.
     if prop == "animation-name"
@@ -2737,7 +2864,11 @@ fn apply_animation_longhand(style: &mut ComputedStyle, prop: &str, val: &Value) 
     }
 
     for (i, value) in values.iter().enumerate() {
-        let idx = if i < style.animations.len() { i } else { i % style.animations.len() };
+        let idx = if i < style.animations.len() {
+            i
+        } else {
+            i % style.animations.len()
+        };
         let entry = &mut style.animations[idx];
         match prop {
             "animation-name" => {
@@ -2864,10 +2995,10 @@ fn parse_box_shadow_from_values(items: &[Value]) -> Option<BoxShadow> {
             }
             Value::Color(c) => color = *c,
             Value::Var { fallback, .. } => {
-                if let Some(fb) = fallback {
-                    if let Value::Color(c) = &**fb {
-                        color = *c;
-                    }
+                if let Some(fb) = fallback
+                    && let Value::Color(c) = &**fb
+                {
+                    color = *c;
                 }
             }
             _ => {}
@@ -2918,17 +3049,14 @@ fn value_to_template_areas(v: &Value) -> Vec<Vec<String>> {
     match v {
         Value::List(items) => {
             for item in items {
-                match item {
-                    Value::String(s) => {
-                        let cells: Vec<String> = s
-                            .split_whitespace()
-                            .map(|w| w.to_ascii_lowercase())
-                            .collect();
-                        if !cells.is_empty() {
-                            rows.push(cells);
-                        }
+                if let Value::String(s) = item {
+                    let cells: Vec<String> = s
+                        .split_whitespace()
+                        .map(|w| w.to_ascii_lowercase())
+                        .collect();
+                    if !cells.is_empty() {
+                        rows.push(cells);
                     }
-                    _ => {}
                 }
             }
         }
@@ -3047,7 +3175,8 @@ mod tests {
 
     #[test]
     fn test_custom_property_cycle_detection() {
-        let html = r#"<p style="--a: var(--b); --b: var(--a); color: var(--a, #ff0000);">Cycle</p>"#;
+        let html =
+            r#"<p style="--a: var(--b); --b: var(--a); color: var(--a, #ff0000);">Cycle</p>"#;
         let doc = parse_html(html);
         let root = doc.root();
         let p_id = doc.find_element_by_tag(root, "p").unwrap();
@@ -3091,13 +3220,17 @@ mod tests {
 
         let div_style = compute_style(div_id, &doc, &[], None);
         assert_eq!(div_style.background_color, Color::WHITE);
-        assert_eq!(div_style.background_image.as_deref(), Some("/static/images/wiki.png"));
+        assert_eq!(
+            div_style.background_image.as_deref(),
+            Some("/static/images/wiki.png")
+        );
         assert_eq!(div_style.background_repeat, BackgroundRepeat::NoRepeat);
     }
 
     #[test]
     fn test_letter_spacing_word_spacing_text_indent() {
-        let html = r#"<div style="letter-spacing: 2px; word-spacing: 4px; text-indent: 20px;">Text</div>"#;
+        let html =
+            r#"<div style="letter-spacing: 2px; word-spacing: 4px; text-indent: 20px;">Text</div>"#;
         let doc = parse_html(html);
         let root = doc.root();
         let div_id = doc.find_element_by_tag(root, "div").unwrap();
@@ -3144,7 +3277,9 @@ mod tests {
         // Test auto resets to None
         let auto_html = r#"<div style="accent-color: auto;">Auto</div>"#;
         let auto_doc = parse_html(auto_html);
-        let auto_div = auto_doc.find_element_by_tag(auto_doc.root(), "div").unwrap();
+        let auto_div = auto_doc
+            .find_element_by_tag(auto_doc.root(), "div")
+            .unwrap();
         let auto_style = compute_style(auto_div, &auto_doc, &[], None);
         assert_eq!(auto_style.accent_color, None);
     }

@@ -3,7 +3,9 @@
 //! Implements CSS 2.1 §9.4.1 (Block formatting contexts) and §10.3.3 (Block-level normal flow width).
 
 use mango_core::{EdgeSizes, Point, Rect};
-use mango_css::values::{BoxSizing, BreakInside, Clear, ColumnSpan, Display, Float, Length, Position};
+use mango_css::values::{
+    BoxSizing, BreakInside, Clear, ColumnSpan, Display, Float, Length, Position,
+};
 
 use crate::box_tree::LayoutBox;
 use crate::dimensions::Dimensions;
@@ -42,15 +44,18 @@ pub fn layout_block(
 
     // If box_node has a specified height, resolve it tentatively
     // so children (like percent-height or max-height inlines) have a containing block height.
-    if let Some(style) = &box_node.style {
-        if style.height != Length::Auto {
-            let font_size = style.font_size;
-            let root_font_size = style.root_font_size;
-            let cb_h = containing_block.content.height();
-            let tentative_h = style.height.to_px_with_viewport(font_size, root_font_size, cb_h, 600.0);
-            if tentative_h > 0.0 {
-                box_node.dimensions.content.size.height = tentative_h;
-            }
+    if let Some(style) = &box_node.style
+        && style.height != Length::Auto
+    {
+        let font_size = style.font_size;
+        let root_font_size = style.root_font_size;
+        let cb_h = containing_block.content.height();
+        let (_, vp_h) = mango_css::get_current_viewport();
+        let tentative_h = style
+            .height
+            .to_px_with_viewport(font_size, root_font_size, cb_h, vp_h);
+        if tentative_h > 0.0 {
+            box_node.dimensions.content.size.height = tentative_h;
         }
     }
 
@@ -92,10 +97,30 @@ fn calculate_block_width(box_node: &mut LayoutBox, containing_block: &Dimensions
     // 1. Padding and borders
     let font_size = style.font_size;
     let root_font_size = style.root_font_size;
-    let pad_top = style.padding_top.to_px_with_viewport(font_size, root_font_size, container_width, container_height);
-    let pad_right = style.padding_right.to_px_with_viewport(font_size, root_font_size, container_width, container_height);
-    let pad_bottom = style.padding_bottom.to_px_with_viewport(font_size, root_font_size, container_width, container_height);
-    let pad_left = style.padding_left.to_px_with_viewport(font_size, root_font_size, container_width, container_height);
+    let pad_top = style.padding_top.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
+    let pad_right = style.padding_right.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
+    let pad_bottom = style.padding_bottom.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
+    let pad_left = style.padding_left.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
 
     let border_top = style.border_top_width;
     let border_right = style.border_right_width;
@@ -107,22 +132,39 @@ fn calculate_block_width(box_node: &mut LayoutBox, containing_block: &Dimensions
         EdgeSizes::new(border_top, border_right, border_bottom, border_left);
 
     // 2. Margins and Width
-    let margin_top = style.margin_top.to_px_with_viewport(font_size, root_font_size, container_width, container_height);
-    let margin_bottom = style.margin_bottom.to_px_with_viewport(font_size, root_font_size, container_width, container_height);
+    let margin_top = style.margin_top.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
+    let margin_bottom = style.margin_bottom.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
 
     let is_width_auto = style.width == Length::Auto;
     let is_margin_left_auto = style.margin_left == Length::Auto;
     let is_margin_right_auto = style.margin_right == Length::Auto;
 
-    let mut margin_left = style.margin_left.to_px_with_viewport(font_size, root_font_size, container_width, container_height);
-    let mut margin_right = style.margin_right.to_px_with_viewport(font_size, root_font_size, container_width, container_height);
+    let mut margin_left = style.margin_left.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
+    let mut margin_right = style.margin_right.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
 
     let total_non_content_h = pad_left + pad_right + border_left + border_right;
 
-    let is_positioned = matches!(
-        style.position,
-        Position::Absolute | Position::Fixed
-    );
+    let is_positioned = matches!(style.position, Position::Absolute | Position::Fixed);
     let is_floating = style.float != Float::None;
     let is_inline_level = box_node.box_type != crate::box_model::BoxType::BlockNode
         && (style.display.is_inline_level()
@@ -138,38 +180,89 @@ fn calculate_block_width(box_node: &mut LayoutBox, containing_block: &Dimensions
             ));
 
     let tentative_width = if is_width_auto {
-        if let crate::box_model::BoxType::ReplacedElement { intrinsic_width, intrinsic_height, .. }
-            | crate::box_model::BoxType::IFrame { intrinsic_width, intrinsic_height, .. }
-            | crate::box_model::BoxType::Video { intrinsic_width, intrinsic_height, .. }
-            | crate::box_model::BoxType::Audio { intrinsic_width, intrinsic_height, .. }
-            | crate::box_model::BoxType::Canvas { intrinsic_width, intrinsic_height, .. } = &box_node.box_type
+        if let crate::box_model::BoxType::ReplacedElement {
+            intrinsic_width,
+            intrinsic_height,
+            ..
+        }
+        | crate::box_model::BoxType::IFrame {
+            intrinsic_width,
+            intrinsic_height,
+            ..
+        }
+        | crate::box_model::BoxType::Video {
+            intrinsic_width,
+            intrinsic_height,
+            ..
+        }
+        | crate::box_model::BoxType::Audio {
+            intrinsic_width,
+            intrinsic_height,
+            ..
+        }
+        | crate::box_model::BoxType::Canvas {
+            intrinsic_width,
+            intrinsic_height,
+            ..
+        } = &box_node.box_type
         {
             if style.height != Length::Auto && *intrinsic_height > 0.0 {
-                let ratio = if let Some(r) = style.aspect_ratio && r > 0.0 {
+                let ratio = if let Some(r) = style.aspect_ratio
+                    && r > 0.0
+                {
                     r
                 } else {
                     *intrinsic_width / *intrinsic_height
                 };
-                let raw_h = style.height.to_px_with_viewport(font_size, root_font_size, container_height, container_height);
+                let raw_h = style.height.to_px_with_viewport(
+                    font_size,
+                    root_font_size,
+                    container_height,
+                    container_height,
+                );
                 (raw_h * ratio).max(1.0)
             } else {
                 *intrinsic_width
             }
         } else if is_inline_level || is_floating {
-            if let Some(ratio) = style.aspect_ratio && ratio > 0.0 && style.height != Length::Auto {
-                let raw_h = style.height.to_px_with_viewport(font_size, root_font_size, container_height, container_height);
+            if let Some(ratio) = style.aspect_ratio
+                && ratio > 0.0
+                && style.height != Length::Auto
+            {
+                let raw_h = style.height.to_px_with_viewport(
+                    font_size,
+                    root_font_size,
+                    container_height,
+                    container_height,
+                );
                 (raw_h * ratio).max(1.0)
             } else {
-                calculate_shrink_to_fit_width(box_node, (container_width - total_non_content_h).max(0.0))
+                calculate_shrink_to_fit_width(
+                    box_node,
+                    (container_width - total_non_content_h).max(0.0),
+                )
             }
-        } else if let Some(ratio) = style.aspect_ratio && ratio > 0.0 && style.height != Length::Auto {
-            let raw_h = style.height.to_px_with_viewport(font_size, root_font_size, container_height, container_height);
+        } else if let Some(ratio) = style.aspect_ratio
+            && ratio > 0.0
+            && style.height != Length::Auto
+        {
+            let raw_h = style.height.to_px_with_viewport(
+                font_size,
+                root_font_size,
+                container_height,
+                container_height,
+            );
             (raw_h * ratio).max(1.0)
         } else {
             (container_width - total_non_content_h - margin_left - margin_right).max(0.0)
         }
     } else {
-        let raw_w = style.width.to_px_with_viewport(font_size, root_font_size, container_width, container_height);
+        let raw_w = style.width.to_px_with_viewport(
+            font_size,
+            root_font_size,
+            container_width,
+            container_height,
+        );
         if style.box_sizing == BoxSizing::BorderBox {
             (raw_w - total_non_content_h).max(0.0)
         } else {
@@ -180,7 +273,12 @@ fn calculate_block_width(box_node: &mut LayoutBox, containing_block: &Dimensions
     // Apply min-width and max-width clamping (CSS 2.1 § 10.4)
     let mut clamped_w = tentative_width;
     if style.max_width != Length::Auto {
-        let raw_max = style.max_width.to_px_with_viewport(font_size, root_font_size, container_width, container_height);
+        let raw_max = style.max_width.to_px_with_viewport(
+            font_size,
+            root_font_size,
+            container_width,
+            container_height,
+        );
         let max_content_w = if style.box_sizing == BoxSizing::BorderBox {
             (raw_max - total_non_content_h).max(0.0)
         } else {
@@ -189,7 +287,12 @@ fn calculate_block_width(box_node: &mut LayoutBox, containing_block: &Dimensions
         clamped_w = clamped_w.min(max_content_w);
     }
     if style.min_width != Length::Auto {
-        let raw_min = style.min_width.to_px_with_viewport(font_size, root_font_size, container_width, container_height);
+        let raw_min = style.min_width.to_px_with_viewport(
+            font_size,
+            root_font_size,
+            container_width,
+            container_height,
+        );
         let min_content_w = if style.box_sizing == BoxSizing::BorderBox {
             (raw_min - total_non_content_h).max(0.0)
         } else {
@@ -206,8 +309,8 @@ fn calculate_block_width(box_node: &mut LayoutBox, containing_block: &Dimensions
             margin_right = 0.0;
         }
     } else {
-        let underflow = container_width
-            - (clamped_w + total_non_content_h + margin_left + margin_right);
+        let underflow =
+            container_width - (clamped_w + total_non_content_h + margin_left + margin_right);
 
         if is_margin_left_auto && is_margin_right_auto {
             // Margin auto centering (e.g. margin: 0 auto; or max-width: 1200px; margin: 0 auto;)
@@ -252,64 +355,116 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
         let w = crate::inline_flow::measure_text_width_with_style(text, font_size, weight, family);
         return w.min(max_width);
     }
-    if let crate::box_model::BoxType::ReplacedElement { intrinsic_width, .. }
-        | crate::box_model::BoxType::IFrame { intrinsic_width, .. }
-        | crate::box_model::BoxType::Video { intrinsic_width, .. }
-        | crate::box_model::BoxType::Audio { intrinsic_width, .. }
-        | crate::box_model::BoxType::Canvas { intrinsic_width, .. } = &box_node.box_type
+    if let crate::box_model::BoxType::ReplacedElement {
+        intrinsic_width, ..
+    }
+    | crate::box_model::BoxType::IFrame {
+        intrinsic_width, ..
+    }
+    | crate::box_model::BoxType::Video {
+        intrinsic_width, ..
+    }
+    | crate::box_model::BoxType::Audio {
+        intrinsic_width, ..
+    }
+    | crate::box_model::BoxType::Canvas {
+        intrinsic_width, ..
+    } = &box_node.box_type
     {
         return (*intrinsic_width).min(max_width);
     }
 
     if let Some(s) = box_node.style.as_ref() {
-        if !matches!(s.width, mango_css::values::Length::Auto | mango_css::values::Length::Percent(_)) {
+        if !matches!(
+            s.width,
+            mango_css::values::Length::Auto | mango_css::values::Length::Percent(_)
+        ) {
             let font_size = s.font_size;
             let root_font_size = s.root_font_size;
-            let raw_w = s.width.to_px_with_viewport(font_size, root_font_size, max_width, max_width);
+            let raw_w =
+                s.width
+                    .to_px_with_viewport(font_size, root_font_size, max_width, max_width);
             let mut w = raw_w;
-            if !matches!(s.max_width, mango_css::values::Length::Auto | mango_css::values::Length::Percent(_)) {
-                let max_w = s.max_width.to_px_with_viewport(font_size, root_font_size, max_width, max_width);
+            if !matches!(
+                s.max_width,
+                mango_css::values::Length::Auto | mango_css::values::Length::Percent(_)
+            ) {
+                let max_w = s.max_width.to_px_with_viewport(
+                    font_size,
+                    root_font_size,
+                    max_width,
+                    max_width,
+                );
                 w = w.min(max_w);
             }
-            if !matches!(s.min_width, mango_css::values::Length::Auto | mango_css::values::Length::Percent(_)) {
-                let min_w = s.min_width.to_px_with_viewport(font_size, root_font_size, max_width, max_width);
+            if !matches!(
+                s.min_width,
+                mango_css::values::Length::Auto | mango_css::values::Length::Percent(_)
+            ) {
+                let min_w = s.min_width.to_px_with_viewport(
+                    font_size,
+                    root_font_size,
+                    max_width,
+                    max_width,
+                );
                 w = w.max(min_w);
             }
             return w.min(max_width);
         }
 
-        if matches!(s.display, mango_css::values::Display::Flex | mango_css::values::Display::InlineFlex) {
+        if matches!(
+            s.display,
+            mango_css::values::Display::Flex | mango_css::values::Display::InlineFlex
+        ) {
             let font_size = s.font_size;
             let root_font_size = s.root_font_size;
             let is_row = matches!(
                 s.flex_direction,
-                mango_css::values::FlexDirection::Row | mango_css::values::FlexDirection::RowReverse
+                mango_css::values::FlexDirection::Row
+                    | mango_css::values::FlexDirection::RowReverse
             );
             if is_row {
-                let col_gap = s.column_gap.to_px_with_viewport(font_size, root_font_size, max_width, max_width);
+                let col_gap = s.column_gap.to_px_with_viewport(
+                    font_size,
+                    root_font_size,
+                    max_width,
+                    max_width,
+                );
                 let mut sum_w = 0.0f32;
                 let mut count = 0;
                 for child in &box_node.children {
-                    let pos = child.style.as_ref().map(|s| s.position).unwrap_or(mango_css::values::Position::Static);
-                    if matches!(pos, mango_css::values::Position::Absolute | mango_css::values::Position::Fixed) {
+                    let pos = child
+                        .style
+                        .as_ref()
+                        .map(|s| s.position)
+                        .unwrap_or(mango_css::values::Position::Static);
+                    if matches!(
+                        pos,
+                        mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
+                    ) {
                         continue;
                     }
                     let child_w = calculate_shrink_to_fit_width(child, max_width);
                     let c_style = child.style.as_ref();
-                    let (p_left, p_right, b_left, b_right, m_left, m_right) = if let Some(cs) = c_style {
-                        let c_fs = cs.font_size;
-                        let c_root_fs = cs.root_font_size;
-                        (
-                            cs.padding_left.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
-                            cs.padding_right.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
-                            cs.border_left_width,
-                            cs.border_right_width,
-                            cs.margin_left.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
-                            cs.margin_right.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
-                        )
-                    } else {
-                        (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-                    };
+                    let (p_left, p_right, b_left, b_right, m_left, m_right) =
+                        if let Some(cs) = c_style {
+                            let c_fs = cs.font_size;
+                            let c_root_fs = cs.root_font_size;
+                            (
+                                cs.padding_left
+                                    .to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                                cs.padding_right
+                                    .to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                                cs.border_left_width,
+                                cs.border_right_width,
+                                cs.margin_left
+                                    .to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                                cs.margin_right
+                                    .to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                            )
+                        } else {
+                            (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+                        };
                     sum_w += child_w + p_left + p_right + b_left + b_right + m_left + m_right;
                     count += 1;
                 }
@@ -320,27 +475,40 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
             } else {
                 let mut max_w = 0.0f32;
                 for child in &box_node.children {
-                    let pos = child.style.as_ref().map(|s| s.position).unwrap_or(mango_css::values::Position::Static);
-                    if matches!(pos, mango_css::values::Position::Absolute | mango_css::values::Position::Fixed) {
+                    let pos = child
+                        .style
+                        .as_ref()
+                        .map(|s| s.position)
+                        .unwrap_or(mango_css::values::Position::Static);
+                    if matches!(
+                        pos,
+                        mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
+                    ) {
                         continue;
                     }
                     let child_w = calculate_shrink_to_fit_width(child, max_width);
                     let c_style = child.style.as_ref();
-                    let (p_left, p_right, b_left, b_right, m_left, m_right) = if let Some(cs) = c_style {
-                        let c_fs = cs.font_size;
-                        let c_root_fs = cs.root_font_size;
-                        (
-                            cs.padding_left.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
-                            cs.padding_right.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
-                            cs.border_left_width,
-                            cs.border_right_width,
-                            cs.margin_left.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
-                            cs.margin_right.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
-                        )
-                    } else {
-                        (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-                    };
-                    max_w = max_w.max(child_w + p_left + p_right + b_left + b_right + m_left + m_right);
+                    let (p_left, p_right, b_left, b_right, m_left, m_right) =
+                        if let Some(cs) = c_style {
+                            let c_fs = cs.font_size;
+                            let c_root_fs = cs.root_font_size;
+                            (
+                                cs.padding_left
+                                    .to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                                cs.padding_right
+                                    .to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                                cs.border_left_width,
+                                cs.border_right_width,
+                                cs.margin_left
+                                    .to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                                cs.margin_right
+                                    .to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                            )
+                        } else {
+                            (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+                        };
+                    max_w =
+                        max_w.max(child_w + p_left + p_right + b_left + b_right + m_left + m_right);
                 }
                 return (max_w.ceil() + 1.0).min(max_width);
             }
@@ -358,7 +526,8 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                         let style = box_node.style.as_ref();
                         let (font_size, is_bold, family_name) = if let Some(s) = style {
                             let bold = match s.font_weight {
-                                mango_css::values::FontWeight::Bold | mango_css::values::FontWeight::Bolder => true,
+                                mango_css::values::FontWeight::Bold
+                                | mango_css::values::FontWeight::Bolder => true,
                                 mango_css::values::FontWeight::Numeric(w) => w >= 600,
                                 _ => false,
                             };
@@ -372,11 +541,16 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                             mango_render::FontWeight::Regular
                         };
                         let family = mango_render::FontFamily::from_css_name(&family_name);
-                        let w = crate::inline_flow::measure_text_width_with_style(val, font_size, weight, family);
+                        let w = crate::inline_flow::measure_text_width_with_style(
+                            val, font_size, weight, family,
+                        );
                         return w.min(max_width);
                     }
                     _ => {
-                        let size_attr = box_node.get_attribute("size").and_then(|s| s.parse::<f32>().ok()).unwrap_or(20.0);
+                        let size_attr = box_node
+                            .get_attribute("size")
+                            .and_then(|s| s.parse::<f32>().ok())
+                            .unwrap_or(20.0);
                         return (size_attr * 8.0 + 16.0).min(max_width);
                     }
                 }
@@ -395,7 +569,8 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                 let style = box_node.style.as_ref();
                 let (font_size, is_bold, family_name) = if let Some(s) = style {
                     let bold = match s.font_weight {
-                        mango_css::values::FontWeight::Bold | mango_css::values::FontWeight::Bolder => true,
+                        mango_css::values::FontWeight::Bold
+                        | mango_css::values::FontWeight::Bolder => true,
                         mango_css::values::FontWeight::Numeric(w) => w >= 600,
                         _ => false,
                     };
@@ -413,13 +588,25 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                 for c in &box_node.children {
                     match &c.box_type {
                         crate::box_model::BoxType::TextNode(t) => {
-                            content_w += crate::inline_flow::measure_text_width_with_style(t, font_size, weight, family);
+                            content_w += crate::inline_flow::measure_text_width_with_style(
+                                t, font_size, weight, family,
+                            );
                         }
-                        crate::box_model::BoxType::ReplacedElement { intrinsic_width, .. }
-                        | crate::box_model::BoxType::IFrame { intrinsic_width, .. }
-                        | crate::box_model::BoxType::Video { intrinsic_width, .. }
-                        | crate::box_model::BoxType::Audio { intrinsic_width, .. }
-                        | crate::box_model::BoxType::Canvas { intrinsic_width, .. } => {
+                        crate::box_model::BoxType::ReplacedElement {
+                            intrinsic_width, ..
+                        }
+                        | crate::box_model::BoxType::IFrame {
+                            intrinsic_width, ..
+                        }
+                        | crate::box_model::BoxType::Video {
+                            intrinsic_width, ..
+                        }
+                        | crate::box_model::BoxType::Audio {
+                            intrinsic_width, ..
+                        }
+                        | crate::box_model::BoxType::Canvas {
+                            intrinsic_width, ..
+                        } => {
                             content_w += *intrinsic_width + 6.0;
                         }
                         _ => {
@@ -430,7 +617,9 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                 }
                 if content_w == 0.0 {
                     let val = box_node.get_attribute("value").unwrap_or("Button");
-                    content_w = crate::inline_flow::measure_text_width_with_style(val, font_size, weight, family);
+                    content_w = crate::inline_flow::measure_text_width_with_style(
+                        val, font_size, weight, family,
+                    );
                 }
                 return content_w.min(max_width);
             }
@@ -439,8 +628,15 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
     }
 
     let has_inlines = box_node.children.iter().any(|c| {
-        let pos = c.style.as_ref().map(|s| s.position).unwrap_or(mango_css::values::Position::Static);
-        !matches!(pos, mango_css::values::Position::Absolute | mango_css::values::Position::Fixed) && c.is_inline()
+        let pos = c
+            .style
+            .as_ref()
+            .map(|s| s.position)
+            .unwrap_or(mango_css::values::Position::Static);
+        !matches!(
+            pos,
+            mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
+        ) && c.is_inline()
     });
     if has_inlines {
         let mut max_line_w = 0.0f32;
@@ -453,8 +649,15 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
             max_line: &mut f32,
             max_width: f32,
         ) {
-            let pos = node.style.as_ref().map(|s| s.position).unwrap_or(mango_css::values::Position::Static);
-            if matches!(pos, mango_css::values::Position::Absolute | mango_css::values::Position::Fixed) {
+            let pos = node
+                .style
+                .as_ref()
+                .map(|s| s.position)
+                .unwrap_or(mango_css::values::Position::Static);
+            if matches!(
+                pos,
+                mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
+            ) {
                 return;
             }
             if node.tag_name.as_deref() == Some("br") {
@@ -466,31 +669,43 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                 crate::box_model::BoxType::InlineBlock => {
                     let w = calculate_shrink_to_fit_width(node, max_width);
                     let c_style = node.style.as_ref();
-                    let (p_left, p_right, b_left, b_right, m_left, m_right) = if let Some(cs) = c_style {
-                        let c_fs = cs.font_size;
-                        let c_root_fs = cs.root_font_size;
-                        (
-                            cs.padding_left.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
-                            cs.padding_right.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
-                            cs.border_left_width,
-                            cs.border_right_width,
-                            cs.margin_left.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
-                            cs.margin_right.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
-                        )
-                    } else {
-                        (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-                    };
+                    let (p_left, p_right, b_left, b_right, m_left, m_right) =
+                        if let Some(cs) = c_style {
+                            let c_fs = cs.font_size;
+                            let c_root_fs = cs.root_font_size;
+                            (
+                                cs.padding_left
+                                    .to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                                cs.padding_right
+                                    .to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                                cs.border_left_width,
+                                cs.border_right_width,
+                                cs.margin_left
+                                    .to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                                cs.margin_right
+                                    .to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                            )
+                        } else {
+                            (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+                        };
                     *curr_line += w + p_left + p_right + b_left + b_right + m_left + m_right;
                 }
                 crate::box_model::BoxType::TextNode(raw_text) => {
                     let style = node.style.as_ref().or(parent_style);
-                    let (font_size, is_bold, family_name, transformed_text) = if let Some(s) = style {
+                    let (font_size, is_bold, family_name, transformed_text) = if let Some(s) = style
+                    {
                         let bold = match s.font_weight {
-                            mango_css::values::FontWeight::Bold | mango_css::values::FontWeight::Bolder => true,
+                            mango_css::values::FontWeight::Bold
+                            | mango_css::values::FontWeight::Bolder => true,
                             mango_css::values::FontWeight::Numeric(w) => w >= 600,
                             _ => false,
                         };
-                        (s.font_size, bold, s.font_family.clone(), s.text_transform.apply(raw_text))
+                        (
+                            s.font_size,
+                            bold,
+                            s.font_family.clone(),
+                            s.text_transform.apply(raw_text),
+                        )
                     } else {
                         (16.0, false, "sans-serif".to_string(), raw_text.clone())
                     };
@@ -516,10 +731,7 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                                 current_word.clear();
                             }
                             text_w += crate::inline_flow::measure_text_width_with_style(
-                                " ",
-                                font_size,
-                                weight,
-                                family,
+                                " ", font_size, weight, family,
                             );
                         } else {
                             current_word.push(ch);
@@ -535,17 +747,33 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                     }
                     *curr_line += text_w.ceil() + 2.0;
                 }
-                crate::box_model::BoxType::ReplacedElement { intrinsic_width, .. }
-                | crate::box_model::BoxType::IFrame { intrinsic_width, .. }
-                | crate::box_model::BoxType::Video { intrinsic_width, .. }
-                | crate::box_model::BoxType::Audio { intrinsic_width, .. }
-                | crate::box_model::BoxType::Canvas { intrinsic_width, .. } => {
+                crate::box_model::BoxType::ReplacedElement {
+                    intrinsic_width, ..
+                }
+                | crate::box_model::BoxType::IFrame {
+                    intrinsic_width, ..
+                }
+                | crate::box_model::BoxType::Video {
+                    intrinsic_width, ..
+                }
+                | crate::box_model::BoxType::Audio {
+                    intrinsic_width, ..
+                }
+                | crate::box_model::BoxType::Canvas {
+                    intrinsic_width, ..
+                } => {
                     *curr_line += *intrinsic_width;
                 }
                 _ => {
                     let next_parent_style = node.style.as_ref().or(parent_style);
                     for c in &node.children {
-                        accumulate_inline_width(c, next_parent_style, curr_line, max_line, max_width);
+                        accumulate_inline_width(
+                            c,
+                            next_parent_style,
+                            curr_line,
+                            max_line,
+                            max_width,
+                        );
                     }
                 }
             }
@@ -561,8 +789,15 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
 
     let mut measured = 0.0f32;
     for child in &box_node.children {
-        let pos = child.style.as_ref().map(|s| s.position).unwrap_or(mango_css::values::Position::Static);
-        if matches!(pos, mango_css::values::Position::Absolute | mango_css::values::Position::Fixed) {
+        let pos = child
+            .style
+            .as_ref()
+            .map(|s| s.position)
+            .unwrap_or(mango_css::values::Position::Static);
+        if matches!(
+            pos,
+            mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
+        ) {
             continue;
         }
         match &child.box_type {
@@ -570,7 +805,8 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                 let style = child.style.as_ref().or(box_node.style.as_ref());
                 let (font_size, is_bold, family_name) = if let Some(s) = style {
                     let bold = match s.font_weight {
-                        mango_css::values::FontWeight::Bold | mango_css::values::FontWeight::Bolder => true,
+                        mango_css::values::FontWeight::Bold
+                        | mango_css::values::FontWeight::Bolder => true,
                         mango_css::values::FontWeight::Numeric(w) => w >= 600,
                         _ => false,
                     };
@@ -584,34 +820,52 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                     mango_render::FontWeight::Regular
                 };
                 let family = mango_render::FontFamily::from_css_name(&family_name);
-                let w = crate::inline_flow::measure_text_width_with_style(text, font_size, weight, family);
+                let w = crate::inline_flow::measure_text_width_with_style(
+                    text, font_size, weight, family,
+                );
                 measured = measured.max(w);
             }
-            crate::box_model::BoxType::ReplacedElement { intrinsic_width, .. }
-            | crate::box_model::BoxType::IFrame { intrinsic_width, .. }
-            | crate::box_model::BoxType::Video { intrinsic_width, .. }
-            | crate::box_model::BoxType::Audio { intrinsic_width, .. }
-            | crate::box_model::BoxType::Canvas { intrinsic_width, .. } => {
+            crate::box_model::BoxType::ReplacedElement {
+                intrinsic_width, ..
+            }
+            | crate::box_model::BoxType::IFrame {
+                intrinsic_width, ..
+            }
+            | crate::box_model::BoxType::Video {
+                intrinsic_width, ..
+            }
+            | crate::box_model::BoxType::Audio {
+                intrinsic_width, ..
+            }
+            | crate::box_model::BoxType::Canvas {
+                intrinsic_width, ..
+            } => {
                 measured = measured.max(*intrinsic_width);
             }
             _ => {
                 let child_w = calculate_shrink_to_fit_width(child, max_width);
                 let c_style = child.style.as_ref();
-                let (p_left, p_right, b_left, b_right, m_left, m_right) = if let Some(cs) = c_style {
+                let (p_left, p_right, b_left, b_right, m_left, m_right) = if let Some(cs) = c_style
+                {
                     let c_fs = cs.font_size;
                     let c_root_fs = cs.root_font_size;
                     (
-                        cs.padding_left.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
-                        cs.padding_right.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                        cs.padding_left
+                            .to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                        cs.padding_right
+                            .to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
                         cs.border_left_width,
                         cs.border_right_width,
-                        cs.margin_left.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
-                        cs.margin_right.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                        cs.margin_left
+                            .to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                        cs.margin_right
+                            .to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
                     )
                 } else {
                     (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
                 };
-                measured = measured.max(child_w + p_left + p_right + b_left + b_right + m_left + m_right);
+                measured =
+                    measured.max(child_w + p_left + p_right + b_left + b_right + m_left + m_right);
             }
         }
     }
@@ -625,7 +879,11 @@ fn calculate_block_position(
     current_y: f32,
     float_ctx: &FloatContext,
 ) {
-    let clear = box_node.style.as_ref().map(|s| s.clear).unwrap_or(Clear::None);
+    let clear = box_node
+        .style
+        .as_ref()
+        .map(|s| s.clear)
+        .unwrap_or(Clear::None);
     let cleared_y = float_ctx.apply_clearance(current_y, clear);
 
     let x = containing_block.content.x()
@@ -665,15 +923,19 @@ pub fn collapse_margins(m1: f32, m2: f32) -> f32 {
 /// Chromium lets such text overflow, so including it here made every block with
 /// tight line-height a few pixels too tall and shifted the whole page below it.
 fn in_flow_block_children_bottom(box_node: &LayoutBox) -> Option<f32> {
-    let parent_has_bottom_strut = box_node.dimensions.border.bottom > 0.0
-        || box_node.dimensions.padding.bottom > 0.0;
+    let parent_has_bottom_strut =
+        box_node.dimensions.border.bottom > 0.0 || box_node.dimensions.padding.bottom > 0.0;
 
     let mut bottom: Option<f32> = None;
     for child in &box_node.children {
         if child.is_inline() {
             continue;
         }
-        let position = child.style.as_ref().map(|s| s.position).unwrap_or(Position::Static);
+        let position = child
+            .style
+            .as_ref()
+            .map(|s| s.position)
+            .unwrap_or(Position::Static);
         if matches!(position, Position::Absolute | Position::Fixed) {
             continue;
         }
@@ -694,7 +956,10 @@ fn has_floats_recursive(box_node: &LayoutBox) -> bool {
     })
 }
 
-fn extract_floats_from_children(children: &mut Vec<LayoutBox>, parent_link: Option<&str>) -> Vec<LayoutBox> {
+fn extract_floats_from_children(
+    children: &mut Vec<LayoutBox>,
+    parent_link: Option<&str>,
+) -> Vec<LayoutBox> {
     let mut extracted_floats = Vec::new();
     let mut retained_children = Vec::new();
 
@@ -733,17 +998,24 @@ fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut FloatContext)
         if has_any_floats {
             let container_dims = box_node.dimensions;
             let parent_link = box_node.link_target.clone();
-            let mut floats = extract_floats_from_children(&mut box_node.children, parent_link.as_deref());
+            let mut floats =
+                extract_floats_from_children(&mut box_node.children, parent_link.as_deref());
 
             let mut float_bottom = container_dims.content.y();
             for float_child in &mut floats {
-                layout_single_float(float_child, &container_dims, container_dims.content.y(), float_ctx);
+                layout_single_float(
+                    float_child,
+                    &container_dims,
+                    container_dims.content.y(),
+                    float_ctx,
+                );
                 float_bottom = float_bottom.max(float_child.dimensions.margin_box().bottom());
             }
 
             let inline_height = layout_inline_children(box_node, float_ctx);
             box_node.children.extend(floats);
-            box_node.dimensions.content.size.height = inline_height.max(float_bottom - container_dims.content.y());
+            box_node.dimensions.content.size.height =
+                inline_height.max(float_bottom - container_dims.content.y());
             return;
         }
 
@@ -753,7 +1025,10 @@ fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut FloatContext)
     } else {
         // Check for CSS Multi-column layout (column-count / column-width)
         let col_count_opt = box_node.style.as_ref().and_then(|s| s.column_count);
-        let col_width_opt = box_node.style.as_ref().and_then(|s| s.column_width.as_ref());
+        let col_width_opt = box_node
+            .style
+            .as_ref()
+            .and_then(|s| s.column_width.as_ref());
         if col_count_opt.is_some() || col_width_opt.is_some() {
             let available_w = box_node.dimensions.content.width();
             let font_size = box_node.style.as_ref().map(|s| s.font_size).unwrap_or(16.0);
@@ -767,7 +1042,8 @@ fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut FloatContext)
                 (Some(c), Some(w_len)) => {
                     let w_px = w_len.to_px(font_size, 16.0, available_w);
                     if w_px > 0.0 {
-                        let max_cols = ((available_w + gap) / (w_px + gap)).floor().max(1.0) as usize;
+                        let max_cols =
+                            ((available_w + gap) / (w_px + gap)).floor().max(1.0) as usize;
                         c.min(max_cols).max(1)
                     } else {
                         c.max(1)
@@ -787,11 +1063,12 @@ fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut FloatContext)
 
             if resolved_cols > 1 {
                 if box_node.children.len() == 1 {
-                    if let Some(child_style) = box_node.children[0].style.as_mut() {
-                        if child_style.column_count.is_none() && child_style.column_width.is_none() {
-                            child_style.column_count = Some(resolved_cols);
-                            child_style.column_gap = mango_css::values::Length::Px(gap);
-                        }
+                    if let Some(child_style) = box_node.children[0].style.as_mut()
+                        && child_style.column_count.is_none()
+                        && child_style.column_width.is_none()
+                    {
+                        child_style.column_count = Some(resolved_cols);
+                        child_style.column_gap = mango_css::values::Length::Px(gap);
                     }
                 } else {
                     layout_multicol_children(box_node, resolved_cols, gap, float_ctx);
@@ -806,7 +1083,9 @@ fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut FloatContext)
         if is_ol {
             for child in &mut box_node.children {
                 if child.tag_name.as_deref() == Some("li") {
-                    child.attributes.push(("_mango_list_index".to_string(), ol_idx.to_string()));
+                    child
+                        .attributes
+                        .push(("_mango_list_index".to_string(), ol_idx.to_string()));
                     ol_idx += 1;
                 }
             }
@@ -819,7 +1098,11 @@ fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut FloatContext)
         let container_dims = box_node.dimensions;
 
         for child in box_node.children.iter_mut() {
-            let child_pos = child.style.as_ref().map(|s| s.position).unwrap_or(Position::Static);
+            let child_pos = child
+                .style
+                .as_ref()
+                .map(|s| s.position)
+                .unwrap_or(Position::Static);
             if matches!(child_pos, Position::Absolute | Position::Fixed) {
                 // Absolutely/fixed positioned elements are out-of-flow; placed in second pass
                 continue;
@@ -843,7 +1126,8 @@ fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut FloatContext)
 
             // Margin collapsing with previous sibling (CSS 2.1 §8.3.1)
             let curr_margin_top = child.dimensions.margin.top;
-            let parent_has_top_strut = container_dims.border.top > 0.0 || container_dims.padding.top > 0.0;
+            let parent_has_top_strut =
+                container_dims.border.top > 0.0 || container_dims.padding.top > 0.0;
             if in_flow_count > 0 {
                 let collapsed_margin = collapse_margins(prev_margin_bottom, curr_margin_top);
                 cursor_y += collapsed_margin;
@@ -864,9 +1148,7 @@ fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut FloatContext)
                 + child.dimensions.margin.left
                 + child.dimensions.border.left
                 + child.dimensions.padding.left;
-            let child_y = cursor_y
-                + child.dimensions.border.top
-                + child.dimensions.padding.top;
+            let child_y = cursor_y + child.dimensions.border.top + child.dimensions.padding.top;
 
             child.dimensions.content.origin = Point::new(child_x, child_y);
 
@@ -916,9 +1198,11 @@ fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut FloatContext)
             prev_margin_bottom = child.dimensions.margin.bottom;
         }
 
-        let parent_has_bottom_strut = container_dims.border.bottom > 0.0 || container_dims.padding.bottom > 0.0;
+        let parent_has_bottom_strut =
+            container_dims.border.bottom > 0.0 || container_dims.padding.bottom > 0.0;
         if !parent_has_bottom_strut && in_flow_count > 0 {
-            box_node.dimensions.margin.bottom = collapse_margins(box_node.dimensions.margin.bottom, prev_margin_bottom);
+            box_node.dimensions.margin.bottom =
+                collapse_margins(box_node.dimensions.margin.bottom, prev_margin_bottom);
         }
     }
 }
@@ -941,7 +1225,9 @@ fn layout_multicol_children(
     if is_ol {
         for child in &mut box_node.children {
             if child.tag_name.as_deref() == Some("li") {
-                child.attributes.push(("_mango_list_index".to_string(), ol_idx.to_string()));
+                child
+                    .attributes
+                    .push(("_mango_list_index".to_string(), ol_idx.to_string()));
                 ol_idx += 1;
             }
         }
@@ -956,7 +1242,10 @@ fn layout_multicol_children(
     let mut pending_normal: Vec<LayoutBox> = Vec::new();
 
     for child in box_node.children.drain(..) {
-        let is_span_all = child.style.as_ref().map_or(false, |s| s.column_span == ColumnSpan::All);
+        let is_span_all = child
+            .style
+            .as_ref()
+            .is_some_and(|s| s.column_span == ColumnSpan::All);
         if is_span_all {
             if !pending_normal.is_empty() {
                 chunks.push(MulticolChunk::Columns(std::mem::take(&mut pending_normal)));
@@ -985,7 +1274,11 @@ fn layout_multicol_children(
 
                 let mut unfragmented_total_h = 0.0f32;
                 for it in &mut items {
-                    let child_pos = it.style.as_ref().map(|s| s.position).unwrap_or(Position::Static);
+                    let child_pos = it
+                        .style
+                        .as_ref()
+                        .map(|s| s.position)
+                        .unwrap_or(Position::Static);
                     if !matches!(child_pos, Position::Absolute | Position::Fixed) {
                         calculate_block_width(it, &col_cb);
                         layout_block_children(it, float_ctx);
@@ -999,14 +1292,17 @@ fn layout_multicol_children(
                 // Fragment splittable blocks across column boundary
                 let mut fragmented_items = Vec::with_capacity(items.len() * 2);
                 for mut item in items.into_iter() {
-                    let break_inside = item.style.as_ref().map_or(BreakInside::Auto, |s| s.break_inside);
+                    let break_inside = item
+                        .style
+                        .as_ref()
+                        .map_or(BreakInside::Auto, |s| s.break_inside);
                     let can_fragment = break_inside == BreakInside::Auto
                         && item.children.len() > 1
                         && item.dimensions.margin_box().height() > target_col_h * 0.8;
 
                     if can_fragment {
                         let mut sub_children = std::mem::take(&mut item.children);
-                        let mid = (sub_children.len() + 1) / 2;
+                        let mid = sub_children.len().div_ceil(2);
                         let second_half = sub_children.split_off(mid);
 
                         let mut frag1 = item.clone();
@@ -1094,17 +1390,27 @@ fn layout_multicol_segment(
     let mut col_heights = vec![0.0f32; num_cols];
 
     for child in children.iter_mut() {
-        let child_pos = child.style.as_ref().map(|s| s.position).unwrap_or(Position::Static);
+        let child_pos = child
+            .style
+            .as_ref()
+            .map(|s| s.position)
+            .unwrap_or(Position::Static);
         if matches!(child_pos, Position::Absolute | Position::Fixed) {
             continue;
         }
 
         let child_display = child.style.as_ref().map(|s| s.display);
-        if matches!(child_display, Some(Display::Flex) | Some(Display::InlineFlex)) {
+        if matches!(
+            child_display,
+            Some(Display::Flex) | Some(Display::InlineFlex)
+        ) {
             crate::flex_flow::layout_flex(child, &col_cb, float_ctx);
-        } else if child_display == Some(Display::Grid) || child_display == Some(Display::InlineGrid) {
+        } else if child_display == Some(Display::Grid) || child_display == Some(Display::InlineGrid)
+        {
             crate::grid_flow::layout_grid(child, &col_cb, float_ctx);
-        } else if child_display == Some(Display::Table) || child.tag_name.as_deref() == Some("table") {
+        } else if child_display == Some(Display::Table)
+            || child.tag_name.as_deref() == Some("table")
+        {
             crate::table_flow::layout_table(child, &col_cb, float_ctx);
         } else {
             calculate_block_width(child, &col_cb);
@@ -1115,7 +1421,10 @@ fn layout_multicol_segment(
         }
 
         let h = child.dimensions.margin_box().height();
-        let break_inside = child.style.as_ref().map_or(BreakInside::Auto, |s| s.break_inside);
+        let break_inside = child
+            .style
+            .as_ref()
+            .map_or(BreakInside::Auto, |s| s.break_inside);
         let avoids_break = matches!(
             break_inside,
             BreakInside::Avoid | BreakInside::AvoidColumn | BreakInside::AvoidPage
@@ -1282,12 +1591,15 @@ fn layout_single_float(
     }
 }
 
-
 /// Positions out-of-flow absolute and fixed children against the containing box's padding box.
 pub fn layout_positioned_children(box_node: &mut LayoutBox, float_ctx: &mut FloatContext) {
     let container_dims = box_node.dimensions;
     for child in box_node.children.iter_mut() {
-        let child_pos = child.style.as_ref().map(|s| s.position).unwrap_or(Position::Static);
+        let child_pos = child
+            .style
+            .as_ref()
+            .map(|s| s.position)
+            .unwrap_or(Position::Static);
         if matches!(child_pos, Position::Absolute | Position::Fixed) {
             layout_positioned_element(child, &container_dims, float_ctx);
         }
@@ -1376,12 +1688,16 @@ fn layout_positioned_element(
     let margin_l = if is_margin_l_auto {
         0.0
     } else {
-        style.margin_left.to_px_with_viewport(font_size, 16.0, pad_w, pad_h)
+        style
+            .margin_left
+            .to_px_with_viewport(font_size, 16.0, pad_w, pad_h)
     };
     let margin_r = if is_margin_r_auto {
         0.0
     } else {
-        style.margin_right.to_px_with_viewport(font_size, 16.0, pad_w, pad_h)
+        style
+            .margin_right
+            .to_px_with_viewport(font_size, 16.0, pad_w, pad_h)
     };
 
     // If both left and right are specified and width is auto, width expands to fill the span
@@ -1390,12 +1706,19 @@ fn layout_positioned_element(
             + box_node.dimensions.padding.right
             + box_node.dimensions.border.left
             + box_node.dimensions.border.right;
-        let left_px = style.left.to_px_with_viewport(font_size, 16.0, pad_w, pad_h);
-        let right_px = style.right.to_px_with_viewport(font_size, 16.0, pad_w, pad_h);
-        let tentative_w = (pad_w - left_px - right_px - margin_l - margin_r - non_content_h).max(0.0);
+        let left_px = style
+            .left
+            .to_px_with_viewport(font_size, 16.0, pad_w, pad_h);
+        let right_px = style
+            .right
+            .to_px_with_viewport(font_size, 16.0, pad_w, pad_h);
+        let tentative_w =
+            (pad_w - left_px - right_px - margin_l - margin_r - non_content_h).max(0.0);
         let mut clamped_w = tentative_w;
         if style.max_width != Length::Auto {
-            let max_w = style.max_width.to_px_with_viewport(font_size, 16.0, pad_w, pad_h);
+            let max_w = style
+                .max_width
+                .to_px_with_viewport(font_size, 16.0, pad_w, pad_h);
             let max_content_w = if style.box_sizing == BoxSizing::BorderBox {
                 (max_w - non_content_h).max(0.0)
             } else {
@@ -1404,7 +1727,9 @@ fn layout_positioned_element(
             clamped_w = clamped_w.min(max_content_w);
         }
         if style.min_width != Length::Auto {
-            let min_w = style.min_width.to_px_with_viewport(font_size, 16.0, pad_w, pad_h);
+            let min_w = style
+                .min_width
+                .to_px_with_viewport(font_size, 16.0, pad_w, pad_h);
             let min_content_w = if style.box_sizing == BoxSizing::BorderBox {
                 (min_w - non_content_h).max(0.0)
             } else {
@@ -1424,12 +1749,16 @@ fn layout_positioned_element(
     let margin_t = if is_margin_t_auto {
         0.0
     } else {
-        style.margin_top.to_px_with_viewport(font_size, 16.0, pad_h, pad_h)
+        style
+            .margin_top
+            .to_px_with_viewport(font_size, 16.0, pad_h, pad_h)
     };
     let margin_b = if is_margin_b_auto {
         0.0
     } else {
-        style.margin_bottom.to_px_with_viewport(font_size, 16.0, pad_h, pad_h)
+        style
+            .margin_bottom
+            .to_px_with_viewport(font_size, 16.0, pad_h, pad_h)
     };
 
     // If both top and bottom are specified and height is auto, height expands to fill the span
@@ -1439,11 +1768,16 @@ fn layout_positioned_element(
             + box_node.dimensions.border.top
             + box_node.dimensions.border.bottom;
         let top_px = style.top.to_px_with_viewport(font_size, 16.0, pad_h, pad_h);
-        let bottom_px = style.bottom.to_px_with_viewport(font_size, 16.0, pad_h, pad_h);
-        let tentative_h = (pad_h - top_px - bottom_px - margin_t - margin_b - non_content_v).max(0.0);
+        let bottom_px = style
+            .bottom
+            .to_px_with_viewport(font_size, 16.0, pad_h, pad_h);
+        let tentative_h =
+            (pad_h - top_px - bottom_px - margin_t - margin_b - non_content_v).max(0.0);
         let mut clamped_h = tentative_h;
         if style.max_height != Length::Auto {
-            let max_h = style.max_height.to_px_with_viewport(font_size, 16.0, pad_h, pad_h);
+            let max_h = style
+                .max_height
+                .to_px_with_viewport(font_size, 16.0, pad_h, pad_h);
             let max_content_h = if style.box_sizing == BoxSizing::BorderBox {
                 (max_h - non_content_v).max(0.0)
             } else {
@@ -1452,7 +1786,9 @@ fn layout_positioned_element(
             clamped_h = clamped_h.min(max_content_h);
         }
         if style.min_height != Length::Auto {
-            let min_h = style.min_height.to_px_with_viewport(font_size, 16.0, pad_h, pad_h);
+            let min_h = style
+                .min_height
+                .to_px_with_viewport(font_size, 16.0, pad_h, pad_h);
             let min_content_h = if style.box_sizing == BoxSizing::BorderBox {
                 (min_h - non_content_v).max(0.0)
             } else {
@@ -1467,8 +1803,12 @@ fn layout_positioned_element(
     let border_box_h = box_node.dimensions.border_box().height();
 
     let border_box_x = if !is_left_auto && !is_right_auto {
-        let left_px = style.left.to_px_with_viewport(font_size, 16.0, pad_w, pad_h);
-        let right_px = style.right.to_px_with_viewport(font_size, 16.0, pad_w, pad_h);
+        let left_px = style
+            .left
+            .to_px_with_viewport(font_size, 16.0, pad_w, pad_h);
+        let right_px = style
+            .right
+            .to_px_with_viewport(font_size, 16.0, pad_w, pad_h);
         if is_margin_l_auto && is_margin_r_auto {
             let free_space = pad_w - left_px - right_px - border_box_w;
             let m = (free_space / 2.0).max(0.0);
@@ -1482,7 +1822,8 @@ fn layout_positioned_element(
             pad_box.x() + left_px + m
         } else if is_margin_r_auto {
             box_node.dimensions.margin.left = margin_l;
-            box_node.dimensions.margin.right = (pad_w - left_px - right_px - border_box_w - margin_l).max(0.0);
+            box_node.dimensions.margin.right =
+                (pad_w - left_px - right_px - border_box_w - margin_l).max(0.0);
             pad_box.x() + left_px + margin_l
         } else {
             box_node.dimensions.margin.left = margin_l;
@@ -1490,12 +1831,16 @@ fn layout_positioned_element(
             pad_box.x() + left_px + margin_l
         }
     } else if !is_left_auto {
-        let left_px = style.left.to_px_with_viewport(font_size, 16.0, pad_w, pad_h);
+        let left_px = style
+            .left
+            .to_px_with_viewport(font_size, 16.0, pad_w, pad_h);
         box_node.dimensions.margin.left = margin_l;
         box_node.dimensions.margin.right = margin_r;
         pad_box.x() + left_px + margin_l
     } else if !is_right_auto {
-        let right_px = style.right.to_px_with_viewport(font_size, 16.0, pad_w, pad_h);
+        let right_px = style
+            .right
+            .to_px_with_viewport(font_size, 16.0, pad_w, pad_h);
         box_node.dimensions.margin.left = margin_l;
         box_node.dimensions.margin.right = margin_r;
         pad_box.right() - right_px - margin_r - border_box_w
@@ -1515,17 +1860,23 @@ fn layout_positioned_element(
     let margin_t = if is_margin_t_auto {
         0.0
     } else {
-        style.margin_top.to_px_with_viewport(font_size, 16.0, pad_h, pad_h)
+        style
+            .margin_top
+            .to_px_with_viewport(font_size, 16.0, pad_h, pad_h)
     };
     let margin_b = if is_margin_b_auto {
         0.0
     } else {
-        style.margin_bottom.to_px_with_viewport(font_size, 16.0, pad_h, pad_h)
+        style
+            .margin_bottom
+            .to_px_with_viewport(font_size, 16.0, pad_h, pad_h)
     };
 
     let border_box_y = if !is_top_auto && !is_bottom_auto {
         let top_px = style.top.to_px_with_viewport(font_size, 16.0, pad_h, pad_h);
-        let bottom_px = style.bottom.to_px_with_viewport(font_size, 16.0, pad_h, pad_h);
+        let bottom_px = style
+            .bottom
+            .to_px_with_viewport(font_size, 16.0, pad_h, pad_h);
         if is_margin_t_auto && is_margin_b_auto {
             let free_space = pad_h - top_px - bottom_px - border_box_h;
             let m = (free_space / 2.0).max(0.0);
@@ -1539,7 +1890,8 @@ fn layout_positioned_element(
             pad_box.y() + top_px + m
         } else if is_margin_b_auto {
             box_node.dimensions.margin.top = margin_t;
-            box_node.dimensions.margin.bottom = (pad_h - top_px - bottom_px - border_box_h - margin_t).max(0.0);
+            box_node.dimensions.margin.bottom =
+                (pad_h - top_px - bottom_px - border_box_h - margin_t).max(0.0);
             pad_box.y() + top_px + margin_t
         } else {
             box_node.dimensions.margin.top = margin_t;
@@ -1552,7 +1904,9 @@ fn layout_positioned_element(
         box_node.dimensions.margin.bottom = margin_b;
         pad_box.y() + top_px + margin_t
     } else if !is_bottom_auto {
-        let bottom_px = style.bottom.to_px_with_viewport(font_size, 16.0, pad_h, pad_h);
+        let bottom_px = style
+            .bottom
+            .to_px_with_viewport(font_size, 16.0, pad_h, pad_h);
         box_node.dimensions.margin.top = margin_t;
         box_node.dimensions.margin.bottom = margin_b;
         pad_box.bottom() - bottom_px - margin_b - border_box_h
@@ -1564,7 +1918,8 @@ fn layout_positioned_element(
     };
 
     // Calculate content box origin from border box origin
-    let content_x = border_box_x + box_node.dimensions.border.left + box_node.dimensions.padding.left;
+    let content_x =
+        border_box_x + box_node.dimensions.border.left + box_node.dimensions.padding.left;
     let content_y = border_box_y + box_node.dimensions.border.top + box_node.dimensions.padding.top;
 
     let dx = content_x - box_node.dimensions.content.x();
@@ -1578,7 +1933,11 @@ fn layout_positioned_element(
 
 pub(crate) fn shift_descendants(box_node: &mut LayoutBox, dx: f32, dy: f32) {
     for child in &mut box_node.children {
-        let child_pos = child.style.as_ref().map(|s| s.position).unwrap_or(Position::Static);
+        let child_pos = child
+            .style
+            .as_ref()
+            .map(|s| s.position)
+            .unwrap_or(Position::Static);
         if child_pos == Position::Fixed {
             continue;
         }
@@ -1624,7 +1983,8 @@ fn calculate_block_height(box_node: &mut LayoutBox, containing_block: &Dimension
     let root_font_size = style.root_font_size;
     let container_h = containing_block.content.height().max(0.0);
     let container_w = containing_block.content.width();
-    let non_content_v = box_node.dimensions.padding.vertical() + box_node.dimensions.border.vertical();
+    let non_content_v =
+        box_node.dimensions.padding.vertical() + box_node.dimensions.border.vertical();
 
     // 1. Determine tentative content height
     if let crate::box_model::BoxType::ReplacedElement {
@@ -1660,25 +2020,36 @@ fn calculate_block_height(box_node: &mut LayoutBox, containing_block: &Dimension
             let is_percent_indefinite = matches!(style.height, Length::Percent(_))
                 && containing_block.content.height() <= 0.0;
             if !is_percent_indefinite {
-                let h = style.height.to_px_with_viewport(font_size, root_font_size, container_h, container_h);
+                let h = style.height.to_px_with_viewport(
+                    font_size,
+                    root_font_size,
+                    container_h,
+                    container_h,
+                );
                 box_node.dimensions.content.size.height = h;
             } else if *intrinsic_width > 0.0 && box_node.dimensions.content.size.width > 0.0 {
-                let ratio = if let Some(r) = style.aspect_ratio && r > 0.0 {
+                let ratio = if let Some(r) = style.aspect_ratio
+                    && r > 0.0
+                {
                     r
                 } else {
                     *intrinsic_width / *intrinsic_height
                 };
-                box_node.dimensions.content.size.height = (box_node.dimensions.content.size.width / ratio).max(1.0);
+                box_node.dimensions.content.size.height =
+                    (box_node.dimensions.content.size.width / ratio).max(1.0);
             } else {
                 box_node.dimensions.content.size.height = *intrinsic_height;
             }
         } else if *intrinsic_width > 0.0 && box_node.dimensions.content.size.width > 0.0 {
-            let ratio = if let Some(r) = style.aspect_ratio && r > 0.0 {
+            let ratio = if let Some(r) = style.aspect_ratio
+                && r > 0.0
+            {
                 r
             } else {
                 *intrinsic_width / *intrinsic_height
             };
-            box_node.dimensions.content.size.height = (box_node.dimensions.content.size.width / ratio).max(1.0);
+            box_node.dimensions.content.size.height =
+                (box_node.dimensions.content.size.width / ratio).max(1.0);
         } else {
             box_node.dimensions.content.size.height = *intrinsic_height;
         }
@@ -1691,7 +2062,9 @@ fn calculate_block_height(box_node: &mut LayoutBox, containing_block: &Dimension
         } else {
             0.0
         };
-        let h = style.height.to_px_with_viewport(font_size, root_font_size, eff_container_h, 600.0);
+        let h = style
+            .height
+            .to_px_with_viewport(font_size, root_font_size, eff_container_h, 600.0);
         if h > 0.0 || !matches!(style.height, Length::Percent(_)) {
             if style.box_sizing == BoxSizing::BorderBox {
                 box_node.dimensions.content.size.height = (h - non_content_v).max(0.0);
@@ -1731,29 +2104,43 @@ fn calculate_block_height(box_node: &mut LayoutBox, containing_block: &Dimension
             }
             _ => {
                 if let Some(bottom) = in_flow_block_children_bottom(box_node) {
-                    box_node.dimensions.content.size.height =
-                        box_node.dimensions.content.size.height.max(bottom - box_node.dimensions.content.y());
+                    box_node.dimensions.content.size.height = box_node
+                        .dimensions
+                        .content
+                        .size
+                        .height
+                        .max(bottom - box_node.dimensions.content.y());
                 }
             }
         }
     } else if let Some(bottom) = in_flow_block_children_bottom(box_node) {
         // Auto height from in-flow *block* children.
-        box_node.dimensions.content.size.height =
-            box_node.dimensions.content.size.height.max(bottom - box_node.dimensions.content.y());
+        box_node.dimensions.content.size.height = box_node
+            .dimensions
+            .content
+            .size
+            .height
+            .max(bottom - box_node.dimensions.content.y());
     }
 
     // 1b. Apply aspect-ratio if height is auto and aspect_ratio is defined
-    if style.height == Length::Auto {
-        if let Some(ratio) = style.aspect_ratio {
-            if ratio > 0.0 && box_node.dimensions.content.size.width > 0.0 {
-                box_node.dimensions.content.size.height = (box_node.dimensions.content.size.width / ratio).max(1.0);
-            }
-        }
+    if style.height == Length::Auto
+        && let Some(ratio) = style.aspect_ratio
+        && ratio > 0.0
+        && box_node.dimensions.content.size.width > 0.0
+    {
+        box_node.dimensions.content.size.height =
+            (box_node.dimensions.content.size.width / ratio).max(1.0);
     }
 
     // 2. Apply max-height and min-height clamping (CSS 2.1 § 10.7)
     if style.max_height != Length::Auto {
-        let raw_max = style.max_height.to_px_with_viewport(font_size, root_font_size, container_h, container_h);
+        let raw_max = style.max_height.to_px_with_viewport(
+            font_size,
+            root_font_size,
+            container_h,
+            container_h,
+        );
         let max_content_h = if style.box_sizing == BoxSizing::BorderBox {
             (raw_max - non_content_v).max(0.0)
         } else {
@@ -1764,7 +2151,12 @@ fn calculate_block_height(box_node: &mut LayoutBox, containing_block: &Dimension
     }
 
     if style.min_height != Length::Auto {
-        let raw_min = style.min_height.to_px_with_viewport(font_size, root_font_size, container_h, container_h);
+        let raw_min = style.min_height.to_px_with_viewport(
+            font_size,
+            root_font_size,
+            container_h,
+            container_h,
+        );
         let min_content_h = if style.box_sizing == BoxSizing::BorderBox {
             (raw_min - non_content_v).max(0.0)
         } else {
@@ -1778,32 +2170,63 @@ fn calculate_block_height(box_node: &mut LayoutBox, containing_block: &Dimension
     //    intrinsic ratio and 'width' computed as 'auto'.
     //    After max-height / min-height clamping may have changed the height,
     //    re-derive width from the final height to preserve the aspect ratio.
-    if style.width == Length::Auto {
-        if let crate::box_model::BoxType::ReplacedElement { intrinsic_width, intrinsic_height, .. }
-            | crate::box_model::BoxType::IFrame { intrinsic_width, intrinsic_height, .. }
-            | crate::box_model::BoxType::Video { intrinsic_width, intrinsic_height, .. }
-            | crate::box_model::BoxType::Audio { intrinsic_width, intrinsic_height, .. }
-            | crate::box_model::BoxType::Canvas { intrinsic_width, intrinsic_height, .. } = &box_node.box_type
-        {
-            if *intrinsic_width > 0.0 && *intrinsic_height > 0.0 {
-                let ratio = if let Some(r) = style.aspect_ratio && r > 0.0 {
-                    r
-                } else {
-                    *intrinsic_width / *intrinsic_height
-                };
-                let ratio_w = box_node.dimensions.content.size.height * ratio;
-                let mut final_w = ratio_w;
-                if style.max_width != Length::Auto {
-                    let raw_max = style.max_width.to_px_with_viewport(font_size, root_font_size, container_w, container_h);
-                    final_w = final_w.min(raw_max);
-                }
-                if style.min_width != Length::Auto {
-                    let raw_min = style.min_width.to_px_with_viewport(font_size, root_font_size, container_w, container_h);
-                    final_w = final_w.max(raw_min);
-                }
-                box_node.dimensions.content.size.width = final_w;
-            }
+    if style.width == Length::Auto
+        && let crate::box_model::BoxType::ReplacedElement {
+            intrinsic_width,
+            intrinsic_height,
+            ..
         }
+        | crate::box_model::BoxType::IFrame {
+            intrinsic_width,
+            intrinsic_height,
+            ..
+        }
+        | crate::box_model::BoxType::Video {
+            intrinsic_width,
+            intrinsic_height,
+            ..
+        }
+        | crate::box_model::BoxType::Audio {
+            intrinsic_width,
+            intrinsic_height,
+            ..
+        }
+        | crate::box_model::BoxType::Canvas {
+            intrinsic_width,
+            intrinsic_height,
+            ..
+        } = &box_node.box_type
+        && *intrinsic_width > 0.0
+        && *intrinsic_height > 0.0
+    {
+        let ratio = if let Some(r) = style.aspect_ratio
+            && r > 0.0
+        {
+            r
+        } else {
+            *intrinsic_width / *intrinsic_height
+        };
+        let ratio_w = box_node.dimensions.content.size.height * ratio;
+        let mut final_w = ratio_w;
+        if style.max_width != Length::Auto {
+            let raw_max = style.max_width.to_px_with_viewport(
+                font_size,
+                root_font_size,
+                container_w,
+                container_h,
+            );
+            final_w = final_w.min(raw_max);
+        }
+        if style.min_width != Length::Auto {
+            let raw_min = style.min_width.to_px_with_viewport(
+                font_size,
+                root_font_size,
+                container_w,
+                container_h,
+            );
+            final_w = final_w.max(raw_min);
+        }
+        box_node.dimensions.content.size.width = final_w;
     }
     box_node.dimensions.content.size.height = box_node.dimensions.content.size.height.max(0.0);
 }
@@ -2155,7 +2578,11 @@ mod tests {
         layout_block(&mut img_box, &containing_block, &mut float_ctx);
 
         assert_eq!(img_box.dimensions.content.width(), 200.0);
-        assert_eq!(img_box.dimensions.content.height(), 100.0, "Auto height should preserve 2:1 aspect ratio");
+        assert_eq!(
+            img_box.dimensions.content.height(),
+            100.0,
+            "Auto height should preserve 2:1 aspect ratio"
+        );
 
         // Case 2: Image has intrinsic 400x200 (aspect ratio 2:1). CSS sets width: auto, height: 50px.
         // Width must resolve to 100px.
@@ -2175,7 +2602,11 @@ mod tests {
         let mut float_ctx2 = FloatContext::new();
         layout_block(&mut img_box2, &containing_block, &mut float_ctx2);
 
-        assert_eq!(img_box2.dimensions.content.width(), 100.0, "Auto width should preserve 2:1 aspect ratio");
+        assert_eq!(
+            img_box2.dimensions.content.width(),
+            100.0,
+            "Auto width should preserve 2:1 aspect ratio"
+        );
         assert_eq!(img_box2.dimensions.content.height(), 50.0);
 
         // Case 3: Image has intrinsic 400x200 (2:1) but CSS aspect-ratio is 16/9.
@@ -2198,7 +2629,10 @@ mod tests {
         layout_block(&mut img_box3, &containing_block, &mut float_ctx3);
 
         assert_eq!(img_box3.dimensions.content.width(), 320.0);
-        assert!((img_box3.dimensions.content.height() - 180.0).abs() < 1.0, "CSS aspect-ratio should override intrinsic aspect ratio");
+        assert!(
+            (img_box3.dimensions.content.height() - 180.0).abs() < 1.0,
+            "CSS aspect-ratio should override intrinsic aspect ratio"
+        );
 
         // Case 4: Image has intrinsic 400x200 (2:1) but CSS aspect-ratio is 16/9.
         // width: auto, height: 180px -> width should be 180 * (16/9) = 320px.
@@ -2219,7 +2653,10 @@ mod tests {
         let mut float_ctx4 = FloatContext::new();
         layout_block(&mut img_box4, &containing_block, &mut float_ctx4);
 
-        assert!((img_box4.dimensions.content.width() - 320.0).abs() < 1.0, "CSS aspect-ratio should override intrinsic aspect ratio for auto width");
+        assert!(
+            (img_box4.dimensions.content.width() - 320.0).abs() < 1.0,
+            "CSS aspect-ratio should override intrinsic aspect ratio for auto width"
+        );
         assert_eq!(img_box4.dimensions.content.height(), 180.0);
     }
 
@@ -2244,7 +2681,14 @@ mod tests {
         let mut float_ctx = FloatContext::new();
         layout_block(&mut bt, &cb, &mut float_ctx);
         fn print_tree(b: &LayoutBox, depth: usize) {
-            println!("{}Box {:?}: tag={:?} w={} h={}", " ".repeat(depth), b.box_type, b.tag_name, b.dimensions.content.width(), b.dimensions.content.height());
+            println!(
+                "{}Box {:?}: tag={:?} w={} h={}",
+                " ".repeat(depth),
+                b.box_type,
+                b.tag_name,
+                b.dimensions.content.width(),
+                b.dimensions.content.height()
+            );
             for c in &b.children {
                 print_tree(c, depth + 2);
             }

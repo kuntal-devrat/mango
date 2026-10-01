@@ -8,8 +8,8 @@
 //!
 //! Universal selector (`*`) and combinators (` `, `>`, `+`, `~`) contribute `(0, 0, 0)`.
 
-use std::cmp::Ordering;
 use crate::selectors::{ComplexSelector, SimpleSelector};
+use std::cmp::Ordering;
 
 /// Specificity tuple `(a, b, c)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -31,7 +31,9 @@ impl Specificity {
                 let lower = pseudo.to_ascii_lowercase();
                 if lower.starts_with("where(") && lower.ends_with(')') {
                     // W3C Selectors 4: :where() always contributes zero specificity (0, 0, 0)
-                } else if (lower.starts_with("is(") || lower.starts_with("not(") || lower.starts_with("has("))
+                } else if (lower.starts_with("is(")
+                    || lower.starts_with("not(")
+                    || lower.starts_with("has("))
                     && lower.ends_with(')')
                 {
                     let prefix_len = if lower.starts_with("is(") { 3 } else { 4 };
@@ -176,11 +178,15 @@ mod tests {
         assert_eq!(Specificity::of(has_sel), Specificity(0, 0, 2));
 
         // div:has(.badge, #special) -> div (0, 0, 1) + max(.badge, #special) (1, 0, 0) = (1, 0, 1)
-        let has_max = &parse_selectors("div:has(.badge, #special)").unwrap().selectors[0];
+        let has_max = &parse_selectors("div:has(.badge, #special)")
+            .unwrap()
+            .selectors[0];
         assert_eq!(Specificity::of(has_max), Specificity(1, 0, 1));
 
         // li:nth-child(2 of .highlight, #main) -> li (0,0,1) + nth-child (0,1,0) + max(.highlight, #main) (1,0,0) = (1, 1, 1)
-        let nth_of = &parse_selectors("li:nth-child(2 of .highlight, #main)").unwrap().selectors[0];
+        let nth_of = &parse_selectors("li:nth-child(2 of .highlight, #main)")
+            .unwrap()
+            .selectors[0];
         assert_eq!(Specificity::of(nth_of), Specificity(1, 1, 1));
     }
 }

@@ -46,10 +46,10 @@ impl Clipboard {
     ///
     /// Does nothing if the platform clipboard is unavailable.
     pub fn set_text(&mut self, text: &str) {
-        if let Some(cb) = self.inner.as_mut() {
-            if let Err(e) = cb.set_text(text.to_owned()) {
-                log::warn!("[clipboard] set_text error: {e}");
-            }
+        if let Some(cb) = self.inner.as_mut()
+            && let Err(e) = cb.set_text(text.to_owned())
+        {
+            log::warn!("[clipboard] set_text error: {e}");
         }
     }
 }

@@ -65,7 +65,10 @@ fn main() {
                 if i + 1 < args.len() {
                     let s = &args[i + 1];
                     let mut parts = s.split(',');
-                    if let (Some(x), Some(y)) = (parts.next().and_then(|v| v.parse().ok()), parts.next().and_then(|v| v.parse().ok())) {
+                    if let (Some(x), Some(y)) = (
+                        parts.next().and_then(|v| v.parse().ok()),
+                        parts.next().and_then(|v| v.parse().ok()),
+                    ) {
                         hover_pos = Some((x, y));
                     }
                     i += 2;
@@ -93,11 +96,23 @@ fn main() {
         }
     }
 
-    let url = positional.first().copied().unwrap_or("https://en.wikipedia.org/wiki/Main_Page");
+    let url = positional
+        .first()
+        .copied()
+        .unwrap_or("https://en.wikipedia.org/wiki/Main_Page");
     let output_path = positional.get(1).copied().unwrap_or("wikipedia_render.png");
-    let width: u32 = positional.get(2).and_then(|s| s.parse().ok()).unwrap_or(1280);
-    let height: u32 = positional.get(3).and_then(|s| s.parse().ok()).unwrap_or(900);
-    let scroll_y: f32 = positional.get(4).and_then(|s| s.parse().ok()).unwrap_or(0.0);
+    let width: u32 = positional
+        .get(2)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1280);
+    let height: u32 = positional
+        .get(3)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(900);
+    let scroll_y: f32 = positional
+        .get(4)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0.0);
 
     // In page-only mode we render at window height = viewport height + chrome, then
     // crop the chrome away, so the page sees exactly `height` CSS pixels of viewport.
@@ -120,7 +135,9 @@ fn main() {
     }
 
     let mut browser = BrowserChrome::new(width, window_height);
-    let trimmed_file = url.trim_start_matches("file:///").trim_start_matches("file://");
+    let trimmed_file = url
+        .trim_start_matches("file:///")
+        .trim_start_matches("file://");
     if let Ok(content) = std::fs::read_to_string(trimmed_file) {
         browser.load_html(content, url.to_string());
     } else if let Ok(content) = std::fs::read_to_string(url) {
@@ -169,16 +186,28 @@ fn main() {
     let mut bold_count = 0;
     let mut reg_count = 0;
     for cmd in dl.iter() {
-        if let mango_render::DisplayCommand::DrawText { text, weight, family, font_size, .. } = cmd {
+        if let mango_render::DisplayCommand::DrawText {
+            text,
+            weight,
+            family,
+            font_size,
+            ..
+        } = cmd
+        {
             if *weight == mango_render::FontWeight::Bold {
                 bold_count += 1;
                 if bold_count <= 10 {
                     let fm = mango_render::font::font_manager();
-                    let f_bold = fm.select_font(*family, mango_render::FontWeight::Bold) as *const _;
-                    let f_reg = fm.select_font(*family, mango_render::FontWeight::Regular) as *const _;
+                    let f_bold =
+                        fm.select_font(*family, mango_render::FontWeight::Bold) as *const _;
+                    let f_reg =
+                        fm.select_font(*family, mango_render::FontWeight::Regular) as *const _;
                     let same_font = f_bold == f_reg;
                     let desc = fm.debug_family_name(*family);
-                    println!("BOLD TEXT [family={}, size={}, same_as_reg={}]: {:?}", desc, font_size, same_font, text);
+                    println!(
+                        "BOLD TEXT [family={}, size={}, same_as_reg={}]: {:?}",
+                        desc, font_size, same_font, text
+                    );
                 }
             } else {
                 reg_count += 1;
@@ -191,7 +220,11 @@ fn main() {
     buffer.fill(mango_core::Color::rgb(255, 255, 255).to_rgb_u32());
     paint(&dl, &mut buffer, width, window_height);
 
-    let (crop_top, crop_height) = if page_only { (CONTENT_TOP, height) } else { (0, window_height) };
+    let (crop_top, crop_height) = if page_only {
+        (CONTENT_TOP, height)
+    } else {
+        (0, window_height)
+    };
 
     let mut img = image::RgbImage::new(width, crop_height);
     for y in 0..crop_height {
@@ -217,7 +250,9 @@ fn main() {
 
     if let Err(err) = img.save(output_path) {
         img.save_with_format(output_path, image::ImageFormat::Png)
-            .unwrap_or_else(|_| panic!("failed to save rendered image to {}: {}", output_path, err));
+            .unwrap_or_else(|_| {
+                panic!("failed to save rendered image to {}: {}", output_path, err)
+            });
     }
     println!("Successfully captured screenshot to: {}", output_path);
 }
@@ -284,8 +319,11 @@ fn probe(browser: &BrowserChrome, selector: &str) {
                     .as_ref()
                     .map(|s| mango_render::FontFamily::from_css_name(&s.font_family))
                     .unwrap_or(mango_render::FontFamily::SansSerif);
-                let (ascent, descent, gap) =
-                    mango_render::font::font_manager().font_metrics(family, mango_render::FontWeight::Regular, font_size);
+                let (ascent, descent, gap) = mango_render::font::font_manager().font_metrics(
+                    family,
+                    mango_render::FontWeight::Regular,
+                    font_size,
+                );
                 println!(
                     "      text {:?} baseline_y={:.1} x={:.1} w={:.1} ascent={:.1} descent={:.1} gap={:.1}",
                     truncate(text, 40),
@@ -324,7 +362,10 @@ fn walk_boxes(
     matches: &[NodeId],
     visit: &mut impl FnMut(usize, &LayoutBox, bool),
 ) {
-    let is_match = node.node_id.map(|id| matches.contains(&id)).unwrap_or(false);
+    let is_match = node
+        .node_id
+        .map(|id| matches.contains(&id))
+        .unwrap_or(false);
     visit(depth, node, is_match);
     for child in &node.children {
         walk_boxes(child, depth + 1, matches, visit);

@@ -24,7 +24,7 @@ use tiny_skia::{
     Stroke, Transform,
 };
 
-use crate::font::{font_manager, FontFamily, FontStyle, FontWeight};
+use crate::font::{FontFamily, FontStyle, FontWeight, font_manager};
 use crate::image_decode::base64_encode;
 
 /// Drawing state saved and restored on the canvas state stack.
@@ -333,12 +333,15 @@ impl Canvas2D {
 
     /// Adds a rectangle subpath.
     pub fn rect(&mut self, x: f32, y: f32, w: f32, h: f32) {
-        if w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0 {
-            if let Some(r) = Rect::from_xywh(x, y, w, h) {
-                self.current_path.push_rect(r);
-                self.has_subpath = true;
-                self.current_point = Some((x, y));
-            }
+        if w.is_finite()
+            && h.is_finite()
+            && w > 0.0
+            && h > 0.0
+            && let Some(r) = Rect::from_xywh(x, y, w, h)
+        {
+            self.current_path.push_rect(r);
+            self.has_subpath = true;
+            self.current_point = Some((x, y));
         }
     }
 
@@ -450,15 +453,7 @@ impl Canvas2D {
     }
 
     /// Adds a cubic Bézier curve to the path.
-    pub fn bezier_curve_to(
-        &mut self,
-        cp1x: f32,
-        cp1y: f32,
-        cp2x: f32,
-        cp2y: f32,
-        x: f32,
-        y: f32,
-    ) {
+    pub fn bezier_curve_to(&mut self, cp1x: f32, cp1y: f32, cp2x: f32, cp2y: f32, x: f32, y: f32) {
         if !self.has_subpath {
             self.current_path.move_to(cp1x, cp1y);
             self.has_subpath = true;
@@ -495,8 +490,13 @@ impl Canvas2D {
                 ) {
                     paint.set_color(sc);
                     paint.anti_alias = true;
-                    self.pixmap
-                        .fill_path(&path, &paint, FillRule::Winding, self.state.transform, None);
+                    self.pixmap.fill_path(
+                        &path,
+                        &paint,
+                        FillRule::Winding,
+                        self.state.transform,
+                        None,
+                    );
                 }
             }
         }
@@ -553,7 +553,8 @@ impl Canvas2D {
                 ) {
                     paint.set_color(sc);
                     paint.anti_alias = true;
-                    self.pixmap.fill_rect(rect, &paint, self.state.transform, None);
+                    self.pixmap
+                        .fill_rect(rect, &paint, self.state.transform, None);
                 }
             }
         }
@@ -602,7 +603,8 @@ impl Canvas2D {
         if let Some(rect) = Rect::from_xywh(x, y, w, h) {
             let mut paint = Paint::default();
             paint.blend_mode = BlendMode::Clear;
-            self.pixmap.fill_rect(rect, &paint, self.state.transform, None);
+            self.pixmap
+                .fill_rect(rect, &paint, self.state.transform, None);
         }
     }
 
@@ -1152,8 +1154,8 @@ mod tests {
 
         let data = canvas.get_image_data(0, 0, 50, 50);
         assert_eq!(data.len(), 50 * 50 * 4);
-        assert_eq!(data[0], 0);   // R
-        assert_eq!(data[1], 0);   // G
+        assert_eq!(data[0], 0); // R
+        assert_eq!(data[1], 0); // G
         assert_eq!(data[2], 255); // B
         assert_eq!(data[3], 255); // A
 
@@ -1189,7 +1191,7 @@ mod tests {
         // Create 10x10 red image data
         let mut img_data = vec![0u8; 10 * 10 * 4];
         for i in 0..100 {
-            img_data[i * 4] = 255;     // R
+            img_data[i * 4] = 255; // R
             img_data[i * 4 + 3] = 255; // A
         }
         // Put only a dirty sub-rectangle of 4x4 from offset (2, 2)

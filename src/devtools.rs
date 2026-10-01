@@ -214,7 +214,11 @@ impl DevTools {
                 y: panel_y + 17.0,
                 color: text_color,
                 font_size: 11.0,
-                weight: if is_active { FontWeight::Bold } else { FontWeight::Regular },
+                weight: if is_active {
+                    FontWeight::Bold
+                } else {
+                    FontWeight::Regular
+                },
                 family: FontFamily::Monospace,
                 style: FontStyle::Normal,
                 decoration: TextDecoration::None,
@@ -302,7 +306,11 @@ impl DevTools {
                 text: text.clone(),
                 x: indent_x,
                 y: row_y,
-                color: if is_selected { Color::WHITE } else { Color::rgb(86, 156, 214) },
+                color: if is_selected {
+                    Color::WHITE
+                } else {
+                    Color::rgb(86, 156, 214)
+                },
                 font_size: 11.0,
                 weight: FontWeight::Regular,
                 family: FontFamily::Monospace,
@@ -343,8 +351,14 @@ impl DevTools {
             let metrics = [
                 format!("Dimensions: {:.1} × {:.1} px", bb.width(), bb.height()),
                 format!("Position: ({:.1}, {:.1})", bb.x(), bb.y()),
-                format!("Margin: {:.0} {:.0} {:.0} {:.0}", mar.top, mar.right, mar.bottom, mar.left),
-                format!("Padding: {:.0} {:.0} {:.0} {:.0}", pad.top, pad.right, pad.bottom, pad.left),
+                format!(
+                    "Margin: {:.0} {:.0} {:.0} {:.0}",
+                    mar.top, mar.right, mar.bottom, mar.left
+                ),
+                format!(
+                    "Padding: {:.0} {:.0} {:.0} {:.0}",
+                    pad.top, pad.right, pad.bottom, pad.left
+                ),
                 format!("Display: {:?}", target_box.box_type),
             ];
 
@@ -551,7 +565,8 @@ impl DevTools {
             .unwrap_or_else(|| "Untitled".to_string());
 
         let scripts_count = count_tag(doc, doc.root(), "script");
-        let stylesheets_count = count_tag(doc, doc.root(), "link") + count_tag(doc, doc.root(), "style");
+        let stylesheets_count =
+            count_tag(doc, doc.root(), "link") + count_tag(doc, doc.root(), "style");
 
         let stats = [
             format!("Title: {}", title.trim()),
@@ -636,8 +651,15 @@ impl DevTools {
     }
 }
 
-fn format_dom_tree(doc: &Document, node_id: NodeId, depth: usize, out: &mut Vec<(NodeId, usize, String)>) {
-    let Some(node) = doc.get(node_id) else { return; };
+fn format_dom_tree(
+    doc: &Document,
+    node_id: NodeId,
+    depth: usize,
+    out: &mut Vec<(NodeId, usize, String)>,
+) {
+    let Some(node) = doc.get(node_id) else {
+        return;
+    };
     match &node.data {
         NodeData::Element(elem) => {
             let mut label = format!("<{}", elem.tag_name);
@@ -678,10 +700,10 @@ fn format_dom_tree(doc: &Document, node_id: NodeId, depth: usize, out: &mut Vec<
 fn count_tag(doc: &Document, root: NodeId, tag: &str) -> usize {
     let mut count = 0;
     for child in doc.children(root) {
-        if let NodeData::Element(elem) = &child.data {
-            if elem.tag_name.eq_ignore_ascii_case(tag) {
-                count += 1;
-            }
+        if let NodeData::Element(elem) = &child.data
+            && elem.tag_name.eq_ignore_ascii_case(tag)
+        {
+            count += 1;
         }
         count += count_tag(doc, child.id, tag);
     }
@@ -715,7 +737,13 @@ mod tests {
     #[test]
     fn test_devtools_network_recording() {
         let mut dt = DevTools::new();
-        dt.record_network("https://example.com/api", "GET", 200, "application/json", 1024);
+        dt.record_network(
+            "https://example.com/api",
+            "GET",
+            200,
+            "application/json",
+            1024,
+        );
         assert_eq!(dt.network_entries.len(), 1);
         assert_eq!(dt.network_entries[0].status, 200);
         assert_eq!(dt.network_entries[0].method, "GET");
@@ -730,6 +758,9 @@ mod tests {
         let doc = mango_html::parse_html("<html><body><div id=\"app\">Hello</div></body></html>");
         let cmds = dt.render_panel(800.0, 600.0, &doc, None);
 
-        assert!(!cmds.is_empty(), "Should generate display list commands for open DevTools");
+        assert!(
+            !cmds.is_empty(),
+            "Should generate display list commands for open DevTools"
+        );
     }
 }

@@ -92,10 +92,10 @@ impl ContextMenu {
         let rel_y = py - (self.y + 4.0);
         if rel_y >= 0.0 {
             let idx = (rel_y / 26.0) as usize;
-            if let Some(item) = self.items.get(idx) {
-                if item.enabled {
-                    return Some(item.action.clone());
-                }
+            if let Some(item) = self.items.get(idx)
+                && item.enabled
+            {
+                return Some(item.action.clone());
             }
         }
         None

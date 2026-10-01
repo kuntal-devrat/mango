@@ -38,9 +38,10 @@ use std::collections::HashMap;
 pub type TargetId = u32;
 
 /// W3C DOM event propagation phase.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EventPhase {
     /// The event is not currently being dispatched.
+    #[default]
     None = 0,
     /// The event is propagating down from Window → target's parent.
     Capturing = 1,
@@ -48,12 +49,6 @@ pub enum EventPhase {
     AtTarget = 2,
     /// The event is propagating up from target's parent → Window.
     Bubbling = 3,
-}
-
-impl Default for EventPhase {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 /// A W3C DOM Event.
@@ -226,12 +221,7 @@ impl EventDispatcher {
     }
 
     /// Removes all listeners matching the given target, event type, and capture flag.
-    pub fn remove_listener(
-        &mut self,
-        target: TargetId,
-        event_type: &str,
-        capture: bool,
-    ) {
+    pub fn remove_listener(&mut self, target: TargetId, event_type: &str, capture: bool) {
         if let Some(list) = self.listeners.get_mut(&target) {
             list.retain(|l| !(l.event_type == event_type && l.options.capture == capture));
         }
@@ -339,9 +329,7 @@ impl EventDispatcher {
         let indices: Vec<usize> = list
             .iter()
             .enumerate()
-            .filter(|(_, l)| {
-                l.event_type == event.event_type && l.options.capture == capture_phase
-            })
+            .filter(|(_, l)| l.event_type == event.event_type && l.options.capture == capture_phase)
             .map(|(i, _)| i)
             .collect();
 
@@ -371,30 +359,71 @@ mod tests {
 
         // Window (id=0) capture listener
         let log_c = log.clone();
-        dispatcher.add_listener(0, "click", move |evt| {
-            log_c.lock().unwrap().push(format!("window:capture:{:?}", evt.phase));
-        }, ListenerOptions { capture: true, ..Default::default() });
+        dispatcher.add_listener(
+            0,
+            "click",
+            move |evt| {
+                log_c
+                    .lock()
+                    .unwrap()
+                    .push(format!("window:capture:{:?}", evt.phase));
+            },
+            ListenerOptions {
+                capture: true,
+                ..Default::default()
+            },
+        );
 
         // Target (id=2) bubble listener
         let log_c = log.clone();
-        dispatcher.add_listener(2, "click", move |evt| {
-            log_c.lock().unwrap().push(format!("target:bubble:{:?}", evt.phase));
-        }, ListenerOptions::default());
+        dispatcher.add_listener(
+            2,
+            "click",
+            move |evt| {
+                log_c
+                    .lock()
+                    .unwrap()
+                    .push(format!("target:bubble:{:?}", evt.phase));
+            },
+            ListenerOptions::default(),
+        );
 
         // Parent (id=1) bubble listener
         let log_c = log.clone();
-        dispatcher.add_listener(1, "click", move |evt| {
-            log_c.lock().unwrap().push(format!("parent:bubble:{:?}", evt.phase));
-        }, ListenerOptions::default());
+        dispatcher.add_listener(
+            1,
+            "click",
+            move |evt| {
+                log_c
+                    .lock()
+                    .unwrap()
+                    .push(format!("parent:bubble:{:?}", evt.phase));
+            },
+            ListenerOptions::default(),
+        );
 
         let event = Event::new("click");
         let result = dispatcher.dispatch(event, &[0, 1, 2]);
 
         let entries = log.lock().unwrap();
-        assert_eq!(entries.len(), 3, "expected 3 listener invocations, got: {:?}", *entries);
-        assert!(entries[0].starts_with("window:capture"), "first should be window capture");
-        assert!(entries[1].starts_with("target:bubble"), "second should be target at-target");
-        assert!(entries[2].starts_with("parent:bubble"), "third should be parent bubble");
+        assert_eq!(
+            entries.len(),
+            3,
+            "expected 3 listener invocations, got: {:?}",
+            *entries
+        );
+        assert!(
+            entries[0].starts_with("window:capture"),
+            "first should be window capture"
+        );
+        assert!(
+            entries[1].starts_with("target:bubble"),
+            "second should be target at-target"
+        );
+        assert!(
+            entries[2].starts_with("parent:bubble"),
+            "third should be parent bubble"
+        );
         assert!(!result.default_prevented);
     }
 
@@ -404,29 +433,47 @@ mod tests {
         let reached_parent = Arc::new(Mutex::new(false));
 
         // Target stops propagation
-        dispatcher.add_listener(1, "click", |evt| {
-            evt.stop_propagation();
-        }, ListenerOptions::default());
+        dispatcher.add_listener(
+            1,
+            "click",
+            |evt| {
+                evt.stop_propagation();
+            },
+            ListenerOptions::default(),
+        );
 
         // Parent should NOT be reached
         let reached = reached_parent.clone();
-        dispatcher.add_listener(0, "click", move |_| {
-            *reached.lock().unwrap() = true;
-        }, ListenerOptions::default());
+        dispatcher.add_listener(
+            0,
+            "click",
+            move |_| {
+                *reached.lock().unwrap() = true;
+            },
+            ListenerOptions::default(),
+        );
 
         let event = Event::new("click");
         dispatcher.dispatch(event, &[0, 1]);
 
-        assert!(!*reached_parent.lock().unwrap(), "parent should not be reached");
+        assert!(
+            !*reached_parent.lock().unwrap(),
+            "parent should not be reached"
+        );
     }
 
     #[test]
     fn test_prevent_default() {
         let mut dispatcher = EventDispatcher::new();
 
-        dispatcher.add_listener(0, "click", |evt| {
-            evt.prevent_default();
-        }, ListenerOptions::default());
+        dispatcher.add_listener(
+            0,
+            "click",
+            |evt| {
+                evt.prevent_default();
+            },
+            ListenerOptions::default(),
+        );
 
         let event = Event::new("click");
         let result = dispatcher.dispatch(event, &[0]);
@@ -440,9 +487,17 @@ mod tests {
         let count = Arc::new(Mutex::new(0u32));
 
         let count_c = count.clone();
-        dispatcher.add_listener(0, "click", move |_| {
-            *count_c.lock().unwrap() += 1;
-        }, ListenerOptions { once: true, ..Default::default() });
+        dispatcher.add_listener(
+            0,
+            "click",
+            move |_| {
+                *count_c.lock().unwrap() += 1;
+            },
+            ListenerOptions {
+                once: true,
+                ..Default::default()
+            },
+        );
 
         // First dispatch
         dispatcher.dispatch(Event::new("click"), &[0]);
@@ -459,16 +514,24 @@ mod tests {
         let reached_parent = Arc::new(Mutex::new(false));
 
         let reached = reached_parent.clone();
-        dispatcher.add_listener(0, "focus", move |_| {
-            *reached.lock().unwrap() = true;
-        }, ListenerOptions::default());
+        dispatcher.add_listener(
+            0,
+            "focus",
+            move |_| {
+                *reached.lock().unwrap() = true;
+            },
+            ListenerOptions::default(),
+        );
 
         dispatcher.add_listener(1, "focus", |_| {}, ListenerOptions::default());
 
         let event = Event::non_bubbling("focus");
         dispatcher.dispatch(event, &[0, 1]);
 
-        assert!(!*reached_parent.lock().unwrap(), "non-bubbling event should not reach parent");
+        assert!(
+            !*reached_parent.lock().unwrap(),
+            "non-bubbling event should not reach parent"
+        );
     }
 
     #[test]
@@ -477,9 +540,14 @@ mod tests {
         let called = Arc::new(Mutex::new(false));
 
         let called_c = called.clone();
-        dispatcher.add_listener(0, "click", move |_| {
-            *called_c.lock().unwrap() = true;
-        }, ListenerOptions::default());
+        dispatcher.add_listener(
+            0,
+            "click",
+            move |_| {
+                *called_c.lock().unwrap() = true;
+            },
+            ListenerOptions::default(),
+        );
 
         dispatcher.remove_listener(0, "click", false);
         dispatcher.dispatch(Event::new("click"), &[0]);
@@ -505,15 +573,25 @@ mod tests {
         let second_called = Arc::new(Mutex::new(false));
 
         // First listener stops immediate propagation
-        dispatcher.add_listener(0, "click", |evt| {
-            evt.stop_immediate_propagation();
-        }, ListenerOptions::default());
+        dispatcher.add_listener(
+            0,
+            "click",
+            |evt| {
+                evt.stop_immediate_propagation();
+            },
+            ListenerOptions::default(),
+        );
 
         // Second listener on same target should NOT fire
         let called = second_called.clone();
-        dispatcher.add_listener(0, "click", move |_| {
-            *called.lock().unwrap() = true;
-        }, ListenerOptions::default());
+        dispatcher.add_listener(
+            0,
+            "click",
+            move |_| {
+                *called.lock().unwrap() = true;
+            },
+            ListenerOptions::default(),
+        );
 
         dispatcher.dispatch(Event::new("click"), &[0]);
         assert!(!*second_called.lock().unwrap());

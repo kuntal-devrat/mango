@@ -71,10 +71,11 @@ impl MatchPattern {
         };
 
         // Check scheme
-        if let Some(ref target_scheme) = self.scheme {
-            if target_scheme != "*" && target_scheme != &url_scheme {
-                return false;
-            }
+        if let Some(ref target_scheme) = self.scheme
+            && target_scheme != "*"
+            && target_scheme != &url_scheme
+        {
+            return false;
         }
 
         let (url_host, url_path) = match rest.split_once('/') {
@@ -83,30 +84,31 @@ impl MatchPattern {
         };
 
         // Check host
-        if let Some(ref target_host) = self.host {
-            if target_host != "*" {
-                if let Some(suffix) = target_host.strip_prefix("*.") {
-                    if !url_host.ends_with(suffix) && url_host != suffix {
-                        return false;
-                    }
-                } else if &url_host != target_host {
+        if let Some(ref target_host) = self.host
+            && target_host != "*"
+        {
+            if let Some(suffix) = target_host.strip_prefix("*.") {
+                if !url_host.ends_with(suffix) && url_host != suffix {
                     return false;
                 }
+            } else if &url_host != target_host {
+                return false;
             }
         }
 
         // Check path prefix
-        if let Some(ref target_path) = self.path_prefix {
-            if target_path != "*" && !target_path.is_empty() {
-                let clean_prefix = target_path.trim_end_matches('*');
-                let target_full = if clean_prefix.starts_with('/') {
-                    clean_prefix.to_string()
-                } else {
-                    format!("/{clean_prefix}")
-                };
-                if !url_path.starts_with(&target_full) {
-                    return false;
-                }
+        if let Some(ref target_path) = self.path_prefix
+            && target_path != "*"
+            && !target_path.is_empty()
+        {
+            let clean_prefix = target_path.trim_end_matches('*');
+            let target_full = if clean_prefix.starts_with('/') {
+                clean_prefix.to_string()
+            } else {
+                format!("/{clean_prefix}")
+            };
+            if !url_path.starts_with(&target_full) {
+                return false;
             }
         }
 
@@ -303,22 +305,34 @@ fn parse_manifest_json(s: &str) -> Result<ExtensionManifest, String> {
 
     let name = obj
         .get("name")
-        .and_then(|v| match v { JsonVal::Str(s) => Some(s.clone()), _ => None })
+        .and_then(|v| match v {
+            JsonVal::Str(s) => Some(s.clone()),
+            _ => None,
+        })
         .unwrap_or_else(|| "Unnamed Extension".to_string());
 
     let version = obj
         .get("version")
-        .and_then(|v| match v { JsonVal::Str(s) => Some(s.clone()), _ => None })
+        .and_then(|v| match v {
+            JsonVal::Str(s) => Some(s.clone()),
+            _ => None,
+        })
         .unwrap_or_else(|| "1.0.0".to_string());
 
     let manifest_version = obj
         .get("manifest_version")
-        .and_then(|v| match v { JsonVal::Number(n) => Some(*n as u32), _ => None })
+        .and_then(|v| match v {
+            JsonVal::Number(n) => Some(*n as u32),
+            _ => None,
+        })
         .unwrap_or(3);
 
     let description = obj
         .get("description")
-        .and_then(|v| match v { JsonVal::Str(s) => Some(s.clone()), _ => None })
+        .and_then(|v| match v {
+            JsonVal::Str(s) => Some(s.clone()),
+            _ => None,
+        })
         .unwrap_or_default();
 
     let mut permissions = Vec::new();
@@ -337,10 +351,10 @@ fn parse_manifest_json(s: &str) -> Result<ExtensionManifest, String> {
                 let mut patterns = Vec::new();
                 if let Some(JsonVal::Array(match_list)) = cs_map.get("matches") {
                     for m in match_list {
-                        if let JsonVal::Str(pat_str) = m {
-                            if let Some(pat) = MatchPattern::parse(pat_str) {
-                                patterns.push(pat);
-                            }
+                        if let JsonVal::Str(pat_str) = m
+                            && let Some(pat) = MatchPattern::parse(pat_str)
+                        {
+                            patterns.push(pat);
                         }
                     }
                 }
@@ -402,7 +416,9 @@ fn parse_json_value(input: &str) -> Result<JsonVal, String> {
     }
     if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
         let unquoted = &s[1..s.len() - 1];
-        return Ok(JsonVal::Str(unquoted.replace("\\\"", "\"").replace("\\\\", "\\")));
+        return Ok(JsonVal::Str(
+            unquoted.replace("\\\"", "\"").replace("\\\\", "\\"),
+        ));
     }
     if let Ok(num) = s.parse::<f64>() {
         return Ok(JsonVal::Number(num));
@@ -521,12 +537,15 @@ mod tests {
         }"#;
 
         let mut mgr = ExtensionManager::new();
-        let ext_id = mgr.load_from_manifest_json("dark-mode", manifest_json).unwrap();
+        let ext_id = mgr
+            .load_from_manifest_json("dark-mode", manifest_json)
+            .unwrap();
         assert_eq!(ext_id, "dark-mode");
         assert_eq!(mgr.extensions().len(), 1);
 
         // Matching URL
-        let (css, js) = mgr.get_content_scripts_for_url("https://my.example.com/app", RunAt::DocumentEnd);
+        let (css, js) =
+            mgr.get_content_scripts_for_url("https://my.example.com/app", RunAt::DocumentEnd);
         assert_eq!(css.len(), 1);
         assert!(css[0].contains("#121212"));
         assert_eq!(js.len(), 1);
@@ -534,7 +553,11 @@ mod tests {
 
         // Disable extension
         mgr.disable("dark-mode");
-        let (css_disabled, _) = mgr.get_content_scripts_for_url("https://my.example.com/app", RunAt::DocumentEnd);
-        assert!(css_disabled.is_empty(), "Disabled extension should not inject scripts");
+        let (css_disabled, _) =
+            mgr.get_content_scripts_for_url("https://my.example.com/app", RunAt::DocumentEnd);
+        assert!(
+            css_disabled.is_empty(),
+            "Disabled extension should not inject scripts"
+        );
     }
 }

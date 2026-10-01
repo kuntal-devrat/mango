@@ -297,7 +297,11 @@ pub async fn decode_stage(
     let ct = content_type.unwrap_or("").to_ascii_lowercase();
     let path = url.path.to_ascii_lowercase();
 
-    if ct.contains("text/html") || ct.contains("application/xhtml") || path.ends_with(".html") || path.ends_with(".htm") {
+    if ct.contains("text/html")
+        || ct.contains("application/xhtml")
+        || path.ends_with(".html")
+        || path.ends_with(".htm")
+    {
         let text = decode_html_bytes(body, content_type);
         Ok(DecodedResource::Html(text))
     } else if ct.contains("text/css") || path.ends_with(".css") {
@@ -531,7 +535,9 @@ mod tests {
     async fn test_decode_stage_html() {
         let url = Url::parse("http://example.com/index.html").unwrap();
         let html_bytes = b"<h1>Hello World</h1>";
-        let decoded = decode_stage(html_bytes, Some("text/html; charset=utf-8"), &url).await.unwrap();
+        let decoded = decode_stage(html_bytes, Some("text/html; charset=utf-8"), &url)
+            .await
+            .unwrap();
         match decoded {
             DecodedResource::Html(text) => assert_eq!(text, "<h1>Hello World</h1>"),
             other => panic!("expected Html variant, got {:?}", other),
@@ -542,7 +548,9 @@ mod tests {
     async fn test_decode_stage_css() {
         let url = Url::parse("http://example.com/style.css").unwrap();
         let css_bytes = b"body { color: red; }";
-        let decoded = decode_stage(css_bytes, Some("text/css"), &url).await.unwrap();
+        let decoded = decode_stage(css_bytes, Some("text/css"), &url)
+            .await
+            .unwrap();
         match decoded {
             DecodedResource::Css(text) => assert_eq!(text, "body { color: red; }"),
             other => panic!("expected Css variant, got {:?}", other),
@@ -593,7 +601,7 @@ mod tests {
         // Block header: 3 bytes: last_block=1 (bit 0), block_type=0 (bits 1-2: 0), size=5 (5 << 3 = 40 = 0x28)
         // Payload: b"Hello"
         let mut raw_frame = vec![0x28, 0xB5, 0x2F, 0xFD, 0x20, 0x05];
-        let block_header = 1 | (0 << 1) | (5 << 3); // 41
+        let block_header = 1 | (5 << 3); // 41
         raw_frame.push((block_header & 0xFF) as u8);
         raw_frame.push(((block_header >> 8) & 0xFF) as u8);
         raw_frame.push(((block_header >> 16) & 0xFF) as u8);

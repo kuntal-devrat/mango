@@ -60,10 +60,18 @@ impl SimpleSelector {
             SimpleSelector::Type(tag) => el.tag_name.eq_ignore_ascii_case(tag),
             SimpleSelector::Class(class_name) => el.has_class(class_name),
             SimpleSelector::Id(id_name) => el.id() == Some(id_name),
-            SimpleSelector::Attribute { name, op, value, case_insensitive } => {
+            SimpleSelector::Attribute {
+                name,
+                op,
+                value,
+                case_insensitive,
+            } => {
                 let raw_val = el.get_attribute(name);
                 let (attr_val, target_val) = if *case_insensitive {
-                    (raw_val.map(|s| s.to_ascii_lowercase()), value.to_ascii_lowercase())
+                    (
+                        raw_val.map(|s| s.to_ascii_lowercase()),
+                        value.to_ascii_lowercase(),
+                    )
                 } else {
                     (raw_val.map(|s| s.to_string()), value.clone())
                 };
@@ -78,7 +86,8 @@ impl SimpleSelector {
                         .any(|word| word == val_ref),
                     AttributeOperator::DashMatch => {
                         if let Some(v) = attr_val.as_deref() {
-                            v == val_ref || (v.starts_with(val_ref) && v[val_ref.len()..].starts_with('-'))
+                            v == val_ref
+                                || (v.starts_with(val_ref) && v[val_ref.len()..].starts_with('-'))
                         } else {
                             false
                         }
@@ -87,21 +96,30 @@ impl SimpleSelector {
                         if val_ref.is_empty() {
                             false
                         } else {
-                            attr_val.as_deref().map(|v| v.starts_with(val_ref)).unwrap_or(false)
+                            attr_val
+                                .as_deref()
+                                .map(|v| v.starts_with(val_ref))
+                                .unwrap_or(false)
                         }
                     }
                     AttributeOperator::Suffix => {
                         if val_ref.is_empty() {
                             false
                         } else {
-                            attr_val.as_deref().map(|v| v.ends_with(val_ref)).unwrap_or(false)
+                            attr_val
+                                .as_deref()
+                                .map(|v| v.ends_with(val_ref))
+                                .unwrap_or(false)
                         }
                     }
                     AttributeOperator::Substring => {
                         if val_ref.is_empty() {
                             false
                         } else {
-                            attr_val.as_deref().map(|v| v.contains(val_ref)).unwrap_or(false)
+                            attr_val
+                                .as_deref()
+                                .map(|v| v.contains(val_ref))
+                                .unwrap_or(false)
                         }
                     }
                 }
@@ -157,10 +175,10 @@ impl SimpleSelector {
                         if let Some(parent_id) = node.parent {
                             let tag = &el.tag_name;
                             for child in doc.children(parent_id) {
-                                if let NodeData::Element(child_el) = &child.data {
-                                    if child_el.tag_name.eq_ignore_ascii_case(tag) {
-                                        return child.id == node_id;
-                                    }
+                                if let NodeData::Element(child_el) = &child.data
+                                    && child_el.tag_name.eq_ignore_ascii_case(tag)
+                                {
+                                    return child.id == node_id;
                                 }
                             }
                             false
@@ -173,10 +191,10 @@ impl SimpleSelector {
                             let tag = &el.tag_name;
                             let mut last_matching = None;
                             for child in doc.children(parent_id) {
-                                if let NodeData::Element(child_el) = &child.data {
-                                    if child_el.tag_name.eq_ignore_ascii_case(tag) {
-                                        last_matching = Some(child.id);
-                                    }
+                                if let NodeData::Element(child_el) = &child.data
+                                    && child_el.tag_name.eq_ignore_ascii_case(tag)
+                                {
+                                    last_matching = Some(child.id);
                                 }
                             }
                             last_matching == Some(node_id)
@@ -189,10 +207,10 @@ impl SimpleSelector {
                             let tag = &el.tag_name;
                             let mut count = 0;
                             for child in doc.children(parent_id) {
-                                if let NodeData::Element(child_el) = &child.data {
-                                    if child_el.tag_name.eq_ignore_ascii_case(tag) {
-                                        count += 1;
-                                    }
+                                if let NodeData::Element(child_el) = &child.data
+                                    && child_el.tag_name.eq_ignore_ascii_case(tag)
+                                {
+                                    count += 1;
                                 }
                             }
                             count == 1
@@ -205,21 +223,20 @@ impl SimpleSelector {
                     }
                     "visited" => false,
                     "root" => el.tag_name.eq_ignore_ascii_case("html"),
-                    "empty" => {
-                        !doc.children(node_id).any(|child| match &child.data {
-                            NodeData::Element(_) => true,
-                            NodeData::Text(t) => !t.trim().is_empty(),
-                            _ => false,
-                        })
-                    }
+                    "empty" => !doc.children(node_id).any(|child| match &child.data {
+                        NodeData::Element(_) => true,
+                        NodeData::Text(t) => !t.trim().is_empty(),
+                        _ => false,
+                    }),
                     "target" => {
                         if el.get_attribute("data-mango-target") == Some("true") {
                             return true;
                         }
-                        if let (Some(target_id), Some(id)) = (&doc.target_id, el.id()) {
-                            if !target_id.is_empty() && id == target_id {
-                                return true;
-                            }
+                        if let (Some(target_id), Some(id)) = (&doc.target_id, el.id())
+                            && !target_id.is_empty()
+                            && id == target_id
+                        {
+                            return true;
                         }
                         false
                     }
@@ -244,7 +261,10 @@ impl SimpleSelector {
                             // A progress element with no value attribute is in indeterminate state (HTML5 §4.10.13)
                             el.get_attribute("value").is_none()
                         } else if tag == "input" {
-                            let input_type = el.get_attribute("type").unwrap_or("text").to_ascii_lowercase();
+                            let input_type = el
+                                .get_attribute("type")
+                                .unwrap_or("text")
+                                .to_ascii_lowercase();
                             if input_type == "checkbox" {
                                 el.get_attribute("indeterminate").is_some()
                                     || el.get_attribute("data-mango-indeterminate") == Some("true")
@@ -259,9 +279,16 @@ impl SimpleSelector {
                         let tag = el.tag_name.to_ascii_lowercase();
                         if matches!(
                             tag.as_str(),
-                            "button" | "input" | "select" | "textarea" | "optgroup" | "option" | "fieldset"
+                            "button"
+                                | "input"
+                                | "select"
+                                | "textarea"
+                                | "optgroup"
+                                | "option"
+                                | "fieldset"
                         ) {
-                            el.get_attribute("disabled").is_some() || is_in_disabled_fieldset(node_id, doc)
+                            el.get_attribute("disabled").is_some()
+                                || is_in_disabled_fieldset(node_id, doc)
                         } else {
                             false
                         }
@@ -270,9 +297,16 @@ impl SimpleSelector {
                         let tag = el.tag_name.to_ascii_lowercase();
                         if matches!(
                             tag.as_str(),
-                            "button" | "input" | "select" | "textarea" | "optgroup" | "option" | "fieldset"
+                            "button"
+                                | "input"
+                                | "select"
+                                | "textarea"
+                                | "optgroup"
+                                | "option"
+                                | "fieldset"
                         ) {
-                            el.get_attribute("disabled").is_none() && !is_in_disabled_fieldset(node_id, doc)
+                            el.get_attribute("disabled").is_none()
+                                && !is_in_disabled_fieldset(node_id, doc)
                         } else {
                             false
                         }
@@ -321,7 +355,14 @@ impl SimpleSelector {
                                     .to_ascii_lowercase();
                                 if !matches!(
                                     input_type.as_str(),
-                                    "text" | "search" | "url" | "tel" | "email" | "password" | "number" | ""
+                                    "text"
+                                        | "search"
+                                        | "url"
+                                        | "tel"
+                                        | "email"
+                                        | "password"
+                                        | "number"
+                                        | ""
                                 ) {
                                     return false;
                                 }
@@ -335,10 +376,10 @@ impl SimpleSelector {
                             let val = el
                                 .get_attribute("data-mango-value")
                                 .or_else(|| el.get_attribute("value"));
-                            if let Some(v) = val {
-                                if !v.is_empty() {
-                                    return false;
-                                }
+                            if let Some(v) = val
+                                && !v.is_empty()
+                            {
+                                return false;
                             }
                             if is_textarea {
                                 let mut text = String::new();
@@ -370,7 +411,8 @@ impl SimpleSelector {
                                 && let NodeData::Element(child) = &n.data
                             {
                                 if child.get_attribute("data-mango-focused") == Some("true")
-                                    || child.get_attribute("data-mango-focus-visible") == Some("true")
+                                    || child.get_attribute("data-mango-focus-visible")
+                                        == Some("true")
                                 {
                                     return true;
                                 }
@@ -379,9 +421,7 @@ impl SimpleSelector {
                         }
                         false
                     }
-                    "focus" => {
-                        el.get_attribute("data-mango-focused") == Some("true")
-                    }
+                    "focus" => el.get_attribute("data-mango-focused") == Some("true"),
                     "focus-visible" => {
                         el.get_attribute("data-mango-focus-visible") == Some("true")
                             || el.get_attribute("data-mango-focused") == Some("true")
@@ -402,12 +442,12 @@ impl SimpleSelector {
                             let tag = &el.tag_name;
                             let mut type_pos = 0;
                             for child in doc.children(parent_id) {
-                                if let NodeData::Element(child_el) = &child.data {
-                                    if child_el.tag_name.eq_ignore_ascii_case(tag) {
-                                        type_pos += 1;
-                                        if child.id == node_id {
-                                            return matches_an_plus_b(arg, type_pos);
-                                        }
+                                if let NodeData::Element(child_el) = &child.data
+                                    && child_el.tag_name.eq_ignore_ascii_case(tag)
+                                {
+                                    type_pos += 1;
+                                    if child.id == node_id {
+                                        return matches_an_plus_b(arg, type_pos);
                                     }
                                 }
                             }
@@ -422,10 +462,10 @@ impl SimpleSelector {
                             let tag = &el.tag_name;
                             let mut same_type = Vec::new();
                             for child in doc.children(parent_id) {
-                                if let NodeData::Element(child_el) = &child.data {
-                                    if child_el.tag_name.eq_ignore_ascii_case(tag) {
-                                        same_type.push(child.id);
-                                    }
+                                if let NodeData::Element(child_el) = &child.data
+                                    && child_el.tag_name.eq_ignore_ascii_case(tag)
+                                {
+                                    same_type.push(child.id);
                                 }
                             }
                             if let Some(idx) = same_type.iter().position(|&id| id == node_id) {
@@ -438,13 +478,17 @@ impl SimpleSelector {
                             false
                         }
                     }
-                    s if (s.starts_with("is(") && s.ends_with(')')) || (s.starts_with("where(") && s.ends_with(')')) => {
+                    s if (s.starts_with("is(") && s.ends_with(')'))
+                        || (s.starts_with("where(") && s.ends_with(')')) =>
+                    {
                         let prefix_len = if s.starts_with("is(") { 3 } else { 6 };
                         let inner = &s[prefix_len..s.len() - 1];
                         if let Some(list) = get_or_parse_complex_selector(inner) {
                             list.matches(node_id, doc)
                         } else {
-                            inner.split(',').any(|part| matches_simple_pattern(part, el, node_id, doc))
+                            inner
+                                .split(',')
+                                .any(|part| matches_simple_pattern(part, el, node_id, doc))
                         }
                     }
                     s if s.starts_with("not(") && s.ends_with(')') => {
@@ -452,7 +496,9 @@ impl SimpleSelector {
                         if let Some(list) = get_or_parse_complex_selector(inner) {
                             !list.matches(node_id, doc)
                         } else {
-                            !inner.split(',').any(|part| matches_simple_pattern(part, el, node_id, doc))
+                            !inner
+                                .split(',')
+                                .any(|part| matches_simple_pattern(part, el, node_id, doc))
                         }
                     }
                     s if s.starts_with("has(") && s.ends_with(')') => {
@@ -472,19 +518,26 @@ impl SimpleSelector {
 
 fn get_or_parse_complex_selector(inner: &str) -> Option<SelectorList> {
     use std::sync::{OnceLock, RwLock};
-    static CACHE: OnceLock<RwLock<std::collections::HashMap<String, Option<SelectorList>>>> = OnceLock::new();
+    static CACHE: OnceLock<RwLock<std::collections::HashMap<String, Option<SelectorList>>>> =
+        OnceLock::new();
     let cache = CACHE.get_or_init(|| RwLock::new(std::collections::HashMap::new()));
 
-    if let Ok(guard) = cache.read() {
-        if let Some(res) = guard.get(inner) {
-            return res.clone();
-        }
+    // Fast path: read lock for cache hits.
+    if let Ok(guard) = cache.read()
+        && let Some(res) = guard.get(inner)
+    {
+        return res.clone();
     }
 
     let parsed = crate::parser::parse_selectors(inner);
     if let Ok(mut guard) = cache.write() {
+        // Evict half the cache to avoid thundering-herd stampede that a full
+        // clear() would cause — all threads would re-parse simultaneously.
         if guard.len() >= 2048 {
-            guard.clear();
+            let keys_to_remove: Vec<String> = guard.keys().take(guard.len() / 2).cloned().collect();
+            for key in keys_to_remove {
+                guard.remove(&key);
+            }
         }
         guard.insert(inner.to_string(), parsed.clone());
     }
@@ -495,29 +548,27 @@ fn get_or_parse_complex_selector(inner: &str) -> Option<SelectorList> {
 fn is_in_disabled_fieldset(node_id: NodeId, doc: &Document) -> bool {
     let mut curr = node_id;
     while let Some(parent_id) = parent_element(curr, doc) {
-        if let Some(parent_node) = doc.get(parent_id) {
-            if let NodeData::Element(parent_el) = &parent_node.data {
-                if parent_el.tag_name.eq_ignore_ascii_case("fieldset")
-                    && parent_el.get_attribute("disabled").is_some()
+        if let Some(parent_node) = doc.get(parent_id)
+            && let NodeData::Element(parent_el) = &parent_node.data
+            && parent_el.tag_name.eq_ignore_ascii_case("fieldset")
+            && parent_el.get_attribute("disabled").is_some()
+        {
+            // Check if node is inside the fieldset's first <legend> child
+            let mut first_legend = None;
+            for child in doc.children(parent_id) {
+                if let NodeData::Element(ch_el) = &child.data
+                    && ch_el.tag_name.eq_ignore_ascii_case("legend")
                 {
-                    // Check if node is inside the fieldset's first <legend> child
-                    let mut first_legend = None;
-                    for child in doc.children(parent_id) {
-                        if let NodeData::Element(ch_el) = &child.data {
-                            if ch_el.tag_name.eq_ignore_ascii_case("legend") {
-                                first_legend = Some(child.id);
-                                break;
-                            }
-                        }
-                    }
-                    if let Some(legend_id) = first_legend {
-                        if curr == legend_id || is_descendant_of(node_id, legend_id, doc) {
-                            return false;
-                        }
-                    }
-                    return true;
+                    first_legend = Some(child.id);
+                    break;
                 }
             }
+            if let Some(legend_id) = first_legend
+                && (curr == legend_id || is_descendant_of(node_id, legend_id, doc))
+            {
+                return false;
+            }
+            return true;
         }
         curr = parent_id;
     }
@@ -526,10 +577,10 @@ fn is_in_disabled_fieldset(node_id: NodeId, doc: &Document) -> bool {
 
 /// Returns true when an element is in an editable (:read-write) state per HTML5 / Selectors 4 §4.1.5.
 fn element_is_read_write(el: &mango_html::dom::ElementData) -> bool {
-    if let Some(ce) = el.get_attribute("contenteditable") {
-        if !ce.eq_ignore_ascii_case("false") {
-            return true;
-        }
+    if let Some(ce) = el.get_attribute("contenteditable")
+        && !ce.eq_ignore_ascii_case("false")
+    {
+        return true;
     }
     if el.get_attribute("readonly").is_some() || el.get_attribute("disabled").is_some() {
         return false;
@@ -545,7 +596,16 @@ fn element_is_read_write(el: &mango_html::dom::ElementData) -> bool {
             .to_ascii_lowercase();
         return matches!(
             t.as_str(),
-            "text" | "search" | "url" | "tel" | "email" | "password" | "number" | "date" | "time" | ""
+            "text"
+                | "search"
+                | "url"
+                | "tel"
+                | "email"
+                | "password"
+                | "number"
+                | "date"
+                | "time"
+                | ""
         );
     }
     false
@@ -557,25 +617,28 @@ fn is_submittable_candidate(el: &mango_html::dom::ElementData) -> bool {
         .get_attribute("type")
         .unwrap_or("text")
         .to_ascii_lowercase();
-    !matches!(input_type.as_str(), "submit" | "button" | "reset" | "hidden" | "image")
+    !matches!(
+        input_type.as_str(),
+        "submit" | "button" | "reset" | "hidden" | "image"
+    )
 }
 
 /// Tests whether all validatable submittable controls in a <form> satisfy their constraints.
 fn form_is_valid(form_id: NodeId, doc: &Document) -> bool {
     let mut stack: Vec<NodeId> = doc.children(form_id).map(|c| c.id).collect();
     while let Some(id) = stack.pop() {
-        if let Some(node) = doc.get(id) {
-            if let NodeData::Element(el) = &node.data {
-                let tag = el.tag_name.to_ascii_lowercase();
-                if matches!(tag.as_str(), "input" | "select" | "textarea") {
-                    if is_submittable_candidate(el) && el.get_attribute("disabled").is_none() {
-                        if !element_is_valid(id, el) {
-                            return false;
-                        }
-                    }
-                }
-                stack.extend(doc.children(id).map(|c| c.id));
+        if let Some(node) = doc.get(id)
+            && let NodeData::Element(el) = &node.data
+        {
+            let tag = el.tag_name.to_ascii_lowercase();
+            if matches!(tag.as_str(), "input" | "select" | "textarea")
+                && is_submittable_candidate(el)
+                && el.get_attribute("disabled").is_none()
+                && !element_is_valid(id, el)
+            {
+                return false;
             }
+            stack.extend(doc.children(id).map(|c| c.id));
         }
     }
     true
@@ -600,10 +663,10 @@ fn parse_and_match_nth_child(arg: &str, node_id: NodeId, doc: &Document, from_la
 
     let selector_list = sel_filter.and_then(crate::parser::parse_selectors);
 
-    if let Some(list) = &selector_list {
-        if !list.matches(node_id, doc) {
-            return false;
-        }
+    if let Some(list) = &selector_list
+        && !list.matches(node_id, doc)
+    {
+        return false;
     }
 
     if from_last {
@@ -666,7 +729,10 @@ pub fn element_is_valid(node_id: NodeId, el: &mango_html::dom::ElementData) -> b
         .unwrap_or("text")
         .to_ascii_lowercase();
     // Buttons and hidden fields are not validated.
-    if matches!(input_type.as_str(), "submit" | "button" | "reset" | "hidden" | "image") {
+    if matches!(
+        input_type.as_str(),
+        "submit" | "button" | "reset" | "hidden" | "image"
+    ) {
         return true;
     }
     let _ = node_id;
@@ -726,52 +792,52 @@ pub fn element_is_valid(node_id: NodeId, el: &mango_html::dom::ElementData) -> b
                 let Ok(num) = value.trim().parse::<f64>() else {
                     return false;
                 };
-                if let Some(min) = el.get_attribute("min").and_then(|v| v.parse::<f64>().ok()) {
-                    if num < min {
-                        return false;
-                    }
+                if let Some(min) = el.get_attribute("min").and_then(|v| v.parse::<f64>().ok())
+                    && num < min
+                {
+                    return false;
                 }
-                if let Some(max) = el.get_attribute("max").and_then(|v| v.parse::<f64>().ok()) {
-                    if num > max {
-                        return false;
-                    }
+                if let Some(max) = el.get_attribute("max").and_then(|v| v.parse::<f64>().ok())
+                    && num > max
+                {
+                    return false;
                 }
-                if let Some(step) = el.get_attribute("step").and_then(|v| v.parse::<f64>().ok()) {
-                    if step > 0.0 {
-                        let min_val = el
-                            .get_attribute("min")
-                            .and_then(|v| v.parse::<f64>().ok())
-                            .unwrap_or(0.0);
-                        let diff = (num - min_val).abs();
-                        let rem = diff % step;
-                        if rem > 0.0001 && (step - rem) > 0.0001 {
-                            return false;
-                        }
+                if let Some(step) = el.get_attribute("step").and_then(|v| v.parse::<f64>().ok())
+                    && step > 0.0
+                {
+                    let min_val = el
+                        .get_attribute("min")
+                        .and_then(|v| v.parse::<f64>().ok())
+                        .unwrap_or(0.0);
+                    let diff = (num - min_val).abs();
+                    let rem = diff % step;
+                    if rem > 0.0001 && (step - rem) > 0.0001 {
+                        return false;
                     }
                 }
             }
             "date" => {
-                if let Some(min) = el.get_attribute("min") {
-                    if value.as_str() < min {
-                        return false;
-                    }
+                if let Some(min) = el.get_attribute("min")
+                    && value.as_str() < min
+                {
+                    return false;
                 }
-                if let Some(max) = el.get_attribute("max") {
-                    if value.as_str() > max {
-                        return false;
-                    }
+                if let Some(max) = el.get_attribute("max")
+                    && value.as_str() > max
+                {
+                    return false;
                 }
             }
             "time" => {
-                if let Some(min) = el.get_attribute("min") {
-                    if value.as_str() < min {
-                        return false;
-                    }
+                if let Some(min) = el.get_attribute("min")
+                    && value.as_str() < min
+                {
+                    return false;
                 }
-                if let Some(max) = el.get_attribute("max") {
-                    if value.as_str() > max {
-                        return false;
-                    }
+                if let Some(max) = el.get_attribute("max")
+                    && value.as_str() > max
+                {
+                    return false;
                 }
             }
             _ => {}
@@ -780,22 +846,26 @@ pub fn element_is_valid(node_id: NodeId, el: &mango_html::dom::ElementData) -> b
         // HTML5 pattern regex constraint
         if let Some(pat) = el.get_attribute("pattern") {
             let anchored = format!("^(?:{})$", pat);
-            if let Ok(re) = regex::Regex::new(&anchored) {
-                if !re.is_match(&value) {
-                    return false;
-                }
+            if let Ok(re) = regex::Regex::new(&anchored)
+                && !re.is_match(&value)
+            {
+                return false;
             }
         }
     }
 
     // Length constraints
     let char_count = value.chars().count();
-    if let Some(min) = el.get_attribute("minlength").and_then(|v| v.parse::<usize>().ok())
+    if let Some(min) = el
+        .get_attribute("minlength")
+        .and_then(|v| v.parse::<usize>().ok())
         && char_count < min
     {
         return false;
     }
-    if let Some(max) = el.get_attribute("maxlength").and_then(|v| v.parse::<usize>().ok())
+    if let Some(max) = el
+        .get_attribute("maxlength")
+        .and_then(|v| v.parse::<usize>().ok())
         && char_count > max
     {
         return false;
@@ -807,8 +877,8 @@ pub fn element_is_valid(node_id: NodeId, el: &mango_html::dom::ElementData) -> b
 fn matches_has(node_id: NodeId, selectors: &[ComplexSelector], doc: &Document) -> bool {
     for sel in selectors {
         // Check if selector starts with a relative combinator (e.g. > img, + p, ~ p)
-        let is_rel = sel.head.simple_selectors == vec![SimpleSelector::Universal]
-            && !sel.tail.is_empty();
+        let is_rel =
+            sel.head.simple_selectors == vec![SimpleSelector::Universal] && !sel.tail.is_empty();
 
         if is_rel {
             let first_comb = sel.tail[0].0;
@@ -869,7 +939,9 @@ fn matches_has(node_id: NodeId, selectors: &[ComplexSelector], doc: &Document) -
                         if sel.head.matches(curr, doc) {
                             return true;
                         }
-                    } else if sel.matches(curr, doc) && leftmost_origin_within(curr, sel, node_id, doc) {
+                    } else if sel.matches(curr, doc)
+                        && leftmost_origin_within(curr, sel, node_id, doc)
+                    {
                         return true;
                     }
                     stack.extend(doc.children(curr).map(|c| c.id));
@@ -887,7 +959,7 @@ pub fn matches_an_plus_b(formula: &str, pos: usize) -> bool {
         return pos % 2 == 1;
     }
     if s.eq_ignore_ascii_case("even") {
-        return pos % 2 == 0;
+        return pos.is_multiple_of(2);
     }
     if let Ok(b) = s.parse::<isize>() {
         return pos as isize == b;
@@ -977,7 +1049,9 @@ impl CompoundSelector {
         if self.simple_selectors.is_empty() {
             return false;
         }
-        self.simple_selectors.iter().all(|s| s.matches(node_id, doc))
+        self.simple_selectors
+            .iter()
+            .all(|s| s.matches(node_id, doc))
     }
 }
 
@@ -1052,7 +1126,13 @@ impl ComplexSelector {
             return false;
         }
 
-        self.match_tail(node_id, self.tail.len() - 1, *last_comb, expected_origin, doc)
+        self.match_tail(
+            node_id,
+            self.tail.len() - 1,
+            *last_comb,
+            expected_origin,
+            doc,
+        )
     }
 
     /// Tests whether this selector targets the specified pseudo-element of `node_id`.
@@ -1239,7 +1319,9 @@ impl SelectorList {
 
     /// Tests if any complex selector in this list targets the specified pseudo-element of `node_id`.
     pub fn matches_pseudo_element(&self, node_id: NodeId, doc: &Document, pseudo: &str) -> bool {
-        self.selectors.iter().any(|s| s.matches_pseudo_element(node_id, doc, pseudo))
+        self.selectors
+            .iter()
+            .any(|s| s.matches_pseudo_element(node_id, doc, pseudo))
     }
 }
 
@@ -1502,7 +1584,10 @@ mod tests {
         assert!(optional.matches(by_id("opt"), &doc));
         assert!(!required.matches(by_id("opt"), &doc));
 
-        assert!(!valid.matches(by_id("req-empty"), &doc), "empty required field is invalid");
+        assert!(
+            !valid.matches(by_id("req-empty"), &doc),
+            "empty required field is invalid"
+        );
         assert!(invalid.matches(by_id("req-empty"), &doc));
         assert!(valid.matches(by_id("req-filled"), &doc));
         assert!(!invalid.matches(by_id("req-filled"), &doc));
@@ -1518,8 +1603,14 @@ mod tests {
         assert!(read_only.matches(by_id("ro"), &doc));
         assert!(!read_only.matches(by_id("req-filled"), &doc));
 
-        assert!(ph_shown.matches(by_id("ph"), &doc), "placeholder with no value");
-        assert!(!ph_shown.matches(by_id("req-filled"), &doc), "placeholder is hidden once a value is set");
+        assert!(
+            ph_shown.matches(by_id("ph"), &doc),
+            "placeholder with no value"
+        );
+        assert!(
+            !ph_shown.matches(by_id("req-filled"), &doc),
+            "placeholder is hidden once a value is set"
+        );
     }
 
     #[test]
@@ -1539,7 +1630,10 @@ mod tests {
             el.attributes
                 .push(("data-mango-focused".to_string(), "true".to_string()));
         }
-        assert!(focus_within.matches(wrap, &doc), "ancestors match :focus-within");
+        assert!(
+            focus_within.matches(wrap, &doc),
+            "ancestors match :focus-within"
+        );
     }
 
     #[test]
@@ -1630,10 +1724,10 @@ mod tests {
     fn test_has_pseudo_class_matching() {
         fn find_by_class(node_id: NodeId, class_name: &str, doc: &Document) -> Option<NodeId> {
             for child in doc.children(node_id) {
-                if let NodeData::Element(el) = &child.data {
-                    if el.has_class(class_name) {
-                        return Some(child.id);
-                    }
+                if let NodeData::Element(el) = &child.data
+                    && el.has_class(class_name)
+                {
+                    return Some(child.id);
                 }
                 if let Some(found) = find_by_class(child.id, class_name, doc) {
                     return Some(found);
@@ -1703,10 +1797,10 @@ mod tests {
             let mut stack = vec![root];
             while let Some(nid) = stack.pop() {
                 if let Some(node) = doc.get(nid) {
-                    if let NodeData::Element(el) = &node.data {
-                        if el.get_attribute("id") == Some(id) {
-                            return element_is_valid(nid, el);
-                        }
+                    if let NodeData::Element(el) = &node.data
+                        && el.get_attribute("id") == Some(id)
+                    {
+                        return element_is_valid(nid, el);
                     }
                     for c in doc.children(nid) {
                         stack.push(c.id);
@@ -1790,12 +1884,16 @@ mod tests {
 
         let mut doc = parse_html(html);
         let root = doc.root();
-        fn collect_ids(doc: &Document, node_id: NodeId, map: &mut std::collections::HashMap<String, NodeId>) {
+        fn collect_ids(
+            doc: &Document,
+            node_id: NodeId,
+            map: &mut std::collections::HashMap<String, NodeId>,
+        ) {
             for child in doc.children(node_id) {
-                if let mango_html::NodeData::Element(elem) = &child.data {
-                    if let Some(id) = elem.id() {
-                        map.insert(id.to_string(), child.id);
-                    }
+                if let mango_html::NodeData::Element(elem) = &child.data
+                    && let Some(id) = elem.id()
+                {
+                    map.insert(id.to_string(), child.id);
                 }
                 collect_ids(doc, child.id, map);
             }
@@ -1810,13 +1908,15 @@ mod tests {
         assert!(is_sel.matches(el("only-h2"), &doc));
         assert!(!is_sel.matches(el("first-p"), &doc));
 
-        let where_sel = crate::parser::parse_selectors(":where(p.intro, span#sibling-span)").unwrap();
+        let where_sel =
+            crate::parser::parse_selectors(":where(p.intro, span#sibling-span)").unwrap();
         assert!(where_sel.matches(el("first-p"), &doc));
         assert!(where_sel.matches(el("sibling-span"), &doc));
         assert!(!where_sel.matches(el("heading"), &doc));
 
         // 2. :not() with complex selectors
-        let not_complex = crate::parser::parse_selectors(":not(#section-target > p.intro)").unwrap();
+        let not_complex =
+            crate::parser::parse_selectors(":not(#section-target > p.intro)").unwrap();
         assert!(!not_complex.matches(el("first-p"), &doc));
         assert!(not_complex.matches(el("heading"), &doc));
 
@@ -1843,7 +1943,8 @@ mod tests {
         assert!(has_child.matches(el("section-target"), &doc));
 
         // Descendant selector: section:has(span#sibling-span)
-        let has_descendant = crate::parser::parse_selectors("section:has(span#sibling-span)").unwrap();
+        let has_descendant =
+            crate::parser::parse_selectors("section:has(span#sibling-span)").unwrap();
         assert!(has_descendant.matches(el("section-target"), &doc));
 
         // 4. :nth-child(An+B [of S]) and :nth-last-child(An+B [of S])
@@ -1851,10 +1952,11 @@ mod tests {
         let nth_of_active = crate::parser::parse_selectors("li:nth-child(2 of .active)").unwrap();
         assert!(!nth_of_active.matches(el("li-1"), &doc)); // index 1 of .active
         assert!(!nth_of_active.matches(el("li-2"), &doc)); // not .active
-        assert!(nth_of_active.matches(el("li-4"), &doc));  // index 2 of .active
+        assert!(nth_of_active.matches(el("li-4"), &doc)); // index 2 of .active
 
         // nth-last-child(1 of .active) should be li-4
-        let nth_last_of = crate::parser::parse_selectors("li:nth-last-child(1 of .active)").unwrap();
+        let nth_last_of =
+            crate::parser::parse_selectors("li:nth-last-child(1 of .active)").unwrap();
         assert!(nth_last_of.matches(el("li-4"), &doc));
         assert!(!nth_last_of.matches(el("li-1"), &doc));
 
@@ -1885,22 +1987,34 @@ mod tests {
         // 6. :empty pseudo-class (comments & whitespace ignored)
         let empty_sel = SimpleSelector::PseudoClass("empty".to_string());
         assert!(empty_sel.matches(el("truly-empty"), &doc));
-        assert!(empty_sel.matches(el("comment-empty"), &doc), "comments must be ignored by :empty");
-        assert!(empty_sel.matches(el("whitespace-empty"), &doc), "whitespace must be ignored by :empty in Selectors 4");
+        assert!(
+            empty_sel.matches(el("comment-empty"), &doc),
+            "comments must be ignored by :empty"
+        );
+        assert!(
+            empty_sel.matches(el("whitespace-empty"), &doc),
+            "whitespace must be ignored by :empty in Selectors 4"
+        );
         assert!(!empty_sel.matches(el("not-empty"), &doc));
 
         // 7. :target pseudo-class
         let target_sel = SimpleSelector::PseudoClass("target".to_string());
         assert!(target_sel.matches(el("section-target"), &doc)); // via data-mango-target
         doc.set_target_id(Some("heading".to_string()));
-        assert!(target_sel.matches(el("heading"), &doc), ":target matches document.target_id");
+        assert!(
+            target_sel.matches(el("heading"), &doc),
+            ":target matches document.target_id"
+        );
         assert!(!target_sel.matches(el("first-p"), &doc));
 
         // 8. :focus-visible and :focus-within
         let focus_vis = SimpleSelector::PseudoClass("focus-visible".to_string());
         let focus_within = SimpleSelector::PseudoClass("focus-within".to_string());
         assert!(focus_vis.matches(el("inp-focus-visible"), &doc));
-        assert!(focus_within.matches(el("focus-container"), &doc), "ancestor matches :focus-within");
+        assert!(
+            focus_within.matches(el("focus-container"), &doc),
+            "ancestor matches :focus-within"
+        );
         assert!(!focus_within.matches(el("section-target"), &doc));
 
         // 9. :placeholder-shown
@@ -1917,7 +2031,10 @@ mod tests {
 
         assert!(enabled_sel.matches(el("inp-enabled"), &doc));
         assert!(!enabled_sel.matches(el("inp-disabled"), &doc));
-        assert!(!enabled_sel.matches(el("wrapper"), &doc), "div cannot match :enabled");
+        assert!(
+            !enabled_sel.matches(el("wrapper"), &doc),
+            "div cannot match :enabled"
+        );
 
         assert!(disabled_sel.matches(el("inp-disabled"), &doc));
         assert!(!disabled_sel.matches(el("inp-enabled"), &doc));
@@ -1926,7 +2043,10 @@ mod tests {
         assert!(!checked_sel.matches(el("chk-unchecked"), &doc));
 
         assert!(indet_sel.matches(el("chk-indet"), &doc));
-        assert!(indet_sel.matches(el("prog-indet"), &doc), "<progress> with no value matches :indeterminate");
+        assert!(
+            indet_sel.matches(el("prog-indet"), &doc),
+            "<progress> with no value matches :indeterminate"
+        );
         assert!(!indet_sel.matches(el("prog-determinate"), &doc));
 
         // 11. :required, :optional, :valid, :invalid
@@ -1937,13 +2057,22 @@ mod tests {
 
         assert!(req_sel.matches(el("inp-required"), &doc));
         assert!(!req_sel.matches(el("inp-optional"), &doc));
-        assert!(!req_sel.matches(el("wrapper"), &doc), "div cannot match :required");
+        assert!(
+            !req_sel.matches(el("wrapper"), &doc),
+            "div cannot match :required"
+        );
 
         assert!(opt_sel.matches(el("inp-optional"), &doc));
         assert!(!opt_sel.matches(el("inp-required"), &doc));
-        assert!(!opt_sel.matches(el("wrapper"), &doc), "div cannot match :optional");
+        assert!(
+            !opt_sel.matches(el("wrapper"), &doc),
+            "div cannot match :optional"
+        );
 
-        assert!(invalid_sel.matches(el("inp-required"), &doc), "empty required field is :invalid");
+        assert!(
+            invalid_sel.matches(el("inp-required"), &doc),
+            "empty required field is :invalid"
+        );
         assert!(!valid_sel.matches(el("inp-required"), &doc));
         assert!(valid_sel.matches(el("inp-optional"), &doc));
 
@@ -1953,11 +2082,17 @@ mod tests {
 
         assert!(rw_sel.matches(el("inp-enabled"), &doc));
         assert!(rw_sel.matches(el("ta-editable"), &doc));
-        assert!(rw_sel.matches(el("editable-div"), &doc), "contenteditable elements match :read-write");
+        assert!(
+            rw_sel.matches(el("editable-div"), &doc),
+            "contenteditable elements match :read-write"
+        );
 
         assert!(!rw_sel.matches(el("inp-disabled"), &doc));
         assert!(!rw_sel.matches(el("ta-readonly"), &doc));
-        assert!(!rw_sel.matches(el("readonly-p"), &doc), "normal paragraphs match :read-only");
+        assert!(
+            !rw_sel.matches(el("readonly-p"), &doc),
+            "normal paragraphs match :read-only"
+        );
 
         assert!(ro_sel.matches(el("readonly-p"), &doc));
         assert!(ro_sel.matches(el("inp-disabled"), &doc));
@@ -1965,20 +2100,36 @@ mod tests {
         assert!(!ro_sel.matches(el("inp-enabled"), &doc));
 
         // 13. ::placeholder pseudo-element
-        let ph_pseudo = crate::parser::parse_selectors("input::placeholder").unwrap().selectors[0].clone();
+        let ph_pseudo = crate::parser::parse_selectors("input::placeholder")
+            .unwrap()
+            .selectors[0]
+            .clone();
         assert!(ph_pseudo.matches_pseudo_element(el("inp-enabled"), &doc, "placeholder"));
-        assert!(ph_pseudo.matches_pseudo_element(el("inp-enabled"), &doc, "-webkit-input-placeholder"));
+        assert!(ph_pseudo.matches_pseudo_element(
+            el("inp-enabled"),
+            &doc,
+            "-webkit-input-placeholder"
+        ));
 
         // 14. ::selection pseudo-element
-        let sel_pseudo = crate::parser::parse_selectors("p::selection").unwrap().selectors[0].clone();
+        let sel_pseudo = crate::parser::parse_selectors("p::selection")
+            .unwrap()
+            .selectors[0]
+            .clone();
         assert!(sel_pseudo.matches_pseudo_element(el("first-p"), &doc, "selection"));
         assert!(sel_pseudo.matches_pseudo_element(el("first-p"), &doc, "-moz-selection"));
         assert!(!sel_pseudo.matches_pseudo_element(el("heading"), &doc, "selection")); // h1 is not p
 
         // 15. ::marker pseudo-element
-        let marker_pseudo = crate::parser::parse_selectors("li::marker").unwrap().selectors[0].clone();
+        let marker_pseudo = crate::parser::parse_selectors("li::marker")
+            .unwrap()
+            .selectors[0]
+            .clone();
         assert!(marker_pseudo.matches_pseudo_element(el("li-1"), &doc, "marker"));
-        assert!(!marker_pseudo.matches_pseudo_element(el("first-p"), &doc, "marker"), "p does not have ::marker");
+        assert!(
+            !marker_pseudo.matches_pseudo_element(el("first-p"), &doc, "marker"),
+            "p does not have ::marker"
+        );
     }
 
     #[test]
@@ -1995,20 +2146,41 @@ mod tests {
 
         // DashMatch: [lang|="en"]
         let dash_sel = crate::parser::parse_selectors("[lang|=\"en\"]").unwrap();
-        assert!(dash_sel.matches(el("en"), &doc), "[lang|='en'] matches 'en'");
-        assert!(dash_sel.matches(el("en-us"), &doc), "[lang|='en'] matches 'en-US'");
-        assert!(!dash_sel.matches(el("english"), &doc), "[lang|='en'] does not match 'english'");
+        assert!(
+            dash_sel.matches(el("en"), &doc),
+            "[lang|='en'] matches 'en'"
+        );
+        assert!(
+            dash_sel.matches(el("en-us"), &doc),
+            "[lang|='en'] matches 'en-US'"
+        );
+        assert!(
+            !dash_sel.matches(el("english"), &doc),
+            "[lang|='en'] does not match 'english'"
+        );
 
         // Empty string matches should return false
         let empty_prefix = crate::parser::parse_selectors("[lang^=\"\"]").unwrap();
-        assert!(!empty_prefix.matches(el("en"), &doc), "[attr^=''] must never match");
+        assert!(
+            !empty_prefix.matches(el("en"), &doc),
+            "[attr^=''] must never match"
+        );
         let empty_suffix = crate::parser::parse_selectors("[lang$=\"\"]").unwrap();
-        assert!(!empty_suffix.matches(el("en"), &doc), "[attr$=''] must never match");
+        assert!(
+            !empty_suffix.matches(el("en"), &doc),
+            "[attr$=''] must never match"
+        );
         let empty_sub = crate::parser::parse_selectors("[lang*=\"\"]").unwrap();
-        assert!(!empty_sub.matches(el("en"), &doc), "[attr*=''] must never match");
+        assert!(
+            !empty_sub.matches(el("en"), &doc),
+            "[attr*=''] must never match"
+        );
 
         // Case-insensitive attribute match: [type="CHECKBOX" i]
         let case_sel = crate::parser::parse_selectors("[type=\"CHECKBOX\" i]").unwrap();
-        assert!(case_sel.matches(el("chk"), &doc), "[type='CHECKBOX' i] matches 'checkbox'");
+        assert!(
+            case_sel.matches(el("chk"), &doc),
+            "[type='CHECKBOX' i] matches 'checkbox'"
+        );
     }
 }

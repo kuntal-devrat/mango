@@ -14,10 +14,7 @@ use crate::float::FloatContext;
 /// An atomic inline fragment kind: either text (word/space), an atomic box (inline-block/replaced), or a forced line break.
 #[derive(Debug, Clone)]
 enum InlineAtomKind {
-    Text {
-        text: String,
-        is_space: bool,
-    },
+    Text { text: String, is_space: bool },
     AtomicBox(Box<LayoutBox>),
     LineBreak,
     WordBreakOpportunity,
@@ -82,18 +79,54 @@ pub fn is_cjk_char(ch: char) -> bool {
 
 /// Returns true if a character is CJK closing punctuation (which cannot begin a line).
 pub fn is_cjk_closing_punct(ch: char) -> bool {
-    matches!(ch,
-        '）' | '」' | '』' | '】' | '》' | '”' | '’' | '〕' | '〗' | '〙'
-        | '。' | '，' | '、' | '；' | '：' | '！' | '？'
-        | ')' | ']' | '}' | '>' | '!' | '?' | ',' | '.' | ':' | ';'
+    matches!(
+        ch,
+        '）' | '」'
+            | '』'
+            | '】'
+            | '》'
+            | '”'
+            | '’'
+            | '〕'
+            | '〗'
+            | '〙'
+            | '。'
+            | '，'
+            | '、'
+            | '；'
+            | '：'
+            | '！'
+            | '？'
+            | ')'
+            | ']'
+            | '}'
+            | '>'
+            | '!'
+            | '?'
+            | ','
+            | '.'
+            | ':'
+            | ';'
     )
 }
 
 /// Returns true if a character is CJK opening punctuation (which cannot end a line).
 pub fn is_cjk_opening_punct(ch: char) -> bool {
-    matches!(ch,
-        '（' | '「' | '『' | '【' | '《' | '“' | '‘' | '〔' | '〖' | '〘'
-        | '(' | '[' | '{' | '<'
+    matches!(
+        ch,
+        '（' | '「'
+            | '『'
+            | '【'
+            | '《'
+            | '“'
+            | '‘'
+            | '〔'
+            | '〖'
+            | '〘'
+            | '('
+            | '['
+            | '{'
+            | '<'
     )
 }
 
@@ -145,11 +178,16 @@ fn font_family_for(style: &ComputedStyle) -> mango_render::FontFamily {
 /// The used line height of a run: the declared `line-height`, or the font's own
 /// `ascent + descent + line-gap` for `normal` — which is how Chromium computes it,
 /// rather than a fixed multiple of the font size (CSS 2.1 §10.8.1).
-fn used_line_height(style: &ComputedStyle, family: mango_render::FontFamily, weight: mango_render::FontWeight) -> f32 {
+fn used_line_height(
+    style: &ComputedStyle,
+    family: mango_render::FontFamily,
+    weight: mango_render::FontWeight,
+) -> f32 {
     if let Some(explicit) = style.line_height {
         return explicit.max(0.0);
     }
-    let (ascent, descent, gap) = mango_render::font::font_manager().font_metrics(family, weight, style.font_size);
+    let (ascent, descent, gap) =
+        mango_render::font::font_manager().font_metrics(family, weight, style.font_size);
     (ascent + descent + gap).max(1.0)
 }
 
@@ -184,7 +222,8 @@ pub fn measure_text_width_with_style_and_spacing(
     letter_spacing: f32,
 ) -> f32 {
     let fm = mango_render::font::font_manager();
-    let (width, _height) = fm.measure_text_with_spacing(text, font_size, weight, family, letter_spacing);
+    let (width, _height) =
+        fm.measure_text_with_spacing(text, font_size, weight, family, letter_spacing);
     width
 }
 
@@ -213,11 +252,16 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
     } else if let Some(style) = &container.style {
         let font_size = style.font_size;
         let root_font_size = style.root_font_size;
-        let h = style.height.to_px_with_viewport(font_size, root_font_size, container_width, 600.0);
+        let (_, vp_h) = mango_css::get_current_viewport();
+        let h = style
+            .height
+            .to_px_with_viewport(font_size, root_font_size, vp_h, vp_h);
         if h > 0.0 {
             h
         } else {
-            let max_h = style.max_height.to_px_with_viewport(font_size, root_font_size, container_width, 600.0);
+            let max_h = style
+                .max_height
+                .to_px_with_viewport(font_size, root_font_size, vp_h, vp_h);
             if max_h > 0.0 && style.max_height != mango_css::values::Length::Auto {
                 max_h
             } else {
@@ -259,10 +303,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
     }
 
     // 1b. Prepend list marker atom if container is a list item
-    let is_list_item = container
-        .style
-        .as_ref()
-        .map(|s| s.display)
+    let is_list_item = container.style.as_ref().map(|s| s.display)
         == Some(mango_css::values::Display::ListItem)
         || container.tag_name.as_deref() == Some("li");
 
@@ -270,7 +311,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
         let mut style = container.style.clone().unwrap_or_default();
         if let Some(c) = container
             .get_attribute("_mango_marker_color")
-            .and_then(|c_str| mango_css::values::Value::parse_color(c_str))
+            .and_then(mango_css::values::Value::parse_color)
         {
             style.color = c;
         }
@@ -325,17 +366,22 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
         };
 
         if let Some(m_text) = marker_str {
-            let already_has_bullet = atoms.iter().find_map(|a| match &a.kind {
-                InlineAtomKind::Text { text, .. } if !text.trim().is_empty() => {
-                    let trimmed = text.trim_start();
-                    Some(trimmed.starts_with('•')
-                        || trimmed.starts_with('\u{2022}')
-                        || trimmed.starts_with('○')
-                        || trimmed.starts_with('▪')
-                        || trimmed.starts_with(&m_text))
-                }
-                _ => None,
-            }).unwrap_or(false);
+            let already_has_bullet = atoms
+                .iter()
+                .find_map(|a| match &a.kind {
+                    InlineAtomKind::Text { text, .. } if !text.trim().is_empty() => {
+                        let trimmed = text.trim_start();
+                        Some(
+                            trimmed.starts_with('•')
+                                || trimmed.starts_with('\u{2022}')
+                                || trimmed.starts_with('○')
+                                || trimmed.starts_with('▪')
+                                || trimmed.starts_with(&m_text),
+                        )
+                    }
+                    _ => None,
+                })
+                .unwrap_or(false);
 
             if !already_has_bullet {
                 let m_font_size = style.font_size;
@@ -362,7 +408,10 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
         let mut oof_children = Vec::new();
         for sc in &source_children {
             let is_oof = sc.style.as_ref().is_some_and(|s| {
-                matches!(s.position, mango_css::values::Position::Absolute | mango_css::values::Position::Fixed)
+                matches!(
+                    s.position,
+                    mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
+                )
             });
             if is_oof {
                 oof_children.push(sc.clone());
@@ -383,15 +432,19 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
         .unwrap_or(0.0);
     let mut is_first_line = true;
 
-    let max_lines = container.style.as_ref().and_then(|s| match s.line_clamp {
-        mango_css::values::LineClamp::Lines(n) if n > 0 => Some(n as usize),
-        _ => None,
-    }).or_else(|| {
-        atoms.first().and_then(|a| match a.style.line_clamp {
+    let max_lines = container
+        .style
+        .as_ref()
+        .and_then(|s| match s.line_clamp {
             mango_css::values::LineClamp::Lines(n) if n > 0 => Some(n as usize),
             _ => None,
         })
-    });
+        .or_else(|| {
+            atoms.first().and_then(|a| match a.style.line_clamp {
+                mango_css::values::LineClamp::Lines(n) if n > 0 => Some(n as usize),
+                _ => None,
+            })
+        });
     let mut line_count = 0;
 
     let mut line_atoms: Vec<InlineAtom> = Vec::new();
@@ -418,10 +471,10 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
             line_atoms.clear();
             line_width = 0.0;
             line_count += 1;
-            if let Some(max) = max_lines {
-                if line_count >= max {
-                    break;
-                }
+            if let Some(max) = max_lines
+                && line_count >= max
+            {
+                break;
             }
             continue;
         }
@@ -437,7 +490,12 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
             float_ctx.available_span(current_y, atom_height, container_x, container_width);
         let available_width = (max_x - min_x - line_indent).max(0.0);
 
-        let is_pre = matches!(atom.style.white_space, mango_css::values::WhiteSpace::Pre | mango_css::values::WhiteSpace::PreWrap | mango_css::values::WhiteSpace::BreakSpaces);
+        let is_pre = matches!(
+            atom.style.white_space,
+            mango_css::values::WhiteSpace::Pre
+                | mango_css::values::WhiteSpace::PreWrap
+                | mango_css::values::WhiteSpace::BreakSpaces
+        );
         // Discard leading space on a new line (unless pre/pre-wrap/break-spaces)
         if line_atoms.is_empty() && atom.is_space() && !is_pre {
             continue;
@@ -450,117 +508,133 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
             || atom.style.word_break == mango_css::values::WordBreak::BreakWord)
             && !is_nowrap;
 
-        if can_break_word && (atom.width > available_width) {
-            if let InlineAtomKind::Text { text, is_space: false } = &atom.kind {
-                if text.chars().count() > 1 && available_width > 0.0 {
-                    let mut chunks = split_overflow_text(
-                        text.as_str(),
-                        &atom.style,
-                        available_width,
-                        atom.height,
-                        atom.link_target.as_deref(),
-                        container_width,
-                    );
-                    if !chunks.is_empty() {
-                        let first = chunks.remove(0);
-                        for chk in chunks.into_iter().rev() {
-                            atom_queue.push_front(chk);
-                        }
-                        atom_queue.push_front(first);
-                        continue;
-                    }
+        if can_break_word
+            && (atom.width > available_width)
+            && let InlineAtomKind::Text {
+                text,
+                is_space: false,
+            } = &atom.kind
+            && text.chars().count() > 1
+            && available_width > 0.0
+        {
+            let mut chunks = split_overflow_text(
+                text.as_str(),
+                &atom.style,
+                available_width,
+                atom.height,
+                atom.link_target.as_deref(),
+                container_width,
+            );
+            if !chunks.is_empty() {
+                let first = chunks.remove(0);
+                for chk in chunks.into_iter().rev() {
+                    atom_queue.push_front(chk);
                 }
+                atom_queue.push_front(first);
+                continue;
             }
         }
 
         // Automatic hyphenation check
         let is_auto_hyphens = atom.style.hyphens == mango_css::values::Hyphens::Auto && !is_nowrap;
-        if is_auto_hyphens && (line_width + atom.width > available_width) {
-            if let InlineAtomKind::Text { text, is_space: false } = &atom.kind {
-                if text.chars().count() >= 6 {
-                    let (can_fit_here, remaining_w) = if line_atoms.is_empty() {
-                        (true, available_width)
-                    } else if available_width > line_width + 20.0 {
-                        (true, available_width - line_width)
-                    } else {
-                        (false, 0.0)
-                    };
+        if is_auto_hyphens
+            && (line_width + atom.width > available_width)
+            && let InlineAtomKind::Text {
+                text,
+                is_space: false,
+            } = &atom.kind
+            && text.chars().count() >= 6
+        {
+            let (can_fit_here, remaining_w) = if line_atoms.is_empty() {
+                (true, available_width)
+            } else if available_width > line_width + 20.0 {
+                (true, available_width - line_width)
+            } else {
+                (false, 0.0)
+            };
 
-                    if can_fit_here {
-                        if let Some((prefix, suffix)) = try_auto_hyphenate(text.as_str(), &atom.style, remaining_w, container_width) {
-                            let hyphen_atom = InlineAtom {
-                                kind: InlineAtomKind::Text {
-                                    text: format!("{}-", prefix),
-                                    is_space: false,
-                                },
-                                style: atom.style.clone(),
-                                width: remaining_w,
-                                height: atom.height,
-                                link_target: atom.link_target.clone(),
-                            };
-                            line_atoms.push(hyphen_atom);
-                            let line_h = finalize_line(
-                                &line_atoms,
-                                min_x + line_indent,
-                                available_width,
-                                current_y,
-                                text_align,
-                                &mut positioned_boxes,
-                            );
-                            current_y += line_h;
-                            is_first_line = false;
-                            line_atoms.clear();
-                            line_width = 0.0;
-                            line_count += 1;
+            if can_fit_here
+                && let Some((prefix, suffix)) =
+                    try_auto_hyphenate(text.as_str(), &atom.style, remaining_w, container_width)
+            {
+                let hyphen_atom = InlineAtom {
+                    kind: InlineAtomKind::Text {
+                        text: format!("{}-", prefix),
+                        is_space: false,
+                    },
+                    style: atom.style.clone(),
+                    width: remaining_w,
+                    height: atom.height,
+                    link_target: atom.link_target.clone(),
+                };
+                line_atoms.push(hyphen_atom);
+                let line_h = finalize_line(
+                    &line_atoms,
+                    min_x + line_indent,
+                    available_width,
+                    current_y,
+                    text_align,
+                    &mut positioned_boxes,
+                );
+                current_y += line_h;
+                is_first_line = false;
+                line_atoms.clear();
+                line_width = 0.0;
+                line_count += 1;
 
-                            if let Some(max) = max_lines {
-                                if line_count >= max {
-                                    if let Some(last_box) = positioned_boxes.last_mut() {
-                                        if let BoxType::TextNode(t) = &mut last_box.box_type {
-                                            if !t.ends_with('…') {
-                                                t.push('…');
-                                            }
-                                        }
-                                    }
-                                    break;
-                                }
-                            }
-
-                            let suffix_w = measure_text_width_with_style(&suffix, atom.style.font_size, font_weight_for(&atom.style), font_family_for(&atom.style));
-                            let suffix_atom = InlineAtom {
-                                kind: InlineAtomKind::Text {
-                                    text: suffix,
-                                    is_space: false,
-                                },
-                                style: atom.style.clone(),
-                                width: suffix_w,
-                                height: atom.height,
-                                link_target: atom.link_target,
-                            };
-                            atom_queue.push_front(suffix_atom);
-                            continue;
-                        }
+                if let Some(max) = max_lines
+                    && line_count >= max
+                {
+                    if let Some(last_box) = positioned_boxes.last_mut()
+                        && let BoxType::TextNode(t) = &mut last_box.box_type
+                        && !t.ends_with('…')
+                    {
+                        t.push('…');
                     }
+                    break;
                 }
+
+                let suffix_w = measure_text_width_with_style(
+                    &suffix,
+                    atom.style.font_size,
+                    font_weight_for(&atom.style),
+                    font_family_for(&atom.style),
+                );
+                let suffix_atom = InlineAtom {
+                    kind: InlineAtomKind::Text {
+                        text: suffix,
+                        is_space: false,
+                    },
+                    style: atom.style.clone(),
+                    width: suffix_w,
+                    height: atom.height,
+                    link_target: atom.link_target,
+                };
+                atom_queue.push_front(suffix_atom);
+                continue;
             }
         }
 
         if !line_atoms.is_empty() && !is_nowrap && (line_width + atom.width > available_width) {
             // Check if there was a SoftHyphen in line_atoms
-            if let Some(sh_pos) = line_atoms.iter().rposition(|a| matches!(a.kind, InlineAtomKind::SoftHyphen)) {
-                let has_space_after_sh = line_atoms[sh_pos + 1..].iter().any(|a| a.is_space() || matches!(a.kind, InlineAtomKind::WordBreakOpportunity));
+            if let Some(sh_pos) = line_atoms
+                .iter()
+                .rposition(|a| matches!(a.kind, InlineAtomKind::SoftHyphen))
+            {
+                let has_space_after_sh = line_atoms[sh_pos + 1..].iter().any(|a| {
+                    a.is_space() || matches!(a.kind, InlineAtomKind::WordBreakOpportunity)
+                });
                 if !has_space_after_sh {
                     let carryover: Vec<InlineAtom> = line_atoms.drain(sh_pos + 1..).collect();
                     for c in carryover.into_iter().rev() {
                         atom_queue.push_front(c);
                     }
                     line_atoms.pop(); // Remove SoftHyphen
-                    if let Some(prev) = line_atoms.last_mut() {
-                        if let InlineAtomKind::Text { text, .. } = &mut prev.kind {
-                            if !text.ends_with('-') {
-                                text.push('-');
-                            }
-                        }
+                    if let Some(prev) = line_atoms.last_mut()
+                        && let InlineAtomKind::Text { text, .. } = &mut prev.kind
+                        && !text.ends_with('-')
+                    {
+                        text.push('-');
                     }
                 }
             }
@@ -580,17 +654,16 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
             line_width = 0.0;
             line_count += 1;
 
-            if let Some(max) = max_lines {
-                if line_count >= max {
-                    if let Some(last_box) = positioned_boxes.last_mut() {
-                        if let BoxType::TextNode(t) = &mut last_box.box_type {
-                            if !t.ends_with('…') {
-                                t.push('…');
-                            }
-                        }
-                    }
-                    break;
+            if let Some(max) = max_lines
+                && line_count >= max
+            {
+                if let Some(last_box) = positioned_boxes.last_mut()
+                    && let BoxType::TextNode(t) = &mut last_box.box_type
+                    && !t.ends_with('…')
+                {
+                    t.push('…');
                 }
+                break;
             }
 
             if atom.is_space() && !is_pre {
@@ -602,7 +675,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
         line_atoms.push(atom);
     }
 
-    if !line_atoms.is_empty() && max_lines.map_or(true, |max| line_count < max) {
+    if !line_atoms.is_empty() && max_lines.is_none_or(|max| line_count < max) {
         let line_indent = if is_first_line { text_indent } else { 0.0 };
         let line_height = line_atoms.iter().map(|a| a.height).fold(0.0f32, f32::max);
         let (min_x, max_x) =
@@ -622,7 +695,10 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
 
     for sc in &source_children {
         let is_oof = sc.style.as_ref().is_some_and(|s| {
-            matches!(s.position, mango_css::values::Position::Absolute | mango_css::values::Position::Fixed)
+            matches!(
+                s.position,
+                mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
+            )
         });
         if is_oof {
             positioned_boxes.push(sc.clone());
@@ -668,7 +744,10 @@ fn layout_vertical_inline_children(
         let mut oof_children = Vec::new();
         for sc in &source_children {
             let is_oof = sc.style.as_ref().is_some_and(|s| {
-                matches!(s.position, mango_css::values::Position::Absolute | mango_css::values::Position::Fixed)
+                matches!(
+                    s.position,
+                    mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
+                )
             });
             if is_oof {
                 oof_children.push(sc.clone());
@@ -686,7 +765,11 @@ fn layout_vertical_inline_children(
     let mut lines: Vec<VertLine> = Vec::new();
     let mut cur_line_boxes: Vec<LayoutBox> = Vec::new();
     let mut cur_y = container_y;
-    let base_col_w = container.style.as_ref().map_or(24.0, |s| s.font_size * 1.5).max(16.0);
+    let base_col_w = container
+        .style
+        .as_ref()
+        .map_or(24.0, |s| s.font_size * 1.5)
+        .max(16.0);
 
     for atom in atoms {
         if matches!(atom.kind, InlineAtomKind::LineBreak) {
@@ -715,7 +798,8 @@ fn layout_vertical_inline_children(
                         cur_y = container_y;
                     }
 
-                    let mut box_node = LayoutBox::new(BoxType::TextNode(ch.to_string()), Some(atom.style.clone()));
+                    let mut box_node =
+                        LayoutBox::new(BoxType::TextNode(ch.to_string()), Some(atom.style.clone()));
                     box_node.link_target = atom.link_target.clone();
                     box_node.dimensions.content.origin = Point::new(0.0, cur_y);
                     box_node.dimensions.content.size = mango_core::Size::new(base_col_w, glyph_adv);
@@ -749,7 +833,11 @@ fn layout_vertical_inline_children(
 
     let num_lines = lines.len().max(1);
     let total_width = num_lines as f32 * base_col_w;
-    let eff_container_w = if container_width > 0.0 { container_width } else { total_width };
+    let eff_container_w = if container_width > 0.0 {
+        container_width
+    } else {
+        total_width
+    };
 
     let mut positioned_boxes = Vec::new();
     let mut max_line_h = 0.0f32;
@@ -778,7 +866,10 @@ fn layout_vertical_inline_children(
 
     for sc in &source_children {
         let is_oof = sc.style.as_ref().is_some_and(|s| {
-            matches!(s.position, mango_css::values::Position::Absolute | mango_css::values::Position::Fixed)
+            matches!(
+                s.position,
+                mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
+            )
         });
         if is_oof {
             positioned_boxes.push(sc.clone());
@@ -800,7 +891,10 @@ fn collect_inline_atoms(
     if style.float != mango_css::values::Float::None {
         return;
     }
-    if matches!(style.position, mango_css::values::Position::Absolute | mango_css::values::Position::Fixed) {
+    if matches!(
+        style.position,
+        mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
+    ) {
         return;
     }
     let font_size = style.font_size;
@@ -835,7 +929,10 @@ fn collect_inline_atoms(
     match &box_node.box_type {
         BoxType::TextNode(raw_text) => {
             let transformed_text = style.text_transform.apply(raw_text);
-            let shaped_text = if transformed_text.chars().any(crate::shaping::is_devanagari_char) {
+            let shaped_text = if transformed_text
+                .chars()
+                .any(crate::shaping::is_devanagari_char)
+            {
                 crate::shaping::shape_devanagari(&transformed_text)
             } else if transformed_text.chars().any(crate::shaping::is_thai_char) {
                 crate::shaping::shape_thai(&transformed_text)
@@ -844,19 +941,41 @@ fn collect_inline_atoms(
             };
             let text = &shaped_text;
             let ws = style.white_space;
-            let preserve_spaces = matches!(ws, mango_css::values::WhiteSpace::Pre | mango_css::values::WhiteSpace::PreWrap | mango_css::values::WhiteSpace::BreakSpaces);
-            let preserve_newlines = matches!(ws, mango_css::values::WhiteSpace::Pre | mango_css::values::WhiteSpace::PreWrap | mango_css::values::WhiteSpace::PreLine | mango_css::values::WhiteSpace::BreakSpaces);
+            let preserve_spaces = matches!(
+                ws,
+                mango_css::values::WhiteSpace::Pre
+                    | mango_css::values::WhiteSpace::PreWrap
+                    | mango_css::values::WhiteSpace::BreakSpaces
+            );
+            let preserve_newlines = matches!(
+                ws,
+                mango_css::values::WhiteSpace::Pre
+                    | mango_css::values::WhiteSpace::PreWrap
+                    | mango_css::values::WhiteSpace::PreLine
+                    | mango_css::values::WhiteSpace::BreakSpaces
+            );
             let letter_spacing_px = style.letter_spacing.to_px(font_size, 16.0, container_width);
             let word_spacing_px = style.word_spacing.to_px(font_size, 16.0, container_width);
 
             let push_word = |word: String, out: &mut Vec<InlineAtom>| {
-                if word.is_empty() { return; }
+                if word.is_empty() {
+                    return;
+                }
                 if style.word_break == mango_css::values::WordBreak::BreakAll {
                     for c in word.chars() {
                         let c_str = c.to_string();
-                        let w = measure_text_width_with_style_and_spacing(&c_str, font_size, weight, family, letter_spacing_px);
+                        let w = measure_text_width_with_style_and_spacing(
+                            &c_str,
+                            font_size,
+                            weight,
+                            family,
+                            letter_spacing_px,
+                        );
                         out.push(InlineAtom {
-                            kind: InlineAtomKind::Text { text: c_str, is_space: false },
+                            kind: InlineAtomKind::Text {
+                                text: c_str,
+                                is_space: false,
+                            },
                             style: style.clone(),
                             width: w,
                             height: line_height,
@@ -864,9 +983,18 @@ fn collect_inline_atoms(
                         });
                     }
                 } else {
-                    let w = measure_text_width_with_style_and_spacing(&word, font_size, weight, family, letter_spacing_px);
+                    let w = measure_text_width_with_style_and_spacing(
+                        &word,
+                        font_size,
+                        weight,
+                        family,
+                        letter_spacing_px,
+                    );
                     out.push(InlineAtom {
-                        kind: InlineAtomKind::Text { text: word, is_space: false },
+                        kind: InlineAtomKind::Text {
+                            text: word,
+                            is_space: false,
+                        },
                         style: style.clone(),
                         width: w,
                         height: line_height,
@@ -909,7 +1037,14 @@ fn collect_inline_atoms(
                             link_target: current_link.map(|s| s.to_string()),
                         });
                     } else if out.last().map(|a| !a.is_space()).unwrap_or(true) {
-                        let space_w = (measure_text_width_with_style_and_spacing(" ", font_size, weight, family, letter_spacing_px) + word_spacing_px).max(0.0);
+                        let space_w = (measure_text_width_with_style_and_spacing(
+                            " ",
+                            font_size,
+                            weight,
+                            family,
+                            letter_spacing_px,
+                        ) + word_spacing_px)
+                            .max(0.0);
                         out.push(InlineAtom {
                             kind: InlineAtomKind::Text {
                                 text: " ".to_string(),
@@ -925,7 +1060,14 @@ fn collect_inline_atoms(
                     push_word(std::mem::take(&mut current_word), out);
                     if ws == mango_css::values::WhiteSpace::BreakSpaces {
                         let space_char = if ch == '\t' { "    " } else { " " };
-                        let space_w = (measure_text_width_with_style_and_spacing(space_char, font_size, weight, family, letter_spacing_px) + word_spacing_px).max(0.0);
+                        let space_w = (measure_text_width_with_style_and_spacing(
+                            space_char,
+                            font_size,
+                            weight,
+                            family,
+                            letter_spacing_px,
+                        ) + word_spacing_px)
+                            .max(0.0);
                         out.push(InlineAtom {
                             kind: InlineAtomKind::Text {
                                 text: space_char.to_string(),
@@ -938,7 +1080,14 @@ fn collect_inline_atoms(
                         });
                     } else if preserve_spaces || out.last().map(|a| !a.is_space()).unwrap_or(true) {
                         let space_char = if ch == '\t' { "    " } else { " " };
-                        let space_w = (measure_text_width_with_style_and_spacing(space_char, font_size, weight, family, letter_spacing_px) + word_spacing_px).max(0.0);
+                        let space_w = (measure_text_width_with_style_and_spacing(
+                            space_char,
+                            font_size,
+                            weight,
+                            family,
+                            letter_spacing_px,
+                        ) + word_spacing_px)
+                            .max(0.0);
                         out.push(InlineAtom {
                             kind: InlineAtomKind::Text {
                                 text: space_char.to_string(),
@@ -950,7 +1099,9 @@ fn collect_inline_atoms(
                             link_target: current_link.map(|s| s.to_string()),
                         });
                     }
-                } else if is_cjk_closing_punct(ch) && style.word_break != mango_css::values::WordBreak::BreakAll {
+                } else if is_cjk_closing_punct(ch)
+                    && style.word_break != mango_css::values::WordBreak::BreakAll
+                {
                     // CJK closing punctuation cannot begin a line. Attach to current word or previous atom if possible.
                     if !current_word.is_empty() {
                         current_word.push(ch);
@@ -975,7 +1126,9 @@ fn collect_inline_atoms(
                     } else {
                         current_word.push(ch);
                     }
-                } else if is_cjk_opening_punct(ch) && style.word_break != mango_css::values::WordBreak::BreakAll {
+                } else if is_cjk_opening_punct(ch)
+                    && style.word_break != mango_css::values::WordBreak::BreakAll
+                {
                     // CJK opening punctuation cannot end a line. It must attach to the following character.
                     if !current_word.is_empty() && !current_word.chars().all(is_cjk_opening_punct) {
                         push_word(std::mem::take(&mut current_word), out);
@@ -1038,21 +1191,26 @@ fn collect_inline_atoms(
             push_word(current_word, out);
         }
 
-        BoxType::InlineNode if box_node.tag_name.as_deref() == Some("ruby")
-            || box_node.style.as_ref().map(|s| s.display == mango_css::values::Display::Ruby).unwrap_or(false) =>
+        BoxType::InlineNode
+            if box_node.tag_name.as_deref() == Some("ruby")
+                || box_node
+                    .style
+                    .as_ref()
+                    .map(|s| s.display == mango_css::values::Display::Ruby)
+                    .unwrap_or(false) =>
         {
-            collect_ruby_atoms(box_node, out, current_link, container_width, container_height);
+            collect_ruby_atoms(
+                box_node,
+                out,
+                current_link,
+                container_width,
+                container_height,
+            );
         }
 
         BoxType::InlineNode => {
             for child in &box_node.children {
-                collect_inline_atoms(
-                    child,
-                    out,
-                    current_link,
-                    container_width,
-                    container_height,
-                );
+                collect_inline_atoms(child, out, current_link, container_width, container_height);
             }
         }
 
@@ -1258,14 +1416,21 @@ fn finalize_line(
     }
 
     // Strip trailing space from the line measurement and display (unless break-spaces)
-    let effective_atoms = if line_atoms.last().map(|a| a.is_space() && a.style.white_space != mango_css::values::WhiteSpace::BreakSpaces).unwrap_or(false) {
+    let effective_atoms = if line_atoms
+        .last()
+        .map(|a| a.is_space() && a.style.white_space != mango_css::values::WhiteSpace::BreakSpaces)
+        .unwrap_or(false)
+    {
         &line_atoms[..line_atoms.len() - 1]
     } else {
         line_atoms
     };
 
     let line_content_width: f32 = effective_atoms.iter().map(|a| a.width).sum();
-    let min_line_height = effective_atoms.iter().map(|a| a.height).fold(0.0f32, f32::max);
+    let min_line_height = effective_atoms
+        .iter()
+        .map(|a| a.height)
+        .fold(0.0f32, f32::max);
 
     // CSS 2.1 §10.8: Calculate unified baseline and total line box height across all inline boxes and text runs
     let mut max_above = 0.0f32;
@@ -1276,8 +1441,11 @@ fn finalize_line(
             InlineAtomKind::Text { .. } => {
                 let family = font_family_for(&atom.style);
                 let weight = font_weight_for(&atom.style);
-                let (ascent, descent, _) = mango_render::font::font_manager()
-                    .font_metrics(family, weight, atom.style.font_size);
+                let (ascent, descent, _) = mango_render::font::font_manager().font_metrics(
+                    family,
+                    weight,
+                    atom.style.font_size,
+                );
                 let lh = used_line_height(&atom.style, family, weight);
                 let natural_h = ascent + descent;
                 let half_leading = (lh - natural_h) / 2.0;
@@ -1288,8 +1456,16 @@ fn finalize_line(
             }
             InlineAtomKind::AtomicBox(atomic_box) => {
                 if atomic_box.tag_name.as_deref() == Some("ruby") {
-                    let rt_h = atomic_box.children.first().map(|c| c.dimensions.content.height()).unwrap_or(0.0);
-                    let base_h = atomic_box.children.get(1).map(|c| c.dimensions.content.height()).unwrap_or(atom.height - rt_h);
+                    let rt_h = atomic_box
+                        .children
+                        .first()
+                        .map(|c| c.dimensions.content.height())
+                        .unwrap_or(0.0);
+                    let base_h = atomic_box
+                        .children
+                        .get(1)
+                        .map(|c| c.dimensions.content.height())
+                        .unwrap_or(atom.height - rt_h);
                     let base_ascent = base_h * 0.8;
                     let base_descent = base_h * 0.2;
                     max_above = max_above.max(rt_h + base_ascent);
@@ -1382,12 +1558,18 @@ fn finalize_line(
             let run_y = match run.style.vertical_align {
                 mango_css::values::VerticalAlign::Baseline => text_top,
                 mango_css::values::VerticalAlign::Top => line_y,
-                mango_css::values::VerticalAlign::Bottom => line_y + (actual_line_height - natural_h).max(0.0),
-                mango_css::values::VerticalAlign::Middle => line_y + baseline_from_line_top - (ascent * 0.5) - (natural_h * 0.5),
+                mango_css::values::VerticalAlign::Bottom => {
+                    line_y + (actual_line_height - natural_h).max(0.0)
+                }
+                mango_css::values::VerticalAlign::Middle => {
+                    line_y + baseline_from_line_top - (ascent * 0.5) - (natural_h * 0.5)
+                }
                 mango_css::values::VerticalAlign::Super => text_top - (ascent * 0.35),
                 mango_css::values::VerticalAlign::Sub => text_top + (descent * 0.5),
                 mango_css::values::VerticalAlign::TextTop => text_top,
-                mango_css::values::VerticalAlign::TextBottom => line_y + (actual_line_height - natural_h).max(0.0),
+                mango_css::values::VerticalAlign::TextBottom => {
+                    line_y + (actual_line_height - natural_h).max(0.0)
+                }
             };
 
             let mut box_node = LayoutBox::new(BoxType::TextNode(run.text), Some(run.style));
@@ -1415,7 +1597,8 @@ fn finalize_line(
                         && last_run.style.text_decoration == atom.style.text_decoration
                         && last_run.style.letter_spacing == atom.style.letter_spacing
                         && last_run.style.vertical_align == atom.style.vertical_align
-                        && (last_run.style.word_spacing == mango_css::values::Length::Px(0.0) && atom.style.word_spacing == mango_css::values::Length::Px(0.0))
+                        && (last_run.style.word_spacing == mango_css::values::Length::Px(0.0)
+                            && atom.style.word_spacing == mango_css::values::Length::Px(0.0))
                 } else {
                     false
                 };
@@ -1427,8 +1610,11 @@ fn finalize_line(
                 } else {
                     let family = font_family_for(&atom.style);
                     let weight = font_weight_for(&atom.style);
-                    let (ascent, descent, _) = mango_render::font::font_manager()
-                        .font_metrics(family, weight, atom.style.font_size);
+                    let (ascent, descent, _) = mango_render::font::font_manager().font_metrics(
+                        family,
+                        weight,
+                        atom.style.font_size,
+                    );
                     runs.push(MergedRun {
                         text: text.clone(),
                         start_x: cursor_x,
@@ -1447,8 +1633,16 @@ fn finalize_line(
                 let mut placed = (**atomic_box).clone();
                 let box_outer_x = cursor_x;
                 let box_outer_y = if atomic_box.tag_name.as_deref() == Some("ruby") {
-                    let rt_h = atomic_box.children.first().map(|c| c.dimensions.content.height()).unwrap_or(0.0);
-                    let base_h = atomic_box.children.get(1).map(|c| c.dimensions.content.height()).unwrap_or(atom.height - rt_h);
+                    let rt_h = atomic_box
+                        .children
+                        .first()
+                        .map(|c| c.dimensions.content.height())
+                        .unwrap_or(0.0);
+                    let base_h = atomic_box
+                        .children
+                        .get(1)
+                        .map(|c| c.dimensions.content.height())
+                        .unwrap_or(atom.height - rt_h);
                     let base_ascent = base_h * 0.8;
                     line_y + baseline_from_line_top - (rt_h + base_ascent)
                 } else {
@@ -1457,12 +1651,22 @@ fn finalize_line(
                             line_y + baseline_from_line_top - atom.height
                         }
                         mango_css::values::VerticalAlign::Top => line_y,
-                        mango_css::values::VerticalAlign::Bottom => line_y + (actual_line_height - atom.height).max(0.0),
-                        mango_css::values::VerticalAlign::Middle => line_y + baseline_from_line_top - (atom.height / 2.0),
-                        mango_css::values::VerticalAlign::Super => line_y + baseline_from_line_top - atom.height - 4.0,
-                        mango_css::values::VerticalAlign::Sub => line_y + baseline_from_line_top - atom.height + 4.0,
+                        mango_css::values::VerticalAlign::Bottom => {
+                            line_y + (actual_line_height - atom.height).max(0.0)
+                        }
+                        mango_css::values::VerticalAlign::Middle => {
+                            line_y + baseline_from_line_top - (atom.height / 2.0)
+                        }
+                        mango_css::values::VerticalAlign::Super => {
+                            line_y + baseline_from_line_top - atom.height - 4.0
+                        }
+                        mango_css::values::VerticalAlign::Sub => {
+                            line_y + baseline_from_line_top - atom.height + 4.0
+                        }
                         mango_css::values::VerticalAlign::TextTop => line_y,
-                        mango_css::values::VerticalAlign::TextBottom => line_y + (actual_line_height - atom.height).max(0.0),
+                        mango_css::values::VerticalAlign::TextBottom => {
+                            line_y + (actual_line_height - atom.height).max(0.0)
+                        }
                     }
                 };
 
@@ -1517,7 +1721,13 @@ fn split_overflow_text(
 
     for ch in text.chars() {
         let s = ch.to_string();
-        let w = measure_text_width_with_style_and_spacing(&s, font_size, weight, family, letter_spacing_px);
+        let w = measure_text_width_with_style_and_spacing(
+            &s,
+            font_size,
+            weight,
+            family,
+            letter_spacing_px,
+        );
         if !current.is_empty() && (cur_w + w > available_width) {
             chunks.push(InlineAtom {
                 kind: InlineAtomKind::Text {
@@ -1571,7 +1781,13 @@ fn try_auto_hyphenate(
     for i in (2..=chars.len() - 2).rev() {
         let prefix: String = chars[..i].iter().collect();
         let prefix_with_hyphen = format!("{}-", prefix);
-        let w = measure_text_width_with_style_and_spacing(&prefix_with_hyphen, font_size, weight, family, letter_spacing);
+        let w = measure_text_width_with_style_and_spacing(
+            &prefix_with_hyphen,
+            font_size,
+            weight,
+            family,
+            letter_spacing,
+        );
         if w <= max_w {
             let suffix: String = chars[i..].iter().collect();
             best_split = Some((prefix, suffix));
@@ -1628,9 +1844,10 @@ mod tests {
         style.font_family = "Arial, sans-serif".to_string();
         style.line_height = Some(40.0);
 
-        container
-            .children
-            .push(LayoutBox::new(BoxType::TextNode("H1".to_string()), Some(style)));
+        container.children.push(LayoutBox::new(
+            BoxType::TextNode("H1".to_string()),
+            Some(style),
+        ));
 
         let mut float_ctx = FloatContext::new();
         let height = layout_inline_children(&mut container, &mut float_ctx);
@@ -1653,9 +1870,10 @@ mod tests {
         style.font_family = "Arial, sans-serif".to_string();
         style.line_height = Some(40.0);
 
-        container
-            .children
-            .push(LayoutBox::new(BoxType::TextNode("H1".to_string()), Some(style)));
+        container.children.push(LayoutBox::new(
+            BoxType::TextNode("H1".to_string()),
+            Some(style),
+        ));
 
         let mut float_ctx = FloatContext::new();
         layout_inline_children(&mut container, &mut float_ctx);
@@ -1680,9 +1898,10 @@ mod tests {
         style.font_size = 16.0;
         style.font_family = "Arial, sans-serif".to_string();
 
-        container
-            .children
-            .push(LayoutBox::new(BoxType::TextNode("one line".to_string()), Some(style)));
+        container.children.push(LayoutBox::new(
+            BoxType::TextNode("one line".to_string()),
+            Some(style),
+        ));
 
         let mut float_ctx = FloatContext::new();
         let height = layout_inline_children(&mut container, &mut float_ctx);
@@ -1696,7 +1915,10 @@ mod tests {
     #[test]
     fn test_measure_text_width() {
         let w = measure_text_width("Hello", 16.0);
-        assert!(w > 30.0 && w < 50.0, "proportional width for 'Hello' should be ~40px, got {w}");
+        assert!(
+            w > 30.0 && w < 50.0,
+            "proportional width for 'Hello' should be ~40px, got {w}"
+        );
     }
 
     #[test]
@@ -1720,7 +1942,10 @@ mod tests {
 
         // Must produce at least 2 lines of text
         assert!(total_h >= 32.0);
-        assert!(container.children.len() >= 2, "Wrapped lines should produce boxes");
+        assert!(
+            container.children.len() >= 2,
+            "Wrapped lines should produce boxes"
+        );
     }
 
     #[test]
@@ -1741,7 +1966,11 @@ mod tests {
         let mut float_ctx = FloatContext::new();
         layout_inline_children(&mut container, &mut float_ctx);
 
-        assert_eq!(container.children.len(), 1, "Single line with identical style should be merged into 1 text run");
+        assert_eq!(
+            container.children.len(),
+            1,
+            "Single line with identical style should be merged into 1 text run"
+        );
         if let BoxType::TextNode(t) = &container.children[0].box_type {
             assert_eq!(t, "Herman Melville - Moby-Dick");
             assert!(container.children[0].dimensions.content.width() > 300.0);
@@ -1752,9 +1981,24 @@ mod tests {
 
     #[test]
     fn test_letter_spacing_expands_text_width() {
-        let base_w = measure_text_width_with_style_and_spacing("Hello", 16.0, mango_render::FontWeight::Regular, mango_render::FontFamily::SansSerif, 0.0);
-        let spaced_w = measure_text_width_with_style_and_spacing("Hello", 16.0, mango_render::FontWeight::Regular, mango_render::FontFamily::SansSerif, 2.0);
-        assert!((spaced_w - base_w - 10.0).abs() < 0.1, "5 characters * 2px spacing should add 10px");
+        let base_w = measure_text_width_with_style_and_spacing(
+            "Hello",
+            16.0,
+            mango_render::FontWeight::Regular,
+            mango_render::FontFamily::SansSerif,
+            0.0,
+        );
+        let spaced_w = measure_text_width_with_style_and_spacing(
+            "Hello",
+            16.0,
+            mango_render::FontWeight::Regular,
+            mango_render::FontFamily::SansSerif,
+            2.0,
+        );
+        assert!(
+            (spaced_w - base_w - 10.0).abs() < 0.1,
+            "5 characters * 2px spacing should add 10px"
+        );
     }
 
     #[test]
@@ -1779,7 +2023,10 @@ mod tests {
         let mut float_ctx = FloatContext::new();
         layout_inline_children(&mut container, &mut float_ctx);
 
-        assert!(container.children.len() >= 2, "Should wrap into at least 2 lines");
+        assert!(
+            container.children.len() >= 2,
+            "Should wrap into at least 2 lines"
+        );
         // First line must start at x >= 25.0
         assert_eq!(container.children[0].dimensions.content.x(), 25.0);
         // Subsequent line must start at x == 0.0
@@ -1801,10 +2048,7 @@ mod tests {
         let mut super_style = ComputedStyle::default();
         super_style.font_size = 12.0;
         super_style.vertical_align = mango_css::values::VerticalAlign::Super;
-        let super_child = LayoutBox::new(
-            BoxType::TextNode("[1]".to_string()),
-            Some(super_style),
-        );
+        let super_child = LayoutBox::new(BoxType::TextNode("[1]".to_string()), Some(super_style));
 
         container.children.push(normal_child);
         container.children.push(super_child);
@@ -1812,10 +2056,17 @@ mod tests {
         let mut float_ctx = FloatContext::new();
         layout_inline_children(&mut container, &mut float_ctx);
 
-        assert_eq!(container.children.len(), 2, "Normal and super text runs should remain separate");
+        assert_eq!(
+            container.children.len(),
+            2,
+            "Normal and super text runs should remain separate"
+        );
         let normal_y = container.children[0].dimensions.content.y();
         let super_y = container.children[1].dimensions.content.y();
-        assert!(super_y < normal_y, "Superscript text must be raised above normal baseline (super_y={super_y} < normal_y={normal_y})");
+        assert!(
+            super_y < normal_y,
+            "Superscript text must be raised above normal baseline (super_y={super_y} < normal_y={normal_y})"
+        );
     }
 
     #[test]
@@ -1828,10 +2079,16 @@ mod tests {
         child_style.font_size = 16.0;
 
         // Long unbroken word with <wbr> in the middle
-        let text1 = LayoutBox::new(BoxType::TextNode("Super".to_string()), Some(child_style.clone()));
+        let text1 = LayoutBox::new(
+            BoxType::TextNode("Super".to_string()),
+            Some(child_style.clone()),
+        );
         let mut wbr_box = LayoutBox::new(BoxType::InlineNode, Some(child_style.clone()));
         wbr_box.tag_name = Some("wbr".to_string());
-        let text2 = LayoutBox::new(BoxType::TextNode("califragilistic".to_string()), Some(child_style.clone()));
+        let text2 = LayoutBox::new(
+            BoxType::TextNode("califragilistic".to_string()),
+            Some(child_style.clone()),
+        );
 
         container.children.push(text1);
         container.children.push(wbr_box);
@@ -1841,7 +2098,10 @@ mod tests {
         layout_inline_children(&mut container, &mut float_ctx);
 
         // Due to narrow width (60px), it should break at the <wbr> into 2 lines!
-        assert!(container.children.len() >= 2, "Long word with wbr should wrap across lines");
+        assert!(
+            container.children.len() >= 2,
+            "Long word with wbr should wrap across lines"
+        );
         assert_eq!(container.children[0].text(), Some("Super"));
 
         // Test with \u{200B} inside a single TextNode
@@ -1853,7 +2113,10 @@ mod tests {
         );
         container2.children.push(text_zwsp);
         layout_inline_children(&mut container2, &mut float_ctx);
-        assert!(container2.children.len() >= 2, "Text with U+200B should wrap across lines");
+        assert!(
+            container2.children.len() >= 2,
+            "Text with U+200B should wrap across lines"
+        );
         assert_eq!(container2.children[0].text(), Some("Zero"));
     }
 
@@ -1867,10 +2130,7 @@ mod tests {
         bdo_style.direction = mango_css::values::Direction::Rtl;
         bdo_style.unicode_bidi = mango_css::values::UnicodeBidi::BidiOverride;
 
-        let bdo_text = LayoutBox::new(
-            BoxType::TextNode("Hello".to_string()),
-            Some(bdo_style),
-        );
+        let bdo_text = LayoutBox::new(BoxType::TextNode("Hello".to_string()), Some(bdo_style));
         container.children.push(bdo_text);
 
         let mut float_ctx = FloatContext::new();
@@ -1899,7 +2159,10 @@ mod tests {
         let mut float_ctx = FloatContext::new();
         layout_inline_children(&mut container, &mut float_ctx);
 
-        assert!(container.children.len() > 1, "word-break: break-all must break word across lines");
+        assert!(
+            container.children.len() > 1,
+            "word-break: break-all must break word across lines"
+        );
     }
 
     #[test]
@@ -1920,7 +2183,10 @@ mod tests {
         let mut float_ctx = FloatContext::new();
         layout_inline_children(&mut container, &mut float_ctx);
 
-        assert!(container.children.len() > 1, "overflow-wrap: break-word must split unbroken word");
+        assert!(
+            container.children.len() > 1,
+            "overflow-wrap: break-word must split unbroken word"
+        );
     }
 
     #[test]
@@ -1941,9 +2207,16 @@ mod tests {
         let mut float_ctx = FloatContext::new();
         layout_inline_children(&mut container, &mut float_ctx);
 
-        assert!(container.children.len() > 1, "hyphens: auto must hyphenate long word across lines");
+        assert!(
+            container.children.len() > 1,
+            "hyphens: auto must hyphenate long word across lines"
+        );
         let first_text = container.children[0].text().unwrap();
-        assert!(first_text.ends_with('-'), "hyphenated prefix must end with hyphen '-': got {}", first_text);
+        assert!(
+            first_text.ends_with('-'),
+            "hyphenated prefix must end with hyphen '-': got {}",
+            first_text
+        );
     }
 
     #[test]
@@ -1964,9 +2237,16 @@ mod tests {
         let mut float_ctx = FloatContext::new();
         layout_inline_children(&mut container, &mut float_ctx);
 
-        assert!(container.children.len() > 1, "Soft hyphen must wrap word across lines");
+        assert!(
+            container.children.len() > 1,
+            "Soft hyphen must wrap word across lines"
+        );
         let first_text = container.children[0].text().unwrap();
-        assert!(first_text.ends_with('-'), "Soft hyphen break must insert visible hyphen: got {}", first_text);
+        assert!(
+            first_text.ends_with('-'),
+            "Soft hyphen break must insert visible hyphen: got {}",
+            first_text
+        );
     }
 
     #[test]
@@ -1989,7 +2269,10 @@ mod tests {
         let mut float_ctx = FloatContext::new();
         layout_inline_children(&mut container, &mut float_ctx);
 
-        assert!(container.children.len() <= 2, "line-clamp: 2 must clamp children to at most 2 boxes");
+        assert!(
+            container.children.len() <= 2,
+            "line-clamp: 2 must clamp children to at most 2 boxes"
+        );
     }
 
     #[test]
@@ -2002,10 +2285,7 @@ mod tests {
 
         let raw = "Rust’s rich type system and ownership model guarantee memory-safety\nand thread-safety — enabling you to eliminate many classes of\nbugs at compile-time.";
         let collapsed = crate::style_tree::collapse_whitespace(raw);
-        let text = LayoutBox::new(
-            BoxType::TextNode(collapsed),
-            Some(child_style),
-        );
+        let text = LayoutBox::new(BoxType::TextNode(collapsed), Some(child_style));
         container.children.push(text);
 
         let mut float_ctx = FloatContext::new();
@@ -2040,9 +2320,21 @@ mod tests {
         let mut texts = Vec::new();
         collect_all_text(&bt, &mut texts);
         let full_text = texts.join(" ");
-        assert!(!full_text.contains("Tinyresource"), "Tiny and resource merged: {}", full_text);
-        assert!(!full_text.contains("Rock-solidreliability"), "Rock-solid and reliability merged: {}", full_text);
-        assert!(!full_text.contains("fornetwork"), "for and network merged: {}", full_text);
+        assert!(
+            !full_text.contains("Tinyresource"),
+            "Tiny and resource merged: {}",
+            full_text
+        );
+        assert!(
+            !full_text.contains("Rock-solidreliability"),
+            "Rock-solid and reliability merged: {}",
+            full_text
+        );
+        assert!(
+            !full_text.contains("fornetwork"),
+            "for and network merged: {}",
+            full_text
+        );
     }
 
     #[test]
@@ -2109,10 +2401,7 @@ mod tests {
         let mut container_thai = LayoutBox::new(BoxType::BlockNode, None);
         container_thai.dimensions.content = Rect::new(0.0, 0.0, 30.0, 0.0);
         let thai_raw = "ที่นี่"; // "thi-ni" (at this place): Consonant 'ท' + Sara I + Mai Ek, Consonant 'น' + Sara I + Mai Ek
-        let text_thai = LayoutBox::new(
-            BoxType::TextNode(thai_raw.to_string()),
-            Some(child_style),
-        );
+        let text_thai = LayoutBox::new(BoxType::TextNode(thai_raw.to_string()), Some(child_style));
         container_thai.children.push(text_thai);
         let mut float_ctx3 = FloatContext::new();
         layout_inline_children(&mut container_thai, &mut float_ctx3);
@@ -2164,8 +2453,17 @@ mod tests {
         // Test mixed LTR + RTL text: "Hello سلام World"
         let mixed = "Hello سلام World";
         let shaped_mixed = shape_and_bidi_text(mixed);
-        assert!(shaped_mixed.starts_with("Hello "), "Mixed text must start with LTR 'Hello '");
-        assert!(shaped_mixed.ends_with(" World"), "Mixed text must end with LTR ' World'");
-        assert!(shaped_mixed.contains('\u{FEFC}'), "Mixed text must contain shaped Arabic ligature");
+        assert!(
+            shaped_mixed.starts_with("Hello "),
+            "Mixed text must start with LTR 'Hello '"
+        );
+        assert!(
+            shaped_mixed.ends_with(" World"),
+            "Mixed text must end with LTR ' World'"
+        );
+        assert!(
+            shaped_mixed.contains('\u{FEFC}'),
+            "Mixed text must contain shaped Arabic ligature"
+        );
     }
 }

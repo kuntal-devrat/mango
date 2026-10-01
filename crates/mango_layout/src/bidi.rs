@@ -6,9 +6,9 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BidiClass {
     // Strong types
-    L,   // Left-to-Right
-    R,   // Right-to-Left
-    AL,  // Right-to-Left Arabic
+    L,  // Left-to-Right
+    R,  // Right-to-Left
+    AL, // Right-to-Left Arabic
     // Weak types
     EN,  // European Number
     ES,  // European Separator
@@ -18,10 +18,10 @@ pub enum BidiClass {
     NSM, // Nonspacing Mark
     BN,  // Boundary Neutral
     // Neutral types
-    B,   // Paragraph Separator
-    S,   // Segment Separator
-    WS,  // Whitespace
-    ON,  // Other Neutral
+    B,  // Paragraph Separator
+    S,  // Segment Separator
+    WS, // Whitespace
+    ON, // Other Neutral
     // Explicit formatting codes
     LRE,
     RLE,
@@ -40,7 +40,10 @@ impl BidiClass {
     }
 
     pub fn is_neutral(self) -> bool {
-        matches!(self, BidiClass::B | BidiClass::S | BidiClass::WS | BidiClass::ON)
+        matches!(
+            self,
+            BidiClass::B | BidiClass::S | BidiClass::WS | BidiClass::ON
+        )
     }
 }
 
@@ -81,7 +84,8 @@ pub fn bidi_class(ch: char) -> BidiClass {
         | '\u{FB50}'..='\u{FDFF}'
         | '\u{FE70}'..='\u{FEFF}' => {
             // Check non-spacing Tashkeel / diacritic marks
-            if matches!(ch, '\u{064B}'..='\u{065F}' | '\u{0670}' | '\u{06D6}'..='\u{06DC}' | '\u{06DF}'..='\u{06E4}' | '\u{06E7}' | '\u{06E8}' | '\u{06EA}'..='\u{06ED}') {
+            if matches!(ch, '\u{064B}'..='\u{065F}' | '\u{0670}' | '\u{06D6}'..='\u{06DC}' | '\u{06DF}'..='\u{06E4}' | '\u{06E7}' | '\u{06E8}' | '\u{06EA}'..='\u{06ED}')
+            {
                 BidiClass::NSM
             } else {
                 BidiClass::AL
@@ -93,7 +97,17 @@ pub fn bidi_class(ch: char) -> BidiClass {
 
         // Hebrew characters (R)
         '\u{0590}'..='\u{05FF}' | '\u{FB1D}'..='\u{FB4F}' => {
-            if matches!(ch, '\u{0591}'..='\u{05BD}' | '\u{05BF}' | '\u{05C1}' | '\u{05C2}' | '\u{05C4}' | '\u{05C5}' | '\u{05C7}') {
+            if matches!(
+                ch,
+                '\u{0591}'
+                    ..='\u{05BD}'
+                        | '\u{05BF}'
+                        | '\u{05C1}'
+                        | '\u{05C2}'
+                        | '\u{05C4}'
+                        | '\u{05C5}'
+                        | '\u{05C7}'
+            ) {
                 BidiClass::NSM
             } else {
                 BidiClass::R
@@ -118,15 +132,19 @@ pub fn bidi_class(ch: char) -> BidiClass {
         | '\u{1DC0}'..='\u{1DFF}'
         | '\u{20D0}'..='\u{20FF}'
         | '\u{FE20}'..='\u{FE2F}'
-        | '\u{0901}'..='\u{0903}' | '\u{093C}' | '\u{094D}' | '\u{0951}'..='\u{0954}'
-        | '\u{0E31}' | '\u{0E34}'..='\u{0E3A}' | '\u{0E47}'..='\u{0E4E}' => BidiClass::NSM,
+        | '\u{0901}'..='\u{0903}'
+        | '\u{093C}'
+        | '\u{094D}'
+        | '\u{0951}'..='\u{0954}'
+        | '\u{0E31}'
+        | '\u{0E34}'..='\u{0E3A}'
+        | '\u{0E47}'..='\u{0E4E}' => BidiClass::NSM,
 
         // Other Neutrals (brackets, punctuation, symbols)
-        '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>'
-        | '«' | '»' | '‹' | '›' | '“' | '”' | '‘' | '’'
-        | '!' | '?' | ';' | '=' | '*' | '&' | '@' | '#' | '|' | '\\' | '^' | '~' | '`'
-        | '（' | '）' | '【' | '】' | '〔' | '〕' | '〈' | '〉' | '《' | '》'
-        | '「' | '」' | '『' | '』' => BidiClass::ON,
+        '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>' | '«' | '»' | '‹' | '›' | '“' | '”' | '‘'
+        | '’' | '!' | '?' | ';' | '=' | '*' | '&' | '@' | '#' | '|' | '\\' | '^' | '~' | '`'
+        | '（' | '）' | '【' | '】' | '〔' | '〕' | '〈' | '〉' | '《' | '》' | '「' | '」'
+        | '『' | '』' => BidiClass::ON,
 
         // Default to Left-to-Right for Latin, Greek, Cyrillic, CJK, Devanagari, Thai, etc.
         _ => BidiClass::L,
@@ -232,7 +250,11 @@ pub fn reorder_bidi_text(text: &str, is_rtl_base: bool) -> String {
 
     // --- Weak Types Resolution (W1–W7) ---
     // W1: NSM takes type of preceding character
-    let mut prev_type = if is_rtl_base { BidiClass::R } else { BidiClass::L };
+    let mut prev_type = if is_rtl_base {
+        BidiClass::R
+    } else {
+        BidiClass::L
+    };
     for i in 0..n {
         if types[i] == BidiClass::NSM {
             types[i] = prev_type;
@@ -242,7 +264,11 @@ pub fn reorder_bidi_text(text: &str, is_rtl_base: bool) -> String {
     }
 
     // W2: European Numbers (EN) after Arabic Letter (AL) become Arabic Numbers (AN)
-    let mut last_strong = if is_rtl_base { BidiClass::R } else { BidiClass::L };
+    let mut last_strong = if is_rtl_base {
+        BidiClass::R
+    } else {
+        BidiClass::L
+    };
     for i in 0..n {
         if types[i].is_strong() {
             last_strong = types[i];
@@ -260,7 +286,10 @@ pub fn reorder_bidi_text(text: &str, is_rtl_base: bool) -> String {
 
     // W4: Single ES between ENs becomes EN; single CS between ENs becomes EN; CS between ANs becomes AN
     for i in 1..n.saturating_sub(1) {
-        if types[i] == BidiClass::ES && types[i - 1] == BidiClass::EN && types[i + 1] == BidiClass::EN {
+        if types[i] == BidiClass::ES
+            && types[i - 1] == BidiClass::EN
+            && types[i + 1] == BidiClass::EN
+        {
             types[i] = BidiClass::EN;
         } else if types[i] == BidiClass::CS {
             if types[i - 1] == BidiClass::EN && types[i + 1] == BidiClass::EN {
@@ -320,8 +349,24 @@ pub fn reorder_bidi_text(text: &str, is_rtl_base: bool) -> String {
                 i += 1;
             }
             let end = i;
-            let lead_type = if start > 0 { types[start - 1] } else { if is_rtl_base { BidiClass::R } else { BidiClass::L } };
-            let trail_type = if end < n { types[end] } else { if is_rtl_base { BidiClass::R } else { BidiClass::L } };
+            let lead_type = if start > 0 {
+                types[start - 1]
+            } else {
+                if is_rtl_base {
+                    BidiClass::R
+                } else {
+                    BidiClass::L
+                }
+            };
+            let trail_type = if end < n {
+                types[end]
+            } else {
+                if is_rtl_base {
+                    BidiClass::R
+                } else {
+                    BidiClass::L
+                }
+            };
 
             let resolved = match (lead_type, trail_type) {
                 (BidiClass::L, BidiClass::L) => BidiClass::L,
@@ -331,7 +376,11 @@ pub fn reorder_bidi_text(text: &str, is_rtl_base: bool) -> String {
                 | (BidiClass::AN, BidiClass::AN) => BidiClass::R,
                 _ => {
                     // N2: Remaining neutrals take base embedding direction
-                    if is_rtl_base { BidiClass::R } else { BidiClass::L }
+                    if is_rtl_base {
+                        BidiClass::R
+                    } else {
+                        BidiClass::L
+                    }
                 }
             };
             for k in start..end {
@@ -345,7 +394,7 @@ pub fn reorder_bidi_text(text: &str, is_rtl_base: bool) -> String {
     // --- Implicit Levels (I1–I2) ---
     for i in 0..n {
         let t = types[i];
-        if base_level % 2 == 0 {
+        if base_level.is_multiple_of(2) {
             // LTR base
             if t == BidiClass::R {
                 levels[i] = base_level + 1;
@@ -382,7 +431,15 @@ pub fn reorder_bidi_text(text: &str, is_rtl_base: bool) -> String {
 
     // --- L2: Reversing Resolved Levels ---
     let max_level = levels.iter().copied().fold(0u8, u8::max);
-    let min_odd_level = if is_rtl_base { 1 } else { levels.iter().copied().filter(|&l| l % 2 == 1).fold(255u8, u8::min) };
+    let min_odd_level = if is_rtl_base {
+        1
+    } else {
+        levels
+            .iter()
+            .copied()
+            .filter(|&l| l % 2 == 1)
+            .fold(255u8, u8::min)
+    };
 
     if min_odd_level <= max_level {
         let mut lvl = max_level;
@@ -409,7 +466,10 @@ pub fn reorder_bidi_text(text: &str, is_rtl_base: bool) -> String {
     }
 
     // Filter out boundary neutral formatting codes
-    out_chars.into_iter().filter(|&c| !matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')).collect()
+    out_chars
+        .into_iter()
+        .filter(|&c| !matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'))
+        .collect()
 }
 
 /// Splits text into visual directional runs according to UAX#9 levels.
@@ -490,7 +550,11 @@ mod tests {
         let text = "(سلام)";
         let reordered = reorder_bidi_text(text, true);
         // Parentheses mirrored: '(' at start becomes ')' when reversed in RTL, and then L4 mirrors it back to '(' at visually left end
-        assert!(reordered.starts_with('(') && reordered.ends_with(')'), "Parentheses must mirror in RTL: got {}", reordered);
+        assert!(
+            reordered.starts_with('(') && reordered.ends_with(')'),
+            "Parentheses must mirror in RTL: got {}",
+            reordered
+        );
     }
 
     #[test]
@@ -498,6 +562,10 @@ mod tests {
         let text = "رقم 123";
         let reordered = reorder_bidi_text(text, true);
         // European numbers remain in visual left-to-right order (123)
-        assert!(reordered.contains("123"), "Numbers must preserve LTR order: got {}", reordered);
+        assert!(
+            reordered.contains("123"),
+            "Numbers must preserve LTR order: got {}",
+            reordered
+        );
     }
 }

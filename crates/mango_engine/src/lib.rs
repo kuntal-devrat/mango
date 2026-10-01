@@ -29,14 +29,12 @@
 use std::collections::HashMap;
 
 use mango_core::{Point, Rect, Size};
-use mango_css::parser::{parse_stylesheet, Stylesheet};
+use mango_css::parser::{Stylesheet, parse_stylesheet};
 use mango_events::{DispatchResult, Event, EventDispatcher, ListenerOptions, TargetId};
 use mango_html::dom::{Document, NodeData, NodeId};
 use mango_html::parse_html;
-use mango_layout::{
-    DisplayListCache, LayoutSnapshot, StyleInvalidator, StyledNode,
-};
 pub use mango_layout::box_tree::FormControlHit;
+use mango_layout::{DisplayListCache, LayoutSnapshot, StyleInvalidator, StyledNode};
 use mango_render::display_list::{DisplayList, DisplayListDiff};
 
 /// Configuration options for initializing the engine.
@@ -226,7 +224,9 @@ impl Engine {
             self.layout_snapshot = Some(snapshot);
 
             // 3. Diff and Cache Display List
-            let _diff = self.display_list_cache.update_and_diff(raw_dl.clone(), self.scroll_y);
+            let _diff = self
+                .display_list_cache
+                .update_and_diff(raw_dl.clone(), self.scroll_y);
             self.display_list = raw_dl;
         } else {
             self.layout_snapshot = None;
@@ -244,7 +244,9 @@ impl Engine {
                 snapshot.display_list_with_scroll(self.scroll_y)
             };
             self.layout_snapshot = Some(snapshot);
-            let _diff = self.display_list_cache.update_and_diff(raw_dl.clone(), self.scroll_y);
+            let _diff = self
+                .display_list_cache
+                .update_and_diff(raw_dl.clone(), self.scroll_y);
             self.display_list = raw_dl;
         }
         self.display_list.clone()
@@ -311,10 +313,10 @@ impl Engine {
     pub fn title(&self) -> Option<String> {
         fn find_title(doc: &Document, nid: NodeId) -> Option<String> {
             if let Some(node) = doc.get(nid) {
-                if let NodeData::Element(elem) = &node.data {
-                    if elem.tag_name.eq_ignore_ascii_case("title") {
-                        return Some(doc.text_content(nid).trim().to_string());
-                    }
+                if let NodeData::Element(elem) = &node.data
+                    && elem.tag_name.eq_ignore_ascii_case("title")
+                {
+                    return Some(doc.text_content(nid).trim().to_string());
                 }
                 for child in doc.children(nid) {
                     if let Some(t) = find_title(doc, child.id) {
@@ -330,7 +332,9 @@ impl Engine {
     /// Performs hit-testing at a point in viewport coordinates, returning the hit DOM node ID.
     pub fn hit_test(&self, point: Point) -> Option<NodeId> {
         let adjusted = Point::new(point.x, point.y + self.scroll_y);
-        self.layout_snapshot.as_ref().and_then(|s| s.hit_test(adjusted))
+        self.layout_snapshot
+            .as_ref()
+            .and_then(|s| s.hit_test(adjusted))
     }
 
     /// Performs hit-testing at a point in viewport coordinates for clickable links.
@@ -351,7 +355,9 @@ impl Engine {
 
     /// Returns the border-box bounds of a specific DOM node.
     pub fn get_node_bounds(&self, node_id: NodeId) -> Option<Rect> {
-        self.layout_snapshot.as_ref().and_then(|s| s.get_node_rect(node_id))
+        self.layout_snapshot
+            .as_ref()
+            .and_then(|s| s.get_node_rect(node_id))
     }
 
     /// Collects layout bounds for all DOM elements, keyed by raw `u32` node ID.
@@ -377,22 +383,18 @@ impl Engine {
         let res = f(&mut self.document);
 
         let dirty = self.document.take_dirty_nodes();
-        if !dirty.is_empty() && self.style_tree.is_some() {
+        if !dirty.is_empty()
+            && let Some(style_tree) = &mut self.style_tree
+        {
             self.style_invalidator.mark_all_dirty(dirty);
             let author_refs: Vec<&Stylesheet> = self.author_stylesheets.iter().collect();
 
             // 1. Incremental Style Recalculation
-            self.style_invalidator.invalidate_and_update(
-                self.style_tree.as_mut().unwrap(),
-                &self.document,
-                &author_refs,
-            );
+            self.style_invalidator
+                .invalidate_and_update(style_tree, &self.document, &author_refs);
 
             // 2. Regenerate Layout Snapshot
-            let snapshot = LayoutSnapshot::from_styled_tree(
-                self.style_tree.as_ref().unwrap(),
-                self.viewport,
-            );
+            let snapshot = LayoutSnapshot::from_styled_tree(style_tree, self.viewport);
             let new_dl = if self.scroll_y == 0.0 {
                 snapshot.display_list().clone()
             } else {
@@ -401,7 +403,9 @@ impl Engine {
             self.layout_snapshot = Some(snapshot);
 
             // 3. Compute DisplayListDiff
-            let diff = self.display_list_cache.update_and_diff(new_dl.clone(), self.scroll_y);
+            let diff = self
+                .display_list_cache
+                .update_and_diff(new_dl.clone(), self.scroll_y);
             self.display_list = new_dl;
 
             (res, diff)
@@ -425,12 +429,14 @@ impl Engine {
     ) where
         F: FnMut(&mut Event) + Send + 'static,
     {
-        self.event_dispatcher.add_listener(target, event_type, callback, options);
+        self.event_dispatcher
+            .add_listener(target, event_type, callback, options);
     }
 
     /// Removes an event listener.
     pub fn remove_event_listener(&mut self, target: TargetId, event_type: &str, capture: bool) {
-        self.event_dispatcher.remove_listener(target, event_type, capture);
+        self.event_dispatcher
+            .remove_listener(target, event_type, capture);
     }
 
     /// Dispatches an event through the target propagation path with capture,
@@ -520,8 +526,8 @@ mod tests {
 
     #[test]
     fn test_engine_event_dispatch() {
-        use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
 
         let mut engine = Engine::new();
         let clicked = Arc::new(AtomicBool::new(false));
@@ -546,8 +552,8 @@ mod tests {
 
     #[test]
     fn test_engine_dom_event_dispatch() {
-        use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
 
         let mut engine = Engine::new();
         engine.load(

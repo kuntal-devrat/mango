@@ -43,10 +43,11 @@ impl DisplayListCache {
 
     /// Returns the cached display list if valid, or builds and caches it (OPT-005).
     pub fn get_or_build(&mut self, root: &LayoutBox, scroll_y: f32) -> DisplayList {
-        if !root.is_dirty && self.cached_scroll_y == Some(scroll_y) {
-            if let Some(ref list) = self.cached_list {
-                return list.clone();
-            }
+        if !root.is_dirty
+            && self.cached_scroll_y == Some(scroll_y)
+            && let Some(ref list) = self.cached_list
+        {
+            return list.clone();
         }
 
         let list = build_display_list_with_scroll(root, scroll_y);
@@ -84,7 +85,11 @@ impl DisplayListCache {
     /// If an old display list was cached, this returns a `DisplayListDiff` with the minimal
     /// changed commands and consolidated damage rect. Otherwise, it treats the entire new list
     /// as freshly inserted.
-    pub fn update_and_diff(&mut self, new_list: DisplayList, scroll_y: f32) -> mango_render::DisplayListDiff {
+    pub fn update_and_diff(
+        &mut self,
+        new_list: DisplayList,
+        scroll_y: f32,
+    ) -> mango_render::DisplayListDiff {
         let diff = if let Some(ref old_list) = self.cached_list {
             old_list.diff(&new_list)
         } else {
@@ -146,7 +151,8 @@ fn generate_search_icon(size: u32, color: Color) -> Vec<u32> {
             let seg_dy = hy_end - hy_start;
             let seg_len_sq = seg_dx * seg_dx + seg_dy * seg_dy;
             if seg_len_sq > 0.0 {
-                let t = (((px - hx_start) * seg_dx + (py - hy_start) * seg_dy) / seg_len_sq).clamp(0.0, 1.0);
+                let t = (((px - hx_start) * seg_dx + (py - hy_start) * seg_dy) / seg_len_sq)
+                    .clamp(0.0, 1.0);
                 let proj_x = hx_start + t * seg_dx;
                 let proj_y = hy_start + t * seg_dy;
                 let h_dist = ((px - proj_x).powi(2) + (py - proj_y).powi(2)).sqrt();
@@ -202,7 +208,8 @@ fn render_layout_box(
 ) {
     let s_ref = box_node.style.as_ref();
 
-    let push_blend = s_ref.map_or(false, |st| st.mix_blend_mode != mango_css::values::BlendMode::Normal);
+    let push_blend =
+        s_ref.is_some_and(|st| st.mix_blend_mode != mango_css::values::BlendMode::Normal);
     if push_blend {
         list.push(DisplayCommand::PushBlendMode {
             mode: s_ref.unwrap().mix_blend_mode,
@@ -216,13 +223,21 @@ fn render_layout_box(
             None
         } else {
             let border_box = box_node.dimensions.border_box();
-            let origin_x = border_box.x() + offset_x + resolve_origin(s.transform_origin_x, border_box.width());
-            let origin_y = border_box.y() + offset_y + resolve_origin(s.transform_origin_y, border_box.height());
+            let origin_x = border_box.x()
+                + offset_x
+                + resolve_origin(s.transform_origin_x, border_box.width());
+            let origin_y = border_box.y()
+                + offset_y
+                + resolve_origin(s.transform_origin_y, border_box.height());
             // translate(origin) * transform * translate(-origin)
             let to_origin = [1.0, 0.0, 0.0, 1.0, origin_x, origin_y];
             let from_origin = [1.0, 0.0, 0.0, 1.0, -origin_x, -origin_y];
             Some(mul_matrix(
-                mul_matrix(to_origin, s.transform.to_matrix_with_size(border_box.width(), border_box.height())),
+                mul_matrix(
+                    to_origin,
+                    s.transform
+                        .to_matrix_with_size(border_box.width(), border_box.height()),
+                ),
                 from_origin,
             ))
         }
@@ -240,7 +255,7 @@ fn render_layout_box(
         border_box.height(),
     );
 
-    let push_clip_path = s_ref.map_or(false, |st| st.clip_path != mango_css::values::ClipPath::None);
+    let push_clip_path = s_ref.is_some_and(|st| st.clip_path != mango_css::values::ClipPath::None);
     if push_clip_path {
         list.push(DisplayCommand::PushClipPath {
             clip_path: Box::new(s_ref.unwrap().clip_path.clone()),
@@ -248,7 +263,7 @@ fn render_layout_box(
         });
     }
 
-    let push_filter = s_ref.map_or(false, |st| !st.filter.is_empty());
+    let push_filter = s_ref.is_some_and(|st| !st.filter.is_empty());
     if push_filter {
         list.push(DisplayCommand::PushFilter {
             filters: s_ref.unwrap().filter.clone(),
@@ -256,7 +271,7 @@ fn render_layout_box(
         });
     }
 
-    let push_backdrop = s_ref.map_or(false, |st| !st.backdrop_filter.is_empty());
+    let push_backdrop = s_ref.is_some_and(|st| !st.backdrop_filter.is_empty());
     if push_backdrop {
         list.push(DisplayCommand::PushBackdropFilter {
             filters: s_ref.unwrap().backdrop_filter.clone(),
@@ -307,8 +322,10 @@ fn render_layout_box_inner(
     }
 
     if let Some(s) = style
-        && (s.overflow_x == mango_css::values::Overflow::Hidden || s.overflow_y == mango_css::values::Overflow::Hidden)
-        && (box_node.dimensions.padding_box().width() <= 1.0 || box_node.dimensions.padding_box().height() <= 1.0)
+        && (s.overflow_x == mango_css::values::Overflow::Hidden
+            || s.overflow_y == mango_css::values::Overflow::Hidden)
+        && (box_node.dimensions.padding_box().width() <= 1.0
+            || box_node.dimensions.padding_box().height() <= 1.0)
     {
         return;
     }
@@ -341,56 +358,57 @@ fn render_layout_box_inner(
             {
                 let shadow_base_rect = Rect::new(
                     border_box.x(),
-                border_box.y(),
-                border_box.width(),
-                border_box.height(),
-            );
-            if shadow_base_rect.width() > 0.0 && shadow_base_rect.height() > 0.0 {
-                let shadow_color = apply_opacity(bs.color, opacity);
-                list.push(DisplayCommand::DrawBoxShadow {
-                    rect: shadow_base_rect,
-                    color: shadow_color,
-                    offset_x: bs.offset_x,
-                    offset_y: bs.offset_y,
-                    blur_radius: bs.blur_radius,
-                    spread_radius: bs.spread_radius,
-                    radii: s.border_radius(),
-                    inset: bs.inset,
+                    border_box.y(),
+                    border_box.width(),
+                    border_box.height(),
+                );
+                if shadow_base_rect.width() > 0.0 && shadow_base_rect.height() > 0.0 {
+                    let shadow_color = apply_opacity(bs.color, opacity);
+                    list.push(DisplayCommand::DrawBoxShadow {
+                        rect: shadow_base_rect,
+                        color: shadow_color,
+                        offset_x: bs.offset_x,
+                        offset_y: bs.offset_y,
+                        blur_radius: bs.blur_radius,
+                        spread_radius: bs.spread_radius,
+                        radii: s.border_radius(),
+                        inset: bs.inset,
+                    });
+                }
+            }
+
+            // Modal dialog backdrop: dimming overlay covering viewport
+            if box_node.tag_name.as_deref() == Some("dialog")
+                && box_node.get_attribute("open").is_some()
+                && box_node.get_attribute("data-mango-modal") == Some("true")
+            {
+                let backdrop_rect = Rect::new(0.0, 0.0, 100_000.0, 100_000.0);
+                list.push(DisplayCommand::FillRect {
+                    rect: backdrop_rect,
+                    color: Color::rgba(0, 0, 0, 102), // 0.4 dimming backdrop
                 });
             }
-        }
 
-        // Modal dialog backdrop: dimming overlay covering viewport
-        if box_node.tag_name.as_deref() == Some("dialog")
-            && box_node.get_attribute("open").is_some()
-            && box_node.get_attribute("data-mango-modal") == Some("true")
-        {
-            let backdrop_rect = Rect::new(0.0, 0.0, 100_000.0, 100_000.0);
-            list.push(DisplayCommand::FillRect {
-                rect: backdrop_rect,
-                color: Color::rgba(0, 0, 0, 102), // 0.4 dimming backdrop
-            });
-        }
+            let content_box = Rect::new(
+                content_x,
+                content_y,
+                box_node.dimensions.content.width(),
+                box_node.dimensions.content.height(),
+            );
 
-        let content_box = Rect::new(
-            content_x,
-            content_y,
-            box_node.dimensions.content.width(),
-            box_node.dimensions.content.height(),
-        );
+            let resolve_clip_rect = |clip: mango_css::values::BackgroundClip| -> Rect {
+                match clip {
+                    mango_css::values::BackgroundClip::BorderBox => border_box,
+                    mango_css::values::BackgroundClip::PaddingBox => pad_box,
+                    mango_css::values::BackgroundClip::ContentBox => content_box,
+                    mango_css::values::BackgroundClip::Text => Rect::new(0.0, 0.0, 0.0, 0.0),
+                }
+            };
 
-        let resolve_clip_rect = |clip: mango_css::values::BackgroundClip| -> Rect {
-            match clip {
-                mango_css::values::BackgroundClip::BorderBox => border_box,
-                mango_css::values::BackgroundClip::PaddingBox => pad_box,
-                mango_css::values::BackgroundClip::ContentBox => content_box,
-                mango_css::values::BackgroundClip::Text => Rect::new(0.0, 0.0, 0.0, 0.0),
-            }
-        };
-
-        // 1. Paint Background (respecting background-clip)
-        if let Some(s) = style {
-            if s.background_clip != mango_css::values::BackgroundClip::Text {
+            // 1. Paint Background (respecting background-clip)
+            if let Some(s) = style
+                && s.background_clip != mango_css::values::BackgroundClip::Text
+            {
                 let bg_color = apply_opacity(s.background_color, opacity);
                 let base_rect = resolve_clip_rect(s.background_clip);
                 if s.mask_image.is_none()
@@ -428,16 +446,21 @@ fn render_layout_box_inner(
                         }
 
                         if let Some(gradient) = &layer.gradient {
-                            let blend = s.background_blend_mode != mango_css::values::BlendMode::Normal;
+                            let blend =
+                                s.background_blend_mode != mango_css::values::BlendMode::Normal;
                             if blend {
-                                list.push(DisplayCommand::PushBlendMode { mode: s.background_blend_mode });
+                                list.push(DisplayCommand::PushBlendMode {
+                                    mode: s.background_blend_mode,
+                                });
                             }
                             let mut resolved_grad = (**gradient).clone();
                             resolved_grad.resolve_current_color(s.color);
                             list.push(DisplayCommand::FillGradient {
                                 rect: target_rect,
                                 gradient: Box::new(resolved_grad),
-                                radii: if s.has_border_radius() && layer.clip == mango_css::values::BackgroundClip::BorderBox {
+                                radii: if s.has_border_radius()
+                                    && layer.clip == mango_css::values::BackgroundClip::BorderBox
+                                {
                                     s.border_radius()
                                 } else {
                                     [0.0; 4]
@@ -468,16 +491,23 @@ fn render_layout_box_inner(
                     if let Some(gradient) = &s.background_gradient {
                         let target_rect = resolve_clip_rect(s.background_clip);
                         if target_rect.width() > 0.0 && target_rect.height() > 0.0 {
-                            let blend = s.background_blend_mode != mango_css::values::BlendMode::Normal;
+                            let blend =
+                                s.background_blend_mode != mango_css::values::BlendMode::Normal;
                             if blend {
-                                list.push(DisplayCommand::PushBlendMode { mode: s.background_blend_mode });
+                                list.push(DisplayCommand::PushBlendMode {
+                                    mode: s.background_blend_mode,
+                                });
                             }
                             let mut resolved_grad = gradient.clone();
                             resolved_grad.resolve_current_color(s.color);
                             list.push(DisplayCommand::FillGradient {
                                 rect: target_rect,
                                 gradient: Box::new(resolved_grad),
-                                radii: if s.has_border_radius() { s.border_radius() } else { [0.0; 4] },
+                                radii: if s.has_border_radius() {
+                                    s.border_radius()
+                                } else {
+                                    [0.0; 4]
+                                },
                                 opacity,
                             });
                             if blend {
@@ -505,194 +535,211 @@ fn render_layout_box_inner(
                     }
                 }
             }
-        }
 
-        // 1c. Paint Masked Background (CSS mask-image / -webkit-mask-image)
-        if let Some(s) = style
-            && let Some(mask_url) = &s.mask_image
-            && pad_box.width() > 0.0
-            && pad_box.height() > 0.0
-        {
-            let pad_w = pad_box.width();
-            let pad_h = pad_box.height();
-            if let Some(img) = lookup_image_cached(mask_url) {
-                let mask_size = s.mask_size.unwrap_or(s.background_size);
-                let (draw_w, draw_h) = match mask_size {
-                    mango_css::values::BackgroundSize::Auto => (img.width as f32, img.height as f32),
-                    mango_css::values::BackgroundSize::Cover => {
-                        let scale = (pad_w / img.width as f32).max(pad_h / img.height as f32);
-                        (img.width as f32 * scale, img.height as f32 * scale)
-                    }
-                    mango_css::values::BackgroundSize::Contain => {
-                        let scale = (pad_w / img.width as f32).min(pad_h / img.height as f32);
-                        (img.width as f32 * scale, img.height as f32 * scale)
-                    }
-                    mango_css::values::BackgroundSize::Explicit(w, h) => {
-                        let is_w_auto = matches!(w, mango_css::values::Length::Auto);
-                        let is_h_auto = matches!(h, mango_css::values::Length::Auto);
-                        let img_w = img.width as f32;
-                        let img_h = img.height as f32;
-
-                        if is_w_auto && is_h_auto {
-                            (img_w, img_h)
-                        } else if is_w_auto {
-                            let height_px = match h {
-                                mango_css::values::Length::Px(px) => px,
-                                mango_css::values::Length::Percent(p) => pad_h * p / 100.0,
-                                _ => img_h,
-                            };
-                            let width_px = if img_h > 0.0 {
-                                height_px * (img_w / img_h)
-                            } else {
-                                img_w
-                            };
-                            (width_px, height_px)
-                        } else if is_h_auto {
-                            let width_px = match w {
-                                mango_css::values::Length::Px(px) => px,
-                                mango_css::values::Length::Percent(p) => pad_w * p / 100.0,
-                                _ => img_w,
-                            };
-                            let height_px = if img_w > 0.0 {
-                                width_px * (img_h / img_w)
-                            } else {
-                                img_h
-                            };
-                            (width_px, height_px)
-                        } else {
-                            let width_px = match w {
-                                mango_css::values::Length::Px(px) => px,
-                                mango_css::values::Length::Percent(p) => pad_w * p / 100.0,
-                                _ => img_w,
-                            };
-                            let height_px = match h {
-                                mango_css::values::Length::Px(px) => px,
-                                mango_css::values::Length::Percent(p) => pad_h * p / 100.0,
-                                _ => img_h,
-                            };
-                            (width_px, height_px)
+            // 1c. Paint Masked Background (CSS mask-image / -webkit-mask-image)
+            if let Some(s) = style
+                && let Some(mask_url) = &s.mask_image
+                && pad_box.width() > 0.0
+                && pad_box.height() > 0.0
+            {
+                let pad_w = pad_box.width();
+                let pad_h = pad_box.height();
+                if let Some(img) = lookup_image_cached(mask_url) {
+                    let mask_size = s.mask_size.unwrap_or(s.background_size);
+                    let (draw_w, draw_h) = match mask_size {
+                        mango_css::values::BackgroundSize::Auto => {
+                            (img.width as f32, img.height as f32)
                         }
-                    }
-                };
-
-                let target_w = draw_w.max(1.0);
-                let target_h = draw_h.max(1.0);
-                let resized = img.resize(target_w as u32, target_h as u32);
-
-                let mask_pos = s.mask_position.unwrap_or(s.background_position);
-                let origin_x = match mask_pos.0 {
-                    mango_css::values::Length::Px(px) => pad_box.x() + px,
-                    mango_css::values::Length::Percent(p) => pad_box.x() + (pad_w - draw_w) * p / 100.0,
-                    _ => pad_box.x() + (pad_w - draw_w) / 2.0,
-                };
-                let origin_y = match mask_pos.1 {
-                    mango_css::values::Length::Px(px) => pad_box.y() + px,
-                    mango_css::values::Length::Percent(p) => pad_box.y() + (pad_h - draw_h) * p / 100.0,
-                    _ => pad_box.y() + (pad_h - draw_h) / 2.0,
-                };
-
-                let tint = if s.background_color != Color::TRANSPARENT && s.background_color.a > 0 {
-                    apply_opacity(s.background_color, opacity)
-                } else if s.color != Color::TRANSPARENT && s.color.a > 0 {
-                    apply_opacity(s.color, opacity)
-                } else {
-                    apply_opacity(Color::BLACK, opacity)
-                };
-
-                let mut tinted_pixels = Vec::with_capacity(resized.pixels.len());
-                for &pix in &resized.pixels {
-                    let a = match s.mask_mode {
-                        mango_css::values::MaskMode::Luminance => {
-                            let r = ((pix >> 16) & 0xFF) as f32;
-                            let g = ((pix >> 8) & 0xFF) as f32;
-                            let b = (pix & 0xFF) as f32;
-                            (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0
+                        mango_css::values::BackgroundSize::Cover => {
+                            let scale = (pad_w / img.width as f32).max(pad_h / img.height as f32);
+                            (img.width as f32 * scale, img.height as f32 * scale)
                         }
-                        _ => ((pix >> 24) & 0xFF) as f32 / 255.0,
+                        mango_css::values::BackgroundSize::Contain => {
+                            let scale = (pad_w / img.width as f32).min(pad_h / img.height as f32);
+                            (img.width as f32 * scale, img.height as f32 * scale)
+                        }
+                        mango_css::values::BackgroundSize::Explicit(w, h) => {
+                            let is_w_auto = matches!(w, mango_css::values::Length::Auto);
+                            let is_h_auto = matches!(h, mango_css::values::Length::Auto);
+                            let img_w = img.width as f32;
+                            let img_h = img.height as f32;
+
+                            if is_w_auto && is_h_auto {
+                                (img_w, img_h)
+                            } else if is_w_auto {
+                                let height_px = match h {
+                                    mango_css::values::Length::Px(px) => px,
+                                    mango_css::values::Length::Percent(p) => pad_h * p / 100.0,
+                                    _ => img_h,
+                                };
+                                let width_px = if img_h > 0.0 {
+                                    height_px * (img_w / img_h)
+                                } else {
+                                    img_w
+                                };
+                                (width_px, height_px)
+                            } else if is_h_auto {
+                                let width_px = match w {
+                                    mango_css::values::Length::Px(px) => px,
+                                    mango_css::values::Length::Percent(p) => pad_w * p / 100.0,
+                                    _ => img_w,
+                                };
+                                let height_px = if img_w > 0.0 {
+                                    width_px * (img_h / img_w)
+                                } else {
+                                    img_h
+                                };
+                                (width_px, height_px)
+                            } else {
+                                let width_px = match w {
+                                    mango_css::values::Length::Px(px) => px,
+                                    mango_css::values::Length::Percent(p) => pad_w * p / 100.0,
+                                    _ => img_w,
+                                };
+                                let height_px = match h {
+                                    mango_css::values::Length::Px(px) => px,
+                                    mango_css::values::Length::Percent(p) => pad_h * p / 100.0,
+                                    _ => img_h,
+                                };
+                                (width_px, height_px)
+                            }
+                        }
                     };
-                    if a <= 0.0 {
-                        tinted_pixels.push(0);
-                    } else {
-                        let final_a = (a * (tint.a as f32 / 255.0) * 255.0).round() as u32;
-                        let out_pixel = (final_a << 24)
-                            | ((tint.r as u32) << 16)
-                            | ((tint.g as u32) << 8)
-                            | (tint.b as u32);
-                        tinted_pixels.push(out_pixel);
+
+                    let target_w = draw_w.max(1.0);
+                    let target_h = draw_h.max(1.0);
+                    let resized = img.resize(target_w as u32, target_h as u32);
+
+                    let mask_pos = s.mask_position.unwrap_or(s.background_position);
+                    let origin_x = match mask_pos.0 {
+                        mango_css::values::Length::Px(px) => pad_box.x() + px,
+                        mango_css::values::Length::Percent(p) => {
+                            pad_box.x() + (pad_w - draw_w) * p / 100.0
+                        }
+                        _ => pad_box.x() + (pad_w - draw_w) / 2.0,
+                    };
+                    let origin_y = match mask_pos.1 {
+                        mango_css::values::Length::Px(px) => pad_box.y() + px,
+                        mango_css::values::Length::Percent(p) => {
+                            pad_box.y() + (pad_h - draw_h) * p / 100.0
+                        }
+                        _ => pad_box.y() + (pad_h - draw_h) / 2.0,
+                    };
+
+                    let tint =
+                        if s.background_color != Color::TRANSPARENT && s.background_color.a > 0 {
+                            apply_opacity(s.background_color, opacity)
+                        } else if s.color != Color::TRANSPARENT && s.color.a > 0 {
+                            apply_opacity(s.color, opacity)
+                        } else {
+                            apply_opacity(Color::BLACK, opacity)
+                        };
+
+                    let mut tinted_pixels = Vec::with_capacity(resized.pixels.len());
+                    for &pix in &resized.pixels {
+                        let a = match s.mask_mode {
+                            mango_css::values::MaskMode::Luminance => {
+                                let r = ((pix >> 16) & 0xFF) as f32;
+                                let g = ((pix >> 8) & 0xFF) as f32;
+                                let b = (pix & 0xFF) as f32;
+                                (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0
+                            }
+                            _ => ((pix >> 24) & 0xFF) as f32 / 255.0,
+                        };
+                        if a <= 0.0 {
+                            tinted_pixels.push(0);
+                        } else {
+                            let final_a = (a * (tint.a as f32 / 255.0) * 255.0).round() as u32;
+                            let out_pixel = (final_a << 24)
+                                | ((tint.r as u32) << 16)
+                                | ((tint.g as u32) << 8)
+                                | (tint.b as u32);
+                            tinted_pixels.push(out_pixel);
+                        }
                     }
+
+                    list.push(DisplayCommand::DrawImage {
+                        x: origin_x,
+                        y: origin_y,
+                        width: target_w,
+                        height: target_h,
+                        pixels: tinted_pixels,
+                    });
+                }
+            }
+
+            // 2. Paint Borders (on border box)
+            if let Some(s) = style {
+                let widths = BorderWidths {
+                    top: box_node.dimensions.border.top,
+                    right: box_node.dimensions.border.right,
+                    bottom: box_node.dimensions.border.bottom,
+                    left: box_node.dimensions.border.left,
+                };
+
+                if widths.top > 0.0
+                    || widths.right > 0.0
+                    || widths.bottom > 0.0
+                    || widths.left > 0.0
+                {
+                    let border_color = if widths.top > 0.0 {
+                        apply_opacity(s.border_top_color, opacity)
+                    } else if widths.bottom > 0.0 {
+                        apply_opacity(s.border_bottom_color, opacity)
+                    } else if widths.left > 0.0 {
+                        apply_opacity(s.border_left_color, opacity)
+                    } else {
+                        apply_opacity(s.border_right_color, opacity)
+                    };
+                    let border_radii = if s.has_border_radius() {
+                        s.border_radius()
+                    } else {
+                        [0.0; 4]
+                    };
+                    list.push(DisplayCommand::DrawBorder {
+                        rect: border_box,
+                        color: border_color,
+                        widths,
+                        radii: border_radii,
+                    });
                 }
 
-                list.push(DisplayCommand::DrawImage {
-                    x: origin_x,
-                    y: origin_y,
-                    width: target_w,
-                    height: target_h,
-                    pixels: tinted_pixels,
-                });
+                // 2b. Paint Outline (on border box + outline-offset, does not affect layout geometry)
+                if !matches!(
+                    s.outline_style,
+                    mango_css::values::BorderStyle::None | mango_css::values::BorderStyle::Hidden
+                ) && s.outline_width > 0.0
+                    && border_box.width() > 0.0
+                    && border_box.height() > 0.0
+                {
+                    let off = s.outline_offset;
+                    let ow = s.outline_width;
+                    let outline_rect = Rect::new(
+                        border_box.x() - off - ow,
+                        border_box.y() - off - ow,
+                        border_box.width() + 2.0 * (off + ow),
+                        border_box.height() + 2.0 * (off + ow),
+                    );
+                    let outline_color = apply_opacity(s.outline_color, opacity);
+                    let outline_radii = if s.has_border_radius() {
+                        let r = s.border_radius();
+                        [
+                            r[0] + off + ow,
+                            r[1] + off + ow,
+                            r[2] + off + ow,
+                            r[3] + off + ow,
+                        ]
+                    } else {
+                        [0.0; 4]
+                    };
+                    list.push(DisplayCommand::DrawBorder {
+                        rect: outline_rect,
+                        color: outline_color,
+                        widths: BorderWidths::all(ow),
+                        radii: outline_radii,
+                    });
+                }
             }
-        }
-
-        // 2. Paint Borders (on border box)
-        if let Some(s) = style {
-            let widths = BorderWidths {
-                top: box_node.dimensions.border.top,
-                right: box_node.dimensions.border.right,
-                bottom: box_node.dimensions.border.bottom,
-                left: box_node.dimensions.border.left,
-            };
-
-            if widths.top > 0.0 || widths.right > 0.0 || widths.bottom > 0.0 || widths.left > 0.0 {
-                let border_color = if widths.top > 0.0 {
-                    apply_opacity(s.border_top_color, opacity)
-                } else if widths.bottom > 0.0 {
-                    apply_opacity(s.border_bottom_color, opacity)
-                } else if widths.left > 0.0 {
-                    apply_opacity(s.border_left_color, opacity)
-                } else {
-                    apply_opacity(s.border_right_color, opacity)
-                };
-                let border_radii = if s.has_border_radius() {
-                    s.border_radius()
-                } else {
-                    [0.0; 4]
-                };
-                list.push(DisplayCommand::DrawBorder {
-                    rect: border_box,
-                    color: border_color,
-                    widths,
-                    radii: border_radii,
-                });
-            }
-
-            // 2b. Paint Outline (on border box + outline-offset, does not affect layout geometry)
-            if !matches!(s.outline_style, mango_css::values::BorderStyle::None | mango_css::values::BorderStyle::Hidden)
-                && s.outline_width > 0.0
-                && border_box.width() > 0.0
-                && border_box.height() > 0.0
-            {
-                let off = s.outline_offset;
-                let ow = s.outline_width;
-                let outline_rect = Rect::new(
-                    border_box.x() - off - ow,
-                    border_box.y() - off - ow,
-                    border_box.width() + 2.0 * (off + ow),
-                    border_box.height() + 2.0 * (off + ow),
-                );
-                let outline_color = apply_opacity(s.outline_color, opacity);
-                let outline_radii = if s.has_border_radius() {
-                    let r = s.border_radius();
-                    [r[0] + off + ow, r[1] + off + ow, r[2] + off + ow, r[3] + off + ow]
-                } else {
-                    [0.0; 4]
-                };
-                list.push(DisplayCommand::DrawBorder {
-                    rect: outline_rect,
-                    color: outline_color,
-                    widths: BorderWidths::all(ow),
-                    radii: outline_radii,
-                });
-            }
-        }
         }
 
         // 3. Paint Text (for text nodes)
@@ -714,22 +761,32 @@ fn render_layout_box_inner(
                 mango_css::values::FontStyle::Normal => mango_render::FontStyle::Normal,
             };
             let mut decoration = match s.text_decoration {
-                mango_css::values::TextDecoration::Underline => mango_render::TextDecoration::Underline,
-                mango_css::values::TextDecoration::LineThrough => mango_render::TextDecoration::LineThrough,
-                mango_css::values::TextDecoration::Overline => mango_render::TextDecoration::Overline,
+                mango_css::values::TextDecoration::Underline => {
+                    mango_render::TextDecoration::Underline
+                }
+                mango_css::values::TextDecoration::LineThrough => {
+                    mango_render::TextDecoration::LineThrough
+                }
+                mango_css::values::TextDecoration::Overline => {
+                    mango_render::TextDecoration::Overline
+                }
                 mango_css::values::TextDecoration::None => mango_render::TextDecoration::None,
             };
 
             // Custom text-underline-offset and text-decoration-thickness handling
             if s.text_decoration == mango_css::values::TextDecoration::Underline
                 && (s.text_underline_offset != mango_css::values::Length::Auto
-                    || !matches!(s.text_decoration_thickness, mango_css::values::TextDecorationThickness::Auto))
+                    || !matches!(
+                        s.text_decoration_thickness,
+                        mango_css::values::TextDecorationThickness::Auto
+                    ))
             {
                 let text_w = box_node.dimensions.content.width();
                 if text_w > 0.0 {
                     let offset_px = s.text_underline_offset.to_px(s.font_size, 16.0, text_w);
                     let thickness_px = match s.text_decoration_thickness {
-                        mango_css::values::TextDecorationThickness::Auto | mango_css::values::TextDecorationThickness::FromFont => {
+                        mango_css::values::TextDecorationThickness::Auto
+                        | mango_css::values::TextDecorationThickness::FromFont => {
                             (s.font_size / 14.0).max(1.0)
                         }
                         mango_css::values::TextDecorationThickness::Length(len) => {
@@ -763,7 +820,8 @@ fn render_layout_box_inner(
                     let char_step = total_w / (char_count as f32);
                     for (i, c) in text.chars().enumerate() {
                         if !c.is_whitespace() {
-                            let char_x = content_x + (i as f32 * char_step) + (char_step - mark_size) * 0.5;
+                            let char_x =
+                                content_x + (i as f32 * char_step) + (char_step - mark_size) * 0.5;
                             list.push(DisplayCommand::DrawText {
                                 text: mark_text.clone(),
                                 x: char_x,
@@ -771,7 +829,7 @@ fn render_layout_box_inner(
                                 color: mark_color,
                                 font_size: mark_size,
                                 weight: mango_render::FontWeight::Regular,
-                                family: family.clone(),
+                                family,
                                 style: mango_render::FontStyle::Normal,
                                 decoration: mango_render::TextDecoration::None,
                                 letter_spacing: 0.0,
@@ -797,7 +855,7 @@ fn render_layout_box_inner(
                     } else {
                         mango_render::FontWeight::Regular
                     },
-                    family: family.clone(),
+                    family,
                     style: style_font,
                     blur_radius: shadow.blur_radius,
                     letter_spacing: s.letter_spacing.to_px(
@@ -823,7 +881,7 @@ fn render_layout_box_inner(
                         } else {
                             mango_render::FontWeight::Regular
                         },
-                        family: family.clone(),
+                        family,
                         style: style_font,
                         decoration,
                         letter_spacing: 0.0,
@@ -844,7 +902,11 @@ fn render_layout_box_inner(
                     family,
                     style: style_font,
                     decoration,
-                    letter_spacing: s.letter_spacing.to_px(s.font_size, 16.0, box_node.dimensions.content.width()),
+                    letter_spacing: s.letter_spacing.to_px(
+                        s.font_size,
+                        16.0,
+                        box_node.dimensions.content.width(),
+                    ),
                 });
             }
         }
@@ -917,23 +979,17 @@ fn render_layout_box_inner(
             };
 
             // Resolve object-position offsets (default: 50% 50% = centered)
-            let (pos_x_len, pos_y_len) = style
-                .map(|s| s.object_position)
-                .unwrap_or((
-                    mango_css::values::Length::Percent(50.0),
-                    mango_css::values::Length::Percent(50.0),
-                ));
+            let (pos_x_len, pos_y_len) = style.map(|s| s.object_position).unwrap_or((
+                mango_css::values::Length::Percent(50.0),
+                mango_css::values::Length::Percent(50.0),
+            ));
             let fs = style.map(|s| s.font_size).unwrap_or(16.0);
             let offset_x_pos = match pos_x_len {
-                mango_css::values::Length::Percent(pct) => {
-                    (draw_w - render_w) * (pct / 100.0)
-                }
+                mango_css::values::Length::Percent(pct) => (draw_w - render_w) * (pct / 100.0),
                 other => other.to_px(fs, 16.0, draw_w),
             };
             let offset_y_pos = match pos_y_len {
-                mango_css::values::Length::Percent(pct) => {
-                    (draw_h - render_h) * (pct / 100.0)
-                }
+                mango_css::values::Length::Percent(pct) => (draw_h - render_h) * (pct / 100.0),
                 other => other.to_px(fs, 16.0, draw_h),
             };
 
@@ -951,15 +1007,30 @@ fn render_layout_box_inner(
                     return None;
                 }
                 if let Some(img) = mango_render::image_decode::decode_data_uri(trimmed) {
-                    return Some(mango_render::image_decode::get_or_resize_cached(trimmed, &img, target_w, target_h).pixels);
+                    return Some(
+                        mango_render::image_decode::get_or_resize_cached(
+                            trimmed, &img, target_w, target_h,
+                        )
+                        .pixels,
+                    );
                 }
                 if let Some(img) = mango_render::image_decode::get_cached_image(trimmed) {
-                    return Some(mango_render::image_decode::get_or_resize_cached(trimmed, &img, target_w, target_h).pixels);
+                    return Some(
+                        mango_render::image_decode::get_or_resize_cached(
+                            trimmed, &img, target_w, target_h,
+                        )
+                        .pixels,
+                    );
                 }
                 if trimmed.starts_with("//") {
                     let https_url = format!("https:{trimmed}");
                     if let Some(img) = mango_render::image_decode::get_cached_image(&https_url) {
-                        return Some(mango_render::image_decode::get_or_resize_cached(&https_url, &img, target_w, target_h).pixels);
+                        return Some(
+                            mango_render::image_decode::get_or_resize_cached(
+                                &https_url, &img, target_w, target_h,
+                            )
+                            .pixels,
+                        );
                     }
                 }
                 None
@@ -975,7 +1046,10 @@ fn render_layout_box_inner(
                 };
                 let cache_key = box_node.get_attribute("src").unwrap_or("");
                 if !cache_key.is_empty() {
-                    mango_render::image_decode::get_or_resize_cached(cache_key, &img, target_w, target_h).pixels
+                    mango_render::image_decode::get_or_resize_cached(
+                        cache_key, &img, target_w, target_h,
+                    )
+                    .pixels
                 } else {
                     img.resize(target_w, target_h).pixels
                 }
@@ -1095,31 +1169,30 @@ fn render_layout_box_inner(
             intrinsic_height,
             ..
         } = &box_node.box_type
+            && *has_controls
         {
-            if *has_controls {
-                let draw_w = if box_node.dimensions.content.width() > 0.0 {
-                    box_node.dimensions.content.width()
-                } else {
-                    *intrinsic_width
-                };
-                let draw_h = if box_node.dimensions.content.height() > 0.0 {
-                    box_node.dimensions.content.height()
-                } else {
-                    *intrinsic_height
-                };
-                if draw_w > 0.0 && draw_h > 0.0 {
-                    let audio_rect = Rect::new(content_x, content_y, draw_w, draw_h);
-                    render_audio_element(
-                        src,
-                        *is_playing,
-                        *is_muted,
-                        *current_time,
-                        *duration,
-                        audio_rect,
-                        opacity,
-                        list,
-                    );
-                }
+            let draw_w = if box_node.dimensions.content.width() > 0.0 {
+                box_node.dimensions.content.width()
+            } else {
+                *intrinsic_width
+            };
+            let draw_h = if box_node.dimensions.content.height() > 0.0 {
+                box_node.dimensions.content.height()
+            } else {
+                *intrinsic_height
+            };
+            if draw_w > 0.0 && draw_h > 0.0 {
+                let audio_rect = Rect::new(content_x, content_y, draw_w, draw_h);
+                render_audio_element(
+                    src,
+                    *is_playing,
+                    *is_muted,
+                    *current_time,
+                    *duration,
+                    audio_rect,
+                    opacity,
+                    list,
+                );
             }
         }
 
@@ -1213,7 +1286,10 @@ fn render_layout_box_inner(
     } || matches!(box_node.box_type, BoxType::IFrame { .. });
 
     let contains_paint = if let Some(s) = style {
-        matches!(s.contain, mango_css::values::Contain::Paint | mango_css::values::Contain::Strict)
+        matches!(
+            s.contain,
+            mango_css::values::Contain::Paint | mango_css::values::Contain::Strict
+        )
     } else {
         false
     };
@@ -1246,21 +1322,30 @@ fn render_layout_box_inner(
     }
 
     // Render CSS multi-column rules if defined
-    if let Some(s) = style {
-        if s.column_rule_style != mango_css::values::BorderStyle::None && s.column_rule_color.a > 0 {
-            let cols = s.column_count.unwrap_or(0);
-            if cols > 1 && pad_box.width() > 0.0 && pad_box.height() > 0.0 {
-                let col_gap = s.column_gap.to_px(s.font_size, 16.0, pad_box.width());
-                let col_w = ((pad_box.width() - (cols - 1) as f32 * col_gap) / cols as f32).max(1.0);
-                let rule_w = s.column_rule_width.to_px(s.font_size, 16.0, pad_box.width()).max(1.0);
-                for c in 1..cols {
-                    let rule_center_x = pad_box.x() + c as f32 * col_w + (c as f32 - 0.5) * col_gap;
-                    let rule_x = rule_center_x - rule_w * 0.5;
-                    list.push(DisplayCommand::FillRect {
-                        rect: Rect::new(rule_x + offset_x, pad_box.y() + offset_y, rule_w, pad_box.height()),
-                        color: s.column_rule_color,
-                    });
-                }
+    if let Some(s) = style
+        && s.column_rule_style != mango_css::values::BorderStyle::None
+        && s.column_rule_color.a > 0
+    {
+        let cols = s.column_count.unwrap_or(0);
+        if cols > 1 && pad_box.width() > 0.0 && pad_box.height() > 0.0 {
+            let col_gap = s.column_gap.to_px(s.font_size, 16.0, pad_box.width());
+            let col_w = ((pad_box.width() - (cols - 1) as f32 * col_gap) / cols as f32).max(1.0);
+            let rule_w = s
+                .column_rule_width
+                .to_px(s.font_size, 16.0, pad_box.width())
+                .max(1.0);
+            for c in 1..cols {
+                let rule_center_x = pad_box.x() + c as f32 * col_w + (c as f32 - 0.5) * col_gap;
+                let rule_x = rule_center_x - rule_w * 0.5;
+                list.push(DisplayCommand::FillRect {
+                    rect: Rect::new(
+                        rule_x + offset_x,
+                        pad_box.y() + offset_y,
+                        rule_w,
+                        pad_box.height(),
+                    ),
+                    color: s.column_rule_color,
+                });
             }
         }
     }
@@ -1354,7 +1439,10 @@ fn render_layout_box_inner(
         let has_transform = style.is_some_and(|s| !s.transform.is_identity());
         let is_fixed_escaped = clip_rect.is_some()
             && !has_transform
-            && child.style.as_ref().is_some_and(|s| s.position == mango_css::values::Position::Fixed);
+            && child
+                .style
+                .as_ref()
+                .is_some_and(|s| s.position == mango_css::values::Position::Fixed);
 
         if is_fixed_escaped {
             list.push(DisplayCommand::PopClip);
@@ -1371,7 +1459,9 @@ fn render_layout_box_inner(
         );
 
         if is_fixed_escaped {
-            list.push(DisplayCommand::PushClip { rect: clip_rect.unwrap() });
+            list.push(DisplayCommand::PushClip {
+                rect: clip_rect.unwrap(),
+            });
         }
     }
 
@@ -1380,14 +1470,19 @@ fn render_layout_box_inner(
     }
 
     // Paint container scrollbars if overflow is scroll or auto with overflowing content
-    if !is_root_or_body && box_node.is_scroll_container() && pad_box.width() > 10.0 && pad_box.height() > 10.0 {
+    if !is_root_or_body
+        && box_node.is_scroll_container()
+        && pad_box.width() > 10.0
+        && pad_box.height() > 10.0
+    {
         let (content_w, content_h) = box_node.scrollable_extent();
         let pad_w = pad_box.width();
         let pad_h = pad_box.height();
 
         // Vertical scrollbar
         let has_v_scroll = if let Some(s) = style {
-            s.overflow_y == mango_css::values::Overflow::Scroll || (s.overflow_y == mango_css::values::Overflow::Auto && content_h > pad_h)
+            s.overflow_y == mango_css::values::Overflow::Scroll
+                || (s.overflow_y == mango_css::values::Overflow::Auto && content_h > pad_h)
         } else {
             false
         };
@@ -1416,7 +1511,8 @@ fn render_layout_box_inner(
 
         // Horizontal scrollbar
         let has_h_scroll = if let Some(s) = style {
-            s.overflow_x == mango_css::values::Overflow::Scroll || (s.overflow_x == mango_css::values::Overflow::Auto && content_w > pad_w)
+            s.overflow_x == mango_css::values::Overflow::Scroll
+                || (s.overflow_x == mango_css::values::Overflow::Auto && content_w > pad_w)
         } else {
             false
         };
@@ -1486,7 +1582,8 @@ fn render_form_control(
                     let box_size = content.width().min(content.height()).clamp(10.0, 24.0);
                     let cx = content.x() + content.width() / 2.0;
                     let cy = content.y() + content.height() / 2.0;
-                    let outer_rect = Rect::new(cx - box_size / 2.0, cy - box_size / 2.0, box_size, box_size);
+                    let outer_rect =
+                        Rect::new(cx - box_size / 2.0, cy - box_size / 2.0, box_size, box_size);
 
                     if box_node.get_attribute("checked").is_some() {
                         let accent = s.accent_color.unwrap_or(Color::rgb(0, 120, 215));
@@ -1512,7 +1609,12 @@ fn render_form_control(
                             color: border_color,
                             radii: [2.0, 2.0, 2.0, 2.0],
                         });
-                        let inner_rect = Rect::new(outer_rect.x() + 1.25, outer_rect.y() + 1.25, (box_size - 2.5).max(1.0), (box_size - 2.5).max(1.0));
+                        let inner_rect = Rect::new(
+                            outer_rect.x() + 1.25,
+                            outer_rect.y() + 1.25,
+                            (box_size - 2.5).max(1.0),
+                            (box_size - 2.5).max(1.0),
+                        );
                         list.push(DisplayCommand::FillRoundedRect {
                             rect: inner_rect,
                             color: apply_opacity(Color::WHITE, opacity),
@@ -1524,7 +1626,8 @@ fn render_form_control(
                     let box_size = content.width().min(content.height()).clamp(10.0, 24.0);
                     let cx = content.x() + content.width() / 2.0;
                     let cy = content.y() + content.height() / 2.0;
-                    let outer_rect = Rect::new(cx - box_size / 2.0, cy - box_size / 2.0, box_size, box_size);
+                    let outer_rect =
+                        Rect::new(cx - box_size / 2.0, cy - box_size / 2.0, box_size, box_size);
                     let r = box_size / 2.0;
 
                     let is_checked = box_node.get_attribute("checked").is_some();
@@ -1545,7 +1648,12 @@ fn render_form_control(
                     // Inner background circle
                     let border_width = 1.5f32;
                     let inner_w = (box_size - border_width * 2.0).max(2.0);
-                    let inner_rect = Rect::new(outer_rect.x() + border_width, outer_rect.y() + border_width, inner_w, inner_w);
+                    let inner_rect = Rect::new(
+                        outer_rect.x() + border_width,
+                        outer_rect.y() + border_width,
+                        inner_w,
+                        inner_w,
+                    );
                     let inner_r = inner_w / 2.0;
                     list.push(DisplayCommand::FillRoundedRect {
                         rect: inner_rect,
@@ -1567,15 +1675,19 @@ fn render_form_control(
                     }
                 }
                 "submit" | "button" | "reset" => {
-                    let label = box_node.get_attribute("value").unwrap_or(match input_type.as_str() {
-                        "submit" => "Submit",
-                        "reset" => "Reset",
-                        _ => "Button",
-                    });
+                    let label =
+                        box_node
+                            .get_attribute("value")
+                            .unwrap_or(match input_type.as_str() {
+                                "submit" => "Submit",
+                                "reset" => "Reset",
+                                _ => "Button",
+                            });
                     if !label.is_empty() {
                         let font_size = s.font_size;
                         let is_bold = match s.font_weight {
-                            mango_css::values::FontWeight::Bold | mango_css::values::FontWeight::Bolder => true,
+                            mango_css::values::FontWeight::Bold
+                            | mango_css::values::FontWeight::Bolder => true,
                             mango_css::values::FontWeight::Numeric(w) => w >= 600,
                             _ => false,
                         };
@@ -1585,7 +1697,9 @@ fn render_form_control(
                             mango_render::FontWeight::Regular
                         };
                         let family = mango_render::FontFamily::from_css_name(&s.font_family);
-                        let text_w = crate::inline_flow::measure_text_width_with_style(label, font_size, weight, family);
+                        let text_w = crate::inline_flow::measure_text_width_with_style(
+                            label, font_size, weight, family,
+                        );
                         let x = content.x() + ((content.width() - text_w) / 2.0).max(0.0);
                         let y = content.y() + ((content.height() - font_size) / 2.0).max(0.0);
                         list.push(DisplayCommand::draw_text(
@@ -1598,18 +1712,37 @@ fn render_form_control(
                             family,
                         ));
                     } else {
-                        let has_bg_img = s.background_image.as_ref().and_then(|url| {
-                            mango_render::image_decode::get_cached_image(url)
-                                .or_else(|| mango_render::image_decode::get_cached_image(&format!("https:{url}")))
-                        }).is_some();
+                        let has_bg_img = s
+                            .background_image
+                            .as_ref()
+                            .and_then(|url| {
+                                mango_render::image_decode::get_cached_image(url).or_else(|| {
+                                    mango_render::image_decode::get_cached_image(&format!(
+                                        "https:{url}"
+                                    ))
+                                })
+                            })
+                            .is_some();
                         if !has_bg_img
-                            && (box_node.get_attribute("class").map(|c| c.contains("search__button")).unwrap_or(false)
-                                || box_node.get_attribute("alt").map(|a| a.eq_ignore_ascii_case("search")).unwrap_or(false)
-                                || box_node.get_attribute("title").map(|t| t.eq_ignore_ascii_case("search")).unwrap_or(false))
+                            && (box_node
+                                .get_attribute("class")
+                                .map(|c| c.contains("search__button"))
+                                .unwrap_or(false)
+                                || box_node
+                                    .get_attribute("alt")
+                                    .map(|a| a.eq_ignore_ascii_case("search"))
+                                    .unwrap_or(false)
+                                || box_node
+                                    .get_attribute("title")
+                                    .map(|t| t.eq_ignore_ascii_case("search"))
+                                    .unwrap_or(false))
                         {
-                            let icon_size = ((content.width().min(content.height()) * 0.65) as u32).clamp(14, 24);
-                            let x = content.x() + ((content.width() - icon_size as f32) / 2.0).max(0.0);
-                            let y = content.y() + ((content.height() - icon_size as f32) / 2.0).max(0.0);
+                            let icon_size = ((content.width().min(content.height()) * 0.65) as u32)
+                                .clamp(14, 24);
+                            let x =
+                                content.x() + ((content.width() - icon_size as f32) / 2.0).max(0.0);
+                            let y = content.y()
+                                + ((content.height() - icon_size as f32) / 2.0).max(0.0);
                             let is_colored_bg = s.background_color.a > 0
                                 && s.background_color != Color::WHITE
                                 && s.background_color != Color::TRANSPARENT;
@@ -1631,13 +1764,26 @@ fn render_form_control(
                 }
                 "range" => {
                     // Slider track + filled portion + draggable thumb (GAP-024).
-                    let min_v: f32 = box_node.get_attribute("min").and_then(|v| v.parse().ok()).unwrap_or(0.0);
-                    let max_v: f32 = box_node.get_attribute("max").and_then(|v| v.parse().ok()).unwrap_or(100.0);
-                    let val: f32 = box_node.get_attribute("value").and_then(|v| v.parse().ok()).unwrap_or(min_v);
+                    let min_v: f32 = box_node
+                        .get_attribute("min")
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(0.0);
+                    let max_v: f32 = box_node
+                        .get_attribute("max")
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(100.0);
+                    let val: f32 = box_node
+                        .get_attribute("value")
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(min_v);
                     let lo = min_v.min(max_v);
                     let hi = min_v.max(max_v);
                     let span = hi - lo;
-                    let frac = if span > f32::EPSILON { ((val - lo) / span).clamp(0.0, 1.0) } else { 0.0 };
+                    let frac = if span > f32::EPSILON {
+                        ((val - lo) / span).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
 
                     let track_h = (content.height() * 0.25).clamp(3.0, 6.0);
                     let track_y = content.y() + (content.height() - track_h) / 2.0;
@@ -1669,14 +1815,20 @@ fn render_form_control(
                     list.push(DisplayCommand::DrawBorder {
                         rect: thumb,
                         color: apply_opacity(accent, opacity),
-                        widths: mango_render::display_list::BorderWidths { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 },
+                        widths: mango_render::display_list::BorderWidths {
+                            top: 1.0,
+                            right: 1.0,
+                            bottom: 1.0,
+                            left: 1.0,
+                        },
                         radii: [thumb_r; 4],
                     });
                 }
                 "color" => {
                     // Color swatch + hex label; clicking opens the palette picker (GAP-024).
                     let raw = box_node.get_attribute("value").unwrap_or("#000000");
-                    let swatch_color = mango_css::values::Value::parse_color(raw).unwrap_or(Color::rgb(0, 0, 0));
+                    let swatch_color =
+                        mango_css::values::Value::parse_color(raw).unwrap_or(Color::rgb(0, 0, 0));
                     let inset = 2.0f32;
                     let sw = (content.width() * 0.45).clamp(24.0, 72.0).max(4.0);
                     let sh = (content.height() - inset * 2.0).max(4.0);
@@ -1689,11 +1841,20 @@ fn render_form_control(
                     list.push(DisplayCommand::DrawBorder {
                         rect: swatch,
                         color: apply_opacity(Color::rgb(120, 124, 128), opacity),
-                        widths: mango_render::display_list::BorderWidths { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 },
+                        widths: mango_render::display_list::BorderWidths {
+                            top: 1.0,
+                            right: 1.0,
+                            bottom: 1.0,
+                            left: 1.0,
+                        },
                         radii: [3.0; 4],
                     });
 
-                    let label = if raw.starts_with('#') { raw.to_ascii_uppercase() } else { raw.to_string() };
+                    let label = if raw.starts_with('#') {
+                        raw.to_ascii_uppercase()
+                    } else {
+                        raw.to_string()
+                    };
                     let font_size = (s.font_size * 0.9).max(10.0);
                     let family = mango_render::FontFamily::from_css_name(&s.font_family);
                     list.push(DisplayCommand::draw_text(
@@ -1738,7 +1899,12 @@ fn render_form_control(
                     list.push(DisplayCommand::DrawBorder {
                         rect: btn,
                         color: apply_opacity(Color::rgb(180, 185, 195), opacity),
-                        widths: mango_render::display_list::BorderWidths { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 },
+                        widths: mango_render::display_list::BorderWidths {
+                            top: 1.0,
+                            right: 1.0,
+                            bottom: 1.0,
+                            left: 1.0,
+                        },
                         radii: [4.0; 4],
                     });
 
@@ -1791,7 +1957,9 @@ fn render_form_control(
                     let x = content.x() + 4.0;
                     let family = mango_render::FontFamily::from_css_name(&s.font_family);
 
-                    if let Some(v) = val && !v.is_empty() {
+                    if let Some(v) = val
+                        && !v.is_empty()
+                    {
                         let display_text = if input_type == "password" {
                             "•".repeat(v.chars().count())
                         } else {
@@ -1825,17 +1993,20 @@ fn render_form_control(
 
                             let caret_x = x + text_w;
                             let caret_h = (font_size * 1.15).min(content.height() - 4.0).max(12.0);
-                            let caret_y = content.y() + ((content.height() - caret_h) / 2.0).max(0.0);
+                            let caret_y =
+                                content.y() + ((content.height() - caret_h) / 2.0).max(0.0);
                             list.push(DisplayCommand::FillRect {
                                 rect: Rect::new(caret_x, caret_y, 1.5, caret_h),
                                 color: apply_opacity(s.color, opacity),
                             });
                         }
                     } else if is_focused {
-                        if let Some(ph) = placeholder && !ph.is_empty() {
+                        if let Some(ph) = placeholder
+                            && !ph.is_empty()
+                        {
                             let ph_color = box_node
                                 .get_attribute("_mango_placeholder_color")
-                                .and_then(|c_str| mango_css::values::Value::parse_color(c_str))
+                                .and_then(mango_css::values::Value::parse_color)
                                 .unwrap_or(Color::rgb(140, 140, 140));
                             list.push(DisplayCommand::draw_text(
                                 ph,
@@ -1853,10 +2024,12 @@ fn render_form_control(
                             rect: Rect::new(x, caret_y, 1.5, caret_h),
                             color: apply_opacity(s.color, opacity),
                         });
-                    } else if let Some(ph) = placeholder && !ph.is_empty() {
+                    } else if let Some(ph) = placeholder
+                        && !ph.is_empty()
+                    {
                         let ph_color = box_node
                             .get_attribute("_mango_placeholder_color")
-                            .and_then(|c_str| mango_css::values::Value::parse_color(c_str))
+                            .and_then(mango_css::values::Value::parse_color)
                             .unwrap_or(Color::rgb(140, 140, 140));
                         list.push(DisplayCommand::draw_text(
                             ph,
@@ -1890,7 +2063,10 @@ fn render_form_control(
                 .unwrap_or("Select...");
 
             if is_multiple || size_attr > 1 {
-                let items: Vec<&str> = selected_text.split(", ").filter(|s| !s.is_empty()).collect();
+                let items: Vec<&str> = selected_text
+                    .split(", ")
+                    .filter(|s| !s.is_empty())
+                    .collect();
                 let mut line_y = content.y() + 4.0;
                 for (idx, item) in items.iter().enumerate().take(size_attr.max(3)) {
                     if idx > 0 {
@@ -1899,7 +2075,12 @@ fn render_form_control(
                     if line_y + font_size > content.bottom() {
                         break;
                     }
-                    let item_rect = Rect::new(content.x() + 2.0, line_y - 1.0, content.width() - 4.0, font_size + 2.0);
+                    let item_rect = Rect::new(
+                        content.x() + 2.0,
+                        line_y - 1.0,
+                        content.width() - 4.0,
+                        font_size + 2.0,
+                    );
                     list.push(DisplayCommand::FillRoundedRect {
                         rect: item_rect,
                         color: apply_opacity(Color::rgb(204, 232, 255), opacity),
@@ -1930,7 +2111,9 @@ fn render_form_control(
                 ));
 
                 if s.appearance != mango_css::values::Appearance::None {
-                    let arrow_x = (content.x() + 124.0).min(content.right() - 14.0).max(x + 10.0);
+                    let arrow_x = (content.x() + 124.0)
+                        .min(content.right() - 14.0)
+                        .max(x + 10.0);
                     list.push(DisplayCommand::draw_text(
                         "▼",
                         arrow_x,
@@ -1960,7 +2143,9 @@ fn render_form_control(
             });
 
             if !has_child_text {
-                if let Some(v) = val && !v.is_empty() {
+                if let Some(v) = val
+                    && !v.is_empty()
+                {
                     list.push(DisplayCommand::draw_text(
                         v,
                         x,
@@ -1970,10 +2155,12 @@ fn render_form_control(
                         mango_render::FontWeight::Regular,
                         family,
                     ));
-                } else if let Some(ph) = placeholder && !ph.is_empty() {
+                } else if let Some(ph) = placeholder
+                    && !ph.is_empty()
+                {
                     let ph_color = box_node
                         .get_attribute("_mango_placeholder_color")
-                        .and_then(|c_str| mango_css::values::Value::parse_color(c_str))
+                        .and_then(mango_css::values::Value::parse_color)
                         .unwrap_or(Color::rgb(140, 140, 140));
                     list.push(DisplayCommand::draw_text(
                         ph,
@@ -2037,7 +2224,10 @@ fn render_progress_element(
         rect: content,
         color: border_color,
         widths: mango_render::display_list::BorderWidths {
-            top: 1.0, right: 1.0, bottom: 1.0, left: 1.0,
+            top: 1.0,
+            right: 1.0,
+            bottom: 1.0,
+            left: 1.0,
         },
         radii,
     });
@@ -2102,7 +2292,10 @@ fn render_meter_element(
         rect: content,
         color: border_color,
         widths: mango_render::display_list::BorderWidths {
-            top: 1.0, right: 1.0, bottom: 1.0, left: 1.0,
+            top: 1.0,
+            right: 1.0,
+            bottom: 1.0,
+            left: 1.0,
         },
         radii,
     });
@@ -2142,27 +2335,27 @@ fn render_meter_element(
     let fill_color = if opt_val >= high_val {
         // High is optimal
         if val >= high_val {
-            Color::rgb(40, 167, 69)   // Green (optimal)
+            Color::rgb(40, 167, 69) // Green (optimal)
         } else if val >= low_val {
-            Color::rgb(255, 193, 7)   // Yellow/Orange (suboptimal)
+            Color::rgb(255, 193, 7) // Yellow/Orange (suboptimal)
         } else {
-            Color::rgb(220, 53, 69)   // Red (poor)
+            Color::rgb(220, 53, 69) // Red (poor)
         }
     } else if opt_val <= low_val {
         // Low is optimal
         if val <= low_val {
-            Color::rgb(40, 167, 69)   // Green (optimal)
+            Color::rgb(40, 167, 69) // Green (optimal)
         } else if val <= high_val {
-            Color::rgb(255, 193, 7)   // Yellow/Orange (suboptimal)
+            Color::rgb(255, 193, 7) // Yellow/Orange (suboptimal)
         } else {
-            Color::rgb(220, 53, 69)   // Red (poor)
+            Color::rgb(220, 53, 69) // Red (poor)
         }
     } else {
         // Middle is optimal
         if val >= low_val && val <= high_val {
-            Color::rgb(40, 167, 69)   // Green (optimal)
+            Color::rgb(40, 167, 69) // Green (optimal)
         } else {
-            Color::rgb(255, 193, 7)   // Yellow/Orange (suboptimal)
+            Color::rgb(255, 193, 7) // Yellow/Orange (suboptimal)
         }
     };
 
@@ -2183,10 +2376,10 @@ fn render_meter_element(
 /// Kept here (rather than in the chrome) so the swatch painting and the
 /// picker UI always agree on the same 28 entries, in the same order.
 pub const COLOR_SWATCHES: [&str; 28] = [
-    "#000000", "#333333", "#666666", "#999999", "#cccccc", "#ffffff", "#ff0000",
-    "#ff4040", "#ff8000", "#ffb300", "#ffff00", "#d4ff00", "#00e000", "#00ff80",
-    "#00ffff", "#0080ff", "#0040ff", "#4000ff", "#8000ff", "#ff00ff", "#ff0080",
-    "#8b4513", "#daa520", "#008080", "#2f4f4f", "#800000", "#000080", "#4b0082",
+    "#000000", "#333333", "#666666", "#999999", "#cccccc", "#ffffff", "#ff0000", "#ff4040",
+    "#ff8000", "#ffb300", "#ffff00", "#d4ff00", "#00e000", "#00ff80", "#00ffff", "#0080ff",
+    "#0040ff", "#4000ff", "#8000ff", "#ff00ff", "#ff0080", "#8b4513", "#daa520", "#008080",
+    "#2f4f4f", "#800000", "#000080", "#4b0082",
 ];
 
 /// Draws the up/down spinner arrows on the right edge of an
@@ -2294,7 +2487,7 @@ fn render_iframe_embed_card(
     };
     let title_font_size = 11.0f32;
     list.push(DisplayCommand::draw_text(
-        &format!("[Frame: {}]", display_title),
+        format!("[Frame: {}]", display_title),
         rect.x() + 8.0,
         rect.y() + (header_h - title_font_size) / 2.0,
         apply_opacity(Color::rgb(75, 85, 99), opacity),
@@ -2356,28 +2549,38 @@ fn render_video_element(
 
     // 2. Poster image (if provided and decoded)
     let mut painted_poster = false;
-    if let Some(pixels) = poster_pixels {
-        if poster_w > 0 && poster_h > 0 {
-            list.push(DisplayCommand::DrawImage {
-                x: rect.x(),
-                y: rect.y(),
-                width: rect.width(),
-                height: rect.height(),
-                pixels: pixels.to_vec(),
-            });
-            painted_poster = true;
-        }
+    if let Some(pixels) = poster_pixels
+        && poster_w > 0
+        && poster_h > 0
+    {
+        list.push(DisplayCommand::DrawImage {
+            x: rect.x(),
+            y: rect.y(),
+            width: rect.width(),
+            height: rect.height(),
+            pixels: pixels.to_vec(),
+        });
+        painted_poster = true;
     }
 
     // 3. Center play overlay badge (if not playing)
     if !is_playing {
-        let overlay_y_offset = if has_controls && rect.height() >= 40.0 { 16.0 } else { 0.0 };
+        let overlay_y_offset = if has_controls && rect.height() >= 40.0 {
+            16.0
+        } else {
+            0.0
+        };
         let center_x = rect.x() + rect.width() / 2.0;
         let center_y = rect.y() + rect.height() / 2.0 - overlay_y_offset;
 
         let badge_size = 48.0f32.min(rect.height() * 0.5).min(rect.width() * 0.5);
         if badge_size >= 20.0 {
-            let badge_rect = Rect::new(center_x - badge_size / 2.0, center_y - badge_size / 2.0, badge_size, badge_size);
+            let badge_rect = Rect::new(
+                center_x - badge_size / 2.0,
+                center_y - badge_size / 2.0,
+                badge_size,
+                badge_size,
+            );
             let r = badge_size / 2.0;
             list.push(DisplayCommand::FillRoundedRect {
                 rect: badge_rect,
@@ -2387,7 +2590,12 @@ fn render_video_element(
             list.push(DisplayCommand::DrawBorder {
                 rect: badge_rect,
                 color: apply_opacity(Color::rgb(255, 255, 255), opacity * 0.3),
-                widths: mango_render::BorderWidths { top: 1.5, right: 1.5, bottom: 1.5, left: 1.5 },
+                widths: mango_render::BorderWidths {
+                    top: 1.5,
+                    right: 1.5,
+                    bottom: 1.5,
+                    left: 1.5,
+                },
                 radii: [r, r, r, r],
             });
             let play_font_size = badge_size * 0.45;
@@ -2407,7 +2615,11 @@ fn render_video_element(
             let label = if src.is_empty() {
                 "HTML5 Video".to_string()
             } else if let Some(filename) = src.split('/').next_back() {
-                if !filename.is_empty() { format!("Video: {}", filename) } else { "HTML5 Video".to_string() }
+                if !filename.is_empty() {
+                    format!("Video: {}", filename)
+                } else {
+                    "HTML5 Video".to_string()
+                }
             } else {
                 "HTML5 Video".to_string()
             };
@@ -2453,7 +2665,11 @@ fn render_video_element(
         ));
 
         // 4b. Current time / Duration text
-        let time_str = format!("{} / {}", format_media_time(current_time), format_media_time(duration));
+        let time_str = format!(
+            "{} / {}",
+            format_media_time(current_time),
+            format_media_time(duration)
+        );
         list.push(DisplayCommand::draw_text(
             &time_str,
             rect.x() + 34.0,
@@ -2477,7 +2693,11 @@ fn render_video_element(
         });
 
         // Played progress fill
-        let progress_ratio = if duration > 0.0 { (current_time / duration).clamp(0.0, 1.0) } else { 0.0 };
+        let progress_ratio = if duration > 0.0 {
+            (current_time / duration).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         let played_w = track_w * progress_ratio;
         list.push(DisplayCommand::FillRect {
             rect: Rect::new(track_start, track_y, played_w, 4.0),
@@ -2541,13 +2761,23 @@ fn render_audio_element(
     list.push(DisplayCommand::DrawBorder {
         rect,
         color: apply_opacity(Color::rgb(51, 65, 85), opacity),
-        widths: mango_render::BorderWidths { top: 1.0, right: 1.0, bottom: 1.0, left: 1.0 },
+        widths: mango_render::BorderWidths {
+            top: 1.0,
+            right: 1.0,
+            bottom: 1.0,
+            left: 1.0,
+        },
         radii: [radius, radius, radius, radius],
     });
 
     // 2. Play / Pause Button Circle (#3b82f6)
     let btn_size = 24.0f32.min(rect.height() - 8.0);
-    let btn_rect = Rect::new(rect.x() + 8.0, rect.y() + (rect.height() - btn_size) / 2.0, btn_size, btn_size);
+    let btn_rect = Rect::new(
+        rect.x() + 8.0,
+        rect.y() + (rect.height() - btn_size) / 2.0,
+        btn_size,
+        btn_size,
+    );
     let btn_r = btn_size / 2.0;
     list.push(DisplayCommand::FillRoundedRect {
         rect: btn_rect,
@@ -2568,7 +2798,11 @@ fn render_audio_element(
     ));
 
     // 3. Time text (e.g. "0:00 / 3:30")
-    let time_str = format!("{} / {}", format_media_time(current_time), format_media_time(duration));
+    let time_str = format!(
+        "{} / {}",
+        format_media_time(current_time),
+        format_media_time(duration)
+    );
     list.push(DisplayCommand::draw_text(
         &time_str,
         rect.x() + 38.0,
@@ -2592,7 +2826,11 @@ fn render_audio_element(
     });
 
     // Active progress
-    let progress_ratio = if duration > 0.0 { (current_time / duration).clamp(0.0, 1.0) } else { 0.0 };
+    let progress_ratio = if duration > 0.0 {
+        (current_time / duration).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     let played_w = track_w * progress_ratio;
     list.push(DisplayCommand::FillRect {
         rect: Rect::new(track_start, track_y, played_w, 4.0),
@@ -2680,7 +2918,11 @@ fn paint_background_image_layer(
                         mango_css::values::Length::Percent(p) => pad_h * p / 100.0,
                         _ => img_h,
                     };
-                    let width_px = if img_h > 0.0 { height_px * (img_w / img_h) } else { img_w };
+                    let width_px = if img_h > 0.0 {
+                        height_px * (img_w / img_h)
+                    } else {
+                        img_w
+                    };
                     (width_px, height_px)
                 } else if is_h_auto {
                     let width_px = match w {
@@ -2688,7 +2930,11 @@ fn paint_background_image_layer(
                         mango_css::values::Length::Percent(p) => pad_w * p / 100.0,
                         _ => img_w,
                     };
-                    let height_px = if img_w > 0.0 { width_px * (img_h / img_w) } else { img_h };
+                    let height_px = if img_w > 0.0 {
+                        width_px * (img_h / img_w)
+                    } else {
+                        img_h
+                    };
                     (width_px, height_px)
                 } else {
                     let width_px = match w {
@@ -2816,9 +3062,8 @@ mod tests {
 
         let mut rotated = ComputedStyle::default();
         rotated.background_color = Color::RED;
-        rotated.transform = mango_css::values::Transform(vec![
-            mango_css::values::TransformFunction::Rotate(45.0),
-        ]);
+        rotated.transform =
+            mango_css::values::Transform(vec![mango_css::values::TransformFunction::Rotate(45.0)]);
         rotated.transform_origin_x = mango_css::values::Length::Percent(50.0);
         rotated.transform_origin_y = mango_css::values::Length::Percent(50.0);
 
@@ -2835,19 +3080,27 @@ mod tests {
             .iter()
             .position(|c| matches!(c, DisplayCommand::PopTransform))
             .expect("PopTransform emitted");
-        assert!(push_idx < pop_idx, "transform must wrap the painted subtree");
+        assert!(
+            push_idx < pop_idx,
+            "transform must wrap the painted subtree"
+        );
 
         // The push matrix must include the rotation (b != 0 for a rotated matrix).
         if let Some(DisplayCommand::PushTransform { matrix }) = dl.iter().nth(push_idx) {
-            assert!(matrix[1].abs() > 0.1, "rotation must produce a non-zero b component");
+            assert!(
+                matrix[1].abs() > 0.1,
+                "rotation must produce a non-zero b component"
+            );
         }
 
         // Identity transforms must not emit any transform commands.
         let plain = LayoutBox::new(BoxType::BlockNode, Some(ComputedStyle::default()));
         let dl_plain = build_display_list(&plain);
-        assert!(!dl_plain
-            .iter()
-            .any(|c| matches!(c, DisplayCommand::PushTransform { .. })));
+        assert!(
+            !dl_plain
+                .iter()
+                .any(|c| matches!(c, DisplayCommand::PushTransform { .. }))
+        );
     }
 
     #[test]
@@ -2900,7 +3153,9 @@ mod tests {
         root.dimensions.content = Rect::new(10.0, 20.0, 200.0, 100.0);
 
         let dl = build_display_list(&root);
-        let grad_cmd = dl.iter().find(|c| matches!(c, DisplayCommand::FillGradient { .. }));
+        let grad_cmd = dl
+            .iter()
+            .find(|c| matches!(c, DisplayCommand::FillGradient { .. }));
         assert!(grad_cmd.is_some());
         if let Some(DisplayCommand::FillGradient { gradient, rect, .. }) = grad_cmd {
             assert_eq!(rect.width(), 200.0);
@@ -2936,7 +3191,10 @@ mod tests {
             .expect("DrawText emitted");
         assert!(shadow_idx < text_idx, "shadow must paint behind the glyphs");
 
-        if let Some(DisplayCommand::DrawTextShadow { x, y, blur_radius, .. }) = dl.iter().nth(shadow_idx) {
+        if let Some(DisplayCommand::DrawTextShadow {
+            x, y, blur_radius, ..
+        }) = dl.iter().nth(shadow_idx)
+        {
             assert_eq!(*x, 6.0);
             assert_eq!(*y, 7.0);
             assert_eq!(*blur_radius, 3.0);
@@ -3094,27 +3352,46 @@ mod tests {
 
         let dl = build_display_list(&parent);
 
-        let push_clip_idx = dl.iter().position(|cmd| matches!(cmd, DisplayCommand::PushClip { .. }));
-        let pop_clip_idx = dl.iter().position(|cmd| matches!(cmd, DisplayCommand::PopClip));
-        let fill_idx = dl.iter().position(|cmd| matches!(cmd, DisplayCommand::FillRect { color, .. } if *color == Color::RED));
+        let push_clip_idx = dl
+            .iter()
+            .position(|cmd| matches!(cmd, DisplayCommand::PushClip { .. }));
+        let pop_clip_idx = dl
+            .iter()
+            .position(|cmd| matches!(cmd, DisplayCommand::PopClip));
+        let fill_idx = dl.iter().position(
+            |cmd| matches!(cmd, DisplayCommand::FillRect { color, .. } if *color == Color::RED),
+        );
 
-        assert!(push_clip_idx.is_some(), "PushClip must be emitted for overflow: hidden container");
-        assert!(pop_clip_idx.is_some(), "PopClip must be emitted after child rendering");
+        assert!(
+            push_clip_idx.is_some(),
+            "PushClip must be emitted for overflow: hidden container"
+        );
+        assert!(
+            pop_clip_idx.is_some(),
+            "PopClip must be emitted after child rendering"
+        );
         assert!(fill_idx.is_some(), "Child fill must be emitted");
 
         let push_idx = push_clip_idx.unwrap();
         let fill = fill_idx.unwrap();
         let pop_idx = pop_clip_idx.unwrap();
 
-        assert!(push_idx < fill && fill < pop_idx, "Child fill must be surrounded by PushClip and PopClip");
+        assert!(
+            push_idx < fill && fill < pop_idx,
+            "Child fill must be surrounded by PushClip and PopClip"
+        );
     }
 
     #[test]
     fn test_form_controls_checkbox_checked() {
         let mut input_box = LayoutBox::new(BoxType::InlineBlock, None);
         input_box.tag_name = Some("input".to_string());
-        input_box.attributes.push(("type".to_string(), "checkbox".to_string()));
-        input_box.attributes.push(("checked".to_string(), "true".to_string()));
+        input_box
+            .attributes
+            .push(("type".to_string(), "checkbox".to_string()));
+        input_box
+            .attributes
+            .push(("checked".to_string(), "true".to_string()));
         input_box.style = Some(ComputedStyle::default());
         input_box.dimensions.content = Rect::new(10.0, 10.0, 14.0, 14.0);
 
@@ -3147,23 +3424,44 @@ mod tests {
             let css_text = std::fs::read_to_string(css_path).unwrap_or_default();
             println!("Loaded css: {} bytes", css_text.len());
             let sheet = mango_css::parser::parse_stylesheet(&css_text);
-            let (_box_tree, dl) = crate::layout_document(&doc, &[&sheet], mango_core::Size::new(1280.0, 900.0));
-            let texts: Vec<&str> = dl.iter().filter_map(|cmd| {
-                if let DisplayCommand::DrawText { text, .. } = cmd {
-                    Some(text.as_str())
-                } else {
-                    None
-                }
-            }).collect();
+            let (_box_tree, dl) =
+                crate::layout_document(&doc, &[&sheet], mango_core::Size::new(1280.0, 900.0));
+            let texts: Vec<&str> = dl
+                .iter()
+                .filter_map(|cmd| {
+                    if let DisplayCommand::DrawText { text, .. } = cmd {
+                        Some(text.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
 
-            assert!(texts.contains(&"All Regions"), "Select should render first option text 'All Regions'");
-            assert!(texts.contains(&"Any Time"), "Select should render first option text 'Any Time'");
-            assert!(!texts.contains(&"Select..."), "Select should not render fallback 'Select...'");
+            assert!(
+                texts.contains(&"All Regions"),
+                "Select should render first option text 'All Regions'"
+            );
+            assert!(
+                texts.contains(&"Any Time"),
+                "Select should render first option text 'Any Time'"
+            );
+            assert!(
+                !texts.contains(&"Select..."),
+                "Select should not render fallback 'Select...'"
+            );
 
             // Verify search button has DrawImage (vector icon) instead of missing emoji "🔍"
-            let has_search_vector_icon = dl.iter().any(|cmd| matches!(cmd, DisplayCommand::DrawImage { .. }));
-            assert!(has_search_vector_icon, "Search button should render crisp vector icon");
-            assert!(!texts.contains(&"🔍"), "Search button must not output missing emoji glyph '🔍'");
+            let has_search_vector_icon = dl
+                .iter()
+                .any(|cmd| matches!(cmd, DisplayCommand::DrawImage { .. }));
+            assert!(
+                has_search_vector_icon,
+                "Search button should render crisp vector icon"
+            );
+            assert!(
+                !texts.contains(&"🔍"),
+                "Search button must not output missing emoji glyph '🔍'"
+            );
         }
     }
 
@@ -3171,10 +3469,18 @@ mod tests {
     fn test_input_caret_fill_rect() {
         let mut input_box = LayoutBox::new(BoxType::BlockNode, Some(ComputedStyle::default()));
         input_box.tag_name = Some("input".to_string());
-        input_box.attributes.push(("type".to_string(), "text".to_string()));
-        input_box.attributes.push(("value".to_string(), "hello".to_string()));
-        input_box.attributes.push(("data-mango-focused".to_string(), "true".to_string()));
-        input_box.attributes.push(("_mango_cursor_pos".to_string(), "3".to_string()));
+        input_box
+            .attributes
+            .push(("type".to_string(), "text".to_string()));
+        input_box
+            .attributes
+            .push(("value".to_string(), "hello".to_string()));
+        input_box
+            .attributes
+            .push(("data-mango-focused".to_string(), "true".to_string()));
+        input_box
+            .attributes
+            .push(("_mango_cursor_pos".to_string(), "3".to_string()));
         input_box.dimensions.content = Rect::new(10.0, 10.0, 150.0, 30.0);
 
         let dl = build_display_list(&input_box);
@@ -3184,16 +3490,21 @@ mod tests {
             DisplayCommand::DrawText { text, .. } => text == "hello",
             _ => false,
         });
-        assert!(has_clean_text, "Input display_text must be clean 'hello' without '|'");
+        assert!(
+            has_clean_text,
+            "Input display_text must be clean 'hello' without '|'"
+        );
 
         // Verify caret is drawn as a FillRect command
         let has_caret_rect = dl.iter().any(|cmd| match cmd {
             DisplayCommand::FillRect { rect, .. } => rect.width() == 1.5 && rect.x() > 10.0,
             _ => false,
         });
-        assert!(has_caret_rect, "Input caret must be rendered as a FillRect line");
+        assert!(
+            has_caret_rect,
+            "Input caret must be rendered as a FillRect line"
+        );
     }
-
 
     #[test]
     fn test_position_fixed_offsets_with_scroll() {
@@ -3286,9 +3597,19 @@ mod tests {
         box_node.dimensions.content = Rect::new(10.0, 20.0, 100.0, 100.0);
 
         let dl = build_display_list(&box_node);
-        let draw_img_cmds: Vec<&DisplayCommand> = dl.iter().filter(|cmd| matches!(cmd, DisplayCommand::DrawImage { .. })).collect();
+        let draw_img_cmds: Vec<&DisplayCommand> = dl
+            .iter()
+            .filter(|cmd| matches!(cmd, DisplayCommand::DrawImage { .. }))
+            .collect();
         assert_eq!(draw_img_cmds.len(), 1);
-        if let DisplayCommand::DrawImage { x, y, width, height, pixels } = draw_img_cmds[0] {
+        if let DisplayCommand::DrawImage {
+            x,
+            y,
+            width,
+            height,
+            pixels,
+        } = draw_img_cmds[0]
+        {
             assert_eq!(*x, 10.0);
             assert_eq!(*y, 20.0);
             assert_eq!(*width, 40.0);
@@ -3356,8 +3677,18 @@ mod tests {
             .iter()
             .filter(|cmd| matches!(cmd, DisplayCommand::DrawBorder { .. }))
             .collect();
-        assert_eq!(border_cmds.len(), 1, "Should emit 1 DrawBorder command for the outline");
-        if let DisplayCommand::DrawBorder { rect, color, widths, .. } = border_cmds[0] {
+        assert_eq!(
+            border_cmds.len(),
+            1,
+            "Should emit 1 DrawBorder command for the outline"
+        );
+        if let DisplayCommand::DrawBorder {
+            rect,
+            color,
+            widths,
+            ..
+        } = border_cmds[0]
+        {
             assert_eq!(*color, Color::RED);
             assert_eq!(rect.x(), 45.0);
             assert_eq!(rect.y(), 45.0);
@@ -3395,14 +3726,20 @@ mod tests {
             }
             _ => false,
         });
-        assert!(has_white_fill, "IFrame should paint white viewport background");
+        assert!(
+            has_white_fill,
+            "IFrame should paint white viewport background"
+        );
 
         // Verify embed card frame title is drawn
         let has_frame_title = dl.iter().any(|cmd| match cmd {
             DisplayCommand::DrawText { text, .. } => text.contains("example.com/embed"),
             _ => false,
         });
-        assert!(has_frame_title, "IFrame placeholder card should display source URL");
+        assert!(
+            has_frame_title,
+            "IFrame placeholder card should display source URL"
+        );
 
         // Verify sandbox badge is drawn
         let has_sandbox_badge = dl.iter().any(|cmd| match cmd {
@@ -3427,7 +3764,10 @@ mod tests {
         let has_clip_html = dl_html
             .iter()
             .any(|cmd| matches!(cmd, DisplayCommand::PushClip { .. }));
-        assert!(!has_clip_html, "html element must not emit PushClip for overflow");
+        assert!(
+            !has_clip_html,
+            "html element must not emit PushClip for overflow"
+        );
 
         // 2. Body element with overflow-x: hidden should NOT emit PushClip
         let mut body_box = LayoutBox::new(BoxType::BlockNode, Some(style.clone()));
@@ -3438,7 +3778,10 @@ mod tests {
         let has_clip_body = dl_body
             .iter()
             .any(|cmd| matches!(cmd, DisplayCommand::PushClip { .. }));
-        assert!(!has_clip_body, "body element must not emit PushClip for overflow");
+        assert!(
+            !has_clip_body,
+            "body element must not emit PushClip for overflow"
+        );
 
         // 3. Normal container with overflow-x: hidden and overflow-y: visible should have unconstrained vertical clip
         let mut div_box = LayoutBox::new(BoxType::BlockNode, Some(style));
@@ -3454,7 +3797,10 @@ mod tests {
             assert_eq!(rect.x(), 10.0);
             assert_eq!(rect.width(), 500.0);
             // Vertical extent should be unconstrained so vertical scrolling content isn't clipped
-            assert!(rect.height() > 10000.0, "Vertical extent should be unconstrained for overflow-y: visible");
+            assert!(
+                rect.height() > 10000.0,
+                "Vertical extent should be unconstrained for overflow-y: visible"
+            );
         }
     }
 
@@ -3511,7 +3857,10 @@ mod tests {
             DisplayCommand::DrawText { text, .. } => text.contains("0:15 / 1:30"),
             _ => false,
         });
-        assert!(has_time_text, "Video controls bar should display formatted elapsed and duration timestamps");
+        assert!(
+            has_time_text,
+            "Video controls bar should display formatted elapsed and duration timestamps"
+        );
 
         // 2. Audio with controls
         let mut audio_box = LayoutBox::new(
@@ -3540,7 +3889,10 @@ mod tests {
             }
             _ => false,
         });
-        assert!(has_audio_card, "Audio should render dark slate rounded container");
+        assert!(
+            has_audio_card,
+            "Audio should render dark slate rounded container"
+        );
 
         // Verify pause glyph when playing
         let has_pause_btn = dl_audio.iter().any(|cmd| match cmd {
@@ -3587,19 +3939,35 @@ mod tests {
 
         // Verify DrawImage command was emitted with canvas pixels
         let has_draw_image = dl.iter().any(|cmd| match cmd {
-            DisplayCommand::DrawImage { x, y, width, height, pixels } => {
-                *x == 20.0 && *y == 30.0 && *width == 100.0 && *height == 50.0 && pixels.len() == 100 * 50
+            DisplayCommand::DrawImage {
+                x,
+                y,
+                width,
+                height,
+                pixels,
+            } => {
+                *x == 20.0
+                    && *y == 30.0
+                    && *width == 100.0
+                    && *height == 50.0
+                    && pixels.len() == 100 * 50
             }
             _ => false,
         });
-        assert!(has_draw_image, "Canvas should emit DrawImage command with pixel data");
+        assert!(
+            has_draw_image,
+            "Canvas should emit DrawImage command with pixel data"
+        );
 
         // Verify fallback child text is NOT drawn
         let has_fallback_text = dl.iter().any(|cmd| match cmd {
             DisplayCommand::DrawText { text, .. } => text.contains("does not support canvas"),
             _ => false,
         });
-        assert!(!has_fallback_text, "Canvas fallback text must not be rendered");
+        assert!(
+            !has_fallback_text,
+            "Canvas fallback text must not be rendered"
+        );
     }
 
     #[test]
@@ -3632,8 +4000,12 @@ mod tests {
     fn test_modal_dialog_backdrop() {
         let mut dialog_box = LayoutBox::new(BoxType::BlockNode, Some(ComputedStyle::default()));
         dialog_box.tag_name = Some("dialog".to_string());
-        dialog_box.attributes.push(("open".to_string(), "".to_string()));
-        dialog_box.attributes.push(("data-mango-modal".to_string(), "true".to_string()));
+        dialog_box
+            .attributes
+            .push(("open".to_string(), "".to_string()));
+        dialog_box
+            .attributes
+            .push(("data-mango-modal".to_string(), "true".to_string()));
         dialog_box.dimensions.content = Rect::new(100.0, 100.0, 200.0, 100.0);
 
         let dl = build_display_list(&dialog_box);
@@ -3645,7 +4017,10 @@ mod tests {
             }
             _ => false,
         });
-        assert!(has_backdrop, "Modal dialog must render dimming backdrop covering viewport");
+        assert!(
+            has_backdrop,
+            "Modal dialog must render dimming backdrop covering viewport"
+        );
     }
 
     #[test]
@@ -3653,8 +4028,12 @@ mod tests {
         // 1. Determinate progress
         let mut progress_box = LayoutBox::new(BoxType::InlineBlock, Some(ComputedStyle::default()));
         progress_box.tag_name = Some("progress".to_string());
-        progress_box.attributes.push(("value".to_string(), "50".to_string()));
-        progress_box.attributes.push(("max".to_string(), "100".to_string()));
+        progress_box
+            .attributes
+            .push(("value".to_string(), "50".to_string()));
+        progress_box
+            .attributes
+            .push(("max".to_string(), "100".to_string()));
         progress_box.dimensions.content = Rect::new(10.0, 10.0, 160.0, 16.0);
 
         let dl_progress = build_display_list(&progress_box);
@@ -3664,17 +4043,32 @@ mod tests {
             }
             _ => false,
         });
-        assert!(has_fill, "Progress value 50/100 must render 50% fill (80px)");
+        assert!(
+            has_fill,
+            "Progress value 50/100 must render 50% fill (80px)"
+        );
 
         // 2. Meter (optimal zone -> green)
         let mut meter_box = LayoutBox::new(BoxType::InlineBlock, Some(ComputedStyle::default()));
         meter_box.tag_name = Some("meter".to_string());
-        meter_box.attributes.push(("min".to_string(), "0".to_string()));
-        meter_box.attributes.push(("max".to_string(), "100".to_string()));
-        meter_box.attributes.push(("low".to_string(), "33".to_string()));
-        meter_box.attributes.push(("high".to_string(), "66".to_string()));
-        meter_box.attributes.push(("optimum".to_string(), "80".to_string()));
-        meter_box.attributes.push(("value".to_string(), "75".to_string()));
+        meter_box
+            .attributes
+            .push(("min".to_string(), "0".to_string()));
+        meter_box
+            .attributes
+            .push(("max".to_string(), "100".to_string()));
+        meter_box
+            .attributes
+            .push(("low".to_string(), "33".to_string()));
+        meter_box
+            .attributes
+            .push(("high".to_string(), "66".to_string()));
+        meter_box
+            .attributes
+            .push(("optimum".to_string(), "80".to_string()));
+        meter_box
+            .attributes
+            .push(("value".to_string(), "75".to_string()));
         meter_box.dimensions.content = Rect::new(10.0, 10.0, 100.0, 16.0);
 
         let dl_meter = build_display_list(&meter_box);
@@ -3684,7 +4078,10 @@ mod tests {
             }
             _ => false,
         });
-        assert!(has_green_meter, "Optimal meter must render green fill of 75px");
+        assert!(
+            has_green_meter,
+            "Optimal meter must render green fill of 75px"
+        );
     }
 
     #[test]
@@ -3692,19 +4089,36 @@ mod tests {
         // Multi-select rendering
         let mut select_box = LayoutBox::new(BoxType::InlineBlock, Some(ComputedStyle::default()));
         select_box.tag_name = Some("select".to_string());
-        select_box.attributes.push(("_mango_is_multiple".to_string(), "true".to_string()));
-        select_box.attributes.push(("_mango_selected_text".to_string(), "Apple, Cherry".to_string()));
+        select_box
+            .attributes
+            .push(("_mango_is_multiple".to_string(), "true".to_string()));
+        select_box.attributes.push((
+            "_mango_selected_text".to_string(),
+            "Apple, Cherry".to_string(),
+        ));
         select_box.dimensions.content = Rect::new(10.0, 10.0, 150.0, 60.0);
 
         let dl = build_display_list(&select_box);
-        let texts: Vec<String> = dl.iter().filter_map(|cmd| match cmd {
-            DisplayCommand::DrawText { text, .. } => Some(text.clone()),
-            _ => None,
-        }).collect();
+        let texts: Vec<String> = dl
+            .iter()
+            .filter_map(|cmd| match cmd {
+                DisplayCommand::DrawText { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
 
-        assert!(texts.contains(&"Apple".to_string()), "Multi-select must render option 'Apple'");
-        assert!(texts.contains(&"Cherry".to_string()), "Multi-select must render option 'Cherry'");
-        assert!(!texts.contains(&"▼".to_string()), "Multi-select should not render drop-down arrow");
+        assert!(
+            texts.contains(&"Apple".to_string()),
+            "Multi-select must render option 'Apple'"
+        );
+        assert!(
+            texts.contains(&"Cherry".to_string()),
+            "Multi-select must render option 'Cherry'"
+        );
+        assert!(
+            !texts.contains(&"▼".to_string()),
+            "Multi-select should not render drop-down arrow"
+        );
     }
 
     #[test]
@@ -3726,13 +4140,32 @@ mod tests {
 
         let dl = build_display_list(&b);
 
-        let has_push_blend = dl.iter().any(|cmd| matches!(cmd, DisplayCommand::PushBlendMode { mode: BlendMode::Multiply }));
-        let has_pop_blend = dl.iter().any(|cmd| matches!(cmd, DisplayCommand::PopBlendMode));
-        let has_push_clip = dl.iter().any(|cmd| matches!(cmd, DisplayCommand::PushClipPath { .. }));
-        let has_pop_clip = dl.iter().any(|cmd| matches!(cmd, DisplayCommand::PopClipPath));
-        let has_push_filter = dl.iter().any(|cmd| matches!(cmd, DisplayCommand::PushFilter { .. }));
-        let has_pop_filter = dl.iter().any(|cmd| matches!(cmd, DisplayCommand::PopFilter));
-        let has_push_backdrop = dl.iter().any(|cmd| matches!(cmd, DisplayCommand::PushBackdropFilter { .. }));
+        let has_push_blend = dl.iter().any(|cmd| {
+            matches!(
+                cmd,
+                DisplayCommand::PushBlendMode {
+                    mode: BlendMode::Multiply
+                }
+            )
+        });
+        let has_pop_blend = dl
+            .iter()
+            .any(|cmd| matches!(cmd, DisplayCommand::PopBlendMode));
+        let has_push_clip = dl
+            .iter()
+            .any(|cmd| matches!(cmd, DisplayCommand::PushClipPath { .. }));
+        let has_pop_clip = dl
+            .iter()
+            .any(|cmd| matches!(cmd, DisplayCommand::PopClipPath));
+        let has_push_filter = dl
+            .iter()
+            .any(|cmd| matches!(cmd, DisplayCommand::PushFilter { .. }));
+        let has_pop_filter = dl
+            .iter()
+            .any(|cmd| matches!(cmd, DisplayCommand::PopFilter));
+        let has_push_backdrop = dl
+            .iter()
+            .any(|cmd| matches!(cmd, DisplayCommand::PushBackdropFilter { .. }));
 
         assert!(has_push_blend, "PushBlendMode must be present");
         assert!(has_pop_blend, "PopBlendMode must be present");
@@ -3745,7 +4178,9 @@ mod tests {
 
     #[test]
     fn test_display_list_text_features() {
-        use mango_css::values::{Length, TextDecoration, TextDecorationThickness, TextEmphasisStyle};
+        use mango_css::values::{
+            Length, TextDecoration, TextDecorationThickness, TextEmphasisStyle,
+        };
 
         // 1. Text underline with custom offset and thickness emits DrawLine
         let mut style1 = ComputedStyle::default();
@@ -3755,18 +4190,35 @@ mod tests {
         style1.text_underline_offset = Length::Px(5.0);
         style1.text_decoration_thickness = TextDecorationThickness::Length(Length::Px(3.0));
 
-        let mut text_box1 = LayoutBox::new(BoxType::TextNode("Underlined Text".to_string()), Some(style1));
+        let mut text_box1 = LayoutBox::new(
+            BoxType::TextNode("Underlined Text".to_string()),
+            Some(style1),
+        );
         text_box1.dimensions.content = Rect::new(10.0, 20.0, 150.0, 24.0);
 
         let dl1 = build_display_list(&text_box1);
 
         let has_custom_underline = dl1.iter().any(|cmd| match cmd {
-            DisplayCommand::DrawLine { x1, y1, x2, y2, color, thickness } => {
-                *x1 == 10.0 && *x2 == 160.0 && (*y1 - y2).abs() < 0.01 && *thickness == 3.0 && *color == Color::rgb(0, 0, 255)
+            DisplayCommand::DrawLine {
+                x1,
+                y1,
+                x2,
+                y2,
+                color,
+                thickness,
+            } => {
+                *x1 == 10.0
+                    && *x2 == 160.0
+                    && (*y1 - y2).abs() < 0.01
+                    && *thickness == 3.0
+                    && *color == Color::rgb(0, 0, 255)
             }
             _ => false,
         });
-        assert!(has_custom_underline, "Custom text-underline-offset and thickness must emit DrawLine");
+        assert!(
+            has_custom_underline,
+            "Custom text-underline-offset and thickness must emit DrawLine"
+        );
 
         // 2. Text emphasis emits DrawText for mark characters with emphasis color
         let mut style2 = ComputedStyle::default();
@@ -3780,13 +4232,24 @@ mod tests {
 
         let dl2 = build_display_list(&text_box2);
 
-        let emphasis_marks: Vec<_> = dl2.iter().filter_map(|cmd| match cmd {
-            DisplayCommand::DrawText { text, color, .. } if text == "●" => Some(*color),
-            _ => None,
-        }).collect();
+        let emphasis_marks: Vec<_> = dl2
+            .iter()
+            .filter_map(|cmd| match cmd {
+                DisplayCommand::DrawText { text, color, .. } if text == "●" => Some(*color),
+                _ => None,
+            })
+            .collect();
 
-        assert_eq!(emphasis_marks.len(), 3, "Each non-whitespace character must have an emphasis mark '●'");
-        assert_eq!(emphasis_marks[0], Color::rgb(255, 0, 0), "Emphasis mark must use text-emphasis-color");
+        assert_eq!(
+            emphasis_marks.len(),
+            3,
+            "Each non-whitespace character must have an emphasis mark '●'"
+        );
+        assert_eq!(
+            emphasis_marks[0],
+            Color::rgb(255, 0, 0),
+            "Emphasis mark must use text-emphasis-color"
+        );
     }
 
     #[test]
@@ -3798,11 +4261,17 @@ mod tests {
         cb_style.accent_color = Some(accent);
         let mut cb_box = LayoutBox::new(BoxType::InlineBlock, Some(cb_style));
         cb_box.tag_name = Some("input".to_string());
-        cb_box.attributes.push(("type".to_string(), "checkbox".to_string()));
-        cb_box.attributes.push(("checked".to_string(), "true".to_string()));
+        cb_box
+            .attributes
+            .push(("type".to_string(), "checkbox".to_string()));
+        cb_box
+            .attributes
+            .push(("checked".to_string(), "true".to_string()));
         cb_box.dimensions.content = Rect::new(0.0, 0.0, 16.0, 16.0);
         let cb_dl = build_display_list(&cb_box);
-        let cb_has_accent = cb_dl.iter().any(|cmd| matches!(cmd, DisplayCommand::FillRoundedRect { color, .. } if *color == accent));
+        let cb_has_accent = cb_dl.iter().any(
+            |cmd| matches!(cmd, DisplayCommand::FillRoundedRect { color, .. } if *color == accent),
+        );
         assert!(cb_has_accent, "Checked checkbox should use accent-color");
 
         // 2. Radio
@@ -3810,11 +4279,17 @@ mod tests {
         r_style.accent_color = Some(accent);
         let mut r_box = LayoutBox::new(BoxType::InlineBlock, Some(r_style));
         r_box.tag_name = Some("input".to_string());
-        r_box.attributes.push(("type".to_string(), "radio".to_string()));
-        r_box.attributes.push(("checked".to_string(), "true".to_string()));
+        r_box
+            .attributes
+            .push(("type".to_string(), "radio".to_string()));
+        r_box
+            .attributes
+            .push(("checked".to_string(), "true".to_string()));
         r_box.dimensions.content = Rect::new(0.0, 0.0, 16.0, 16.0);
         let r_dl = build_display_list(&r_box);
-        let r_has_accent = r_dl.iter().any(|cmd| matches!(cmd, DisplayCommand::FillRoundedRect { color, .. } if *color == accent));
+        let r_has_accent = r_dl.iter().any(
+            |cmd| matches!(cmd, DisplayCommand::FillRoundedRect { color, .. } if *color == accent),
+        );
         assert!(r_has_accent, "Checked radio should use accent-color");
 
         // 3. Range
@@ -3822,11 +4297,17 @@ mod tests {
         rng_style.accent_color = Some(accent);
         let mut rng_box = LayoutBox::new(BoxType::InlineBlock, Some(rng_style));
         rng_box.tag_name = Some("input".to_string());
-        rng_box.attributes.push(("type".to_string(), "range".to_string()));
-        rng_box.attributes.push(("value".to_string(), "50".to_string()));
+        rng_box
+            .attributes
+            .push(("type".to_string(), "range".to_string()));
+        rng_box
+            .attributes
+            .push(("value".to_string(), "50".to_string()));
         rng_box.dimensions.content = Rect::new(0.0, 0.0, 100.0, 20.0);
         let rng_dl = build_display_list(&rng_box);
-        let rng_has_accent = rng_dl.iter().any(|cmd| matches!(cmd, DisplayCommand::FillRoundedRect { color, .. } if *color == accent));
+        let rng_has_accent = rng_dl.iter().any(
+            |cmd| matches!(cmd, DisplayCommand::FillRoundedRect { color, .. } if *color == accent),
+        );
         assert!(rng_has_accent, "Range slider should use accent-color");
 
         // 4. Progress
@@ -3834,11 +4315,17 @@ mod tests {
         prog_style.accent_color = Some(accent);
         let mut prog_box = LayoutBox::new(BoxType::InlineBlock, Some(prog_style));
         prog_box.tag_name = Some("progress".to_string());
-        prog_box.attributes.push(("value".to_string(), "50".to_string()));
-        prog_box.attributes.push(("max".to_string(), "100".to_string()));
+        prog_box
+            .attributes
+            .push(("value".to_string(), "50".to_string()));
+        prog_box
+            .attributes
+            .push(("max".to_string(), "100".to_string()));
         prog_box.dimensions.content = Rect::new(0.0, 0.0, 160.0, 16.0);
         let prog_dl = build_display_list(&prog_box);
-        let prog_has_accent = prog_dl.iter().any(|cmd| matches!(cmd, DisplayCommand::FillRoundedRect { color, .. } if *color == accent));
+        let prog_has_accent = prog_dl.iter().any(
+            |cmd| matches!(cmd, DisplayCommand::FillRoundedRect { color, .. } if *color == accent),
+        );
         assert!(prog_has_accent, "Progress bar should use accent-color");
     }
 
@@ -3867,11 +4354,26 @@ mod tests {
         // Contain: fit to width → rendered 100x50, centered → offset_y = 25
         let img_contain = make_img(ObjectFit::Contain, 100.0, 100.0, 200.0, 100.0);
         let dl = build_display_list(&img_contain);
-        let draw_cmd = dl.iter().find(|c| matches!(c, DisplayCommand::DrawImage { .. }));
+        let draw_cmd = dl
+            .iter()
+            .find(|c| matches!(c, DisplayCommand::DrawImage { .. }));
         assert!(draw_cmd.is_some(), "Contain should emit DrawImage");
-        if let Some(DisplayCommand::DrawImage { x, y, width, height, .. }) = draw_cmd {
-            assert!((width - 100.0).abs() < 1.0, "contain: width should be 100, got {width}");
-            assert!((height - 50.0).abs() < 1.0, "contain: height should be 50, got {height}");
+        if let Some(DisplayCommand::DrawImage {
+            x,
+            y,
+            width,
+            height,
+            ..
+        }) = draw_cmd
+        {
+            assert!(
+                (width - 100.0).abs() < 1.0,
+                "contain: width should be 100, got {width}"
+            );
+            assert!(
+                (height - 50.0).abs() < 1.0,
+                "contain: height should be 50, got {height}"
+            );
             // Centered: y offset = 20 + (100 - 50) * 0.5 = 45
             assert!((y - 45.0).abs() < 1.0, "contain: y should be 45, got {y}");
             assert!((x - 10.0).abs() < 1.0, "contain: x should be 10, got {x}");
@@ -3881,12 +4383,29 @@ mod tests {
         let img_cover = make_img(ObjectFit::Cover, 100.0, 100.0, 200.0, 100.0);
         let dl = build_display_list(&img_cover);
         // Cover should emit PushClip before DrawImage
-        let has_clip = dl.iter().any(|c| matches!(c, DisplayCommand::PushClip { .. }));
+        let has_clip = dl
+            .iter()
+            .any(|c| matches!(c, DisplayCommand::PushClip { .. }));
         assert!(has_clip, "cover should emit PushClip");
-        let draw_cmd = dl.iter().find(|c| matches!(c, DisplayCommand::DrawImage { .. }));
-        if let Some(DisplayCommand::DrawImage { x, y: _, width, height, .. }) = draw_cmd {
-            assert!((width - 200.0).abs() < 1.0, "cover: width should be 200, got {width}");
-            assert!((height - 100.0).abs() < 1.0, "cover: height should be 100, got {height}");
+        let draw_cmd = dl
+            .iter()
+            .find(|c| matches!(c, DisplayCommand::DrawImage { .. }));
+        if let Some(DisplayCommand::DrawImage {
+            x,
+            y: _,
+            width,
+            height,
+            ..
+        }) = draw_cmd
+        {
+            assert!(
+                (width - 200.0).abs() < 1.0,
+                "cover: width should be 200, got {width}"
+            );
+            assert!(
+                (height - 100.0).abs() < 1.0,
+                "cover: height should be 100, got {height}"
+            );
             // Centered: x offset = 10 + (100 - 200) * 0.5 = -40
             assert!((x - (-40.0)).abs() < 1.0, "cover: x should be -40, got {x}");
         }
@@ -3894,41 +4413,78 @@ mod tests {
         // None: use intrinsic size 200x100 in 100x100 box
         let img_none = make_img(ObjectFit::None, 100.0, 100.0, 200.0, 100.0);
         let dl = build_display_list(&img_none);
-        let draw_cmd = dl.iter().find(|c| matches!(c, DisplayCommand::DrawImage { .. }));
+        let draw_cmd = dl
+            .iter()
+            .find(|c| matches!(c, DisplayCommand::DrawImage { .. }));
         if let Some(DisplayCommand::DrawImage { width, height, .. }) = draw_cmd {
-            assert!((width - 200.0).abs() < 1.0, "none: width should be 200, got {width}");
-            assert!((height - 100.0).abs() < 1.0, "none: height should be 100, got {height}");
+            assert!(
+                (width - 200.0).abs() < 1.0,
+                "none: width should be 200, got {width}"
+            );
+            assert!(
+                (height - 100.0).abs() < 1.0,
+                "none: height should be 100, got {height}"
+            );
         }
 
         // Scale-down: intrinsic 50x25 in 100x100 → contain would produce 100x50 > intrinsic → use none (50x25)
         let img_sd = make_img(ObjectFit::ScaleDown, 100.0, 100.0, 50.0, 25.0);
         let dl = build_display_list(&img_sd);
-        let draw_cmd = dl.iter().find(|c| matches!(c, DisplayCommand::DrawImage { .. }));
+        let draw_cmd = dl
+            .iter()
+            .find(|c| matches!(c, DisplayCommand::DrawImage { .. }));
         if let Some(DisplayCommand::DrawImage { width, height, .. }) = draw_cmd {
-            assert!((width - 50.0).abs() < 1.0, "scale-down (none path): width should be 50, got {width}");
-            assert!((height - 25.0).abs() < 1.0, "scale-down (none path): height should be 25, got {height}");
+            assert!(
+                (width - 50.0).abs() < 1.0,
+                "scale-down (none path): width should be 50, got {width}"
+            );
+            assert!(
+                (height - 25.0).abs() < 1.0,
+                "scale-down (none path): height should be 25, got {height}"
+            );
         }
 
         // Scale-down: intrinsic 400x200 in 100x100 → contain produces 100x50 < intrinsic → use contain
         let img_sd2 = make_img(ObjectFit::ScaleDown, 100.0, 100.0, 400.0, 200.0);
         let dl = build_display_list(&img_sd2);
-        let draw_cmd = dl.iter().find(|c| matches!(c, DisplayCommand::DrawImage { .. }));
+        let draw_cmd = dl
+            .iter()
+            .find(|c| matches!(c, DisplayCommand::DrawImage { .. }));
         if let Some(DisplayCommand::DrawImage { width, height, .. }) = draw_cmd {
-            assert!((width - 100.0).abs() < 1.0, "scale-down (contain path): width should be 100, got {width}");
-            assert!((height - 50.0).abs() < 1.0, "scale-down (contain path): height should be 50, got {height}");
+            assert!(
+                (width - 100.0).abs() < 1.0,
+                "scale-down (contain path): width should be 100, got {width}"
+            );
+            assert!(
+                (height - 50.0).abs() < 1.0,
+                "scale-down (contain path): height should be 50, got {height}"
+            );
         }
 
         // Fill: should use exact box dimensions
         let img_fill = make_img(ObjectFit::Fill, 100.0, 100.0, 200.0, 100.0);
         let dl = build_display_list(&img_fill);
-        let draw_cmd = dl.iter().find(|c| matches!(c, DisplayCommand::DrawImage { .. }));
-        if let Some(DisplayCommand::DrawImage { x, y, width, height, .. }) = draw_cmd {
-            assert!((width - 100.0).abs() < 1.0, "fill: width should be 100, got {width}");
-            assert!((height - 100.0).abs() < 1.0, "fill: height should be 100, got {height}");
+        let draw_cmd = dl
+            .iter()
+            .find(|c| matches!(c, DisplayCommand::DrawImage { .. }));
+        if let Some(DisplayCommand::DrawImage {
+            x,
+            y,
+            width,
+            height,
+            ..
+        }) = draw_cmd
+        {
+            assert!(
+                (width - 100.0).abs() < 1.0,
+                "fill: width should be 100, got {width}"
+            );
+            assert!(
+                (height - 100.0).abs() < 1.0,
+                "fill: height should be 100, got {height}"
+            );
             assert!((x - 10.0).abs() < 1.0, "fill: x should be 10, got {x}");
             assert!((y - 20.0).abs() < 1.0, "fill: y should be 20, got {y}");
         }
     }
 }
-
-

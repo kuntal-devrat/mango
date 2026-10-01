@@ -24,10 +24,13 @@ pub fn url_encode(input: &str) -> String {
                 encoded.push('+');
             }
             _ => {
+                const HEX: &[u8; 16] = b"0123456789ABCDEF";
                 let mut buf = [0u8; 4];
                 let utf8_bytes = ch.encode_utf8(&mut buf);
                 for b in utf8_bytes.bytes() {
-                    encoded.push_str(&format!("%{:02X}", b));
+                    encoded.push('%');
+                    encoded.push(HEX[(b >> 4) as usize] as char);
+                    encoded.push(HEX[(b & 0x0F) as usize] as char);
                 }
             }
         }
@@ -46,17 +49,18 @@ pub fn is_search_query(input: &str) -> bool {
     let lower = trimmed.to_ascii_lowercase();
 
     // Explicit schemes (case-insensitive)
-    if let Some((scheme, rest)) = lower.split_once(':') {
-        if !scheme.contains('/') && !scheme.contains(' ') {
-            match scheme {
-                "http" | "https" | "ftp" | "file" | "about" | "test" | "data"
-                | "view-source" | "javascript" | "mailto" | "blob" | "tel" => {
+    if let Some((scheme, rest)) = lower.split_once(':')
+        && !scheme.contains('/')
+        && !scheme.contains(' ')
+    {
+        match scheme {
+            "http" | "https" | "ftp" | "file" | "about" | "test" | "data" | "view-source"
+            | "javascript" | "mailto" | "blob" | "tel" => {
+                return false;
+            }
+            _ => {
+                if rest.starts_with("//") {
                     return false;
-                }
-                _ => {
-                    if rest.starts_with("//") {
-                        return false;
-                    }
                 }
             }
         }
@@ -76,7 +80,14 @@ pub fn is_search_query(input: &str) -> bool {
     if trimmed.starts_with('[') {
         return false;
     }
-    if lower == "::1" || trimmed.split('/').next().unwrap_or("").parse::<std::net::Ipv6Addr>().is_ok() {
+    if lower == "::1"
+        || trimmed
+            .split('/')
+            .next()
+            .unwrap_or("")
+            .parse::<std::net::Ipv6Addr>()
+            .is_ok()
+    {
         return false;
     }
 
@@ -94,10 +105,11 @@ pub fn is_search_query(input: &str) -> bool {
     }
 
     // Host with explicit port e.g. my-machine:3000
-    if let Some((h, port_str)) = host_part.split_once(':') {
-        if !h.is_empty() && port_str.parse::<u16>().is_ok() {
-            return false;
-        }
+    if let Some((h, port_str)) = host_part.split_once(':')
+        && !h.is_empty()
+        && port_str.parse::<u16>().is_ok()
+    {
+        return false;
     }
 
     // Domain check: must contain dot, and not start/end with dot
@@ -131,7 +143,10 @@ pub fn resolve_omnibox_input(input: &str) -> NavigationTarget {
 }
 
 /// Resolves raw omnibox input using the provided browser configuration.
-pub fn resolve_omnibox_input_with_config(input: &str, config: &crate::config::Config) -> NavigationTarget {
+pub fn resolve_omnibox_input_with_config(
+    input: &str,
+    config: &crate::config::Config,
+) -> NavigationTarget {
     let trimmed = input.trim();
     if is_special_or_local_page(trimmed) {
         NavigationTarget::SpecialOrLocal(trimmed.to_string())

@@ -3,7 +3,7 @@
 //! Provides convenience wrappers around the [`crate::font::FontManager`] for
 //! backward-compatible text measurement used by the layout engine.
 
-use crate::font::{font_manager, FontFamily, FontWeight};
+use crate::font::{FontFamily, FontWeight, font_manager};
 
 /// Measures the width and height of a text string at the given font size.
 ///

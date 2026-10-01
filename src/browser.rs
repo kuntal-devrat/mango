@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 
 use mango_core::{Color, Rect, Size};
 use mango_css::computed::ComputedStyle;
-use mango_css::{parse_stylesheet, Stylesheet};
+use mango_css::{Stylesheet, parse_stylesheet};
 use mango_html::dom::{Document, NodeData, NodeId};
 use mango_html::parse_html;
 use mango_js::JsRuntime;
@@ -17,8 +17,8 @@ use mango_net::{FetchedDocument, ResourceLoader, Url};
 use mango_platform::input::{KeyEvent, KeyState, MangoKey, MouseButton};
 use mango_render::display_list::{BorderWidths, DisplayCommand, DisplayList};
 use mango_render::{
-    cache_image, decode_data_uri, decode_image_bytes, font_manager, get_cached_image, FontFamily,
-    FontWeight,
+    FontFamily, FontWeight, cache_image, decode_data_uri, decode_image_bytes, font_manager,
+    get_cached_image,
 };
 
 use crate::config::Config;
@@ -257,7 +257,9 @@ impl BrowserChrome {
             focused_control: None,
             control_cursor_pos: 0,
             page_display_list: DisplayList::new(),
-            display_list_cache: std::cell::RefCell::new(mango_layout::display_list::DisplayListCache::new()),
+            display_list_cache: std::cell::RefCell::new(
+                mango_layout::display_list::DisplayListCache::new(),
+            ),
             canvas_bg: CONTENT_BG,
             scrollbar_dragging: false,
             drag_start_mouse_y: 0.0,
@@ -390,11 +392,14 @@ impl BrowserChrome {
         let previous = std::mem::take(&mut self.style_snapshot);
 
         let mut starts: Vec<(mango_html::dom::NodeId, ComputedStyle)> = Vec::new();
-        mango_layout::apply_box_style_overrides(&mut self.root_box.as_mut().unwrap(), &mut |node, style| {
-            if let Some(node) = node {
-                starts.push((node, style.clone()));
-            }
-        });
+        mango_layout::apply_box_style_overrides(
+            self.root_box.as_mut().unwrap(),
+            &mut |node, style| {
+                if let Some(node) = node {
+                    starts.push((node, style.clone()));
+                }
+            },
+        );
 
         for (node, style) in starts {
             self.anim_state.sync_animations(node, &style);
@@ -518,23 +523,25 @@ impl BrowserChrome {
     /// Navigates back in history if possible.
     pub fn go_back(&mut self) {
         if let Some(tab) = self.tabs.get_mut(self.active_tab_idx)
-            && let Some((url, scroll_pos)) = tab.go_back() {
-                self.address_text = url.clone();
-                self.cursor_pos = self.address_text.len();
-                self.scroll_y = scroll_pos;
-                self.navigate_to_address(false);
-            }
+            && let Some((url, scroll_pos)) = tab.go_back()
+        {
+            self.address_text = url.clone();
+            self.cursor_pos = self.address_text.len();
+            self.scroll_y = scroll_pos;
+            self.navigate_to_address(false);
+        }
     }
 
     /// Navigates forward in history if possible.
     pub fn go_forward(&mut self) {
         if let Some(tab) = self.tabs.get_mut(self.active_tab_idx)
-            && let Some((url, scroll_pos)) = tab.go_forward() {
-                self.address_text = url.clone();
-                self.cursor_pos = self.address_text.len();
-                self.scroll_y = scroll_pos;
-                self.navigate_to_address(false);
-            }
+            && let Some((url, scroll_pos)) = tab.go_forward()
+        {
+            self.address_text = url.clone();
+            self.cursor_pos = self.address_text.len();
+            self.scroll_y = scroll_pos;
+            self.navigate_to_address(false);
+        }
     }
 
     /// Saves the active tab's WebContents (DOM tree, JS runtime, scroll, form state) into `self.tabs`.
@@ -714,31 +721,38 @@ impl BrowserChrome {
         );
 
         // Load web fonts and imported stylesheets from embedded and cached stylesheets
-        let embedded_sheets = mango_layout::extract_style_elements(self.cached_document.as_ref().unwrap());
+        let embedded_sheets =
+            mango_layout::extract_style_elements(self.cached_document.as_ref().unwrap());
         self.base_url = Url::parse(&url).ok();
-        if self.cached_stylesheets.is_empty() {
-            if let Some(ref base) = self.base_url.clone() {
-                let mut visited = std::collections::HashSet::new();
-                for sheet in &embedded_sheets {
-                    for rule in &sheet.rules {
-                        if let mango_css::parser::Rule::Import(import_path) = rule {
-                            load_stylesheet_recursive(
-                                &self.loader,
-                                base,
-                                import_path,
-                                &mut visited,
-                                &mut self.cached_stylesheets,
-                            );
-                        }
+        if self.cached_stylesheets.is_empty()
+            && let Some(ref base) = self.base_url.clone()
+        {
+            let mut visited = std::collections::HashSet::new();
+            for sheet in &embedded_sheets {
+                for rule in &sheet.rules {
+                    if let mango_css::parser::Rule::Import(import_path) = rule {
+                        load_stylesheet_recursive(
+                            &self.loader,
+                            base,
+                            import_path,
+                            &mut visited,
+                            &mut self.cached_stylesheets,
+                        );
                     }
                 }
             }
         }
-        load_web_fonts(&self.loader, self.base_url.as_ref(), &self.cached_stylesheets);
+        load_web_fonts(
+            &self.loader,
+            self.base_url.as_ref(),
+            &self.cached_stylesheets,
+        );
         load_web_fonts(&self.loader, self.base_url.as_ref(), &embedded_sheets);
 
         // Inject extension stylesheets (GAP-023)
-        let (ext_css, ext_js) = self.extension_manager.get_content_scripts_for_url(&url, crate::extensions::RunAt::DocumentEnd);
+        let (ext_css, ext_js) = self
+            .extension_manager
+            .get_content_scripts_for_url(&url, crate::extensions::RunAt::DocumentEnd);
         for css in ext_css {
             let sheet = mango_css::parser::parse_stylesheet(&css);
             self.cached_stylesheets.push(sheet);
@@ -791,13 +805,12 @@ impl BrowserChrome {
                     let _ = js_rt.execute_script(&code);
                 }
                 ScriptToRun::External(src) => {
-                    if external_count < 8 {
-                        if let Some(ref base) = self.base_url {
-                            if let Ok(script_code) = self.loader.fetch_script(base, &src) {
-                                external_count += 1;
-                                let _ = js_rt.execute_script(&script_code);
-                            }
-                        }
+                    if external_count < 8
+                        && let Some(ref base) = self.base_url
+                        && let Ok(script_code) = self.loader.fetch_script(base, &src)
+                    {
+                        external_count += 1;
+                        let _ = js_rt.execute_script(&script_code);
                     }
                 }
             }
@@ -824,7 +837,10 @@ impl BrowserChrome {
                 if let Some(node) = doc.get(nid) {
                     if let NodeData::Element(elem) = &node.data {
                         let tag = elem.tag_name.to_ascii_lowercase();
-                        if (tag == "input" || tag == "textarea" || tag == "button" || tag == "select")
+                        if (tag == "input"
+                            || tag == "textarea"
+                            || tag == "button"
+                            || tag == "select")
                             && elem.get_attribute("autofocus").is_some()
                         {
                             return Some(nid);
@@ -841,14 +857,19 @@ impl BrowserChrome {
             if let Some(autofocus_nid) = find_autofocus(&doc_snap, doc_snap.root()) {
                 self.focused_control = Some(autofocus_nid);
                 let current_val = if let Some(ref rt) = self.js_runtime {
-                    rt.get_node_attribute(autofocus_nid, "value").unwrap_or_default()
+                    rt.get_node_attribute(autofocus_nid, "value")
+                        .unwrap_or_default()
                 } else {
                     String::new()
                 };
                 self.control_cursor_pos = current_val.chars().count();
                 if let Some(ref mut rt) = self.js_runtime {
                     rt.set_node_attribute(autofocus_nid, "data-mango-focused", "true");
-                    rt.set_node_attribute(autofocus_nid, "_mango_cursor_pos", &self.control_cursor_pos.to_string());
+                    rt.set_node_attribute(
+                        autofocus_nid,
+                        "_mango_cursor_pos",
+                        &self.control_cursor_pos.to_string(),
+                    );
                 }
                 self.relayout();
             }
@@ -895,7 +916,10 @@ impl BrowserChrome {
     pub fn has_pending_timers(&self) -> bool {
         self.smooth_scroll.is_some()
             || self.anim_state.is_animating()
-            || self.js_runtime.as_ref().is_some_and(|rt| rt.has_pending_timers())
+            || self
+                .js_runtime
+                .as_ref()
+                .is_some_and(|rt| rt.has_pending_timers())
     }
 
     /// Triggers smooth scrolling to `target_y` over the specified duration.
@@ -938,7 +962,11 @@ impl BrowserChrome {
             && mx <= picker.x + picker.width
             && my >= picker.y
             && my <= picker.y + picker.height
-            && let PickerKind::File { dir, entries, offset } = &mut picker.kind
+            && let PickerKind::File {
+                dir,
+                entries,
+                offset,
+            } = &mut picker.kind
         {
             let has_parent = dir.parent().is_some();
             let total = entries.len() + usize::from(has_parent);
@@ -968,7 +996,8 @@ impl BrowserChrome {
 
         // Try nested scrolling on scrollable containers under the cursor
         let (_unconsumed_x, unconsumed_y) = if let Some(root) = &mut self.root_box {
-            let rem = root.dispatch_nested_scroll(mouse_doc_x, mouse_doc_y, scroll_step_x, scroll_step_y);
+            let rem =
+                root.dispatch_nested_scroll(mouse_doc_x, mouse_doc_y, scroll_step_x, scroll_step_y);
             if (rem.0 - scroll_step_x).abs() > 0.001 || (rem.1 - scroll_step_y).abs() > 0.001 {
                 self.display_list_cache.borrow_mut().clear();
             }
@@ -1003,7 +1032,9 @@ impl BrowserChrome {
 
         // Translate & clip page commands (OPT-005 display list cache)
         let page_dl = if let Some(root) = &self.root_box {
-            self.display_list_cache.borrow_mut().get_or_build(root, self.scroll_y)
+            self.display_list_cache
+                .borrow_mut()
+                .get_or_build(root, self.scroll_y)
         } else {
             self.page_display_list.clone()
         };
@@ -1025,7 +1056,12 @@ impl BrowserChrome {
                     let clamped_bottom = (translated_y + rect.height()).min(content_y + content_h);
                     if clamped_bottom > clamped_top {
                         dl.push(DisplayCommand::FillRect {
-                            rect: Rect::new(rect.x(), clamped_top, rect.width(), clamped_bottom - clamped_top),
+                            rect: Rect::new(
+                                rect.x(),
+                                clamped_top,
+                                rect.width(),
+                                clamped_bottom - clamped_top,
+                            ),
                             color,
                         });
                     }
@@ -1035,27 +1071,49 @@ impl BrowserChrome {
                     let clamped_top = translated_y.max(content_y);
                     let clamped_bottom = (translated_y + rect.height()).min(content_y + content_h);
                     if clamped_bottom > clamped_top {
-                        if translated_y >= content_y && translated_y + rect.height() <= content_y + content_h {
+                        if translated_y >= content_y
+                            && translated_y + rect.height() <= content_y + content_h
+                        {
                             dl.push(DisplayCommand::FillRoundedRect {
-                                rect: Rect::new(rect.x(), translated_y, rect.width(), rect.height()),
+                                rect: Rect::new(
+                                    rect.x(),
+                                    translated_y,
+                                    rect.width(),
+                                    rect.height(),
+                                ),
                                 color,
                                 radii,
                             });
                         } else {
                             dl.push(DisplayCommand::FillRect {
-                                rect: Rect::new(rect.x(), clamped_top, rect.width(), clamped_bottom - clamped_top),
+                                rect: Rect::new(
+                                    rect.x(),
+                                    clamped_top,
+                                    rect.width(),
+                                    clamped_bottom - clamped_top,
+                                ),
                                 color,
                             });
                         }
                     }
                 }
-                DisplayCommand::DrawBorder { rect, color, widths, radii } => {
+                DisplayCommand::DrawBorder {
+                    rect,
+                    color,
+                    widths,
+                    radii,
+                } => {
                     let translated_y = rect.y() + content_y - self.scroll_y;
                     let clamped_top = translated_y.max(content_y);
                     let clamped_bottom = (translated_y + rect.height()).min(content_y + content_h);
                     if clamped_bottom > clamped_top {
                         dl.push(DisplayCommand::DrawBorder {
-                            rect: Rect::new(rect.x(), clamped_top, rect.width(), clamped_bottom - clamped_top),
+                            rect: Rect::new(
+                                rect.x(),
+                                clamped_top,
+                                rect.width(),
+                                clamped_bottom - clamped_top,
+                            ),
                             color,
                             widths,
                             radii,
@@ -1073,9 +1131,12 @@ impl BrowserChrome {
                     inset,
                 } => {
                     let translated_y = rect.y() + content_y - self.scroll_y;
-                    let translated_rect = Rect::new(rect.x(), translated_y, rect.width(), rect.height());
+                    let translated_rect =
+                        Rect::new(rect.x(), translated_y, rect.width(), rect.height());
                     let max_blur = blur_radius + spread_radius;
-                    if translated_rect.bottom() + max_blur >= content_y && translated_rect.y() - max_blur <= content_y + content_h {
+                    if translated_rect.bottom() + max_blur >= content_y
+                        && translated_rect.y() - max_blur <= content_y + content_h
+                    {
                         dl.push(DisplayCommand::DrawBoxShadow {
                             rect: translated_rect,
                             color,
@@ -1088,7 +1149,18 @@ impl BrowserChrome {
                         });
                     }
                 }
-                DisplayCommand::DrawText { text, x, y, color, font_size, weight, family, style, decoration, letter_spacing } => {
+                DisplayCommand::DrawText {
+                    text,
+                    x,
+                    y,
+                    color,
+                    font_size,
+                    weight,
+                    family,
+                    style,
+                    decoration,
+                    letter_spacing,
+                } => {
                     let translated_y = y + content_y - self.scroll_y;
                     // Cull only runs whose glyph box (ascent above the baseline, descent
                     // below it) cannot touch the content band; the rest is clipped.
@@ -1109,7 +1181,14 @@ impl BrowserChrome {
                         });
                     }
                 }
-                DisplayCommand::DrawLine { x1, y1, x2, y2, color, thickness } => {
+                DisplayCommand::DrawLine {
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    color,
+                    thickness,
+                } => {
                     let ty1 = y1 + content_y - self.scroll_y;
                     let ty2 = y2 + content_y - self.scroll_y;
                     let (lo, hi) = (ty1.min(ty2) - thickness, ty1.max(ty2) + thickness);
@@ -1124,7 +1203,13 @@ impl BrowserChrome {
                         });
                     }
                 }
-                DisplayCommand::DrawImage { x, y, width, height, pixels } => {
+                DisplayCommand::DrawImage {
+                    x,
+                    y,
+                    width,
+                    height,
+                    pixels,
+                } => {
                     let translated_y = y + content_y - self.scroll_y;
                     // The content clip crops the visible rows, so the image is pushed
                     // once (no per-row re-slicing) and the painter clips it.
@@ -1138,7 +1223,12 @@ impl BrowserChrome {
                         });
                     }
                 }
-                DisplayCommand::FillGradient { rect, gradient, radii, opacity } => {
+                DisplayCommand::FillGradient {
+                    rect,
+                    gradient,
+                    radii,
+                    opacity,
+                } => {
                     let translated_y = rect.y() + content_y - self.scroll_y;
                     let clamped_top = translated_y.max(content_y);
                     let clamped_bottom = (translated_y + rect.height()).min(content_y + content_h);
@@ -1151,7 +1241,18 @@ impl BrowserChrome {
                         });
                     }
                 }
-                DisplayCommand::DrawTextShadow { text, x, y, color, font_size, weight, family, style, blur_radius, letter_spacing } => {
+                DisplayCommand::DrawTextShadow {
+                    text,
+                    x,
+                    y,
+                    color,
+                    font_size,
+                    weight,
+                    family,
+                    style,
+                    blur_radius,
+                    letter_spacing,
+                } => {
                     let translated_y = y + content_y - self.scroll_y;
                     if translated_y + font_size * 0.3 + blur_radius >= content_y
                         && translated_y - font_size * 1.2 - blur_radius <= content_y + content_h
@@ -1245,7 +1346,9 @@ impl BrowserChrome {
                     fill,
                 } => {
                     let translated_y = rect.y() + content_y - self.scroll_y;
-                    if translated_y + rect.height() >= content_y && translated_y <= content_y + content_h {
+                    if translated_y + rect.height() >= content_y
+                        && translated_y <= content_y + content_h
+                    {
                         dl.push(DisplayCommand::DrawBorderImage {
                             rect: Rect::new(rect.x(), translated_y, rect.width(), rect.height()),
                             pixels,
@@ -1288,7 +1391,12 @@ impl BrowserChrome {
                             style,
                             decoration,
                             letter_spacing,
-                            gradient_rect: Rect::new(gradient_rect.x(), translated_rect_y, gradient_rect.width(), gradient_rect.height()),
+                            gradient_rect: Rect::new(
+                                gradient_rect.x(),
+                                translated_rect_y,
+                                gradient_rect.width(),
+                                gradient_rect.height(),
+                            ),
                         });
                     }
                 }
@@ -1332,7 +1440,8 @@ impl BrowserChrome {
                 });
 
                 // Thumb dimensions and position
-                let thumb_h = ((content_h / doc_h) * content_h).clamp(32.0f32.min(content_h), content_h);
+                let thumb_h =
+                    ((content_h / doc_h) * content_h).clamp(32.0f32.min(content_h), content_h);
                 let max_thumb_travel = (content_h - thumb_h).max(1.0);
                 let thumb_y = content_y + (self.scroll_y / max_s) * max_thumb_travel;
 
@@ -1415,7 +1524,11 @@ impl BrowserChrome {
             }
 
             // Tab favicon dot / badge
-            let dot_color = if is_active { Color::MANGO_ORANGE } else { Color::rgb(120, 124, 130) };
+            let dot_color = if is_active {
+                Color::MANGO_ORANGE
+            } else {
+                Color::rgb(120, 124, 130)
+            };
             dl.push(DisplayCommand::FillRect {
                 rect: Rect::new(tab_x + 8.0, 14.0, 6.0, 6.0),
                 color: dot_color,
@@ -1432,9 +1545,17 @@ impl BrowserChrome {
                 title_text,
                 tab_x + 18.0,
                 11.0,
-                if is_active { TAB_TEXT_ACTIVE } else { TAB_TEXT_INACTIVE },
+                if is_active {
+                    TAB_TEXT_ACTIVE
+                } else {
+                    TAB_TEXT_INACTIVE
+                },
                 12.0,
-                if is_active { FontWeight::Bold } else { FontWeight::Regular },
+                if is_active {
+                    FontWeight::Bold
+                } else {
+                    FontWeight::Regular
+                },
                 FontFamily::SansSerif,
             ));
 
@@ -1452,7 +1573,11 @@ impl BrowserChrome {
                 "x".to_string(),
                 close_x,
                 11.0,
-                if close_hovered { Color::WHITE } else { TAB_TEXT_INACTIVE },
+                if close_hovered {
+                    Color::WHITE
+                } else {
+                    TAB_TEXT_INACTIVE
+                },
                 11.0,
                 FontWeight::Bold,
                 FontFamily::SansSerif,
@@ -1472,7 +1597,11 @@ impl BrowserChrome {
             "+".to_string(),
             new_tab_x + 3.0,
             9.0,
-            if new_tab_hovered { Color::WHITE } else { TAB_TEXT_INACTIVE },
+            if new_tab_hovered {
+                Color::WHITE
+            } else {
+                TAB_TEXT_INACTIVE
+            },
             16.0,
             FontWeight::Regular,
             FontFamily::SansSerif,
@@ -1489,8 +1618,14 @@ impl BrowserChrome {
         });
 
         let btn_y = TAB_BAR_HEIGHT + 6.0;
-        let can_back = self.tabs.get(self.active_tab_idx).is_some_and(|t| t.can_go_back());
-        let can_forward = self.tabs.get(self.active_tab_idx).is_some_and(|t| t.can_go_forward());
+        let can_back = self
+            .tabs
+            .get(self.active_tab_idx)
+            .is_some_and(|t| t.can_go_back());
+        let can_forward = self
+            .tabs
+            .get(self.active_tab_idx)
+            .is_some_and(|t| t.can_go_forward());
 
         // Back button (◀ / <)
         let back_hovered = self.hovered_target == Some(HoverTarget::Back) && can_back;
@@ -1504,7 +1639,11 @@ impl BrowserChrome {
             "<".to_string(),
             14.0,
             btn_y + 3.0,
-            if can_back { TOOLBAR_TEXT } else { TOOLBAR_TEXT_DISABLED },
+            if can_back {
+                TOOLBAR_TEXT
+            } else {
+                TOOLBAR_TEXT_DISABLED
+            },
             15.0,
             FontWeight::Bold,
             FontFamily::SansSerif,
@@ -1522,7 +1661,11 @@ impl BrowserChrome {
             ">".to_string(),
             44.0,
             btn_y + 3.0,
-            if can_forward { TOOLBAR_TEXT } else { TOOLBAR_TEXT_DISABLED },
+            if can_forward {
+                TOOLBAR_TEXT
+            } else {
+                TOOLBAR_TEXT_DISABLED
+            },
             15.0,
             FontWeight::Bold,
             FontFamily::SansSerif,
@@ -1540,7 +1683,11 @@ impl BrowserChrome {
             "R".to_string(),
             74.0,
             btn_y + 3.0,
-            if reload_hovered { Color::WHITE } else { TOOLBAR_TEXT },
+            if reload_hovered {
+                Color::WHITE
+            } else {
+                TOOLBAR_TEXT
+            },
             14.0,
             FontWeight::Bold,
             FontFamily::SansSerif,
@@ -1558,7 +1705,11 @@ impl BrowserChrome {
             "H".to_string(),
             104.0,
             btn_y + 3.0,
-            if home_hovered { Color::MANGO_ORANGE } else { TOOLBAR_TEXT },
+            if home_hovered {
+                Color::MANGO_ORANGE
+            } else {
+                TOOLBAR_TEXT
+            },
             14.0,
             FontWeight::Bold,
             FontFamily::SansSerif,
@@ -1593,7 +1744,11 @@ impl BrowserChrome {
 
         // Security / Mango badge on left of Omnibox
         let is_https = self.address_text.starts_with("https://");
-        let badge_color = if is_https { Color::rgb(52, 168, 83) } else { Color::MANGO_ORANGE };
+        let badge_color = if is_https {
+            Color::rgb(52, 168, 83)
+        } else {
+            Color::MANGO_ORANGE
+        };
         dl.push(DisplayCommand::FillRect {
             rect: Rect::new(addr_x + 8.0, addr_y + 11.0, 8.0, 8.0),
             color: badge_color,
@@ -1818,7 +1973,12 @@ impl BrowserChrome {
                 if item_y + dropdown.item_height > dropdown.y + total_h {
                     break;
                 }
-                let item_rect = Rect::new(dropdown.x + 4.0, item_y, dropdown.width - 8.0, dropdown.item_height - 2.0);
+                let item_rect = Rect::new(
+                    dropdown.x + 4.0,
+                    item_y,
+                    dropdown.width - 8.0,
+                    dropdown.item_height - 2.0,
+                );
 
                 if dropdown.hovered_idx == Some(i) {
                     dl.push(DisplayCommand::FillRoundedRect {
@@ -1923,12 +2083,8 @@ impl BrowserChrome {
                 }
                 PickerKind::Date { year, month } => {
                     // Header: "<" / Month Year / ">" (ASCII arrows for glyph coverage).
-                    let prev_rect = Rect::new(
-                        picker.x + 4.0,
-                        picker.y + PICKER_DATE_HEADER_Y,
-                        26.0,
-                        22.0,
-                    );
+                    let prev_rect =
+                        Rect::new(picker.x + 4.0, picker.y + PICKER_DATE_HEADER_Y, 26.0, 22.0);
                     let next_rect = Rect::new(
                         picker.x + picker.width - 30.0,
                         picker.y + PICKER_DATE_HEADER_Y,
@@ -1953,7 +2109,8 @@ impl BrowserChrome {
                     dl.push(DisplayCommand::draw_text(
                         "<",
                         prev_rect.x()
-                            + (prev_rect.width() - mango_layout::measure_text_width("<", arrow_font))
+                            + (prev_rect.width()
+                                - mango_layout::measure_text_width("<", arrow_font))
                                 / 2.0,
                         picker.y + PICKER_DATE_HEADER_Y + 4.0,
                         Color::rgb(60, 64, 67),
@@ -1964,7 +2121,8 @@ impl BrowserChrome {
                     dl.push(DisplayCommand::draw_text(
                         ">",
                         next_rect.x()
-                            + (next_rect.width() - mango_layout::measure_text_width(">", arrow_font))
+                            + (next_rect.width()
+                                - mango_layout::measure_text_width(">", arrow_font))
                                 / 2.0,
                         picker.y + PICKER_DATE_HEADER_Y + 4.0,
                         Color::rgb(60, 64, 67),
@@ -2133,16 +2291,8 @@ impl BrowserChrome {
                     };
                     let hour_text = hour.to_string();
                     let minute_text = minute.to_string();
-                    center_label(
-                        &mut dl,
-                        picker.y + PICKER_TIME_HOUR_Y + 5.0,
-                        &hour_text,
-                    );
-                    center_label(
-                        &mut dl,
-                        picker.y + PICKER_TIME_MIN_Y + 5.0,
-                        &minute_text,
-                    );
+                    center_label(&mut dl, picker.y + PICKER_TIME_HOUR_Y + 5.0, &hour_text);
+                    center_label(&mut dl, picker.y + PICKER_TIME_MIN_Y + 5.0, &minute_text);
 
                     let set_rect = Rect::new(
                         picker.x + (picker.width - PICKER_TIME_SET_W) / 2.0,
@@ -2206,8 +2356,7 @@ impl BrowserChrome {
 
                     let has_parent = dir.parent().is_some();
                     for row in 0..PICKER_FILE_ROWS {
-                        let row_y =
-                            picker.y + PICKER_FILE_ROW_Y + row as f32 * PICKER_FILE_ROW_H;
+                        let row_y = picker.y + PICKER_FILE_ROW_Y + row as f32 * PICKER_FILE_ROW_H;
                         if row_y + PICKER_FILE_ROW_H > picker.y + picker.height {
                             break;
                         }
@@ -2224,7 +2373,9 @@ impl BrowserChrome {
                                 None => (None, String::new(), false),
                             }
                         };
-                        let Some(row_hit) = row_hit else { continue; };
+                        let Some(row_hit) = row_hit else {
+                            continue;
+                        };
                         let rect = Rect::new(
                             picker.x + 4.0,
                             row_y,
@@ -2261,11 +2412,15 @@ impl BrowserChrome {
         if self.devtools.is_open {
             // Borrowed view: the inspector repaints every frame while it is open.
             let doc = self.document_view();
-            let highlight_cmds = self.devtools.render_highlight(self.root_box.as_ref(), self.scroll_y, content_y);
+            let highlight_cmds =
+                self.devtools
+                    .render_highlight(self.root_box.as_ref(), self.scroll_y, content_y);
             for cmd in highlight_cmds {
                 dl.push(cmd);
             }
-            let panel_cmds = self.devtools.render_panel(w, h, &doc, self.root_box.as_ref());
+            let panel_cmds = self
+                .devtools
+                .render_panel(w, h, &doc, self.root_box.as_ref());
             for cmd in panel_cmds {
                 dl.push(cmd);
             }
@@ -2347,7 +2502,8 @@ impl BrowserChrome {
                             self.set_control_value(select_node_id, &selected_val);
                             self.fire_dom_event(select_node_id, "change");
                             if let Some(ref mut rt) = self.js_runtime
-                                && let Some(onchange) = rt.get_node_attribute(select_node_id, "onchange")
+                                && let Some(onchange) =
+                                    rt.get_node_attribute(select_node_id, "onchange")
                             {
                                 let _ = rt.execute_script(&onchange);
                             }
@@ -2362,7 +2518,9 @@ impl BrowserChrome {
             }
 
             // Global focus shortcut: Ctrl+L
-            if event.modifiers.ctrl && matches!(&event.key, MangoKey::Char('l') | MangoKey::Char('L')) {
+            if event.modifiers.ctrl
+                && matches!(&event.key, MangoKey::Char('l') | MangoKey::Char('L'))
+            {
                 self.clear_form_focus();
                 self.address_focused = true;
                 self.is_all_selected = true;
@@ -2395,7 +2553,11 @@ impl BrowserChrome {
                         .map(|t| t.to_ascii_lowercase())
                         .unwrap_or_default();
                     if input_type == "range" || input_type == "number" {
-                        let dir = if event.key == MangoKey::ArrowUp { 1.0 } else { -1.0 };
+                        let dir = if event.key == MangoKey::ArrowUp {
+                            1.0
+                        } else {
+                            -1.0
+                        };
                         self.step_numeric_control(node_id, dir);
                         return;
                     }
@@ -2406,7 +2568,11 @@ impl BrowserChrome {
                         MangoKey::Char('a') | MangoKey::Char('A') => {
                             self.control_cursor_pos = current_val.chars().count();
                             if let Some(ref mut rt) = self.js_runtime {
-                                rt.set_node_attribute(node_id, "_mango_cursor_pos", &self.control_cursor_pos.to_string());
+                                rt.set_node_attribute(
+                                    node_id,
+                                    "_mango_cursor_pos",
+                                    &self.control_cursor_pos.to_string(),
+                                );
                             }
                             self.relayout();
                             return;
@@ -2426,7 +2592,8 @@ impl BrowserChrome {
                             {
                                 let chars: Vec<char> = current_val.chars().collect();
                                 let idx = self.control_cursor_pos.min(chars.len());
-                                let mut new_chars = Vec::with_capacity(chars.len() + paste_text.len());
+                                let mut new_chars =
+                                    Vec::with_capacity(chars.len() + paste_text.len());
                                 new_chars.extend_from_slice(&chars[..idx]);
                                 new_chars.extend(paste_text.chars());
                                 new_chars.extend_from_slice(&chars[idx..]);
@@ -2434,7 +2601,11 @@ impl BrowserChrome {
                                 let new_val: String = new_chars.into_iter().collect();
                                 self.set_control_value(node_id, &new_val);
                                 if let Some(ref mut rt) = self.js_runtime {
-                                    rt.set_node_attribute(node_id, "_mango_cursor_pos", &self.control_cursor_pos.to_string());
+                                    rt.set_node_attribute(
+                                        node_id,
+                                        "_mango_cursor_pos",
+                                        &self.control_cursor_pos.to_string(),
+                                    );
                                 }
                                 self.relayout();
                             }
@@ -2470,7 +2641,11 @@ impl BrowserChrome {
                         let new_val: String = new_chars.into_iter().collect();
                         self.set_control_value(node_id, &new_val);
                         if let Some(ref mut rt) = self.js_runtime {
-                            rt.set_node_attribute(node_id, "_mango_cursor_pos", &self.control_cursor_pos.to_string());
+                            rt.set_node_attribute(
+                                node_id,
+                                "_mango_cursor_pos",
+                                &self.control_cursor_pos.to_string(),
+                            );
                         }
                         self.relayout();
                         return;
@@ -2486,7 +2661,11 @@ impl BrowserChrome {
                         let new_val: String = new_chars.into_iter().collect();
                         self.set_control_value(node_id, &new_val);
                         if let Some(ref mut rt) = self.js_runtime {
-                            rt.set_node_attribute(node_id, "_mango_cursor_pos", &self.control_cursor_pos.to_string());
+                            rt.set_node_attribute(
+                                node_id,
+                                "_mango_cursor_pos",
+                                &self.control_cursor_pos.to_string(),
+                            );
                         }
                         self.relayout();
                         return;
@@ -2500,7 +2679,11 @@ impl BrowserChrome {
                             let new_val: String = chars.into_iter().collect();
                             self.set_control_value(node_id, &new_val);
                             if let Some(ref mut rt) = self.js_runtime {
-                                rt.set_node_attribute(node_id, "_mango_cursor_pos", &self.control_cursor_pos.to_string());
+                                rt.set_node_attribute(
+                                    node_id,
+                                    "_mango_cursor_pos",
+                                    &self.control_cursor_pos.to_string(),
+                                );
                             }
                             self.relayout();
                         }
@@ -2513,7 +2696,11 @@ impl BrowserChrome {
                             let new_val: String = chars.into_iter().collect();
                             self.set_control_value(node_id, &new_val);
                             if let Some(ref mut rt) = self.js_runtime {
-                                rt.set_node_attribute(node_id, "_mango_cursor_pos", &self.control_cursor_pos.to_string());
+                                rt.set_node_attribute(
+                                    node_id,
+                                    "_mango_cursor_pos",
+                                    &self.control_cursor_pos.to_string(),
+                                );
                             }
                             self.relayout();
                         }
@@ -2522,7 +2709,11 @@ impl BrowserChrome {
                     MangoKey::ArrowLeft => {
                         self.control_cursor_pos = self.control_cursor_pos.saturating_sub(1);
                         if let Some(ref mut rt) = self.js_runtime {
-                            rt.set_node_attribute(node_id, "_mango_cursor_pos", &self.control_cursor_pos.to_string());
+                            rt.set_node_attribute(
+                                node_id,
+                                "_mango_cursor_pos",
+                                &self.control_cursor_pos.to_string(),
+                            );
                         }
                         self.relayout();
                         return;
@@ -2531,7 +2722,11 @@ impl BrowserChrome {
                         let count = current_val.chars().count();
                         self.control_cursor_pos = (self.control_cursor_pos + 1).min(count);
                         if let Some(ref mut rt) = self.js_runtime {
-                            rt.set_node_attribute(node_id, "_mango_cursor_pos", &self.control_cursor_pos.to_string());
+                            rt.set_node_attribute(
+                                node_id,
+                                "_mango_cursor_pos",
+                                &self.control_cursor_pos.to_string(),
+                            );
                         }
                         self.relayout();
                         return;
@@ -2539,7 +2734,11 @@ impl BrowserChrome {
                     MangoKey::Home => {
                         self.control_cursor_pos = 0;
                         if let Some(ref mut rt) = self.js_runtime {
-                            rt.set_node_attribute(node_id, "_mango_cursor_pos", &self.control_cursor_pos.to_string());
+                            rt.set_node_attribute(
+                                node_id,
+                                "_mango_cursor_pos",
+                                &self.control_cursor_pos.to_string(),
+                            );
                         }
                         self.relayout();
                         return;
@@ -2547,7 +2746,11 @@ impl BrowserChrome {
                     MangoKey::End => {
                         self.control_cursor_pos = current_val.chars().count();
                         if let Some(ref mut rt) = self.js_runtime {
-                            rt.set_node_attribute(node_id, "_mango_cursor_pos", &self.control_cursor_pos.to_string());
+                            rt.set_node_attribute(
+                                node_id,
+                                "_mango_cursor_pos",
+                                &self.control_cursor_pos.to_string(),
+                            );
                         }
                         self.relayout();
                         return;
@@ -2571,7 +2774,8 @@ impl BrowserChrome {
             }
 
             // Scroll content when address bar is not focused
-            let content_h = (self.height as f32 - HEADER_HEIGHT - STATUS_BAR_HEIGHT - 1.0).max(10.0);
+            let content_h =
+                (self.height as f32 - HEADER_HEIGHT - STATUS_BAR_HEIGHT - 1.0).max(10.0);
             let page_step = (content_h * 0.85) / 45.0;
             match &event.key {
                 MangoKey::ArrowDown => {
@@ -2713,7 +2917,9 @@ impl BrowserChrome {
                 } else if self.cursor_pos < self.address_text.len() {
                     let safe_pos = self.cursor_pos.min(self.address_text.len());
                     let mut next = safe_pos + 1;
-                    while next < self.address_text.len() && !self.address_text.is_char_boundary(next) {
+                    while next < self.address_text.len()
+                        && !self.address_text.is_char_boundary(next)
+                    {
                         next += 1;
                     }
                     self.address_text.drain(safe_pos..next);
@@ -2733,7 +2939,9 @@ impl BrowserChrome {
                 self.is_all_selected = false;
                 if self.cursor_pos < self.address_text.len() {
                     let mut next = self.cursor_pos + 1;
-                    while next < self.address_text.len() && !self.address_text.is_char_boundary(next) {
+                    while next < self.address_text.len()
+                        && !self.address_text.is_char_boundary(next)
+                    {
                         next += 1;
                     }
                     self.cursor_pos = next;
@@ -2765,13 +2973,12 @@ impl BrowserChrome {
         let mut input = self.address_text.trim().to_string();
         log::info!("Navigate to: {}", input);
 
-        if input.starts_with('#') {
-            if let Some(base) = &self.base_url {
-                if let Ok(resolved) = base.resolve(&input) {
-                    input = resolved.to_string();
-                    self.address_text = input.clone();
-                }
-            }
+        if input.starts_with('#')
+            && let Some(base) = &self.base_url
+            && let Ok(resolved) = base.resolve(&input)
+        {
+            input = resolved.to_string();
+            self.address_text = input.clone();
         }
 
         if is_special_or_local_page(&input) {
@@ -2786,7 +2993,10 @@ impl BrowserChrome {
 
         if is_search_query(&input) {
             let search_url = self.config.format_search_url(&input);
-            log::info!("Search query: routing to configured search engine: {}", search_url);
+            log::info!(
+                "Search query: routing to configured search engine: {}",
+                search_url
+            );
             input = search_url;
             self.address_text = input.clone();
         }
@@ -2806,54 +3016,50 @@ impl BrowserChrome {
         };
 
         // Same-document fragment navigation: avoid full network re-fetch when only the #hash changes
-        if let Some(base) = &self.base_url {
-            if parsed_url.scheme == base.scheme
-                && parsed_url.host == base.host
-                && parsed_url.port == base.port
-                && parsed_url.path == base.path
-                && parsed_url.query == base.query
-            {
-                if push_history {
-                    if let Some(tab) = self.tabs.get_mut(self.active_tab_idx) {
-                        tab.push_history(base.to_string(), self.page_title.clone());
-                    }
-                }
-                self.base_url = Some(parsed_url.clone());
-                self.address_text = parsed_url.to_string();
-                self.address_focused = false;
-                self.is_loading = false;
-                if let Some(ref frag) = parsed_url.fragment {
-                    let frag_str = frag.clone();
-                    if let Some(ref mut doc) = self.cached_document {
-                        doc.set_target_id(Some(frag_str.clone()));
-                    }
-                    if let Some(ref mut rt) = self.js_runtime {
-                        rt.set_target_id(Some(frag_str.clone()));
-                    }
-                    let doc = self.active_document();
-                    if let Some(node_id) = find_element_by_id(&doc, &frag_str) {
-                        if let Some(root) = &self.root_box {
-                            if let Some(lbox) = root.find_box_for_node(node_id) {
-                                let target_y = lbox.dimensions.content.y();
-                                let max_s = self.max_scroll();
-                                self.scroll_y = target_y.clamp(0.0, max_s);
-                                if let Some(tab) = self.tabs.get_mut(self.active_tab_idx) {
-                                    tab.scroll_y = self.scroll_y;
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    if let Some(ref mut doc) = self.cached_document {
-                        doc.set_target_id(None);
-                    }
-                    if let Some(ref mut rt) = self.js_runtime {
-                        rt.set_target_id(None);
-                    }
-                }
-                self.relayout();
-                return;
+        if let Some(base) = &self.base_url
+            && parsed_url.scheme == base.scheme
+            && parsed_url.host == base.host
+            && parsed_url.port == base.port
+            && parsed_url.path == base.path
+            && parsed_url.query == base.query
+        {
+            if push_history && let Some(tab) = self.tabs.get_mut(self.active_tab_idx) {
+                tab.push_history(base.to_string(), self.page_title.clone());
             }
+            self.base_url = Some(parsed_url.clone());
+            self.address_text = parsed_url.to_string();
+            self.address_focused = false;
+            self.is_loading = false;
+            if let Some(ref frag) = parsed_url.fragment {
+                let frag_str = frag.clone();
+                if let Some(ref mut doc) = self.cached_document {
+                    doc.set_target_id(Some(frag_str.clone()));
+                }
+                if let Some(ref mut rt) = self.js_runtime {
+                    rt.set_target_id(Some(frag_str.clone()));
+                }
+                let doc = self.active_document();
+                if let Some(node_id) = find_element_by_id(&doc, &frag_str)
+                    && let Some(root) = &self.root_box
+                    && let Some(lbox) = root.find_box_for_node(node_id)
+                {
+                    let target_y = lbox.dimensions.content.y();
+                    let max_s = self.max_scroll();
+                    self.scroll_y = target_y.clamp(0.0, max_s);
+                    if let Some(tab) = self.tabs.get_mut(self.active_tab_idx) {
+                        tab.scroll_y = self.scroll_y;
+                    }
+                }
+            } else {
+                if let Some(ref mut doc) = self.cached_document {
+                    doc.set_target_id(None);
+                }
+                if let Some(ref mut rt) = self.js_runtime {
+                    rt.set_target_id(None);
+                }
+            }
+            self.relayout();
+            return;
         }
 
         self.status_text = format!("Loading {}...", parsed_url);
@@ -2883,7 +3089,11 @@ impl BrowserChrome {
 
     /// Loads a fetched document into the browser, recursively fetching external stylesheets,
     /// web fonts, and images, and updating the page metadata and history.
-    pub fn process_and_load_document(&mut self, mut doc_result: FetchedDocument, push_history: bool) {
+    pub fn process_and_load_document(
+        &mut self,
+        mut doc_result: FetchedDocument,
+        push_history: bool,
+    ) {
         let final_url = doc_result.url.clone();
         preprocess_wikipedia_appearance_html(&mut doc_result.html, &final_url.as_str());
         self.base_url = Some(final_url.clone());
@@ -2948,16 +3158,13 @@ impl BrowserChrome {
         // Prefetch eagerly up-front so above-the-fold media is ready
         // when the first frame paints, then queue the remainder to be
         // drained a few per frame.
-        let (eager, queued): (Vec<(usize, String)>, Vec<(usize, String)>) =
-            image_sources
-                .into_iter()
-                .enumerate()
-                .partition(|(idx, _)| *idx < EAGER_IMAGE_PREFETCH);
-        for (_, src) in eager {
-            self.prefetch_image(&final_url, &src);
+        let eager_count = image_sources.len().min(EAGER_IMAGE_PREFETCH);
+        let (eager, queued) = image_sources.split_at(eager_count);
+        for src in eager {
+            self.prefetch_image(&final_url, src);
         }
         self.image_fetch_base = Some(final_url.clone());
-        self.pending_image_fetches = queued.into_iter().map(|(_, s)| s).collect();
+        self.pending_image_fetches = queued.to_vec();
 
         self.status_text = format!(
             "Loaded {} ({} bytes, HTTP {})",
@@ -3074,7 +3281,9 @@ impl BrowserChrome {
                 let mut cur = Some(target);
                 let mut guard = 0;
                 while let Some(nid) = cur {
-                    if guard > 512 { break; }
+                    if guard > 512 {
+                        break;
+                    }
                     guard += 1;
                     new_chain.insert(nid);
                     cur = doc.get(nid).and_then(|n| n.parent);
@@ -3084,21 +3293,21 @@ impl BrowserChrome {
                 return false;
             }
             for nid in &self.hovered_dom_nodes {
-                if !new_chain.contains(nid) {
-                    if let Some(node) = doc.get_mut(*nid) {
-                        if let mango_html::dom::NodeData::Element(el) = &mut node.data {
-                            el.attributes.retain(|(k, _)| !k.eq_ignore_ascii_case("data-mango-hover"));
-                        }
-                    }
+                if !new_chain.contains(nid)
+                    && let Some(node) = doc.get_mut(*nid)
+                    && let mango_html::dom::NodeData::Element(el) = &mut node.data
+                {
+                    el.attributes
+                        .retain(|(k, _)| !k.eq_ignore_ascii_case("data-mango-hover"));
                 }
             }
             for nid in &new_chain {
-                if !self.hovered_dom_nodes.contains(nid) {
-                    if let Some(node) = doc.get_mut(*nid) {
-                        if let mango_html::dom::NodeData::Element(el) = &mut node.data {
-                            el.attributes.push(("data-mango-hover".to_string(), "true".to_string()));
-                        }
-                    }
+                if !self.hovered_dom_nodes.contains(nid)
+                    && let Some(node) = doc.get_mut(*nid)
+                    && let mango_html::dom::NodeData::Element(el) = &mut node.data
+                {
+                    el.attributes
+                        .push(("data-mango-hover".to_string(), "true".to_string()));
                 }
             }
             self.hovered_dom_nodes = new_chain;
@@ -3119,7 +3328,9 @@ impl BrowserChrome {
                 let mut cur = Some(target);
                 let mut guard = 0;
                 while let Some(nid) = cur {
-                    if guard > 512 { break; }
+                    if guard > 512 {
+                        break;
+                    }
                     guard += 1;
                     new_chain.insert(nid);
                     cur = doc.get(nid).and_then(|n| n.parent);
@@ -3129,21 +3340,21 @@ impl BrowserChrome {
                 return false;
             }
             for nid in &self.active_dom_nodes {
-                if !new_chain.contains(nid) {
-                    if let Some(node) = doc.get_mut(*nid) {
-                        if let mango_html::dom::NodeData::Element(el) = &mut node.data {
-                            el.attributes.retain(|(k, _)| !k.eq_ignore_ascii_case("data-mango-active"));
-                        }
-                    }
+                if !new_chain.contains(nid)
+                    && let Some(node) = doc.get_mut(*nid)
+                    && let mango_html::dom::NodeData::Element(el) = &mut node.data
+                {
+                    el.attributes
+                        .retain(|(k, _)| !k.eq_ignore_ascii_case("data-mango-active"));
                 }
             }
             for nid in &new_chain {
-                if !self.active_dom_nodes.contains(nid) {
-                    if let Some(node) = doc.get_mut(*nid) {
-                        if let mango_html::dom::NodeData::Element(el) = &mut node.data {
-                            el.attributes.push(("data-mango-active".to_string(), "true".to_string()));
-                        }
-                    }
+                if !self.active_dom_nodes.contains(nid)
+                    && let Some(node) = doc.get_mut(*nid)
+                    && let mango_html::dom::NodeData::Element(el) = &mut node.data
+                {
+                    el.attributes
+                        .push(("data-mango-active".to_string(), "true".to_string()));
                 }
             }
             self.active_dom_nodes = new_chain;
@@ -3170,11 +3381,13 @@ impl BrowserChrome {
 
         // If user is actively dragging the scrollbar thumb:
         if self.scrollbar_dragging {
-            let content_h = (self.height as f32 - HEADER_HEIGHT - STATUS_BAR_HEIGHT - 1.0).max(10.0);
+            let content_h =
+                (self.height as f32 - HEADER_HEIGHT - STATUS_BAR_HEIGHT - 1.0).max(10.0);
             let doc_h = self.scrollable_height();
             let max_s = self.max_scroll();
             if max_s > 0.0 && doc_h > 0.0 {
-                let thumb_h = ((content_h / doc_h) * content_h).clamp(32.0f32.min(content_h), content_h);
+                let thumb_h =
+                    ((content_h / doc_h) * content_h).clamp(32.0f32.min(content_h), content_h);
                 let max_thumb_travel = (content_h - thumb_h).max(1.0);
                 let delta_mouse_y = y - self.drag_start_mouse_y;
                 let delta_scroll = (delta_mouse_y / max_thumb_travel) * max_s;
@@ -3206,7 +3419,11 @@ impl BrowserChrome {
         // Select dropdown hover hit testing
         if let Some(ref mut dropdown) = self.select_dropdown {
             let total_h = (dropdown.options.len() as f32 * dropdown.item_height + 8.0).min(300.0);
-            if x >= dropdown.x && x <= dropdown.x + dropdown.width && y >= dropdown.y && y <= dropdown.y + total_h {
+            if x >= dropdown.x
+                && x <= dropdown.x + dropdown.width
+                && y >= dropdown.y
+                && y <= dropdown.y + total_h
+            {
                 let idx = ((y - dropdown.y - 4.0) / dropdown.item_height) as usize;
                 if idx < dropdown.options.len() {
                     dropdown.hovered_idx = Some(idx);
@@ -3231,11 +3448,11 @@ impl BrowserChrome {
         let mut hover_changed = false;
 
         // If mouse is outside web content (in header/tabs/toolbar or status bar), clear DOM content hover
-        if y <= HEADER_HEIGHT || y >= self.height as f32 - STATUS_BAR_HEIGHT {
-            if self.set_hover_node(None) {
-                hover_changed = true;
-                self.relayout();
-            }
+        if (y <= HEADER_HEIGHT || y >= self.height as f32 - STATUS_BAR_HEIGHT)
+            && self.set_hover_node(None)
+        {
+            hover_changed = true;
+            self.relayout();
         }
 
         // 1. Tab bar hit testing
@@ -3347,7 +3564,8 @@ impl BrowserChrome {
                 self.relayout();
             }
             let doc_h = self.scrollable_height();
-            let thumb_h = ((content_h / doc_h) * content_h).clamp(32.0f32.min(content_h), content_h);
+            let thumb_h =
+                ((content_h / doc_h) * content_h).clamp(32.0f32.min(content_h), content_h);
             let max_thumb_travel = (content_h - thumb_h).max(1.0);
             let thumb_y = content_y_top + (self.scroll_y / max_s) * max_thumb_travel;
             if y >= thumb_y && y <= thumb_y + thumb_h {
@@ -3390,14 +3608,21 @@ impl BrowserChrome {
                 .as_ref()
                 .and_then(|root| root.hit_test_form_control(pt))
             {
-                self.status_text = format!("Form control: <{} type=\"{}\">", hit.tag_name, hit.form_type);
+                self.status_text = format!(
+                    "Form control: <{} type=\"{}\">",
+                    hit.tag_name, hit.form_type
+                );
             } else if let Some(media) = self
                 .root_box
                 .as_ref()
                 .and_then(|root| root.hit_test_media_control(pt))
             {
                 let tag = if media.is_video { "video" } else { "audio" };
-                let play_state = if media.is_playing { "Playing" } else { "Paused" };
+                let play_state = if media.is_playing {
+                    "Playing"
+                } else {
+                    "Paused"
+                };
                 let cur_m = (media.current_time as u32) / 60;
                 let cur_s = (media.current_time as u32) % 60;
                 let dur_m = (media.duration as u32) / 60;
@@ -3447,13 +3672,16 @@ impl BrowserChrome {
 
             let mut link_to_navigate = None;
 
-            if self.mouse_y > HEADER_HEIGHT && self.mouse_y < self.height as f32 - STATUS_BAR_HEIGHT {
+            if self.mouse_y > HEADER_HEIGHT && self.mouse_y < self.height as f32 - STATUS_BAR_HEIGHT
+            {
                 let content_x = self.mouse_x;
                 let content_y = self.mouse_y - HEADER_HEIGHT + self.scroll_y;
                 let hit_link = self
                     .root_box
                     .as_ref()
-                    .and_then(|root| root.hit_test_link(mango_core::Point::new(content_x, content_y)))
+                    .and_then(|root| {
+                        root.hit_test_link(mango_core::Point::new(content_x, content_y))
+                    })
                     .map(|s| s.to_string());
                 let hit_node = self
                     .root_box
@@ -3503,16 +3731,17 @@ impl BrowserChrome {
             return;
         }
 
-        if button == MouseButton::Left {
-            if self.mouse_y > HEADER_HEIGHT && self.mouse_y < self.height as f32 - STATUS_BAR_HEIGHT {
-                let content_x = self.mouse_x;
-                let content_y = self.mouse_y - HEADER_HEIGHT + self.scroll_y;
-                let pt = mango_core::Point::new(content_x, content_y);
-                let active_node = self.root_box.as_ref().and_then(|root| root.hit_test(pt));
-                let active_changed = self.set_active_node(active_node);
-                if active_changed {
-                    self.relayout();
-                }
+        if button == MouseButton::Left
+            && self.mouse_y > HEADER_HEIGHT
+            && self.mouse_y < self.height as f32 - STATUS_BAR_HEIGHT
+        {
+            let content_x = self.mouse_x;
+            let content_y = self.mouse_y - HEADER_HEIGHT + self.scroll_y;
+            let pt = mango_core::Point::new(content_x, content_y);
+            let active_node = self.root_box.as_ref().and_then(|root| root.hit_test(pt));
+            let active_changed = self.set_active_node(active_node);
+            if active_changed {
+                self.relayout();
             }
         }
 
@@ -3524,31 +3753,30 @@ impl BrowserChrome {
                 .root_box
                 .as_ref()
                 .and_then(|r| r.hit_test_link(mango_core::Point::new(content_x, content_y)));
-            let hit_media = self
-                .root_box
-                .as_ref()
-                .and_then(|r| r.hit_test_media_control(mango_core::Point::new(content_x, content_y)));
+            let hit_media = self.root_box.as_ref().and_then(|r| {
+                r.hit_test_media_control(mango_core::Point::new(content_x, content_y))
+            });
 
             let can_back = self.active_tab().is_some_and(|t| t.can_go_back());
             let can_fwd = self.active_tab().is_some_and(|t| t.can_go_forward());
 
             let mut items = Vec::new();
 
-            if let Some(media) = hit_media {
-                if let Some(nid) = media.node_id {
-                    let play_label = if media.is_playing { "Pause" } else { "Play" };
-                    items.push(ContextMenuItem {
-                        label: play_label.to_string(),
-                        action: ContextMenuAction::ToggleMediaPlay(nid, !media.is_playing),
-                        enabled: true,
-                    });
-                    let mute_label = if media.is_muted { "Unmute" } else { "Mute" };
-                    items.push(ContextMenuItem {
-                        label: mute_label.to_string(),
-                        action: ContextMenuAction::ToggleMediaMute(nid, !media.is_muted),
-                        enabled: true,
-                    });
-                }
+            if let Some(media) = hit_media
+                && let Some(nid) = media.node_id
+            {
+                let play_label = if media.is_playing { "Pause" } else { "Play" };
+                items.push(ContextMenuItem {
+                    label: play_label.to_string(),
+                    action: ContextMenuAction::ToggleMediaPlay(nid, !media.is_playing),
+                    enabled: true,
+                });
+                let mute_label = if media.is_muted { "Unmute" } else { "Mute" };
+                items.push(ContextMenuItem {
+                    label: mute_label.to_string(),
+                    action: ContextMenuAction::ToggleMediaMute(nid, !media.is_muted),
+                    enabled: true,
+                });
             }
             if let Some(link) = hit_link {
                 let resolved = if let Some(base) = &self.base_url {
@@ -3592,8 +3820,12 @@ impl BrowserChrome {
 
             let menu_w = 175.0;
             let menu_h = items.len() as f32 * 26.0 + 8.0;
-            let menu_x = self.mouse_x.min((self.width as f32 - menu_w - 4.0).max(0.0));
-            let menu_y = self.mouse_y.min((self.height as f32 - menu_h - 4.0).max(0.0));
+            let menu_x = self
+                .mouse_x
+                .min((self.width as f32 - menu_w - 4.0).max(0.0));
+            let menu_y = self
+                .mouse_y
+                .min((self.height as f32 - menu_h - 4.0).max(0.0));
 
             self.context_menu = Some(ContextMenu {
                 x: menu_x,
@@ -3617,7 +3849,8 @@ impl BrowserChrome {
 
             // Dismiss or select option in select dropdown if open
             if let Some(dropdown) = self.select_dropdown.take() {
-                let total_h = (dropdown.options.len() as f32 * dropdown.item_height + 8.0).min(300.0);
+                let total_h =
+                    (dropdown.options.len() as f32 * dropdown.item_height + 8.0).min(300.0);
                 if self.mouse_x >= dropdown.x
                     && self.mouse_x <= dropdown.x + dropdown.width
                     && self.mouse_y >= dropdown.y
@@ -3642,7 +3875,8 @@ impl BrowserChrome {
                         self.set_control_value(select_node_id, &selected_val);
                         self.fire_dom_event(select_node_id, "change");
                         if let Some(ref mut rt) = self.js_runtime
-                            && let Some(onchange) = rt.get_node_attribute(select_node_id, "onchange")
+                            && let Some(onchange) =
+                                rt.get_node_attribute(select_node_id, "onchange")
                         {
                             let _ = rt.execute_script(&onchange);
                         }
@@ -3677,13 +3911,18 @@ impl BrowserChrome {
                         }
                         ContextMenuAction::ViewSource => self.open_view_source(),
                         ContextMenuAction::Inspect => {
-                            self.devtools.open_tab(crate::devtools::DevToolsTab::Elements);
+                            self.devtools
+                                .open_tab(crate::devtools::DevToolsTab::Elements);
                             self.status_text = "Mango DevTools: Inspect Element opened".to_string();
                             self.relayout();
                         }
                         ContextMenuAction::ToggleMediaPlay(node_id, play) => {
                             if let Some(ref mut rt) = self.js_runtime {
-                                rt.set_node_attribute(*node_id, "data-mango-playing", if *play { "true" } else { "false" });
+                                rt.set_node_attribute(
+                                    *node_id,
+                                    "data-mango-playing",
+                                    if *play { "true" } else { "false" },
+                                );
                                 let evt_type = if *play { "play" } else { "pause" };
                                 let script = format!(
                                     "if (typeof document !== 'undefined') {{ var el = document.querySelector('[data-mango-playing]'); if (el) el.dispatchEvent({{ type: '{}' }}); }}",
@@ -3691,16 +3930,28 @@ impl BrowserChrome {
                                 );
                                 let _ = rt.execute_script(&script);
                             }
-                            self.status_text = if *play { "Media playing".to_string() } else { "Media paused".to_string() };
+                            self.status_text = if *play {
+                                "Media playing".to_string()
+                            } else {
+                                "Media paused".to_string()
+                            };
                             self.relayout();
                         }
                         ContextMenuAction::ToggleMediaMute(node_id, mute) => {
                             if let Some(ref mut rt) = self.js_runtime {
-                                rt.set_node_attribute(*node_id, "data-mango-muted", if *mute { "true" } else { "false" });
+                                rt.set_node_attribute(
+                                    *node_id,
+                                    "data-mango-muted",
+                                    if *mute { "true" } else { "false" },
+                                );
                                 let script = "if (typeof document !== 'undefined') { var el = document.querySelector('[data-mango-muted]'); if (el) el.dispatchEvent({ type: 'volumechange' }); }";
                                 let _ = rt.execute_script(script);
                             }
-                            self.status_text = if *mute { "Media muted".to_string() } else { "Media unmuted".to_string() };
+                            self.status_text = if *mute {
+                                "Media muted".to_string()
+                            } else {
+                                "Media unmuted".to_string()
+                            };
                             self.relayout();
                         }
                     }
@@ -3756,10 +4007,12 @@ impl BrowserChrome {
                 }
                 Some(HoverTarget::ScrollbarTrack) => {
                     let content_y_top = HEADER_HEIGHT + 1.0;
-                    let content_h = (self.height as f32 - HEADER_HEIGHT - STATUS_BAR_HEIGHT - 1.0).max(10.0);
+                    let content_h =
+                        (self.height as f32 - HEADER_HEIGHT - STATUS_BAR_HEIGHT - 1.0).max(10.0);
                     let max_s = self.max_scroll();
                     if max_s > 0.0 {
-                        let click_ratio = ((self.mouse_y - content_y_top) / content_h).clamp(0.0, 1.0);
+                        let click_ratio =
+                            ((self.mouse_y - content_y_top) / content_h).clamp(0.0, 1.0);
                         self.scroll_y = (click_ratio * max_s).clamp(0.0, max_s);
                         if let Some(tab) = self.tabs.get_mut(self.active_tab_idx) {
                             tab.scroll_y = self.scroll_y;
@@ -3774,7 +4027,8 @@ impl BrowserChrome {
             }
 
             // Click outside toolbar / tabs unfocuses address bar
-            if self.mouse_y > HEADER_HEIGHT && self.mouse_y < self.height as f32 - STATUS_BAR_HEIGHT {
+            if self.mouse_y > HEADER_HEIGHT && self.mouse_y < self.height as f32 - STATUS_BAR_HEIGHT
+            {
                 self.address_focused = false;
                 self.is_all_selected = false;
 
@@ -3783,10 +4037,12 @@ impl BrowserChrome {
                 let max_s = self.max_scroll();
                 if max_s > 0.0 && self.mouse_x >= self.width as f32 - scrollbar_w {
                     let content_y_top = HEADER_HEIGHT + 1.0;
-                    let content_h = (self.height as f32 - HEADER_HEIGHT - STATUS_BAR_HEIGHT - 1.0).max(10.0);
+                    let content_h =
+                        (self.height as f32 - HEADER_HEIGHT - STATUS_BAR_HEIGHT - 1.0).max(10.0);
                     if self.mouse_y >= content_y_top && self.mouse_y <= content_y_top + content_h {
                         let doc_h = self.scrollable_height();
-                        let thumb_h = ((content_h / doc_h) * content_h).clamp(32.0f32.min(content_h), content_h);
+                        let thumb_h = ((content_h / doc_h) * content_h)
+                            .clamp(32.0f32.min(content_h), content_h);
                         let max_thumb_travel = (content_h - thumb_h).max(1.0);
                         let thumb_y = content_y_top + (self.scroll_y / max_s) * max_thumb_travel;
 
@@ -3795,7 +4051,8 @@ impl BrowserChrome {
                             self.drag_start_mouse_y = self.mouse_y;
                             self.drag_start_scroll_y = self.scroll_y;
                         } else {
-                            let click_ratio = ((self.mouse_y - content_y_top) / content_h).clamp(0.0, 1.0);
+                            let click_ratio =
+                                ((self.mouse_y - content_y_top) / content_h).clamp(0.0, 1.0);
                             self.scroll_y = (click_ratio * max_s).clamp(0.0, max_s);
                             if let Some(tab) = self.tabs.get_mut(self.active_tab_idx) {
                                 tab.scroll_y = self.scroll_y;
@@ -3812,21 +4069,17 @@ impl BrowserChrome {
                 let content_y = self.mouse_y - HEADER_HEIGHT + self.scroll_y;
 
                 // Hit-test media controls (<video>, <audio>)
-                if let Some(hit) = self
-                    .root_box
-                    .as_ref()
-                    .and_then(|root| root.hit_test_media_control(mango_core::Point::new(content_x, content_y)))
-                {
+                if let Some(hit) = self.root_box.as_ref().and_then(|root| {
+                    root.hit_test_media_control(mango_core::Point::new(content_x, content_y))
+                }) {
                     self.handle_media_control_click(hit);
                     return;
                 }
 
                 // Hit-test form controls (<input>, <button>, <select>, <textarea>)
-                if let Some(hit) = self
-                    .root_box
-                    .as_ref()
-                    .and_then(|root| root.hit_test_form_control(mango_core::Point::new(content_x, content_y)))
-                {
+                if let Some(hit) = self.root_box.as_ref().and_then(|root| {
+                    root.hit_test_form_control(mango_core::Point::new(content_x, content_y))
+                }) {
                     self.handle_form_control_click(hit);
                     return;
                 }
@@ -3887,9 +4140,14 @@ impl BrowserChrome {
                 if let mango_html::dom::NodeData::Element(el) = &node.data {
                     let tag = el.tag_name.to_ascii_lowercase();
                     let disabled = el.get_attribute("disabled").is_some();
-                    let tabindex_opt = el.get_attribute("tabindex").and_then(|s| s.trim().parse::<i32>().ok());
+                    let tabindex_opt = el
+                        .get_attribute("tabindex")
+                        .and_then(|s| s.trim().parse::<i32>().ok());
                     let is_hidden_input = tag == "input"
-                        && el.get_attribute("type").map(|t| t.eq_ignore_ascii_case("hidden")).unwrap_or(false);
+                        && el
+                            .get_attribute("type")
+                            .map(|t| t.eq_ignore_ascii_case("hidden"))
+                            .unwrap_or(false);
 
                     let can_focus = if disabled || is_hidden_input {
                         false
@@ -3898,7 +4156,8 @@ impl BrowserChrome {
                     } else {
                         matches!(tag.as_str(), "input" | "button" | "select" | "textarea")
                             || (tag == "a" && el.get_attribute("href").is_some())
-                            || el.get_attribute("contenteditable")
+                            || el
+                                .get_attribute("contenteditable")
                                 .map(|v| v.eq_ignore_ascii_case("true") || v.is_empty())
                                 .unwrap_or(false)
                     };
@@ -3959,12 +4218,18 @@ impl BrowserChrome {
 
     /// Handles clicks on HTML5 <video> and <audio> media controls.
     fn handle_media_control_click(&mut self, hit: mango_layout::MediaControlHit) {
-        let Some(node_id) = hit.node_id else { return; };
+        let Some(node_id) = hit.node_id else {
+            return;
+        };
         match hit.action {
             mango_layout::MediaClickAction::TogglePlayPause => {
                 let next_playing = !hit.is_playing;
                 if let Some(ref mut rt) = self.js_runtime {
-                    rt.set_node_attribute(node_id, "data-mango-playing", if next_playing { "true" } else { "false" });
+                    rt.set_node_attribute(
+                        node_id,
+                        "data-mango-playing",
+                        if next_playing { "true" } else { "false" },
+                    );
                     let evt_type = if next_playing { "play" } else { "pause" };
                     let script = format!(
                         "if (typeof document !== 'undefined') {{ var el = document.querySelector('[data-mango-playing]'); if (el) el.dispatchEvent({{ type: '{}' }}); }}",
@@ -3973,29 +4238,53 @@ impl BrowserChrome {
                     let _ = rt.execute_script(&script);
                 }
                 self.status_text = if next_playing {
-                    if hit.is_video { "Video playing".to_string() } else { "Audio playing".to_string() }
+                    if hit.is_video {
+                        "Video playing".to_string()
+                    } else {
+                        "Audio playing".to_string()
+                    }
                 } else {
-                    if hit.is_video { "Video paused".to_string() } else { "Audio paused".to_string() }
+                    if hit.is_video {
+                        "Video paused".to_string()
+                    } else {
+                        "Audio paused".to_string()
+                    }
                 };
                 self.relayout();
             }
             mango_layout::MediaClickAction::ToggleMute => {
                 let next_muted = !hit.is_muted;
                 if let Some(ref mut rt) = self.js_runtime {
-                    rt.set_node_attribute(node_id, "data-mango-muted", if next_muted { "true" } else { "false" });
+                    rt.set_node_attribute(
+                        node_id,
+                        "data-mango-muted",
+                        if next_muted { "true" } else { "false" },
+                    );
                     let script = "if (typeof document !== 'undefined') { var el = document.querySelector('[data-mango-muted]'); if (el) el.dispatchEvent({ type: 'volumechange' }); }";
                     let _ = rt.execute_script(script);
                 }
-                self.status_text = if next_muted { "Media muted".to_string() } else { "Media unmuted".to_string() };
+                self.status_text = if next_muted {
+                    "Media muted".to_string()
+                } else {
+                    "Media unmuted".to_string()
+                };
                 self.relayout();
             }
             mango_layout::MediaClickAction::Seek(target_time) => {
                 if let Some(ref mut rt) = self.js_runtime {
-                    rt.set_node_attribute(node_id, "data-mango-time", &format!("{:.1}", target_time));
+                    rt.set_node_attribute(
+                        node_id,
+                        "data-mango-time",
+                        &format!("{:.1}", target_time),
+                    );
                     let script = "if (typeof document !== 'undefined') { var el = document.querySelector('[data-mango-time]'); if (el) el.dispatchEvent({ type: 'timeupdate' }); }";
                     let _ = rt.execute_script(script);
                 }
-                self.status_text = format!("Seek to {:02}:{:02}", (target_time as u32) / 60, (target_time as u32) % 60);
+                self.status_text = format!(
+                    "Seek to {:02}:{:02}",
+                    (target_time as u32) / 60,
+                    (target_time as u32) % 60
+                );
                 self.relayout();
             }
             mango_layout::MediaClickAction::ToggleFullscreen => {
@@ -4168,7 +4457,11 @@ impl BrowserChrome {
 
         if let Some(ref mut rt) = self.js_runtime {
             rt.set_node_attribute(node_id, "data-mango-focused", "true");
-            rt.set_node_attribute(node_id, "_mango_cursor_pos", &self.control_cursor_pos.to_string());
+            rt.set_node_attribute(
+                node_id,
+                "_mango_cursor_pos",
+                &self.control_cursor_pos.to_string(),
+            );
         }
         self.relayout();
         self.status_text = format!("Focused {} field", hit.form_type);
@@ -4447,7 +4740,9 @@ impl BrowserChrome {
 
     /// Handles clicks on interactive form controls.
     fn handle_form_control_click(&mut self, hit: mango_layout::FormControlHit) {
-        let Some(node_id) = hit.node_id else { return; };
+        let Some(node_id) = hit.node_id else {
+            return;
+        };
 
         match hit.form_type.as_str() {
             "checkbox" => {
@@ -4489,11 +4784,11 @@ impl BrowserChrome {
                             let mut found_form = None;
                             while let Some(nid) = curr {
                                 if let Some(node) = doc.get(nid) {
-                                    if let NodeData::Element(el) = &node.data {
-                                        if el.tag_name.eq_ignore_ascii_case("form") {
-                                            found_form = Some(nid);
-                                            break;
-                                        }
+                                    if let NodeData::Element(el) = &node.data
+                                        && el.tag_name.eq_ignore_ascii_case("form")
+                                    {
+                                        found_form = Some(nid);
+                                        break;
                                     }
                                     curr = node.parent;
                                 } else {
@@ -4507,14 +4802,19 @@ impl BrowserChrome {
                         let mut stack = vec![form_root];
                         while let Some(nid) = stack.pop() {
                             if let Some(node) = doc.get(nid) {
-                                if let NodeData::Element(el) = &node.data {
-                                    if el.tag_name.eq_ignore_ascii_case("input")
-                                        && el.get_attribute("type").map(|t| t.eq_ignore_ascii_case("radio")).unwrap_or(false)
-                                        && el.get_attribute("name").map(|n| n == radio_name).unwrap_or(false)
-                                        && nid != node_id
-                                    {
-                                        radios_to_uncheck.push(nid);
-                                    }
+                                if let NodeData::Element(el) = &node.data
+                                    && el.tag_name.eq_ignore_ascii_case("input")
+                                    && el
+                                        .get_attribute("type")
+                                        .map(|t| t.eq_ignore_ascii_case("radio"))
+                                        .unwrap_or(false)
+                                    && el
+                                        .get_attribute("name")
+                                        .map(|n| n == radio_name)
+                                        .unwrap_or(false)
+                                    && nid != node_id
+                                {
+                                    radios_to_uncheck.push(nid);
                                 }
                                 let mut child = node.first_child;
                                 while let Some(cid) = child {
@@ -4536,21 +4836,30 @@ impl BrowserChrome {
                     rt.set_node_attribute(node_id, "checked", "true");
                 }
                 if let Some(ref mut doc) = self.cached_document {
-                    let radio_name = self.js_runtime.as_ref().and_then(|rt| rt.get_node_attribute(node_id, "name")).unwrap_or_default();
+                    let radio_name = self
+                        .js_runtime
+                        .as_ref()
+                        .and_then(|rt| rt.get_node_attribute(node_id, "name"))
+                        .unwrap_or_default();
                     if !radio_name.is_empty() {
                         let mut stack = vec![doc.root()];
                         while let Some(nid) = stack.pop() {
                             if let Some(node) = doc.get_mut(nid) {
-                                if let NodeData::Element(ref mut el) = node.data {
-                                    if el.tag_name.eq_ignore_ascii_case("input")
-                                        && el.get_attribute("type").map(|t| t.eq_ignore_ascii_case("radio")).unwrap_or(false)
-                                        && el.get_attribute("name").map(|n| n == radio_name).unwrap_or(false)
-                                    {
-                                        if nid == node_id {
-                                            el.set_attribute("checked", "true");
-                                        } else {
-                                            el.remove_attribute("checked");
-                                        }
+                                if let NodeData::Element(ref mut el) = node.data
+                                    && el.tag_name.eq_ignore_ascii_case("input")
+                                    && el
+                                        .get_attribute("type")
+                                        .map(|t| t.eq_ignore_ascii_case("radio"))
+                                        .unwrap_or(false)
+                                    && el
+                                        .get_attribute("name")
+                                        .map(|n| n == radio_name)
+                                        .unwrap_or(false)
+                                {
+                                    if nid == node_id {
+                                        el.set_attribute("checked", "true");
+                                    } else {
+                                        el.remove_attribute("checked");
                                     }
                                 }
                                 let mut child = node.first_child;
@@ -4572,19 +4881,33 @@ impl BrowserChrome {
                     if !n.is_empty() {
                         (n, v)
                     } else if let Some(ref doc) = self.cached_document {
-                        let elem = doc.get(node_id).and_then(|n| match &n.data { NodeData::Element(e) => Some(e), _ => None });
+                        let elem = doc.get(node_id).and_then(|n| match &n.data {
+                            NodeData::Element(e) => Some(e),
+                            _ => None,
+                        });
                         (
-                            elem.and_then(|e| e.get_attribute("name")).unwrap_or_default().to_string(),
-                            elem.and_then(|e| e.get_attribute("value")).unwrap_or_default().to_string(),
+                            elem.and_then(|e| e.get_attribute("name"))
+                                .unwrap_or_default()
+                                .to_string(),
+                            elem.and_then(|e| e.get_attribute("value"))
+                                .unwrap_or_default()
+                                .to_string(),
                         )
                     } else {
                         (n, v)
                     }
                 } else if let Some(ref doc) = self.cached_document {
-                    let elem = doc.get(node_id).and_then(|n| match &n.data { NodeData::Element(e) => Some(e), _ => None });
+                    let elem = doc.get(node_id).and_then(|n| match &n.data {
+                        NodeData::Element(e) => Some(e),
+                        _ => None,
+                    });
                     (
-                        elem.and_then(|e| e.get_attribute("name")).unwrap_or_default().to_string(),
-                        elem.and_then(|e| e.get_attribute("value")).unwrap_or_default().to_string(),
+                        elem.and_then(|e| e.get_attribute("name"))
+                            .unwrap_or_default()
+                            .to_string(),
+                        elem.and_then(|e| e.get_attribute("value"))
+                            .unwrap_or_default()
+                            .to_string(),
                     )
                 } else {
                     (String::new(), String::new())
@@ -4649,9 +4972,15 @@ impl BrowserChrome {
                         })
                     });
                     let size_css = match radio_val.as_str() {
-                        "small" => "body.mango-wiki-font-size, #content, .mw-body { font-size: 13px !important; }",
-                        "large" => "body.mango-wiki-font-size, #content, .mw-body { font-size: 17px !important; }",
-                        _ => "body.mango-wiki-font-size, #content, .mw-body { font-size: 14.4px !important; }",
+                        "small" => {
+                            "body.mango-wiki-font-size, #content, .mw-body { font-size: 13px !important; }"
+                        }
+                        "large" => {
+                            "body.mango-wiki-font-size, #content, .mw-body { font-size: 17px !important; }"
+                        }
+                        _ => {
+                            "body.mango-wiki-font-size, #content, .mw-body { font-size: 14.4px !important; }"
+                        }
                     };
                     let sheet = mango_css::parser::parse_stylesheet(size_css);
                     self.cached_stylesheets.push(sheet);
@@ -4674,19 +5003,23 @@ impl BrowserChrome {
                         let mut content_nid = None;
                         for idx in 0..15000 {
                             let nid = mango_core::Id::from_raw(idx);
-                            if let Some(node) = doc.get(nid) {
-                                if let NodeData::Element(el) = &node.data {
-                                    if el.get_attribute("id") == Some("vector-appearance-content") {
-                                        content_nid = Some(nid);
-                                        break;
-                                    }
-                                }
+                            if let Some(node) = doc.get(nid)
+                                && let NodeData::Element(el) = &node.data
+                                && el.get_attribute("id") == Some("vector-appearance-content")
+                            {
+                                content_nid = Some(nid);
+                                break;
                             }
                         }
                         if let Some(cnid) = content_nid {
-                            let cur_style = rt.get_node_attribute(cnid, "style").unwrap_or_default();
+                            let cur_style =
+                                rt.get_node_attribute(cnid, "style").unwrap_or_default();
                             if cur_style.contains("display: none") {
-                                rt.set_node_attribute(cnid, "style", "padding: 4px 0; font-family: sans-serif; color: #202122;");
+                                rt.set_node_attribute(
+                                    cnid,
+                                    "style",
+                                    "padding: 4px 0; font-family: sans-serif; color: #202122;",
+                                );
                                 self.status_text = "Appearance section expanded".to_string();
                             } else {
                                 rt.set_node_attribute(cnid, "style", "display: none !important;");
@@ -4756,14 +5089,27 @@ impl BrowserChrome {
             "time" => {
                 let (hour, minute, minute_step) = self.picker_start_time(node_id);
                 self.focus_text_control(node_id, &hit);
-                self.open_picker(node_id, PickerKind::Time { hour, minute, minute_step });
+                self.open_picker(
+                    node_id,
+                    PickerKind::Time {
+                        hour,
+                        minute,
+                        minute_step,
+                    },
+                );
                 self.status_text = "Pick a time".to_string();
             }
             "file" => {
-                let dir =
-                    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+                let dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
                 let entries = list_directory(&dir);
-                self.open_picker(node_id, PickerKind::File { dir, entries, offset: 0 });
+                self.open_picker(
+                    node_id,
+                    PickerKind::File {
+                        dir,
+                        entries,
+                        offset: 0,
+                    },
+                );
                 self.status_text = "Choose a file".to_string();
             }
             "select" => {
@@ -4775,24 +5121,25 @@ impl BrowserChrome {
                     let mut child = node.first_child;
                     while let Some(cid) = child {
                         if let Some(cnode) = doc.get(cid) {
-                            if let NodeData::Element(el) = &cnode.data {
-                                if el.tag_name.eq_ignore_ascii_case("option") {
-                                    // BUG-008 fix: Use recursive text_content to handle nested inline elements
-                                    let opt_text = doc.text_content(cid);
-                                    let text = if opt_text.trim().is_empty() {
-                                        el.get_attribute("value").unwrap_or("").to_string()
-                                    } else {
-                                        opt_text.trim().to_string()
-                                    };
-                                    let value = el.get_attribute("value").unwrap_or(&text).to_string();
-                                    let selected = el.get_attribute("selected").is_some() || hit.value == value;
-                                    options.push(SelectDropdownOption {
-                                        node_id: cid,
-                                        text,
-                                        value,
-                                        selected,
-                                    });
-                                }
+                            if let NodeData::Element(el) = &cnode.data
+                                && el.tag_name.eq_ignore_ascii_case("option")
+                            {
+                                // BUG-008 fix: Use recursive text_content to handle nested inline elements
+                                let opt_text = doc.text_content(cid);
+                                let text = if opt_text.trim().is_empty() {
+                                    el.get_attribute("value").unwrap_or("").to_string()
+                                } else {
+                                    opt_text.trim().to_string()
+                                };
+                                let value = el.get_attribute("value").unwrap_or(&text).to_string();
+                                let selected =
+                                    el.get_attribute("selected").is_some() || hit.value == value;
+                                options.push(SelectDropdownOption {
+                                    node_id: cid,
+                                    text,
+                                    value,
+                                    selected,
+                                });
                             }
                             child = cnode.next_sibling;
                         } else {
@@ -4838,11 +5185,11 @@ impl BrowserChrome {
                 let mut details_node = None;
                 while let Some(nid) = curr {
                     if let Some(node) = doc.get(nid) {
-                        if let NodeData::Element(el) = &node.data {
-                            if el.tag_name.eq_ignore_ascii_case("details") {
-                                details_node = Some(nid);
-                                break;
-                            }
+                        if let NodeData::Element(el) = &node.data
+                            && el.tag_name.eq_ignore_ascii_case("details")
+                        {
+                            details_node = Some(nid);
+                            break;
                         }
                         curr = node.parent;
                     } else {
@@ -4886,7 +5233,10 @@ impl BrowserChrome {
                         if nid != node_id
                             && let Some(node) = doc.get(nid)
                             && let NodeData::Element(el) = &node.data
-                            && matches!(el.tag_name.to_ascii_lowercase().as_str(), "input" | "select" | "textarea" | "button")
+                            && matches!(
+                                el.tag_name.to_ascii_lowercase().as_str(),
+                                "input" | "select" | "textarea" | "button"
+                            )
                         {
                             found = Some(nid);
                             break;
@@ -4906,7 +5256,14 @@ impl BrowserChrome {
                     && let Some(tnode) = doc.get(target_id)
                     && let NodeData::Element(el) = &tnode.data
                 {
-                    let t_type = el.get_attribute("type").unwrap_or(if el.tag_name.eq_ignore_ascii_case("select") { "select" } else { "text" }).to_ascii_lowercase();
+                    let t_type = el
+                        .get_attribute("type")
+                        .unwrap_or(if el.tag_name.eq_ignore_ascii_case("select") {
+                            "select"
+                        } else {
+                            "text"
+                        })
+                        .to_ascii_lowercase();
                     let t_checked = el.get_attribute("checked").is_some();
                     self.handle_form_control_click(mango_layout::FormControlHit {
                         node_id: Some(target_id),
@@ -4934,29 +5291,24 @@ impl Drop for BrowserChrome {
 }
 
 /// Restores a `localStorage` profile (`<key>\t<value>` or `<origin>\t<key>\t<value>` per line) into the store.
-fn load_local_storage(
-    path: &std::path::Path,
-    store: &mango_js::web_apis::SharedLocalStorage,
-) {
+fn load_local_storage(path: &std::path::Path, store: &mango_js::web_apis::SharedLocalStorage) {
     match mango_js::web_apis::load_local_storage_from_file(path, store) {
         Ok(count) if count > 0 => {
-            log::info!("Restored {count} localStorage entries from {}", path.display());
+            log::info!(
+                "Restored {count} localStorage entries from {}",
+                path.display()
+            );
         }
         _ => {}
     }
 }
 
 /// Writes the `localStorage` store to its profile file (GAP-017, Phase 6.4 / PRD 7.6).
-fn save_local_storage(
-    path: &std::path::Path,
-    store: &mango_js::web_apis::SharedLocalStorage,
-) {
+fn save_local_storage(path: &std::path::Path, store: &mango_js::web_apis::SharedLocalStorage) {
     if let Err(e) = mango_js::web_apis::save_local_storage_to_file(path, store) {
         log::warn!("Could not persist localStorage: {e}");
     }
 }
-
-
 
 /// Truncates a string to at most `max` characters with an ASCII ellipsis.
 fn truncate_label(s: &str, max: usize) -> String {
@@ -5027,7 +5379,10 @@ impl BrowserChrome {
         let (action, method) = if let Some(node) = doc.get(form_id) {
             if let NodeData::Element(el) = &node.data {
                 let a = el.get_attribute("action").unwrap_or("").to_string();
-                let m = el.get_attribute("method").unwrap_or("GET").to_ascii_uppercase();
+                let m = el
+                    .get_attribute("method")
+                    .unwrap_or("GET")
+                    .to_ascii_uppercase();
                 (a, m)
             } else {
                 ("".to_string(), "GET".to_string())
@@ -5051,9 +5406,10 @@ impl BrowserChrome {
                         && !name.is_empty()
                     {
                         if tag == "textarea" {
-                            let val = el.get_attribute("value").map(|v| v.to_string()).unwrap_or_else(|| {
-                                doc.text_content(nid)
-                            });
+                            let val = el
+                                .get_attribute("value")
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(|| doc.text_content(nid));
                             form_values.push((name.to_string(), val));
                         } else if tag == "select" {
                             let is_multiple = el.get_attribute("multiple").is_some();
@@ -5061,17 +5417,21 @@ impl BrowserChrome {
                             let mut opt_stack = vec![nid];
                             while let Some(curr_id) = opt_stack.pop() {
                                 if let Some(curr_node) = doc.get(curr_id) {
-                                    if curr_id != nid {
-                                        if let NodeData::Element(opt_el) = &curr_node.data {
-                                            if opt_el.tag_name.eq_ignore_ascii_case("option") {
-                                                let opt_disabled = opt_el.get_attribute("disabled").is_some();
-                                                let opt_selected = opt_el.get_attribute("selected").is_some();
-                                                let opt_val = opt_el.get_attribute("value")
-                                                    .map(|v| v.to_string())
-                                                    .unwrap_or_else(|| doc.text_content(curr_id).trim().to_string());
-                                                options.push((opt_disabled, opt_selected, opt_val));
-                                            }
-                                        }
+                                    if curr_id != nid
+                                        && let NodeData::Element(opt_el) = &curr_node.data
+                                        && opt_el.tag_name.eq_ignore_ascii_case("option")
+                                    {
+                                        let opt_disabled =
+                                            opt_el.get_attribute("disabled").is_some();
+                                        let opt_selected =
+                                            opt_el.get_attribute("selected").is_some();
+                                        let opt_val = opt_el
+                                            .get_attribute("value")
+                                            .map(|v| v.to_string())
+                                            .unwrap_or_else(|| {
+                                                doc.text_content(curr_id).trim().to_string()
+                                            });
+                                        options.push((opt_disabled, opt_selected, opt_val));
                                     }
                                     let mut child = curr_node.first_child;
                                     let mut children = Vec::new();
@@ -5095,7 +5455,9 @@ impl BrowserChrome {
                                     }
                                 }
                             } else {
-                                let selected = options.iter().find(|(d, s, _)| !d && *s)
+                                let selected = options
+                                    .iter()
+                                    .find(|(d, s, _)| !d && *s)
                                     .or_else(|| options.iter().find(|(d, _, _)| !d));
                                 if let Some((_, _, opt_val)) = selected {
                                     form_values.push((name.to_string(), opt_val.clone()));
@@ -5105,8 +5467,14 @@ impl BrowserChrome {
                                 }
                             }
                         } else {
-                            let input_type = el.get_attribute("type").unwrap_or("text").to_ascii_lowercase();
-                            if input_type == "button" || input_type == "reset" || input_type == "image" {
+                            let input_type = el
+                                .get_attribute("type")
+                                .unwrap_or("text")
+                                .to_ascii_lowercase();
+                            if input_type == "button"
+                                || input_type == "reset"
+                                || input_type == "image"
+                            {
                                 // Omitted
                             } else if input_type == "submit" {
                                 if nid == control_node_id {
@@ -5211,7 +5579,11 @@ impl BrowserChrome {
                     "Please provide a valid value."
                 };
                 self.status_text = msg.to_string();
-                log::info!("Form submission blocked: control {:?} is invalid ({})", inval_id, msg);
+                log::info!(
+                    "Form submission blocked: control {:?} is invalid ({})",
+                    inval_id,
+                    msg
+                );
                 return;
             }
         }
@@ -5219,7 +5591,9 @@ impl BrowserChrome {
         let resolved_action = if action.is_empty() {
             self.address_text.clone()
         } else if let Some(base) = &self.base_url {
-            base.resolve(&action).map(|u| u.to_string()).unwrap_or(action)
+            base.resolve(&action)
+                .map(|u| u.to_string())
+                .unwrap_or(action)
         } else if action.starts_with('/') {
             format!("https://html.duckduckgo.com{}", action)
         } else {
@@ -5231,7 +5605,11 @@ impl BrowserChrome {
             if let Ok(parsed_url) = Url::parse(&resolved_action) {
                 self.status_text = format!("Submitting to {}...", parsed_url);
                 self.is_loading = true;
-                match self.loader.post_document(&parsed_url, query_str.as_bytes(), "application/x-www-form-urlencoded") {
+                match self.loader.post_document(
+                    &parsed_url,
+                    query_str.as_bytes(),
+                    "application/x-www-form-urlencoded",
+                ) {
                     Ok(doc_result) => {
                         self.is_loading = false;
                         self.address_text = doc_result.url.to_string();
@@ -5240,7 +5618,10 @@ impl BrowserChrome {
                         return;
                     }
                     Err(e) => {
-                        log::warn!("POST submission error: {}. Falling back to GET navigation.", e);
+                        log::warn!(
+                            "POST submission error: {}. Falling back to GET navigation.",
+                            e
+                        );
                     }
                 }
             }
@@ -5337,11 +5718,12 @@ fn collect_stylesheet_links(doc: &Document, node_id: NodeId, links: &mut Vec<Str
     {
         let is_stylesheet = elem
             .get_attribute("rel")
-            .map(|r| r.split_whitespace().any(|t| t.eq_ignore_ascii_case("stylesheet")))
+            .map(|r| {
+                r.split_whitespace()
+                    .any(|t| t.eq_ignore_ascii_case("stylesheet"))
+            })
             .unwrap_or(false);
-        if is_stylesheet
-            && let Some(href) = elem.get_attribute("href")
-        {
+        if is_stylesheet && let Some(href) = elem.get_attribute("href") {
             let trimmed = href.trim();
             if !trimmed.is_empty() {
                 links.push(trimmed.to_string());
@@ -5383,11 +5765,7 @@ fn load_stylesheet_recursive(
     }
 }
 
-fn load_web_fonts(
-    loader: &ResourceLoader,
-    base_url: Option<&Url>,
-    stylesheets: &[Stylesheet],
-) {
+fn load_web_fonts(loader: &ResourceLoader, base_url: Option<&Url>, stylesheets: &[Stylesheet]) {
     let mut font_faces = Vec::new();
     for sheet in stylesheets {
         for rule in &sheet.rules {
@@ -5406,17 +5784,15 @@ fn load_web_fonts(
         let font_bytes_res: Result<Vec<u8>, String> = if font_face.src_url.starts_with("data:") {
             decode_data_uri_font(&font_face.src_url).map_err(|e| e.to_string())
         } else if let Some(base) = base_url {
-            loader.fetch_font_bytes(base, &font_face.src_url).map_err(|e| e.to_string())
+            loader
+                .fetch_font_bytes(base, &font_face.src_url)
+                .map_err(|e| e.to_string())
         } else {
             return false;
         };
 
         if let Ok(font_bytes) = font_bytes_res {
-            match font_manager().register_web_font(
-                &font_face.font_family,
-                weight,
-                &font_bytes,
-            ) {
+            match font_manager().register_web_font(&font_face.font_family, weight, &font_bytes) {
                 Ok(id) => {
                     log::info!(
                         "Loaded and registered web font '{}' (ID: {}, weight: {:?})",
@@ -5473,7 +5849,8 @@ fn load_web_fonts(
             mango_css::values::FontWeight::Numeric(w) => w >= 600,
             _ => false,
         };
-        if is_semi_bold && !font_manager().has_web_font_weight(&face.font_family, FontWeight::Bold) {
+        if is_semi_bold && !font_manager().has_web_font_weight(&face.font_family, FontWeight::Bold)
+        {
             try_load_face(face, FontWeight::Bold);
         }
     }
@@ -5512,7 +5889,10 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         }
     }
 
-    let filtered: Vec<u8> = input.bytes().filter(|b| !b.is_ascii_whitespace() && *b != b'=').collect();
+    let filtered: Vec<u8> = input
+        .bytes()
+        .filter(|b| !b.is_ascii_whitespace() && *b != b'=')
+        .collect();
     let mut out = Vec::with_capacity(filtered.len() * 3 / 4);
 
     let chunks = filtered.chunks(4);
@@ -5604,8 +5984,6 @@ fn collect_image_sources(doc: &Document, node_id: NodeId, sources: &mut Vec<Stri
     }
 }
 
-
-
 fn collect_stylesheet_images(
     _doc: &Document,
     stylesheets: &[mango_css::parser::Stylesheet],
@@ -5666,11 +6044,7 @@ fn collect_box_background_images(b: &mango_layout::box_tree::LayoutBox, out: &mu
 fn extract_title(doc: &Document) -> Option<String> {
     let title_id = doc.find_element_by_tag(doc.root(), "title")?;
     let text = doc.text_content(title_id).trim().to_string();
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
+    if text.is_empty() { None } else { Some(text) }
 }
 
 fn resolve_navigation_input(input: &str) -> String {
@@ -5702,7 +6076,6 @@ fn resolve_navigation_input(input: &str) -> String {
         welcome_page_html()
     }
 }
-
 
 fn test_net_html() -> String {
     format!(
@@ -6125,7 +6498,8 @@ fn box_model_test_html() -> String {
         </div>
     </body>
     </html>
-    "#.to_string()
+    "#
+    .to_string()
 }
 
 fn inline_test_html() -> String {
@@ -6416,7 +6790,10 @@ mod tests {
                 false
             }
         });
-        assert!(found_text, "Rendered display list should contain text mutated by JS");
+        assert!(
+            found_text,
+            "Rendered display list should contain text mutated by JS"
+        );
     }
 
     #[test]
@@ -6464,7 +6841,11 @@ mod tests {
         assert!(browser.context_menu.is_some());
         let menu = browser.context_menu.as_ref().unwrap();
         assert!(menu.items.iter().any(|item| item.label == "Reload"));
-        assert!(menu.items.iter().any(|item| item.label == "View Page Source"));
+        assert!(
+            menu.items
+                .iter()
+                .any(|item| item.label == "View Page Source")
+        );
 
         // Render display list with open context menu
         let dl = browser.build_display_list((1024, 768));
@@ -6545,8 +6926,13 @@ mod tests {
         assert_eq!(browser.address_text, "test:svg");
 
         let dl = browser.build_display_list((1024, 768));
-        let has_svg_images = dl.iter().any(|cmd| matches!(cmd, DisplayCommand::DrawImage { .. }));
-        assert!(has_svg_images, "Display list should contain rasterized SVG images");
+        let has_svg_images = dl
+            .iter()
+            .any(|cmd| matches!(cmd, DisplayCommand::DrawImage { .. }));
+        assert!(
+            has_svg_images,
+            "Display list should contain rasterized SVG images"
+        );
     }
 
     #[test]
@@ -6564,7 +6950,13 @@ mod tests {
 
         let dl = browser.build_display_list((1024, 768));
         let found_italic_underline = dl.iter().any(|cmd| {
-            if let DisplayCommand::DrawText { text, style, decoration, .. } = cmd {
+            if let DisplayCommand::DrawText {
+                text,
+                style,
+                decoration,
+                ..
+            } = cmd
+            {
                 text == "Italic and Underlined"
                     && *style == mango_render::FontStyle::Italic
                     && *decoration == mango_render::TextDecoration::Underline
@@ -6572,16 +6964,25 @@ mod tests {
                 false
             }
         });
-        assert!(found_italic_underline, "Should render text with Italic style and Underline decoration");
+        assert!(
+            found_italic_underline,
+            "Should render text with Italic style and Underline decoration"
+        );
 
         let found_line_through = dl.iter().any(|cmd| {
-            if let DisplayCommand::DrawText { text, decoration, .. } = cmd {
+            if let DisplayCommand::DrawText {
+                text, decoration, ..
+            } = cmd
+            {
                 text == "Strikethrough" && *decoration == mango_render::TextDecoration::LineThrough
             } else {
                 false
             }
         });
-        assert!(found_line_through, "Should render text with LineThrough decoration");
+        assert!(
+            found_line_through,
+            "Should render text with LineThrough decoration"
+        );
     }
 
     #[test]
@@ -6602,7 +7003,9 @@ mod tests {
         browser.load_html(html.to_string(), "test:btn_icon".to_string());
 
         let dl = browser.build_display_list((1024, 768));
-        let has_svg = dl.iter().any(|cmd| matches!(cmd, DisplayCommand::DrawImage { .. }));
+        let has_svg = dl
+            .iter()
+            .any(|cmd| matches!(cmd, DisplayCommand::DrawImage { .. }));
         let has_text = dl.iter().any(|cmd| {
             if let DisplayCommand::DrawText { text, .. } = cmd {
                 text.contains("Click Me")
@@ -6629,8 +7032,16 @@ mod tests {
         browser.load_html(html.to_string(), "test:extent".to_string());
 
         let doc_h = browser.scrollable_height();
-        assert!(doc_h >= 3000.0, "Document extent must reflect all 3000px of child boxes, got {}", doc_h);
-        assert!(browser.max_scroll() > 2000.0, "Max scroll must be > 2000px, got {}", browser.max_scroll());
+        assert!(
+            doc_h >= 3000.0,
+            "Document extent must reflect all 3000px of child boxes, got {}",
+            doc_h
+        );
+        assert!(
+            browser.max_scroll() > 2000.0,
+            "Max scroll must be > 2000px, got {}",
+            browser.max_scroll()
+        );
     }
 
     #[test]
@@ -6659,7 +7070,8 @@ mod tests {
         // Verify that no page-related command extends above content_y or below content_y + content_h
         for cmd in dl.iter() {
             match cmd {
-                DisplayCommand::FillRect { rect, .. } | DisplayCommand::FillRoundedRect { rect, .. } => {
+                DisplayCommand::FillRect { rect, .. }
+                | DisplayCommand::FillRoundedRect { rect, .. } => {
                     // Chrome elements (tab bar at y=0..38, toolbar at 38..78, status bar at 744..768) are allowed
                     if rect.y() >= content_y && rect.y() < content_y + content_h {
                         assert!(
@@ -6705,12 +7117,16 @@ mod tests {
         let scrollbar_w = 12.0f32;
         let has_thumb = dl.iter().any(|cmd| {
             if let DisplayCommand::FillRoundedRect { rect, radii, .. } = cmd {
-                (rect.x() - (1024.0 - scrollbar_w + 2.0)).abs() < 2.0 && *radii == [4.0, 4.0, 4.0, 4.0]
+                (rect.x() - (1024.0 - scrollbar_w + 2.0)).abs() < 2.0
+                    && *radii == [4.0, 4.0, 4.0, 4.0]
             } else {
                 false
             }
         });
-        assert!(has_thumb, "Display list must render rounded scrollbar thumb");
+        assert!(
+            has_thumb,
+            "Display list must render rounded scrollbar thumb"
+        );
 
         // Hover over scrollbar thumb
         let content_y_top = HEADER_HEIGHT + 1.0;
@@ -6721,7 +7137,10 @@ mod tests {
         browser.handle_mouse_click(MouseButton::Left, KeyState::Pressed);
         assert!(browser.scrollbar_dragging);
         browser.handle_mouse_move(1020.0, content_y_top + 110.0);
-        assert!(browser.scroll_y > 0.0, "Dragging scrollbar thumb down must scroll page down");
+        assert!(
+            browser.scroll_y > 0.0,
+            "Dragging scrollbar thumb down must scroll page down"
+        );
 
         // Release mouse click
         browser.handle_mouse_click(MouseButton::Left, KeyState::Released);
@@ -6730,7 +7149,10 @@ mod tests {
         // Click track near bottom jumps scroll
         browser.handle_mouse_move(1020.0, 700.0);
         browser.handle_mouse_click(MouseButton::Left, KeyState::Pressed);
-        assert!(browser.scroll_y > 1000.0, "Clicking bottom of scrollbar track must jump scroll position");
+        assert!(
+            browser.scroll_y > 1000.0,
+            "Clicking bottom of scrollbar track must jump scroll position"
+        );
         browser.handle_mouse_click(MouseButton::Left, KeyState::Released);
     }
 
@@ -6754,7 +7176,10 @@ mod tests {
             modifiers: mango_platform::input::Modifiers::default(),
         });
         let scrolled_pagedown = browser.scroll_y;
-        assert!(scrolled_pagedown > 400.0, "PageDown must scroll ~85% of viewport height");
+        assert!(
+            scrolled_pagedown > 400.0,
+            "PageDown must scroll ~85% of viewport height"
+        );
 
         // Space
         browser.handle_key_event(&KeyEvent {
@@ -6762,7 +7187,10 @@ mod tests {
             state: KeyState::Pressed,
             modifiers: mango_platform::input::Modifiers::default(),
         });
-        assert!(browser.scroll_y > scrolled_pagedown, "Space must scroll down");
+        assert!(
+            browser.scroll_y > scrolled_pagedown,
+            "Space must scroll down"
+        );
 
         // Shift+Space
         let shift_mods = mango_platform::input::Modifiers {
@@ -6774,7 +7202,10 @@ mod tests {
             state: KeyState::Pressed,
             modifiers: shift_mods,
         });
-        assert!((browser.scroll_y - scrolled_pagedown).abs() < 2.0, "Shift+Space must scroll up");
+        assert!(
+            (browser.scroll_y - scrolled_pagedown).abs() < 2.0,
+            "Shift+Space must scroll up"
+        );
 
         // End
         browser.handle_key_event(&KeyEvent {
@@ -6782,7 +7213,11 @@ mod tests {
             state: KeyState::Pressed,
             modifiers: mango_platform::input::Modifiers::default(),
         });
-        assert_eq!(browser.scroll_y, browser.max_scroll(), "End must scroll to bottom");
+        assert_eq!(
+            browser.scroll_y,
+            browser.max_scroll(),
+            "End must scroll to bottom"
+        );
 
         // Home
         browser.handle_key_event(&KeyEvent {
@@ -6813,7 +7248,10 @@ mod tests {
         browser.handle_mouse_move(30.0, HEADER_HEIGHT + 30.0);
         browser.handle_mouse_click(MouseButton::Left, KeyState::Pressed);
 
-        assert!(browser.select_dropdown.is_some(), "Clicking select must open select_dropdown");
+        assert!(
+            browser.select_dropdown.is_some(),
+            "Clicking select must open select_dropdown"
+        );
         let dropdown = browser.select_dropdown.as_ref().unwrap();
         assert_eq!(dropdown.options.len(), 2);
         assert_eq!(dropdown.options[0].text, "TinySkia");
@@ -6824,7 +7262,10 @@ mod tests {
         browser.handle_mouse_move(dropdown.x + 20.0, opt2_y);
         browser.handle_mouse_click(MouseButton::Left, KeyState::Pressed);
 
-        assert!(browser.select_dropdown.is_none(), "Selecting option must close dropdown");
+        assert!(
+            browser.select_dropdown.is_none(),
+            "Selecting option must close dropdown"
+        );
         assert_eq!(browser.status_text, "Selected: Software");
     }
 
@@ -6853,7 +7294,10 @@ mod tests {
             NodeData::Element(e) => e.clone(),
             _ => panic!("Expected element"),
         };
-        assert!(el.get_attribute("open").is_some(), "Clicking summary must open details");
+        assert!(
+            el.get_attribute("open").is_some(),
+            "Clicking summary must open details"
+        );
 
         // Click summary again to collapse
         browser.handle_mouse_click(MouseButton::Left, KeyState::Pressed);
@@ -6862,7 +7306,10 @@ mod tests {
             NodeData::Element(e) => e.clone(),
             _ => panic!("Expected element"),
         };
-        assert!(el2.get_attribute("open").is_none(), "Clicking summary again must close details");
+        assert!(
+            el2.get_attribute("open").is_none(),
+            "Clicking summary again must close details"
+        );
     }
 
     #[test]
@@ -6895,7 +7342,10 @@ mod tests {
             NodeData::Element(e) => e.get_attribute("checked").is_some(),
             _ => false,
         };
-        assert!(is_checked2, "Clicking label must toggle checkbox to checked");
+        assert!(
+            is_checked2,
+            "Clicking label must toggle checkbox to checked"
+        );
     }
 
     #[test]
@@ -6969,8 +7419,14 @@ mod tests {
 
         // 1. Hover over the video controls play button (x=15, y = HEADER_HEIGHT + 135)
         let hovered = browser.handle_mouse_move(15.0, HEADER_HEIGHT + 135.0);
-        assert!(hovered || browser.status_text.starts_with("Media <video>"), "Hovering video controls should update status text");
-        assert!(browser.status_text.contains("Media <video>"), "Status should indicate video media");
+        assert!(
+            hovered || browser.status_text.starts_with("Media <video>"),
+            "Hovering video controls should update status text"
+        );
+        assert!(
+            browser.status_text.contains("Media <video>"),
+            "Status should indicate video media"
+        );
 
         // 2. Left click play button -> toggles playing
         browser.handle_mouse_click(MouseButton::Left, KeyState::Pressed);
@@ -6981,7 +7437,10 @@ mod tests {
             NodeData::Element(e) => e.get_attribute("data-mango-playing") == Some("true"),
             _ => false,
         };
-        assert!(is_playing, "Clicking play button should set data-mango-playing to true");
+        assert!(
+            is_playing,
+            "Clicking play button should set data-mango-playing to true"
+        );
 
         // 3. Left click play button again -> toggles paused
         browser.handle_mouse_click(MouseButton::Left, KeyState::Pressed);
@@ -6991,15 +7450,29 @@ mod tests {
             NodeData::Element(e) => e.get_attribute("data-mango-playing") == Some("false"),
             _ => false,
         };
-        assert!(is_paused, "Clicking play button again should set data-mango-playing to false");
+        assert!(
+            is_paused,
+            "Clicking play button again should set data-mango-playing to false"
+        );
 
         // 4. Right click -> opens context menu with Play and Mute actions
         browser.handle_mouse_move(50.0, HEADER_HEIGHT + 50.0);
         browser.handle_mouse_click(MouseButton::Right, KeyState::Pressed);
-        assert!(browser.context_menu.is_some(), "Right click on video must open context menu");
+        assert!(
+            browser.context_menu.is_some(),
+            "Right click on video must open context menu"
+        );
         let menu = browser.context_menu.as_ref().unwrap();
-        assert!(menu.items.iter().any(|i| i.label == "Play" || i.label == "Pause"));
-        assert!(menu.items.iter().any(|i| i.label == "Mute" || i.label == "Unmute"));
+        assert!(
+            menu.items
+                .iter()
+                .any(|i| i.label == "Play" || i.label == "Pause")
+        );
+        assert!(
+            menu.items
+                .iter()
+                .any(|i| i.label == "Mute" || i.label == "Unmute")
+        );
 
         // 5. Click Mute action on context menu
         let mute_idx = menu.items.iter().position(|i| i.label == "Mute").unwrap();
@@ -7012,7 +7485,10 @@ mod tests {
             NodeData::Element(e) => e.get_attribute("data-mango-muted") == Some("true"),
             _ => false,
         };
-        assert!(is_muted, "Activating Mute from context menu should set data-mango-muted to true");
+        assert!(
+            is_muted,
+            "Activating Mute from context menu should set data-mango-muted to true"
+        );
     }
 
     #[test]
@@ -7076,10 +7552,10 @@ mod tests {
             .lock()
             .unwrap()
             .insert("theme\tname".to_string(), "dark\nvalue".to_string());
-        store
-            .lock()
-            .unwrap()
-            .insert("https://example.com\x1fuser_token".to_string(), "token_12345".to_string());
+        store.lock().unwrap().insert(
+            "https://example.com\x1fuser_token".to_string(),
+            "token_12345".to_string(),
+        );
         save_local_storage(&path, &store);
         assert!(path.exists(), "profile file was written");
 
@@ -7087,12 +7563,20 @@ mod tests {
             std::sync::Arc::new(std::sync::Mutex::new(HashMap::new()));
         load_local_storage(&path, &restored);
         assert_eq!(
-            restored.lock().unwrap().get("theme\tname").map(|s| s.as_str()),
+            restored
+                .lock()
+                .unwrap()
+                .get("theme\tname")
+                .map(|s| s.as_str()),
             Some("dark\nvalue"),
             "tabs/newlines inside values survive the roundtrip"
         );
         assert_eq!(
-            restored.lock().unwrap().get("https://example.com\x1fuser_token").map(|s| s.as_str()),
+            restored
+                .lock()
+                .unwrap()
+                .get("https://example.com\x1fuser_token")
+                .map(|s| s.as_str()),
             Some("token_12345"),
             "origin-scoped keys survive the roundtrip"
         );
@@ -7280,17 +7764,16 @@ mod tests {
         assert!(texts.iter().any(|t| t == "#000000"), "hex label painted");
 
         // Swatch index 6 is "#ff0000" (row 0, column 6).
-        let sx = px + PICKER_SWATCH_PAD + 6.0 * (PICKER_SWATCH_CELL + PICKER_SWATCH_GAP)
+        let sx = px
+            + PICKER_SWATCH_PAD
+            + 6.0 * (PICKER_SWATCH_CELL + PICKER_SWATCH_GAP)
             + PICKER_SWATCH_CELL / 2.0;
         let sy = py + PICKER_SWATCH_PAD + PICKER_SWATCH_CELL / 2.0;
         browser.handle_mouse_move(sx, sy);
         browser.handle_mouse_click(MouseButton::Left, KeyState::Pressed);
 
         assert!(browser.picker.is_none(), "picking closes the palette");
-        assert_eq!(
-            attr(&browser, node_id, "value").as_deref(),
-            Some("#ff0000")
-        );
+        assert_eq!(attr(&browser, node_id, "value").as_deref(), Some("#ff0000"));
         assert_eq!(browser.status_text, "Color: #FF0000");
     }
 
@@ -7332,7 +7815,10 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert!(texts.iter().any(|t| t == "March 2026"), "month header painted");
+        assert!(
+            texts.iter().any(|t| t == "March 2026"),
+            "month header painted"
+        );
         assert!(texts.iter().any(|t| t == "15"), "day cell painted");
 
         // Click day 15 (March 2026 starts on a Sunday).
@@ -7343,7 +7829,10 @@ mod tests {
         let dy = py + PICKER_DATE_GRID_Y + (idx / 7) as f32 * PICKER_DATE_ROW_H + 10.0;
         browser.handle_mouse_move(dx, dy);
         browser.handle_mouse_click(MouseButton::Left, KeyState::Pressed);
-        assert!(browser.picker.is_none(), "picking a day closes the calendar");
+        assert!(
+            browser.picker.is_none(),
+            "picking a day closes the calendar"
+        );
         assert_eq!(
             attr(&browser, node_id, "value").as_deref(),
             Some("2026-03-15")
@@ -7439,8 +7928,14 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert!(texts.iter().any(|t| t == "Choose file..."), "button painted");
-        assert!(texts.iter().any(|t| t == "No file chosen"), "placeholder painted");
+        assert!(
+            texts.iter().any(|t| t == "Choose file..."),
+            "button painted"
+        );
+        assert!(
+            texts.iter().any(|t| t == "No file chosen"),
+            "placeholder painted"
+        );
 
         let hit = hit_control(&browser, 30.0, 30.0);
         assert_eq!(hit.form_type, "file");
@@ -7452,7 +7947,11 @@ mod tests {
         let (root_dir, entries_len) = {
             let picker = browser.picker.as_ref().expect("file picker opens");
             match &picker.kind {
-                PickerKind::File { dir, entries, offset } => {
+                PickerKind::File {
+                    dir,
+                    entries,
+                    offset,
+                } => {
                     assert!(!entries.is_empty(), "directory listing is populated");
                     assert_eq!(*offset, 0);
                     (dir.clone(), entries.len())
@@ -7478,12 +7977,17 @@ mod tests {
                 let p = browser.picker.as_ref().unwrap();
                 (p.x, p.y)
             };
-            let row_y = py + PICKER_FILE_ROW_Y + (idx + 1) as f32 * PICKER_FILE_ROW_H
+            let row_y = py
+                + PICKER_FILE_ROW_Y
+                + (idx + 1) as f32 * PICKER_FILE_ROW_H
                 + PICKER_FILE_ROW_H / 2.0;
             browser.handle_mouse_move(px + 60.0, row_y);
             browser.handle_mouse_click(MouseButton::Left, KeyState::Pressed);
             assert!(browser.picker.is_none(), "picking a file closes the picker");
-            assert_eq!(attr(&browser, node_id, "value").as_deref(), Some(name.as_str()));
+            assert_eq!(
+                attr(&browser, node_id, "value").as_deref(),
+                Some(name.as_str())
+            );
             assert_eq!(
                 attr(&browser, node_id, "data-mango-filename").as_deref(),
                 Some(name.as_str())
@@ -7511,23 +8015,37 @@ mod tests {
             other => panic!("expected File picker, got {:?}", other),
         };
         let dir_idx = match &browser.picker.as_ref().unwrap().kind {
-            PickerKind::File { entries, .. } => entries
-                .iter()
-                .position(|e| e.name == dir_name)
-                .unwrap(),
+            PickerKind::File { entries, .. } => {
+                entries.iter().position(|e| e.name == dir_name).unwrap()
+            }
             _ => unreachable!(),
         };
         let (px, py) = {
             let p = browser.picker.as_ref().unwrap();
             (p.x, p.y)
         };
-        let row_y = py + PICKER_FILE_ROW_Y + (dir_idx + 1) as f32 * PICKER_FILE_ROW_H
+        let row_y = py
+            + PICKER_FILE_ROW_Y
+            + (dir_idx + 1) as f32 * PICKER_FILE_ROW_H
             + PICKER_FILE_ROW_H / 2.0;
         browser.handle_mouse_move(px + 60.0, row_y);
         browser.handle_mouse_click(MouseButton::Left, KeyState::Pressed);
-        match &browser.picker.as_ref().expect("still open after entering dir").kind {
-            PickerKind::File { dir, entries, offset } => {
-                assert!(dir.ends_with(&dir_name), "entered {:?}, got {dir:?}", dir_name);
+        match &browser
+            .picker
+            .as_ref()
+            .expect("still open after entering dir")
+            .kind
+        {
+            PickerKind::File {
+                dir,
+                entries,
+                offset,
+            } => {
+                assert!(
+                    dir.ends_with(&dir_name),
+                    "entered {:?}, got {dir:?}",
+                    dir_name
+                );
                 assert_eq!(*offset, 0);
                 let _ = entries;
             }
@@ -7539,12 +8057,14 @@ mod tests {
             let p = browser.picker.as_ref().unwrap();
             (p.x, p.y)
         };
-        browser.handle_mouse_move(
-            px + 60.0,
-            py + PICKER_FILE_ROW_Y + PICKER_FILE_ROW_H / 2.0,
-        );
+        browser.handle_mouse_move(px + 60.0, py + PICKER_FILE_ROW_Y + PICKER_FILE_ROW_H / 2.0);
         browser.handle_mouse_click(MouseButton::Left, KeyState::Pressed);
-        match &browser.picker.as_ref().expect("still open after going up").kind {
+        match &browser
+            .picker
+            .as_ref()
+            .expect("still open after going up")
+            .kind
+        {
             PickerKind::File { dir, .. } => assert_eq!(dir, &root_dir, "back at the root"),
             other => panic!("expected File picker, got {:?}", other),
         }
@@ -7600,12 +8120,19 @@ mod tests {
             Some(3),
             "both characters were inserted"
         );
-        assert_eq!(attr(&browser, node_id, "data-changed"), None, "no change yet");
+        assert_eq!(
+            attr(&browser, node_id, "data-changed"),
+            None,
+            "no change yet"
+        );
 
         // Clicking normal content blurs the field → one trailing `change` event.
         browser.handle_mouse_move(30.0, HEADER_HEIGHT + 70.0);
         browser.handle_mouse_click(MouseButton::Left, KeyState::Pressed);
-        assert!(browser.focused_control.is_none(), "focus cleared by content click");
+        assert!(
+            browser.focused_control.is_none(),
+            "focus cleared by content click"
+        );
         assert_eq!(
             attr(&browser, node_id, "data-changed").as_deref(),
             Some("1"),
@@ -7639,5 +8166,3 @@ mod tests {
         assert!(browser.scroll_y >= 290.0);
     }
 }
-
-

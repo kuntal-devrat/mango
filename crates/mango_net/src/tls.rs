@@ -31,11 +31,7 @@ pub fn requires_https(url: &Url) -> bool {
         return true;
     }
     // Hardcoded HSTS preload entries for common hosts.
-    let host = url
-        .host
-        .as_deref()
-        .unwrap_or("")
-        .to_ascii_lowercase();
+    let host = url.host.as_deref().unwrap_or("").to_ascii_lowercase();
     HSTS_PRELOAD_HOSTS
         .iter()
         .any(|&preloaded| host == preloaded || host.ends_with(&format!(".{preloaded}")))
@@ -77,7 +73,9 @@ pub fn is_valid_tls_hostname(hostname: &str) -> bool {
     hostname.split('.').all(|label| {
         !label.is_empty()
             && label.len() <= 63
-            && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '*')
+            && label
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '*')
             && !label.starts_with('-')
             && !label.ends_with('-')
     })

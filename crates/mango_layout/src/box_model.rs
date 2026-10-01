@@ -116,15 +116,25 @@ impl IFrameSandbox {
                 let tokens: Vec<&str> = tokens_str.split_whitespace().collect();
                 Self {
                     is_sandboxed: true,
-                    allow_scripts: tokens.iter().any(|&t| t.eq_ignore_ascii_case("allow-scripts")),
-                    allow_same_origin: tokens.iter().any(|&t| t.eq_ignore_ascii_case("allow-same-origin")),
-                    allow_forms: tokens.iter().any(|&t| t.eq_ignore_ascii_case("allow-forms")),
+                    allow_scripts: tokens
+                        .iter()
+                        .any(|&t| t.eq_ignore_ascii_case("allow-scripts")),
+                    allow_same_origin: tokens
+                        .iter()
+                        .any(|&t| t.eq_ignore_ascii_case("allow-same-origin")),
+                    allow_forms: tokens
+                        .iter()
+                        .any(|&t| t.eq_ignore_ascii_case("allow-forms")),
                     allow_top_navigation: tokens.iter().any(|&t| {
                         t.eq_ignore_ascii_case("allow-top-navigation")
                             || t.eq_ignore_ascii_case("allow-top-navigation-by-user-activation")
                     }),
-                    allow_popups: tokens.iter().any(|&t| t.eq_ignore_ascii_case("allow-popups")),
-                    allow_modals: tokens.iter().any(|&t| t.eq_ignore_ascii_case("allow-modals")),
+                    allow_popups: tokens
+                        .iter()
+                        .any(|&t| t.eq_ignore_ascii_case("allow-popups")),
+                    allow_modals: tokens
+                        .iter()
+                        .any(|&t| t.eq_ignore_ascii_case("allow-modals")),
                 }
             }
         }

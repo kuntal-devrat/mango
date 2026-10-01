@@ -1,6 +1,6 @@
+use mango_core::Size;
 use mango_html::parse_html;
 use mango_layout::layout_document;
-use mango_core::Size;
 
 #[test]
 fn test_youtube_masthead_layout() {
@@ -73,11 +73,15 @@ ytd-masthead.shell svg {
     let doc = parse_html(html);
     let author_styles = mango_layout::extract_style_elements(&doc);
     let author_style_refs: Vec<&_> = author_styles.iter().collect();
-    let styled_root = mango_layout::build_style_tree_with_size(&doc, &author_style_refs, 1280.0, 800.0).unwrap();
+    let styled_root =
+        mango_layout::build_style_tree_with_size(&doc, &author_style_refs, 1280.0, 800.0).unwrap();
 
     fn print_styled(node: &mango_layout::StyledNode, depth: usize) {
         let indent = "  ".repeat(depth);
-        let tag = node.tag_name.as_deref().unwrap_or(node.text.as_deref().unwrap_or("anon"));
+        let tag = node
+            .tag_name
+            .as_deref()
+            .unwrap_or(node.text.as_deref().unwrap_or("anon"));
         println!(
             "{indent}<{tag}> display={:?} pos={:?}",
             node.style.display, node.style.position
@@ -104,8 +108,14 @@ ytd-masthead.shell svg {
         let content = b.dimensions.content;
         println!(
             "{indent}<{tag}> border=({:.1},{:.1} {:.1}x{:.1}) content=({:.1},{:.1} {:.1}x{:.1})",
-            border.x(), border.y(), border.width(), border.height(),
-            content.x(), content.y(), content.width(), content.height()
+            border.x(),
+            border.y(),
+            border.width(),
+            border.height(),
+            content.x(),
+            content.y(),
+            content.width(),
+            content.height()
         );
         for child in &b.children {
             print_box(child, depth + 1);

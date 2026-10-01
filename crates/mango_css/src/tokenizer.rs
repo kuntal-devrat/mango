@@ -99,197 +99,199 @@ impl<'a> CssTokenizer<'a> {
             None => return Token::Eof,
         };
 
-            // Comments /* ... */ or Delim('/')
-            if ch == '/' {
-                if self.peek() == Some('*') {
-                    self.advance(); // consume '*'
-                    let mut comment = String::new();
-                    while let Some(c) = self.advance() {
-                        if c == '*' && self.peek() == Some('/') {
-                            self.advance(); // consume '/'
+        // Comments /* ... */ or Delim('/')
+        if ch == '/' {
+            if self.peek() == Some('*') {
+                self.advance(); // consume '*'
+                let mut comment = String::new();
+                while let Some(c) = self.advance() {
+                    if c == '*' && self.peek() == Some('/') {
+                        self.advance(); // consume '/'
+                        break;
+                    }
+                    comment.push(c);
+                }
+                return Token::Comment(comment);
+            }
+            return Token::Delim('/');
+        }
+
+        // Whitespace
+        if ch.is_ascii_whitespace() {
+            while let Some(next) = self.peek() {
+                if next.is_ascii_whitespace() {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+            return Token::Whitespace;
+        }
+
+        // Strings "..." or '...'
+        if ch == '"' || ch == '\'' {
+            let quote = ch;
+            let mut string_val = String::new();
+            let mut is_bad = false;
+            while let Some(c) = self.advance() {
+                if c == quote {
+                    break;
+                }
+                if c == '\n' || c == '\r' {
+                    is_bad = true;
+                    break;
+                }
+                if c == '\\' {
+                    // String continuation: backslash followed by newline
+                    if self.peek() == Some('\r') {
+                        self.advance();
+                        if self.peek() == Some('\n') {
+                            self.advance();
+                        }
+                    } else if self.peek() == Some('\n') {
+                        self.advance();
+                    } else if let Some(escaped) = self.consume_escape() {
+                        string_val.push(escaped);
+                    }
+                } else {
+                    string_val.push(c);
+                }
+            }
+            if is_bad {
+                return Token::BadString;
+            }
+            return Token::String(string_val);
+        }
+
+        // Punctuation
+        match ch {
+            ':' => return Token::Colon,
+            ';' => return Token::Semicolon,
+            ',' => return Token::Comma,
+            '[' => return Token::OpenBracket,
+            ']' => return Token::CloseBracket,
+            '(' => return Token::OpenParen,
+            ')' => return Token::CloseParen,
+            '{' => return Token::OpenCurly,
+            '}' => return Token::CloseCurly,
+            _ => {}
+        }
+
+        // At-keyword (@media, @import, etc.)
+        if ch == '@' {
+            let name = self.consume_ident();
+            return Token::AtKeyword(name);
+        }
+
+        // Hash (#header, #ff9900)
+        if ch == '#' {
+            let mut hash = String::new();
+            while let Some(next) = self.peek() {
+                if next.is_ascii_alphanumeric() || next == '-' || next == '_' {
+                    hash.push(self.advance().unwrap());
+                } else {
+                    break;
+                }
+            }
+            return Token::Hash(hash);
+        }
+
+        // Numbers, Percentages, Dimensions (e.g. 10px, -5em, 50%, -.5px)
+        let starts_number = ch.is_ascii_digit()
+            || ((ch == '+' || ch == '-')
+                && (self.peek().map(|p| p.is_ascii_digit()).unwrap_or(false)
+                    || (self.peek() == Some('.')
+                        && self.peek2().map(|p| p.is_ascii_digit()).unwrap_or(false))))
+            || (ch == '.' && self.peek().map(|p| p.is_ascii_digit()).unwrap_or(false));
+
+        if starts_number {
+            let mut num_str = String::from(ch);
+            let mut has_dot = ch == '.';
+
+            while let Some(next) = self.peek() {
+                if next.is_ascii_digit() {
+                    num_str.push(self.advance().unwrap());
+                } else if next == '.' && !has_dot {
+                    has_dot = true;
+                    num_str.push(self.advance().unwrap());
+                } else {
+                    break;
+                }
+            }
+
+            // Exponent notation: 1e3, 2.5e-2, etc.
+            if let Some(e) = self.peek()
+                && (e == 'e' || e == 'E')
+            {
+                let mut it = self.chars.clone();
+                let next1 = it.next();
+                let (is_exp, has_sign) = match next1 {
+                    Some('+' | '-') => {
+                        (it.next().map(|c| c.is_ascii_digit()).unwrap_or(false), true)
+                    }
+                    Some(c) if c.is_ascii_digit() => (true, false),
+                    _ => (false, false),
+                };
+                if is_exp {
+                    num_str.push(self.advance().unwrap());
+                    if has_sign {
+                        num_str.push(self.advance().unwrap());
+                    }
+                    while let Some(next) = self.peek() {
+                        if next.is_ascii_digit() {
+                            num_str.push(self.advance().unwrap());
+                        } else {
                             break;
                         }
-                        comment.push(c);
                     }
-                    return Token::Comment(comment);
                 }
-                return Token::Delim('/');
             }
 
-            // Whitespace
-            if ch.is_ascii_whitespace() {
-                while let Some(next) = self.peek() {
-                    if next.is_ascii_whitespace() {
-                        self.advance();
-                    } else {
-                        break;
-                    }
-                }
-                return Token::Whitespace;
+            let value = num_str.parse::<f32>().unwrap_or(0.0);
+
+            if self.peek() == Some('%') {
+                self.advance();
+                return Token::Percentage(value);
             }
 
-            // Strings "..." or '...'
-            if ch == '"' || ch == '\'' {
-                let quote = ch;
-                let mut string_val = String::new();
-                let mut is_bad = false;
-                while let Some(c) = self.advance() {
-                    if c == quote {
-                        break;
-                    }
-                    if c == '\n' || c == '\r' {
-                        is_bad = true;
-                        break;
-                    }
-                    if c == '\\' {
-                        // String continuation: backslash followed by newline
-                        if self.peek() == Some('\r') {
-                            self.advance();
-                            if self.peek() == Some('\n') {
-                                self.advance();
-                            }
-                        } else if self.peek() == Some('\n') {
-                            self.advance();
-                        } else if let Some(escaped) = self.consume_escape() {
-                            string_val.push(escaped);
-                        }
-                    } else {
-                        string_val.push(c);
-                    }
-                }
-                if is_bad {
-                    return Token::BadString;
-                }
-                return Token::String(string_val);
+            if self.peek().map(is_ident_start).unwrap_or(false) {
+                let unit = self.consume_ident();
+                return Token::Dimension { value, unit };
             }
 
-            // Punctuation
-            match ch {
-                ':' => return Token::Colon,
-                ';' => return Token::Semicolon,
-                ',' => return Token::Comma,
-                '[' => return Token::OpenBracket,
-                ']' => return Token::CloseBracket,
-                '(' => return Token::OpenParen,
-                ')' => return Token::CloseParen,
-                '{' => return Token::OpenCurly,
-                '}' => return Token::CloseCurly,
-                _ => {}
-            }
+            return Token::Number(value);
+        }
 
-            // At-keyword (@media, @import, etc.)
-            if ch == '@' {
-                let name = self.consume_ident();
-                return Token::AtKeyword(name);
-            }
-
-            // Hash (#header, #ff9900)
-            if ch == '#' {
-                let mut hash = String::new();
-                while let Some(next) = self.peek() {
-                    if next.is_ascii_alphanumeric() || next == '-' || next == '_' {
-                        hash.push(self.advance().unwrap());
-                    } else {
-                        break;
-                    }
+        // Identifiers
+        if is_ident_start(ch) || ch == '\\' {
+            let mut ident = String::new();
+            if ch == '\\' {
+                if let Some(escaped) = self.consume_escape() {
+                    ident.push(escaped);
                 }
-                return Token::Hash(hash);
+            } else {
+                ident.push(ch);
             }
-
-            // Numbers, Percentages, Dimensions (e.g. 10px, -5em, 50%, -.5px)
-            let starts_number = ch.is_ascii_digit()
-                || ((ch == '+' || ch == '-')
-                    && (self.peek().map(|p| p.is_ascii_digit()).unwrap_or(false)
-                        || (self.peek() == Some('.')
-                            && self.peek2().map(|p| p.is_ascii_digit()).unwrap_or(false))))
-                || (ch == '.' && self.peek().map(|p| p.is_ascii_digit()).unwrap_or(false));
-
-            if starts_number {
-                let mut num_str = String::from(ch);
-                let mut has_dot = ch == '.';
-
-                while let Some(next) = self.peek() {
-                    if next.is_ascii_digit() {
-                        num_str.push(self.advance().unwrap());
-                    } else if next == '.' && !has_dot {
-                        has_dot = true;
-                        num_str.push(self.advance().unwrap());
-                    } else {
-                        break;
-                    }
-                }
-
-                // Exponent notation: 1e3, 2.5e-2, etc.
-                if let Some(e) = self.peek() {
-                    if e == 'e' || e == 'E' {
-                        let mut it = self.chars.clone();
-                        let next1 = it.next();
-                        let (is_exp, has_sign) = match next1 {
-                            Some('+' | '-') => (it.next().map(|c| c.is_ascii_digit()).unwrap_or(false), true),
-                            Some(c) if c.is_ascii_digit() => (true, false),
-                            _ => (false, false),
-                        };
-                        if is_exp {
-                            num_str.push(self.advance().unwrap());
-                            if has_sign {
-                                num_str.push(self.advance().unwrap());
-                            }
-                            while let Some(next) = self.peek() {
-                                if next.is_ascii_digit() {
-                                    num_str.push(self.advance().unwrap());
-                                } else {
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                let value = num_str.parse::<f32>().unwrap_or(0.0);
-
-                if self.peek() == Some('%') {
+            while let Some(next) = self.peek() {
+                if is_ident_char(next) {
+                    ident.push(self.advance().unwrap());
+                } else if next == '\\' {
                     self.advance();
-                    return Token::Percentage(value);
-                }
-
-                if self.peek().map(is_ident_start).unwrap_or(false) {
-                    let unit = self.consume_ident();
-                    return Token::Dimension { value, unit };
-                }
-
-                return Token::Number(value);
-            }
-
-            // Identifiers
-            if is_ident_start(ch) || ch == '\\' {
-                let mut ident = String::new();
-                if ch == '\\' {
                     if let Some(escaped) = self.consume_escape() {
                         ident.push(escaped);
                     }
                 } else {
-                    ident.push(ch);
+                    break;
                 }
-                while let Some(next) = self.peek() {
-                    if is_ident_char(next) {
-                        ident.push(self.advance().unwrap());
-                    } else if next == '\\' {
-                        self.advance();
-                        if let Some(escaped) = self.consume_escape() {
-                            ident.push(escaped);
-                        }
-                    } else {
-                        break;
-                    }
-                }
-                if ident == "-" {
-                    return Token::Delim('-');
-                }
-                return Token::Ident(ident);
             }
+            if ident == "-" {
+                return Token::Delim('-');
+            }
+            return Token::Ident(ident);
+        }
 
-            // Any other delimiter
-            Token::Delim(ch)
+        // Any other delimiter
+        Token::Delim(ch)
     }
 
     fn consume_ident(&mut self) -> String {
@@ -315,24 +317,24 @@ impl<'a> CssTokenizer<'a> {
             let mut hex_val = first.to_digit(16).unwrap();
             let mut count = 1;
             while count < 6 {
-                if let Some(p) = self.peek() {
-                    if p.is_ascii_hexdigit() {
-                        let digit = self.advance().unwrap().to_digit(16).unwrap();
-                        hex_val = hex_val * 16 + digit;
-                        count += 1;
-                        continue;
-                    }
+                if let Some(p) = self.peek()
+                    && p.is_ascii_hexdigit()
+                {
+                    let digit = self.advance().unwrap().to_digit(16).unwrap();
+                    hex_val = hex_val * 16 + digit;
+                    count += 1;
+                    continue;
                 }
                 break;
             }
             // If the next input code point is whitespace, consume it as well.
-            if let Some(p) = self.peek() {
-                if p == ' ' || p == '\t' || p == '\n' || p == '\r' || p == '\x0C' {
+            if let Some(p) = self.peek()
+                && (p == ' ' || p == '\t' || p == '\n' || p == '\r' || p == '\x0C')
+            {
+                self.advance();
+                // If it was \r\n, consume the \n as well
+                if p == '\r' && self.peek() == Some('\n') {
                     self.advance();
-                    // If it was \r\n, consume the \n as well
-                    if p == '\r' && self.peek() == Some('\n') {
-                        self.advance();
-                    }
                 }
             }
             // If zero, surrogate, or > 0x10FFFF -> U+FFFD

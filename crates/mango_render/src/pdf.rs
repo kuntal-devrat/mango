@@ -113,10 +113,23 @@ pub fn render_to_pdf(display_list: &DisplayList, options: &PdfOptions) -> Vec<u8
                     let _ = writeln!(
                         stream,
                         "{:.3} {:.3} {:.3} rg\n{:.2} {:.2} {:.2} {:.2} re f",
-                        r, g, b, rect.x(), pdf_y, rect.width(), rect.height()
+                        r,
+                        g,
+                        b,
+                        rect.x(),
+                        pdf_y,
+                        rect.width(),
+                        rect.height()
                     );
                 }
-                DisplayCommand::DrawLine { x1, y1, x2, y2, color, thickness } => {
+                DisplayCommand::DrawLine {
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    color,
+                    thickness,
+                } => {
                     let min_y = (*y1).min(*y2);
                     let max_y_line = (*y1).max(*y2);
                     if max_y_line < page_y_start || min_y > page_y_end {
@@ -133,7 +146,12 @@ pub fn render_to_pdf(display_list: &DisplayList, options: &PdfOptions) -> Vec<u8
                         thickness, r, g, b, x1, pdf_y1, x2, pdf_y2
                     );
                 }
-                DisplayCommand::DrawBorder { rect, color, widths, .. } => {
+                DisplayCommand::DrawBorder {
+                    rect,
+                    color,
+                    widths,
+                    ..
+                } => {
                     if rect.y() + rect.height() < page_y_start || rect.y() > page_y_end {
                         continue;
                     }
@@ -146,10 +164,26 @@ pub fn render_to_pdf(display_list: &DisplayList, options: &PdfOptions) -> Vec<u8
                     let _ = writeln!(
                         stream,
                         "{:.2} w\n{:.3} {:.3} {:.3} RG\n{:.2} {:.2} {:.2} {:.2} re S",
-                        w, r, g, b, rect.x(), pdf_y, rect.width(), rect.height()
+                        w,
+                        r,
+                        g,
+                        b,
+                        rect.x(),
+                        pdf_y,
+                        rect.width(),
+                        rect.height()
                     );
                 }
-                DisplayCommand::DrawText { text, x, y, color, font_size, weight, style, .. } => {
+                DisplayCommand::DrawText {
+                    text,
+                    x,
+                    y,
+                    color,
+                    font_size,
+                    weight,
+                    style,
+                    ..
+                } => {
                     if *y + *font_size < page_y_start || *y > page_y_end {
                         continue;
                     }
@@ -184,7 +218,11 @@ pub fn render_to_pdf(display_list: &DisplayList, options: &PdfOptions) -> Vec<u8
 }
 
 /// Saves the PDF to the given filesystem path.
-pub fn print_to_pdf(display_list: &DisplayList, path: &Path, options: &PdfOptions) -> std::io::Result<()> {
+pub fn print_to_pdf(
+    display_list: &DisplayList,
+    path: &Path,
+    options: &PdfOptions,
+) -> std::io::Result<()> {
     let pdf_bytes = render_to_pdf(display_list, options);
     let mut file = File::create(path)?;
     file.write_all(&pdf_bytes)?;
@@ -207,12 +245,7 @@ fn escape_pdf_text(s: &str) -> String {
 }
 
 /// Assembles PDF 1.4 catalog, page tree, font resources, content streams, and cross-reference table.
-fn build_pdf_file(
-    page_w: f32,
-    page_h: f32,
-    num_pages: usize,
-    page_streams: &[Vec<u8>],
-) -> Vec<u8> {
+fn build_pdf_file(page_w: f32, page_h: f32, num_pages: usize, page_streams: &[Vec<u8>]) -> Vec<u8> {
     let mut pdf: Vec<u8> = Vec::with_capacity(4096);
     let mut offsets: Vec<usize> = Vec::new();
 
@@ -246,9 +279,8 @@ fn build_pdf_file(
         let page_id = 7 + 2 * i;
         let _ = write!(kids, "{page_id} 0 R ");
     }
-    let pages_obj = format!(
-        "2 0 obj\n<< /Type /Pages /Kids [ {kids}] /Count {num_pages} >>\nendobj\n"
-    );
+    let pages_obj =
+        format!("2 0 obj\n<< /Type /Pages /Kids [ {kids}] /Count {num_pages} >>\nendobj\n");
     pdf.extend_from_slice(pages_obj.as_bytes());
 
     // 3 0 obj: Font F1
@@ -302,9 +334,8 @@ fn build_pdf_file(
     }
 
     // Trailer
-    let trailer = format!(
-        "trailer\n<< /Size {total_objs} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n"
-    );
+    let trailer =
+        format!("trailer\n<< /Size {total_objs} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n");
     pdf.extend_from_slice(trailer.as_bytes());
 
     pdf
