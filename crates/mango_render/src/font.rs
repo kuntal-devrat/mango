@@ -552,10 +552,10 @@ fn load_system_font(filename: &str) -> Option<Font> {
             format!("/usr/share/fonts/truetype/wqy/{}", filename),
         ];
         for p in paths {
-            if let Ok(bytes) = std::fs::read(&p) {
-                if let Ok(f) = Font::from_bytes(bytes, FontSettings::default()) {
-                    return Some(f);
-                }
+            if let Ok(bytes) = std::fs::read(&p)
+                && let Ok(f) = Font::from_bytes(bytes, FontSettings::default())
+            {
+                return Some(f);
             }
         }
     }
