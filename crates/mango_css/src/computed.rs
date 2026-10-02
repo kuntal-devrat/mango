@@ -1454,21 +1454,29 @@ pub fn apply_cascaded_properties(
             "border-top-width" => {
                 if let Value::Length(l) = val {
                     style.border_top_width = l.to_px(style.font_size, 16.0, 100.0);
+                } else if let Value::Number(n) = val {
+                    style.border_top_width = (*n).max(0.0);
                 }
             }
             "border-right-width" => {
                 if let Value::Length(l) = val {
                     style.border_right_width = l.to_px(style.font_size, 16.0, 100.0);
+                } else if let Value::Number(n) = val {
+                    style.border_right_width = (*n).max(0.0);
                 }
             }
             "border-bottom-width" => {
                 if let Value::Length(l) = val {
                     style.border_bottom_width = l.to_px(style.font_size, 16.0, 100.0);
+                } else if let Value::Number(n) = val {
+                    style.border_bottom_width = (*n).max(0.0);
                 }
             }
             "border-left-width" => {
                 if let Value::Length(l) = val {
                     style.border_left_width = l.to_px(style.font_size, 16.0, 100.0);
+                } else if let Value::Number(n) = val {
+                    style.border_left_width = (*n).max(0.0);
                 }
             }
 

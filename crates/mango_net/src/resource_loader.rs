@@ -447,6 +447,16 @@ impl ResourceLoader {
 
         let content_type = resp.content_type().unwrap_or("font/woff2").to_string();
         let bytes = resp.body.clone();
+        if content_type.starts_with("text/html")
+            || bytes.starts_with(b"<!DOC")
+            || bytes.starts_with(b"<!doc")
+            || bytes.starts_with(b"<html")
+            || bytes.starts_with(b"<HTML")
+        {
+            return Err(NetworkError::Other(
+                "Received HTML instead of binary font data".into(),
+            ));
+        }
         let status = resp.status;
         let headers = resp.headers;
         let body = resp.body;

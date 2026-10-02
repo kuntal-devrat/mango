@@ -1014,7 +1014,40 @@ impl TransitionEngine {
                 continue;
             }
             let matches_property = |prop: &str| -> bool {
-                spec.property == "all" || spec.property.eq_ignore_ascii_case(prop)
+                if spec.property == "all" || spec.property.eq_ignore_ascii_case(prop) {
+                    return true;
+                }
+                match spec.property.to_ascii_lowercase().as_str() {
+                    "background" => prop == "background-color",
+                    "border" => {
+                        prop == "border-color"
+                            || prop == "border-width"
+                            || prop == "border-radius"
+                    }
+                    "border-color" => prop == "border-color",
+                    "border-width" => prop == "border-width",
+                    "border-radius" => prop == "border-radius",
+                    "outline" => {
+                        prop == "outline-width"
+                            || prop == "outline-offset"
+                            || prop == "color"
+                    }
+                    "margin" => prop == "margin",
+                    "padding" => prop == "padding",
+                    "flex" => {
+                        prop == "flex-grow"
+                            || prop == "flex-shrink"
+                            || prop == "flex-basis"
+                    }
+                    "gap" => prop == "gap",
+                    "inset" => {
+                        prop == "top"
+                            || prop == "right"
+                            || prop == "bottom"
+                            || prop == "left"
+                    }
+                    _ => false,
+                }
             };
             for prop in ANIMATABLE_PROPERTIES {
                 if !matches_property(prop) || !property_differs(old, new, prop) {

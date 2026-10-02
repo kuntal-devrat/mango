@@ -340,11 +340,13 @@ pub fn paint(display_list: &DisplayList, buffer: &mut [u32], buf_width: u32, buf
                     let y = rect.y();
                     let w = rect.width();
                     let h = rect.height();
+                    let side_y = y + widths.top;
+                    let side_h = (h - widths.top - widths.bottom).max(0.0);
                     let edges = [
                         mango_core::Rect::new(x, y, w, widths.top),
                         mango_core::Rect::new(x, y + h - widths.bottom, w, widths.bottom),
-                        mango_core::Rect::new(x, y, widths.left, h),
-                        mango_core::Rect::new(x + w - widths.right, y, widths.right, h),
+                        mango_core::Rect::new(x, side_y, widths.left, side_h),
+                        mango_core::Rect::new(x + w - widths.right, side_y, widths.right, side_h),
                     ];
                     let present = [
                         widths.top > 0.0,
@@ -573,8 +575,10 @@ pub fn paint(display_list: &DisplayList, buffer: &mut [u32], buf_width: u32, buf
                 }
                 // Left border
                 if widths.left > 0.0 {
+                    let side_y = y + widths.top;
+                    let side_h = (h - widths.top - widths.bottom).max(0.0);
                     let left_rect =
-                        intersect_rect(active_clip, mango_core::Rect::new(x, y, widths.left, h));
+                        intersect_rect(active_clip, mango_core::Rect::new(x, side_y, widths.left, side_h));
                     if left_rect.width() > 0.0 && left_rect.height() > 0.0 {
                         fill_rect(
                             buffer,
@@ -590,9 +594,11 @@ pub fn paint(display_list: &DisplayList, buffer: &mut [u32], buf_width: u32, buf
                 }
                 // Right border
                 if widths.right > 0.0 {
+                    let side_y = y + widths.top;
+                    let side_h = (h - widths.top - widths.bottom).max(0.0);
                     let right_rect = intersect_rect(
                         active_clip,
-                        mango_core::Rect::new(x + w - widths.right, y, widths.right, h),
+                        mango_core::Rect::new(x + w - widths.right, side_y, widths.right, side_h),
                     );
                     if right_rect.width() > 0.0 && right_rect.height() > 0.0 {
                         fill_rect(

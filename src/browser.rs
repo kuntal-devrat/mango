@@ -78,9 +78,28 @@ pub use crate::form_handler::*;
 pub use crate::navigation::*;
 pub use crate::scroll::*;
 
+#[derive(Debug, Clone)]
+pub enum ScriptToRun {
+    Inline(String),
+    External(String),
+    Preloaded { src: String, code: String },
+}
+
+pub struct PreparedDocument {
+    pub url: Url,
+    pub doc: Document,
+    pub html: String,
+    pub status: u16,
+    pub content_type: String,
+    pub encoding: mango_net::encoding::Encoding,
+    pub cached_stylesheets: Vec<Stylesheet>,
+    pub preloaded_scripts: Vec<ScriptToRun>,
+    pub image_sources: Vec<String>,
+}
+
 struct PendingNavigation {
     target_url: Url,
-    rx: std::sync::mpsc::Receiver<Result<FetchedDocument, mango_net::NetworkError>>,
+    rx: std::sync::mpsc::Receiver<Result<PreparedDocument, mango_net::NetworkError>>,
     push_history: bool,
 }
 
@@ -427,6 +446,25 @@ impl BrowserChrome {
         }
 
         self.style_snapshot = fresh;
+
+        if self.anim_state.is_animating() {
+            if let Some(mut root) = self.root_box.take() {
+                let snapshot = self.style_snapshot.clone();
+                let anim_state = &self.anim_state;
+                mango_layout::apply_box_style_overrides(&mut root, &mut |node, style| {
+                    let Some(node) = node else { return };
+                    let Some(base) = snapshot.get(&node.raw()) else {
+                        return;
+                    };
+                    let mut blended = anim_state.transitions.current_style(node, base);
+                    anim_state.animations.apply(node, &mut blended);
+                    *style = blended;
+                });
+                let viewport = Size::new(self.content_width(), self.content_height());
+                self.page_display_list = mango_layout::relayout_box_tree(&mut root, viewport);
+                self.root_box = Some(root);
+            }
+        }
     }
 
     /// Advances CSS transitions/animations by `dt_ms` and re-lays-out the page when
@@ -701,6 +739,25 @@ impl BrowserChrome {
         push_history: bool,
         skip_embedded_sheets_and_fonts: bool,
     ) {
+        self.load_document_internal_with_scripts(
+            doc,
+            html,
+            url,
+            push_history,
+            skip_embedded_sheets_and_fonts,
+            None,
+        );
+    }
+
+    fn load_document_internal_with_scripts(
+        &mut self,
+        doc: Document,
+        html: String,
+        url: String,
+        push_history: bool,
+        skip_embedded_sheets_and_fonts: bool,
+        preloaded_scripts: Option<Vec<ScriptToRun>>,
+    ) {
         self.current_html = html;
         self.address_text = url.clone();
         self.cursor_pos = self.address_text.len();
@@ -823,14 +880,22 @@ impl BrowserChrome {
         }
 
         // Extract and execute scripts in document order
-        let mut scripts = Vec::new();
-        let doc_ref = self.active_document();
-        collect_scripts(&doc_ref, doc_ref.root(), &mut scripts);
+        let scripts = if let Some(pre) = preloaded_scripts {
+            pre
+        } else {
+            let mut s = Vec::new();
+            let doc_ref = self.active_document();
+            collect_scripts(&doc_ref, doc_ref.root(), &mut s);
+            s
+        };
 
         let mut external_count = 0;
         for script in scripts {
             match script {
                 ScriptToRun::Inline(code) => {
+                    let _ = js_rt.execute_script(&code);
+                }
+                ScriptToRun::Preloaded { code, .. } => {
                     let _ = js_rt.execute_script(&code);
                 }
                 ScriptToRun::External(src) => {
@@ -3099,7 +3164,9 @@ impl BrowserChrome {
             let target_url = parsed_url.clone();
             let (tx, rx) = std::sync::mpsc::channel();
             std::thread::spawn(move || {
-                let res = loader.fetch_document(&target_url);
+                let res = loader
+                    .fetch_document(&target_url)
+                    .map(|doc_res| prepare_document_pipeline(&loader, doc_res));
                 let _ = tx.send(res);
             });
             self.pending_navigation = Some(PendingNavigation {
@@ -3143,8 +3210,8 @@ impl BrowserChrome {
                 let pending = self.pending_navigation.take().unwrap();
                 self.is_loading = false;
                 match res {
-                    Ok(doc_result) => {
-                        self.process_and_load_document(doc_result, pending.push_history);
+                    Ok(prep) => {
+                        self.apply_prepared_document(prep, pending.push_history);
                     }
                     Err(e) => {
                         let err_msg = e.to_string();
@@ -3179,8 +3246,8 @@ impl BrowserChrome {
             self.is_loading = false;
             if let Ok(res) = pending.rx.recv() {
                 match res {
-                    Ok(doc_result) => {
-                        self.process_and_load_document(doc_result, pending.push_history);
+                    Ok(prep) => {
+                        self.apply_prepared_document(prep, pending.push_history);
                     }
                     Err(e) => {
                         let err_msg = e.to_string();
@@ -3200,117 +3267,133 @@ impl BrowserChrome {
             }
         }
     }
+}
 
-    /// Loads a fetched document into the browser, recursively fetching external stylesheets,
-    /// web fonts, and images, and updating the page metadata and history.
-    pub fn process_and_load_document(
-        &mut self,
-        mut doc_result: FetchedDocument,
-        push_history: bool,
-    ) {
-        let final_url = doc_result.url.clone();
-        preprocess_wikipedia_appearance_html(&mut doc_result.html, &final_url.as_str());
-        self.base_url = Some(final_url.clone());
-        self.cached_stylesheets.clear();
-        mango_render::clear_global_svg_symbols();
+/// Prepares a fetched document on a background worker thread: parsing HTML, prefetching
+/// external stylesheets, web fonts, and scripts, so the main UI thread never blocks on I/O.
+pub fn prepare_document_pipeline(
+    loader: &ResourceLoader,
+    mut doc_result: FetchedDocument,
+) -> PreparedDocument {
+    let final_url = doc_result.url.clone();
+    preprocess_wikipedia_appearance_html(&mut doc_result.html, &final_url.as_str());
 
-        let mut doc = parse_html(&doc_result.html);
-        doc.character_set = doc_result.encoding.name().to_string();
-        doc.content_type = doc_result.content_type.clone();
+    let mut doc = parse_html(&doc_result.html);
+    doc.character_set = doc_result.encoding.name().to_string();
+    doc.content_type = doc_result.content_type.clone();
 
-        let mut stylesheet_links = Vec::new();
-        collect_stylesheet_links(&doc, doc.root(), &mut stylesheet_links);
-        let mut visited_css = std::collections::HashSet::new();
-        load_stylesheets_parallel(
-            &self.loader,
-            &final_url,
-            &stylesheet_links,
-            &mut visited_css,
-            &mut self.cached_stylesheets,
-        );
+    let mut stylesheet_links = Vec::new();
+    collect_stylesheet_links(&doc, doc.root(), &mut stylesheet_links);
+    let mut visited_css = std::collections::HashSet::new();
+    let mut cached_stylesheets = Vec::new();
+    load_stylesheets_parallel(
+        loader,
+        &final_url,
+        &stylesheet_links,
+        &mut visited_css,
+        &mut cached_stylesheets,
+    );
 
-        load_web_fonts(&self.loader, Some(&final_url), &self.cached_stylesheets);
-
-        let mut doc_images = Vec::new();
-        collect_image_sources(&doc, doc.root(), &mut doc_images);
-
-        let mut sheet_images = Vec::new();
-        collect_stylesheet_images(&doc, &self.cached_stylesheets, &mut sheet_images);
-        let inline_sheets = mango_layout::extract_style_elements(&doc);
-        for sheet in &inline_sheets {
-            for rule in &sheet.rules {
-                if let mango_css::parser::Rule::Import(import_path) = rule {
-                    load_stylesheet_recursive(
-                        &self.loader,
-                        &final_url,
-                        import_path,
-                        &mut visited_css,
-                        &mut self.cached_stylesheets,
-                    );
-                }
+    let inline_sheets = mango_layout::extract_style_elements(&doc);
+    for sheet in &inline_sheets {
+        for rule in &sheet.rules {
+            if let mango_css::parser::Rule::Import(import_path) = rule {
+                load_stylesheet_recursive(
+                    loader,
+                    &final_url,
+                    import_path,
+                    &mut visited_css,
+                    &mut cached_stylesheets,
+                );
             }
         }
-        collect_stylesheet_images(&doc, &inline_sheets, &mut sheet_images);
-        load_web_fonts(&self.loader, Some(&final_url), &inline_sheets);
+    }
 
-        // Interleave stylesheet images (CSS header logos, icons, masks) and
-        // document images (hero images, img tags) so the top of both sets are fetched eagerly.
-        let mut image_sources = Vec::new();
-        let sheet_take = 6.min(sheet_images.len());
-        let doc_take = 6.min(doc_images.len());
-        image_sources.extend(sheet_images[..sheet_take].iter().cloned());
-        image_sources.extend(doc_images[..doc_take].iter().cloned());
-        image_sources.extend(sheet_images[sheet_take..].iter().cloned());
-        image_sources.extend(doc_images[doc_take..].iter().cloned());
+    load_web_fonts(loader, Some(&final_url), &cached_stylesheets);
+    load_web_fonts(loader, Some(&final_url), &inline_sheets);
 
-        let mut seen = std::collections::HashSet::new();
-        image_sources.retain(|src| seen.insert(src.clone()));
-
-        // Prefetch eagerly up-front in parallel so above-the-fold media is ready
-        let eager_count = image_sources.len().min(EAGER_IMAGE_PREFETCH);
-        let (eager, queued) = image_sources.split_at(eager_count);
-
-        let eager_to_fetch: Vec<String> = eager
-            .iter()
-            .filter(|src| get_cached_image(src).is_none())
-            .cloned()
-            .collect();
-
-        if !eager_to_fetch.is_empty() {
-            std::thread::scope(|s| {
-                for src in &eager_to_fetch {
-                    let loader = &self.loader;
-                    let base = &final_url;
-                    s.spawn(move || {
-                        if src.trim_start().starts_with("data:") {
-                            if let Some(decoded) = decode_data_uri(src) {
-                                cache_image(src, decoded);
-                            }
-                            return;
-                        }
-                        if let Ok(bytes) = loader.fetch_image_bytes(base, src)
-                            && let Some(decoded) = decode_image_bytes(&bytes)
-                        {
-                            cache_image(src, decoded.clone());
-                            if let Ok(resolved) = base.resolve(src) {
-                                cache_image(&resolved.as_str(), decoded);
-                            }
-                        }
-                    });
+    let mut raw_scripts = Vec::new();
+    collect_scripts(&doc, doc.root(), &mut raw_scripts);
+    let mut preloaded_scripts = Vec::new();
+    let mut ext_count = 0;
+    for s in raw_scripts {
+        match s {
+            ScriptToRun::Inline(c) => preloaded_scripts.push(ScriptToRun::Inline(c)),
+            ScriptToRun::External(src) => {
+                if ext_count < 8 {
+                    if let Ok(code) = loader.fetch_script(&final_url, &src) {
+                        preloaded_scripts.push(ScriptToRun::Preloaded { src, code });
+                        ext_count += 1;
+                    } else {
+                        preloaded_scripts.push(ScriptToRun::External(src));
+                    }
+                } else {
+                    preloaded_scripts.push(ScriptToRun::External(src));
                 }
-            });
+            }
+            ScriptToRun::Preloaded { src, code } => {
+                preloaded_scripts.push(ScriptToRun::Preloaded { src, code });
+            }
         }
+    }
+
+    let mut doc_images = Vec::new();
+    collect_image_sources(&doc, doc.root(), &mut doc_images);
+
+    let mut sheet_images = Vec::new();
+    collect_stylesheet_images(&doc, &cached_stylesheets, &mut sheet_images);
+    collect_stylesheet_images(&doc, &inline_sheets, &mut sheet_images);
+
+    let mut image_sources = Vec::new();
+    let sheet_take = 6.min(sheet_images.len());
+    let doc_take = 6.min(doc_images.len());
+    image_sources.extend(sheet_images[..sheet_take].iter().cloned());
+    image_sources.extend(doc_images[..doc_take].iter().cloned());
+    if sheet_images.len() > sheet_take {
+        image_sources.extend(sheet_images[sheet_take..].iter().cloned());
+    }
+    if doc_images.len() > doc_take {
+        image_sources.extend(doc_images[doc_take..].iter().cloned());
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    image_sources.retain(|src| seen.insert(src.clone()));
+
+    PreparedDocument {
+        url: final_url,
+        doc,
+        html: doc_result.html,
+        status: doc_result.status,
+        content_type: doc_result.content_type,
+        encoding: doc_result.encoding,
+        cached_stylesheets,
+        preloaded_scripts,
+        image_sources,
+    }
+}
+
+impl BrowserChrome {
+    /// Applies an asynchronously prepared document to the browser UI without freezing the event loop.
+    pub fn apply_prepared_document(&mut self, prep: PreparedDocument, push_history: bool) {
+        let final_url = prep.url.clone();
+        self.base_url = Some(final_url.clone());
+        self.cached_stylesheets = prep.cached_stylesheets;
+        mango_render::clear_global_svg_symbols();
+
+        let inline_sheets = mango_layout::extract_style_elements(&prep.doc);
+        load_web_fonts(&self.loader, Some(&final_url), &self.cached_stylesheets);
+        load_web_fonts(&self.loader, Some(&final_url), &inline_sheets);
 
         // Spawn background worker for queued images to avoid any main-thread freeze
         let (tx, rx) = std::sync::mpsc::channel();
         self.image_rx = Some(rx);
         self.image_fetch_base = Some(final_url.clone());
-        self.pending_image_fetches = queued.to_vec();
+        self.pending_image_fetches = prep.image_sources.clone();
 
-        if !queued.is_empty() {
+        if !prep.image_sources.is_empty() {
             let loader = self.loader.clone();
             let base = final_url.clone();
-            let to_fetch = queued.to_vec();
+            let to_fetch = prep.image_sources;
             std::thread::spawn(move || {
                 for src in to_fetch {
                     if get_cached_image(&src).is_some() {
@@ -3339,28 +3422,40 @@ impl BrowserChrome {
         self.status_text = format!(
             "Loaded {} ({} bytes, HTTP {})",
             final_url,
-            doc_result.html.len(),
-            doc_result.status
+            prep.html.len(),
+            prep.status
         );
         self.devtools.record_network(
             final_url.to_string(),
             "GET",
-            doc_result.status,
-            doc_result.content_type.clone(),
-            doc_result.html.len(),
+            prep.status,
+            prep.content_type.clone(),
+            prep.html.len(),
         );
         self.devtools.log(
             crate::devtools::ConsoleLevel::Info,
             format!("Navigated to {}", final_url),
         );
-        self.load_document_internal(
-            doc,
-            doc_result.html,
+        self.load_document_internal_with_scripts(
+            prep.doc,
+            prep.html,
             final_url.to_string(),
             push_history,
             true,
+            Some(prep.preloaded_scripts),
         );
         self.address_focused = false;
+    }
+
+    /// Loads a fetched document into the browser, recursively fetching external stylesheets,
+    /// web fonts, and images, and updating the page metadata and history.
+    pub fn process_and_load_document(
+        &mut self,
+        doc_result: FetchedDocument,
+        push_history: bool,
+    ) {
+        let prep = prepare_document_pipeline(&self.loader, doc_result);
+        self.apply_prepared_document(prep, push_history);
     }
 
     /// Flushes the shared cookie jar to the profile file.
@@ -5801,6 +5896,27 @@ impl BrowserChrome {
             if let Ok(parsed_url) = Url::parse(&resolved_action) {
                 self.status_text = format!("Submitting to {}...", parsed_url);
                 self.is_loading = true;
+                if self.async_navigation {
+                    let loader = self.loader.clone();
+                    let target_url = parsed_url.clone();
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    std::thread::spawn(move || {
+                        let res = loader
+                            .post_document(
+                                &target_url,
+                                query_str.as_bytes(),
+                                "application/x-www-form-urlencoded",
+                            )
+                            .map(|doc_res| prepare_document_pipeline(&loader, doc_res));
+                        let _ = tx.send(res);
+                    });
+                    self.pending_navigation = Some(PendingNavigation {
+                        target_url: parsed_url,
+                        rx,
+                        push_history: true,
+                    });
+                    return;
+                }
                 match self.loader.post_document(
                     &parsed_url,
                     query_str.as_bytes(),
@@ -5877,11 +5993,6 @@ fn is_js_script_type(type_attr: Option<&str>) -> bool {
                 || t == "javascript"
         }
     }
-}
-
-enum ScriptToRun {
-    Inline(String),
-    External(String),
 }
 
 fn collect_scripts(doc: &Document, node_id: NodeId, scripts: &mut Vec<ScriptToRun>) {

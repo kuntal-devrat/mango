@@ -507,6 +507,21 @@ pub fn decode_font_bytes(bytes: &[u8]) -> Result<Font, String> {
         return Err("Font data is too short".to_string());
     }
 
+    let trimmed = if bytes.starts_with(b" ") || bytes.starts_with(b"\n") || bytes.starts_with(b"\r") || bytes.starts_with(b"\t") {
+        bytes.iter().copied().skip_while(|&b| b.is_ascii_whitespace()).collect::<Vec<u8>>()
+    } else {
+        Vec::new()
+    };
+    let slice = if trimmed.is_empty() { bytes } else { &trimmed };
+    if slice.starts_with(b"<!DOC")
+        || slice.starts_with(b"<!doc")
+        || slice.starts_with(b"<html")
+        || slice.starts_with(b"<HTML")
+        || slice.starts_with(b"<?xml")
+    {
+        return Err("Expected binary font data, received HTML text".to_string());
+    }
+
     let decompressed: Cow<[u8]> = if bytes.starts_with(b"wOF2") {
         let dec = wuff::decompress_woff2(bytes)
             .map_err(|e| format!("Failed to decompress WOFF2 font: {:?}", e))?;

@@ -329,10 +329,15 @@ fn test_inline_block_side_by_side() {
 
     let body = &root_box.children[0];
     let outer_div = &body.children[0];
-    assert_eq!(outer_div.children.len(), 2);
+    let ib_children: Vec<_> = outer_div
+        .children
+        .iter()
+        .filter(|c| !matches!(c.box_type, mango_layout::box_model::BoxType::TextNode(_)))
+        .collect();
+    assert_eq!(ib_children.len(), 2);
 
-    let ib1 = &outer_div.children[0];
-    let ib2 = &outer_div.children[1];
+    let ib1 = ib_children[0];
+    let ib2 = ib_children[1];
 
     assert_eq!(ib1.dimensions.content.width(), 120.0);
     assert_eq!(ib2.dimensions.content.width(), 120.0);
@@ -954,3 +959,131 @@ fn test_explicit_line_height_matches_chromium_block_height() {
         b.dimensions.content.y()
     );
 }
+
+#[test]
+fn test_rust_lang_footer() {
+    let html = r#"<!doctype html><html><head><style>
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        body > main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        body > main > section:last-child {
+            flex: 1;
+        }
+        nav { height: 60px; }
+        section { height: 500px; }
+        footer { height: 100px; }
+    </style></head><body>
+        <nav>Nav</nav>
+        <main>
+            <section>Section 1</section>
+            <section>Section 2</section>
+        </main>
+        <footer>Footer</footer>
+    </body></html>"#;
+    let doc = parse_html(html);
+    let (root_box, _) = layout_document(&doc, &[], Size::new(1280.0, 900.0));
+
+    let footer = find_box(&root_box, "footer").expect("footer must exist");
+    println!("FOOTER Y = {}, HEIGHT = {}", footer.dimensions.content.y(), footer.dimensions.content.height());
+    let main_box = find_box(&root_box, "main").expect("main must exist");
+    println!("MAIN Y = {}, HEIGHT = {}", main_box.dimensions.content.y(), main_box.dimensions.content.height());
+    assert!(footer.dimensions.content.y() >= 1000.0, "footer must be below main content, got {}", footer.dimensions.content.y());
+}
+
+#[test]
+fn test_rust_lang_footer_sticky_short_content() {
+    let html = r#"<!doctype html><html><head><style>
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        body > main {
+            flex: 1;
+        }
+        nav { height: 60px; }
+        footer { height: 100px; }
+    </style></head><body>
+        <nav>Nav</nav>
+        <main>
+            <p>Short content</p>
+        </main>
+        <footer>Footer</footer>
+    </body></html>"#;
+    let doc = parse_html(html);
+    let (root_box, _) = layout_document(&doc, &[], Size::new(1280.0, 900.0));
+
+    let footer = find_box(&root_box, "footer").expect("footer must exist");
+    println!("STICKY FOOTER Y = {}, HEIGHT = {}", footer.dimensions.content.y(), footer.dimensions.content.height());
+    assert!(footer.dimensions.content.y() >= 800.0, "footer must be at bottom of 900px viewport, got {}", footer.dimensions.content.y());
+}
+
+#[test]
+fn test_inline_image_spacing() {
+    let html = r#"<!doctype html><html><body style="margin:0"><p style="margin:0"><img src="a.png" style="width:50px;height:50px"> <img src="b.png" style="width:50px;height:50px"></p></body></html>"#;
+    let doc = parse_html(html);
+    let (root_box, _) = layout_document(&doc, &[], Size::new(1280.0, 900.0));
+
+    let p = find_box(&root_box, "p").expect("p must exist");
+    println!("P children count = {}", p.children.len());
+    for (i, c) in p.children.iter().enumerate() {
+        println!("Child {}: type={:?}, x={}, width={}", i, c.box_type, c.dimensions.content.x(), c.dimensions.content.width());
+    }
+    assert_eq!(p.children.len(), 3, "p must have 3 children (img, space, img)");
+    assert!(p.children[2].dimensions.content.x() > 50.0, "second image must be spaced after first image + whitespace, got x={}", p.children[2].dimensions.content.x());
+}
+
+#[test]
+fn test_button_border_zero_removal() {
+    let html = r#"<!doctype html><html><body style="margin:0"><button style="border: 0; padding: 10px;">Click me</button></body></html>"#;
+    let doc = parse_html(html);
+    let (root_box, dl) = layout_document(&doc, &[], Size::new(1280.0, 900.0));
+
+    let btn = find_box(&root_box, "button").expect("button must exist");
+    assert_eq!(btn.dimensions.border.top, 0.0);
+    assert_eq!(btn.dimensions.border.bottom, 0.0);
+    assert_eq!(btn.dimensions.border.left, 0.0);
+    assert_eq!(btn.dimensions.border.right, 0.0);
+
+    // Verify display list contains NO DrawBorder commands for this button
+    let has_border_cmd = dl.iter().any(|cmd| matches!(cmd, mango_render::DisplayCommand::DrawBorder { .. }));
+    assert!(!has_border_cmd, "button with border: 0 must not emit DrawBorder command");
+}
+
+#[test]
+fn test_transition_shorthand_retarget() {
+    use mango_css::animation::TransitionEngine;
+    use mango_css::ComputedStyle;
+    use mango_css::values::{Transition, TimingFunction};
+    use mango_html::dom::NodeId;
+
+    let mut engine = TransitionEngine::new();
+    let node = NodeId::from_raw(1);
+
+    let mut old_style = ComputedStyle::default();
+    old_style.background_color = mango_core::Color::BLACK;
+
+    let mut new_style = ComputedStyle::default();
+    new_style.background_color = mango_core::Color::WHITE;
+    new_style.transitions = vec![Transition {
+        property: "background".to_string(),
+        duration_ms: 150.0,
+        delay_ms: 0.0,
+        timing: TimingFunction::Ease,
+    }];
+
+    let retargeted = engine.retarget(node, &old_style, &new_style);
+    assert!(retargeted, "transition: background must match background-color and trigger a transition");
+    assert!(engine.is_animating(), "engine should be animating background transition");
+}
+
+

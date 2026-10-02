@@ -740,6 +740,12 @@ fn expand_border_sides(sides: &[&str], value: &Value, important: bool) -> Vec<De
                 }
                 width = Some(item.clone());
             }
+            Value::Number(n) => {
+                if *n == 0.0 {
+                    style = Some(Value::BorderStyle(BorderStyle::None));
+                }
+                width = Some(Value::Length(Length::Px(*n)));
+            }
             Value::BorderStyle(_) => style = Some(item.clone()),
             Value::Color(_) => color = Some(item.clone()),
             Value::Var { .. } if color.is_none() => {
@@ -760,9 +766,16 @@ fn expand_border_sides(sides: &[&str], value: &Value, important: bool) -> Vec<De
                 "dashed" => style = Some(Value::BorderStyle(BorderStyle::Dashed)),
                 "dotted" => style = Some(Value::BorderStyle(BorderStyle::Dotted)),
                 "double" => style = Some(Value::BorderStyle(BorderStyle::Double)),
+                "thin" => width = Some(Value::Length(Length::Px(1.0))),
+                "medium" => width = Some(Value::Length(Length::Px(3.0))),
+                "thick" => width = Some(Value::Length(Length::Px(5.0))),
                 "transparent" => color = Some(Value::Color(mango_core::Color::TRANSPARENT)),
                 "currentcolor" => color = Some(Value::CurrentColor),
-                _ => {}
+                _ => {
+                    if let Some(c) = Value::parse_color(k) {
+                        color = Some(Value::Color(c));
+                    }
+                }
             },
             _ => {}
         }

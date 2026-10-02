@@ -1179,7 +1179,14 @@ pub fn layout_flex(
                     | BoxType::Video { intrinsic_height, .. }
                     | BoxType::Audio { intrinsic_height, .. }
                     | BoxType::Canvas { intrinsic_height, .. } => *intrinsic_height,
-                    _ => 0.0,
+                    _ => {
+                        let mut child_clone = child.clone();
+                        child_clone.dimensions.content.size.width = cross_size;
+                        let item_cb = Dimensions::new(Rect::new(0.0, 0.0, cross_size, 0.0));
+                        let mut item_float_ctx = FloatContext::new();
+                        layout_flex_item(&mut child_clone, &item_cb, &mut item_float_ctx, c_fs);
+                        child_clone.dimensions.content.size.height
+                    }
                 };
                 min_main = auto_min.min(max_main);
             }
@@ -1213,15 +1220,51 @@ pub fn layout_flex(
     }
 
     // 5. Construct flex lines (multi-line wrapping)
+    let min_main_size = if is_row {
+        if style.min_width != Length::Auto {
+            let raw_min = style.min_width.to_px_with_viewport(
+                font_size,
+                root_font_size,
+                container_width,
+                container_height,
+            );
+            if style.box_sizing == BoxSizing::BorderBox {
+                (raw_min - total_non_content_h).max(0.0)
+            } else {
+                raw_min
+            }
+        } else {
+            0.0
+        }
+    } else if style.min_height != Length::Auto {
+        let raw_min = style.min_height.to_px_with_viewport(
+            font_size,
+            root_font_size,
+            container_height,
+            container_height,
+        );
+        if style.box_sizing == BoxSizing::BorderBox {
+            (raw_min - total_non_content_v).max(0.0)
+        } else {
+            raw_min
+        }
+    } else {
+        0.0
+    };
+
     let is_container_main_definite = if is_row {
         true
     } else {
-        content_height > 0.0 || (style.height != Length::Auto && !is_percent_indefinite)
+        content_height > 0.0
+            || (style.height != Length::Auto && !is_percent_indefinite)
+            || min_main_size > 0.0
     };
     let container_main_size = if is_row {
-        content_width
-    } else {
+        content_width.max(min_main_size)
+    } else if content_height > 0.0 {
         content_height
+    } else {
+        min_main_size
     };
 
     let mut lines: Vec<Vec<usize>> = Vec::new();
@@ -1321,7 +1364,9 @@ pub fn layout_flex(
                     if !has_violation {
                         break;
                     }
-                } else if cur_free_space < 0.0 {
+                } else if cur_free_space < 0.0
+                    && (is_row || (style.height != Length::Auto && !is_percent_indefinite))
+                {
                     let sum_scaled_shrink: f32 = line
                         .iter()
                         .enumerate()

@@ -381,7 +381,7 @@ fn is_node_inline(
                 return false;
             }
             let style = compute_style_with_index(node_id, doc, author_index, parent_style);
-            style.display != Display::None && style.display.is_inline_level()
+            style.display.is_inline_level()
         }
         NodeData::Text(t) => !t.chars().all(|c| c.is_ascii_whitespace()),
         _ => false,
@@ -699,10 +699,32 @@ fn build_styled_node(
                 } else if let Some(parent_id) = node.parent {
                     let siblings: Vec<_> = doc.children(parent_id).collect();
                     if let Some(pos) = siblings.iter().position(|c| c.id == node_id) {
-                        let prev_inline = pos > 0
-                            && is_node_inline(doc, siblings[pos - 1].id, author_index, parent_style);
-                        let next_inline = pos + 1 < siblings.len()
-                            && is_node_inline(doc, siblings[pos + 1].id, author_index, parent_style);
+                        let prev_meaningful = siblings[..pos].iter().rev().find(|s| match &s.data {
+                            NodeData::Comment(_) => false,
+                            NodeData::Element(el) => {
+                                el.get_attribute("hidden").is_none()
+                                    && !el.tag_name.eq_ignore_ascii_case("template")
+                                    && !el.tag_name.eq_ignore_ascii_case("head")
+                                    && !el.tag_name.eq_ignore_ascii_case("style")
+                                    && !el.tag_name.eq_ignore_ascii_case("script")
+                            }
+                            _ => true,
+                        });
+                        let next_meaningful = siblings[pos + 1..].iter().find(|s| match &s.data {
+                            NodeData::Comment(_) => false,
+                            NodeData::Element(el) => {
+                                el.get_attribute("hidden").is_none()
+                                    && !el.tag_name.eq_ignore_ascii_case("template")
+                                    && !el.tag_name.eq_ignore_ascii_case("head")
+                                    && !el.tag_name.eq_ignore_ascii_case("style")
+                                    && !el.tag_name.eq_ignore_ascii_case("script")
+                            }
+                            _ => true,
+                        });
+                        let prev_inline = prev_meaningful
+                            .map_or(false, |s| is_node_inline(doc, s.id, author_index, parent_style));
+                        let next_inline = next_meaningful
+                            .map_or(false, |s| is_node_inline(doc, s.id, author_index, parent_style));
                         prev_inline && next_inline
                     } else {
                         false
