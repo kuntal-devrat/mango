@@ -43,7 +43,9 @@ pub enum A11yRole {
     // Sectioning / Grouping
     Article,
     Section,
-    Heading { level: u8 },
+    Heading {
+        level: u8,
+    },
     Group,
     Blockquote,
     Figure,
@@ -261,7 +263,9 @@ impl A11yTree {
 
     /// Finds a node by its DOM node ID.
     pub fn find_by_node_id(&self, target: NodeId) -> Option<&A11yNode> {
-        self.root.as_ref().and_then(|r| find_by_node_id_rec(r, target))
+        self.root
+            .as_ref()
+            .and_then(|r| find_by_node_id_rec(r, target))
     }
 
     /// Produces a formatted text dump of the accessibility tree for debugging and testing.
@@ -343,7 +347,11 @@ fn dump_node(node: &A11yNode, depth: usize, out: &mut String) {
         });
     }
     if let Some(e) = node.state.expanded {
-        state_parts.push(if e { "expanded".to_string() } else { "collapsed".to_string() });
+        state_parts.push(if e {
+            "expanded".to_string()
+        } else {
+            "collapsed".to_string()
+        });
     }
     if let Some(ref v) = node.state.value {
         state_parts.push(format!("value={v}"));
@@ -477,10 +485,7 @@ fn build_node(
             let role = resolve_role(&tag, elem, doc, node_id);
             let state = resolve_state(elem, &tag);
             let name = compute_accessible_name(doc, node_id, elem, &tag, &mut HashSet::new());
-            let bounds = bounds_cache
-                .get(&node_id)
-                .copied()
-                .unwrap_or(Rect::ZERO);
+            let bounds = bounds_cache.get(&node_id).copied().unwrap_or(Rect::ZERO);
 
             // G4: role="presentation"/"none" — flatten children into parent
             if role == A11yRole::Presentation {
@@ -555,7 +560,11 @@ fn resolve_role(
     // 1. Explicit ARIA role takes precedence
     if let Some(explicit_role) = elem.get_attribute("role") {
         // ARIA spec: take the first valid token from the space-separated list
-        let r = explicit_role.split_whitespace().next().unwrap_or("").to_ascii_lowercase();
+        let r = explicit_role
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
         if let Some(role) = match_aria_role(&r, elem) {
             return role;
         }
@@ -681,7 +690,7 @@ fn resolve_role(
         "progress" => A11yRole::ProgressBar,
         "meter" => A11yRole::Meter,
         "hr" => A11yRole::Separator,
-        "details" => A11yRole::Group, // G13
+        "details" => A11yRole::Group,  // G13
         "summary" => A11yRole::Button, // G13: disclosure trigger
         "figure" => A11yRole::Figure,
         "figcaption" => A11yRole::FigCaption,
@@ -876,17 +885,17 @@ fn resolve_state(elem: &mango_html::dom::ElementData, tag: &str) -> A11yState {
     }
 
     // Invalid
-    if let Some(v) = elem.get_attribute("aria-invalid") {
-        if v != "false" {
-            state.invalid = Some(v.to_string());
-        }
+    if let Some(v) = elem.get_attribute("aria-invalid")
+        && v != "false"
+    {
+        state.invalid = Some(v.to_string());
     }
 
     // Has popup
-    if let Some(v) = elem.get_attribute("aria-haspopup") {
-        if v != "false" {
-            state.has_popup = Some(v.to_string());
-        }
+    if let Some(v) = elem.get_attribute("aria-haspopup")
+        && v != "false"
+    {
+        state.has_popup = Some(v.to_string());
     }
 
     // Autocomplete
@@ -898,10 +907,10 @@ fn resolve_state(elem: &mango_html::dom::ElementData, tag: &str) -> A11yState {
     }
 
     // Current
-    if let Some(v) = elem.get_attribute("aria-current") {
-        if v != "false" {
-            state.current = Some(v.to_string());
-        }
+    if let Some(v) = elem.get_attribute("aria-current")
+        && v != "false"
+    {
+        state.current = Some(v.to_string());
     }
 
     // Orientation
@@ -913,9 +922,7 @@ fn resolve_state(elem: &mango_html::dom::ElementData, tag: &str) -> A11yState {
     if let Some(v) = elem.get_attribute("value") {
         state.value = Some(v.to_string());
     }
-    state.value_text = elem
-        .get_attribute("aria-valuetext")
-        .map(|s| s.to_string());
+    state.value_text = elem.get_attribute("aria-valuetext").map(|s| s.to_string());
     state.value_min = elem
         .get_attribute("aria-valuemin")
         .and_then(|v| v.parse().ok())
@@ -934,9 +941,7 @@ fn resolve_state(elem: &mango_html::dom::ElementData, tag: &str) -> A11yState {
     if let Some(v) = elem.get_attribute("aria-atomic") {
         state.atomic = Some(v == "true");
     }
-    state.relevant = elem
-        .get_attribute("aria-relevant")
-        .map(|s| s.to_string());
+    state.relevant = elem.get_attribute("aria-relevant").map(|s| s.to_string());
 
     // Relationship IDs
     state.controls = split_ids(elem.get_attribute("aria-controls"));
@@ -991,8 +996,7 @@ fn resolve_state(elem: &mango_html::dom::ElementData, tag: &str) -> A11yState {
         .map(|s| s.to_string());
 
     // Focusable heuristic
-    state.focusable = is_natively_focusable(tag, elem)
-        || elem.get_attribute("tabindex").is_some();
+    state.focusable = is_natively_focusable(tag, elem) || elem.get_attribute("tabindex").is_some();
 
     state
 }
@@ -1012,12 +1016,8 @@ fn is_natively_focusable(tag: &str, elem: &mango_html::dom::ElementData) -> bool
 
 /// Splits a space-separated ID reference list into a Vec of Strings.
 fn split_ids(attr: Option<&str>) -> Vec<String> {
-    attr.map(|s| {
-        s.split_whitespace()
-            .map(|id| id.to_string())
-            .collect()
-    })
-    .unwrap_or_default()
+    attr.map(|s| s.split_whitespace().map(|id| id.to_string()).collect())
+        .unwrap_or_default()
 }
 
 // ─── Accessible Name Computation (AccName 1.2) ──────────────────────────────
@@ -1087,8 +1087,8 @@ fn compute_accessible_name(
             // G8, G9: These elements also need <label for> and placeholder support
             compute_labelable_name(doc, node_id, elem, tag)
         }
-        "button" | "a" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "summary" | "output"
-        | "th" | "td" | "li" | "option" | "legend" | "caption" | "dt" | "dd" | "figcaption" => {
+        "button" | "a" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "summary" | "output" | "th"
+        | "td" | "li" | "option" | "legend" | "caption" | "dt" | "dd" | "figcaption" => {
             let text = doc.text_content(node_id);
             let trimmed = text.trim();
             if !trimmed.is_empty() {
@@ -1182,10 +1182,10 @@ fn compute_input_name(
     }
 
     // Try explicit <label for="...">
-    if let Some(id) = elem.id() {
-        if let Some(label_text) = find_label_for_id(doc, doc.root(), id) {
-            return label_text;
-        }
+    if let Some(id) = elem.id()
+        && let Some(label_text) = find_label_for_id(doc, doc.root(), id)
+    {
+        return label_text;
     }
 
     // G5: Try implicit label (wrapping <label>)
@@ -1212,10 +1212,10 @@ fn compute_labelable_name(
     tag: &str,
 ) -> String {
     // Try explicit <label for="...">
-    if let Some(id) = elem.id() {
-        if let Some(label_text) = find_label_for_id(doc, doc.root(), id) {
-            return label_text;
-        }
+    if let Some(id) = elem.id()
+        && let Some(label_text) = find_label_for_id(doc, doc.root(), id)
+    {
+        return label_text;
     }
 
     // G5: Try implicit label (wrapping <label>)
@@ -1224,12 +1224,12 @@ fn compute_labelable_name(
     }
 
     // Placeholder fallback (textarea supports placeholder)
-    if tag == "textarea" {
-        if let Some(placeholder) = elem.get_attribute("placeholder") {
-            let t = placeholder.trim();
-            if !t.is_empty() {
-                return t.to_string();
-            }
+    if tag == "textarea"
+        && let Some(placeholder) = elem.get_attribute("placeholder")
+    {
+        let t = placeholder.trim();
+        if !t.is_empty() {
+            return t.to_string();
         }
     }
 
@@ -1263,16 +1263,16 @@ fn find_wrapping_label(doc: &Document, node_id: NodeId) -> Option<String> {
         let node = doc.get(current)?;
         let parent_id = node.parent?;
         let parent_node = doc.get(parent_id)?;
-        if let NodeData::Element(pelem) = &parent_node.data {
-            if pelem.tag_name.eq_ignore_ascii_case("label") {
-                // This is a wrapping label — get its text content
-                // (excluding the input element's own text contribution,
-                // but text_content already handles that since inputs have no text children)
-                let text = doc.text_content(parent_id);
-                let trimmed = text.trim();
-                if !trimmed.is_empty() {
-                    return Some(trimmed.to_string());
-                }
+        if let NodeData::Element(pelem) = &parent_node.data
+            && pelem.tag_name.eq_ignore_ascii_case("label")
+        {
+            // This is a wrapping label — get its text content
+            // (excluding the input element's own text contribution,
+            // but text_content already handles that since inputs have no text children)
+            let text = doc.text_content(parent_id);
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
             }
         }
         if matches!(parent_node.data, NodeData::Document) {
@@ -1285,13 +1285,13 @@ fn find_wrapping_label(doc: &Document, node_id: NodeId) -> Option<String> {
 /// Finds the text of the first direct child element with the given tag name.
 fn find_child_element_text(doc: &Document, parent_id: NodeId, child_tag: &str) -> Option<String> {
     for child in doc.children(parent_id) {
-        if let NodeData::Element(elem) = &child.data {
-            if elem.tag_name.eq_ignore_ascii_case(child_tag) {
-                let text = doc.text_content(child.id);
-                let trimmed = text.trim();
-                if !trimmed.is_empty() {
-                    return Some(trimmed.to_string());
-                }
+        if let NodeData::Element(elem) = &child.data
+            && elem.tag_name.eq_ignore_ascii_case(child_tag)
+        {
+            let text = doc.text_content(child.id);
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
             }
         }
     }
@@ -1301,10 +1301,7 @@ fn find_child_element_text(doc: &Document, parent_id: NodeId, child_tag: &str) -
 // ─── Description Computation ─────────────────────────────────────────────────
 
 /// G10: Computes the accessible description from `aria-describedby`, `aria-description`, or `title`.
-fn compute_description(
-    doc: &Document,
-    elem: &mango_html::dom::ElementData,
-) -> Option<String> {
+fn compute_description(doc: &Document, elem: &mango_html::dom::ElementData) -> Option<String> {
     // aria-describedby takes precedence
     if let Some(described_by) = elem.get_attribute("aria-describedby") {
         let mut descriptions = Vec::new();

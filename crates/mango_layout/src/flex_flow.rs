@@ -61,11 +61,20 @@ fn layout_flex_item(
 /// Computes the first baseline ascent of a flex item according to CSS Flexbox §8.5.
 fn find_first_baseline_ascent(box_: &LayoutBox, default_fs: f32) -> f32 {
     if matches!(box_.box_type, BoxType::TextNode(_)) {
-        let fs = box_.style.as_ref().map(|s| s.font_size).unwrap_or(default_fs);
+        let fs = box_
+            .style
+            .as_ref()
+            .map(|s| s.font_size)
+            .unwrap_or(default_fs);
         return fs * 0.8;
     }
     for child in &box_.children {
-        if child.style.as_ref().map(|s| s.display != Display::None).unwrap_or(true) {
+        if child
+            .style
+            .as_ref()
+            .map(|s| s.display != Display::None)
+            .unwrap_or(true)
+        {
             let child_ascent = find_first_baseline_ascent(child, default_fs);
             if child_ascent > 0.0 {
                 return child.dimensions.margin.top
@@ -75,7 +84,11 @@ fn find_first_baseline_ascent(box_: &LayoutBox, default_fs: f32) -> f32 {
             }
         }
     }
-    let fs = box_.style.as_ref().map(|s| s.font_size).unwrap_or(default_fs);
+    let fs = box_
+        .style
+        .as_ref()
+        .map(|s| s.font_size)
+        .unwrap_or(default_fs);
     fs * 0.8
 }
 
@@ -1124,12 +1137,22 @@ pub fn layout_flex(
                 min_main = min_content_w;
             } else if child_style.overflow_x == Overflow::Visible {
                 let auto_min = match &child.box_type {
-                    BoxType::ReplacedElement { intrinsic_width, .. }
-                    | BoxType::IFrame { intrinsic_width, .. }
-                    | BoxType::Video { intrinsic_width, .. }
-                    | BoxType::Audio { intrinsic_width, .. }
-                    | BoxType::Canvas { intrinsic_width, .. } => *intrinsic_width,
-                    BoxType::TextNode(_) => {
+                    BoxType::ReplacedElement {
+                        intrinsic_width, ..
+                    }
+                    | BoxType::IFrame {
+                        intrinsic_width, ..
+                    }
+                    | BoxType::Video {
+                        intrinsic_width, ..
+                    }
+                    | BoxType::Audio {
+                        intrinsic_width, ..
+                    }
+                    | BoxType::Canvas {
+                        intrinsic_width, ..
+                    } => *intrinsic_width,
+                    _ => {
                         let mut memo = std::collections::HashMap::new();
                         let (min_w, _) = crate::table_flow::measure_box_intrinsic_widths(
                             child,
@@ -1140,7 +1163,6 @@ pub fn layout_flex(
                         );
                         min_w
                     }
-                    _ => 0.0,
                 };
                 min_main = auto_min.min(max_main);
             }
@@ -1174,11 +1196,21 @@ pub fn layout_flex(
                 min_main = min_content_h;
             } else if child_style.overflow_y == Overflow::Visible {
                 let auto_min = match &child.box_type {
-                    BoxType::ReplacedElement { intrinsic_height, .. }
-                    | BoxType::IFrame { intrinsic_height, .. }
-                    | BoxType::Video { intrinsic_height, .. }
-                    | BoxType::Audio { intrinsic_height, .. }
-                    | BoxType::Canvas { intrinsic_height, .. } => *intrinsic_height,
+                    BoxType::ReplacedElement {
+                        intrinsic_height, ..
+                    }
+                    | BoxType::IFrame {
+                        intrinsic_height, ..
+                    }
+                    | BoxType::Video {
+                        intrinsic_height, ..
+                    }
+                    | BoxType::Audio {
+                        intrinsic_height, ..
+                    }
+                    | BoxType::Canvas {
+                        intrinsic_height, ..
+                    } => *intrinsic_height,
                     _ => {
                         let mut child_clone = child.clone();
                         child_clone.dimensions.content.size.width = cross_size;
@@ -1312,8 +1344,10 @@ pub fn layout_flex(
         // Distribute free space with iterative violation resolution (CSS Flexbox §9.7)
         if is_container_main_definite {
             let mut is_frozen = vec![false; line_item_count];
-            let mut item_sizes: Vec<f32> =
-                line.iter().map(|&idx| item_metrics[idx].base_main).collect();
+            let mut item_sizes: Vec<f32> = line
+                .iter()
+                .map(|&idx| item_metrics[idx].base_main)
+                .collect();
 
             for _ in 0..line_item_count {
                 let mut used_space = total_gaps;
@@ -1753,10 +1787,7 @@ pub fn layout_flex(
             let item_outer_main = m.final_main + m.pad_main + m.border_main + m.margin_main;
             if is_row {
                 let x = if is_reverse {
-                    container_x
-                        + container_main_size
-                        - main_cursor
-                        - item_outer_main
+                    container_x + container_main_size - main_cursor - item_outer_main
                         + child.dimensions.margin.left
                         + child.dimensions.border.left
                         + child.dimensions.padding.left
@@ -1783,10 +1814,7 @@ pub fn layout_flex(
                     + child.dimensions.border.left
                     + child.dimensions.padding.left;
                 let y = if is_reverse {
-                    container_y
-                        + container_main_size
-                        - main_cursor
-                        - item_outer_main
+                    container_y + container_main_size - main_cursor - item_outer_main
                         + child.dimensions.margin.top
                         + child.dimensions.border.top
                         + child.dimensions.padding.top

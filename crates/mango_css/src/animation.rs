@@ -46,14 +46,31 @@ pub fn lerp(a: f32, b: f32, t: f32) -> f32 {
 /// Interpolates two colors in premultiplied sRGB space.
 pub fn interpolate_color(a: Color, b: Color, t: f32) -> Color {
     let t = t.clamp(0.0, 1.0);
-    let blend =
-        |x: u8, y: u8| -> u8 { lerp(x as f32, y as f32, t).round().clamp(0.0, 255.0) as u8 };
-    Color::rgba(
-        blend(a.r, b.r),
-        blend(a.g, b.g),
-        blend(a.b, b.b),
-        blend(a.a, b.a),
-    )
+    let alpha_a = a.a as f32 / 255.0;
+    let alpha_b = b.a as f32 / 255.0;
+    let alpha_out = lerp(alpha_a, alpha_b, t);
+
+    if alpha_out <= 0.0001 {
+        return Color::TRANSPARENT;
+    }
+
+    let r_a = (a.r as f32 / 255.0) * alpha_a;
+    let r_b = (b.r as f32 / 255.0) * alpha_b;
+    let g_a = (a.g as f32 / 255.0) * alpha_a;
+    let g_b = (b.g as f32 / 255.0) * alpha_b;
+    let b_a = (a.b as f32 / 255.0) * alpha_a;
+    let b_b = (b.b as f32 / 255.0) * alpha_b;
+
+    let r_interp = lerp(r_a, r_b, t);
+    let g_interp = lerp(g_a, g_b, t);
+    let b_interp = lerp(b_a, b_b, t);
+
+    let r_out = ((r_interp / alpha_out) * 255.0).round().clamp(0.0, 255.0) as u8;
+    let g_out = ((g_interp / alpha_out) * 255.0).round().clamp(0.0, 255.0) as u8;
+    let b_out = ((b_interp / alpha_out) * 255.0).round().clamp(0.0, 255.0) as u8;
+    let a_out = (alpha_out * 255.0).round().clamp(0.0, 255.0) as u8;
+
+    Color::rgba(r_out, g_out, b_out, a_out)
 }
 
 /// Interpolates two CSS lengths, falling back to a discrete switch for
@@ -517,14 +534,10 @@ pub fn interpolate_style(from: &ComputedStyle, to: &ComputedStyle, t: f32) -> Co
         style.box_shadow = to.box_shadow;
     }
 
-    if let (Some(x1), Some(y1), Some(x2), Some(y2)) = (
-        from.aspect_ratio,
-        to.aspect_ratio,
-        from.aspect_ratio,
-        to.aspect_ratio,
-    ) {
-        style.aspect_ratio = Some(lerp(x1, y2, t));
-        let _ = (y1, x2);
+    if let (Some(a), Some(b)) = (from.aspect_ratio, to.aspect_ratio) {
+        style.aspect_ratio = Some(lerp(a, b, t));
+    } else if t >= 0.5 {
+        style.aspect_ratio = to.aspect_ratio;
     }
 
     // Discrete properties flip at the midpoint.
@@ -1020,31 +1033,20 @@ impl TransitionEngine {
                 match spec.property.to_ascii_lowercase().as_str() {
                     "background" => prop == "background-color",
                     "border" => {
-                        prop == "border-color"
-                            || prop == "border-width"
-                            || prop == "border-radius"
+                        prop == "border-color" || prop == "border-width" || prop == "border-radius"
                     }
                     "border-color" => prop == "border-color",
                     "border-width" => prop == "border-width",
                     "border-radius" => prop == "border-radius",
                     "outline" => {
-                        prop == "outline-width"
-                            || prop == "outline-offset"
-                            || prop == "color"
+                        prop == "outline-width" || prop == "outline-offset" || prop == "color"
                     }
                     "margin" => prop == "margin",
                     "padding" => prop == "padding",
-                    "flex" => {
-                        prop == "flex-grow"
-                            || prop == "flex-shrink"
-                            || prop == "flex-basis"
-                    }
+                    "flex" => prop == "flex-grow" || prop == "flex-shrink" || prop == "flex-basis",
                     "gap" => prop == "gap",
                     "inset" => {
-                        prop == "top"
-                            || prop == "right"
-                            || prop == "bottom"
-                            || prop == "left"
+                        prop == "top" || prop == "right" || prop == "bottom" || prop == "left"
                     }
                     _ => false,
                 }
@@ -1626,5 +1628,19 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn test_premultiplied_color_interpolation() {
+        // Interpolating between transparent red rgba(255, 0, 0, 0) and opaque blue rgba(0, 0, 255, 255)
+        // In premultiplied space, at t=0.5:
+        // alpha = 0.5 (128)
+        // red premultiplied = 0.0, blue premultiplied = 1.0 * 0.5 = 0.5 -> un-premultiplied blue = 1.0 (255)
+        let c1 = Color::rgba(255, 0, 0, 0);
+        let c2 = Color::rgba(0, 0, 255, 255);
+        let mid = interpolate_color(c1, c2, 0.5);
+        assert_eq!(mid.b, 255);
+        assert_eq!(mid.r, 0);
+        assert_eq!(mid.a, 128);
     }
 }

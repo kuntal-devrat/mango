@@ -326,7 +326,10 @@ fn test_tfoot_rendered_after_tbody_even_if_first_in_markup() {
     "#;
     let table = layout_html_table(html, "", 500.0, 500.0);
 
-    fn find_by_id<'a>(node: &'a mango_layout::box_tree::LayoutBox, id: &str) -> Option<&'a mango_layout::box_tree::LayoutBox> {
+    fn find_by_id<'a>(
+        node: &'a mango_layout::box_tree::LayoutBox,
+        id: &str,
+    ) -> Option<&'a mango_layout::box_tree::LayoutBox> {
         if node.attributes.iter().any(|(k, v)| k == "id" && v == id) {
             return Some(node);
         }
@@ -397,4 +400,3 @@ fn test_table_min_height_constraint() {
         table.dimensions.content.height()
     );
 }
-

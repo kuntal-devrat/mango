@@ -714,6 +714,30 @@ fn parse_and_match_nth_child(arg: &str, node_id: NodeId, doc: &Document, from_la
     }
 }
 
+static REGEX_CACHE: std::sync::OnceLock<
+    std::sync::RwLock<std::collections::HashMap<String, Option<regex::Regex>>>,
+> = std::sync::OnceLock::new();
+
+fn match_cached_pattern(pattern: &str, value: &str) -> bool {
+    let cache_lock =
+        REGEX_CACHE.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()));
+    {
+        let cache = cache_lock.read().unwrap_or_else(|e| e.into_inner());
+        if let Some(opt_re) = cache.get(pattern) {
+            return opt_re.as_ref().map(|re| re.is_match(value)).unwrap_or(true);
+        }
+    }
+    let mut cache = cache_lock.write().unwrap_or_else(|e| e.into_inner());
+    if cache.len() >= 512 {
+        cache.clear();
+    }
+    let anchored = format!("^(?:{})$", pattern);
+    let opt_re = regex::Regex::new(&anchored).ok();
+    let matches = opt_re.as_ref().map(|re| re.is_match(value)).unwrap_or(true);
+    cache.insert(pattern.to_string(), opt_re);
+    matches
+}
+
 /// Minimal HTML constraint-validation check backing `:valid` / `:invalid`
 /// and `element.checkValidity()`.
 ///
@@ -844,13 +868,10 @@ pub fn element_is_valid(node_id: NodeId, el: &mango_html::dom::ElementData) -> b
         }
 
         // HTML5 pattern regex constraint
-        if let Some(pat) = el.get_attribute("pattern") {
-            let anchored = format!("^(?:{})$", pat);
-            if let Ok(re) = regex::Regex::new(&anchored)
-                && !re.is_match(&value)
-            {
-                return false;
-            }
+        if let Some(pat) = el.get_attribute("pattern")
+            && !match_cached_pattern(pat, &value)
+        {
+            return false;
         }
     }
 
@@ -1326,49 +1347,58 @@ impl SelectorList {
 }
 
 fn leftmost_origin_within(
-    mut curr: NodeId,
+    curr: NodeId,
     sel: &ComplexSelector,
     scope_id: NodeId,
     doc: &Document,
 ) -> bool {
-    for (comb, _) in sel.tail.iter().rev() {
-        match comb {
-            Combinator::Child => {
-                let Some(parent) = parent_element(curr, doc) else {
-                    return false;
-                };
-                curr = parent;
-            }
-            Combinator::Descendant => {
-                let mut found = None;
-                let mut p = curr;
-                while let Some(parent) = parent_element(p, doc) {
-                    if parent == scope_id || is_descendant_of(parent, scope_id, doc) {
-                        found = Some(parent);
-                        break;
-                    }
-                    p = parent;
+    can_reach_origin_within(curr, &sel.tail, scope_id, doc)
+}
+
+fn can_reach_origin_within(
+    curr: NodeId,
+    tail_slice: &[(Combinator, CompoundSelector)],
+    scope_id: NodeId,
+    doc: &Document,
+) -> bool {
+    let Some(((comb, _), remaining)) = tail_slice.split_last() else {
+        return curr == scope_id || is_descendant_of(curr, scope_id, doc);
+    };
+
+    match comb {
+        Combinator::Child => {
+            let Some(parent) = parent_element(curr, doc) else {
+                return false;
+            };
+            can_reach_origin_within(parent, remaining, scope_id, doc)
+        }
+        Combinator::Descendant => {
+            let mut p = curr;
+            while let Some(parent) = parent_element(p, doc) {
+                if can_reach_origin_within(parent, remaining, scope_id, doc) {
+                    return true;
                 }
-                let Some(ancestor) = found else {
-                    return false;
-                };
-                curr = ancestor;
+                p = parent;
             }
-            Combinator::NextSibling => {
-                let Some(sib) = prev_element_sibling(curr, doc) else {
-                    return false;
-                };
-                curr = sib;
+            false
+        }
+        Combinator::NextSibling => {
+            let Some(sib) = prev_element_sibling(curr, doc) else {
+                return false;
+            };
+            can_reach_origin_within(sib, remaining, scope_id, doc)
+        }
+        Combinator::SubsequentSibling => {
+            let mut sib = curr;
+            while let Some(prev) = prev_element_sibling(sib, doc) {
+                if can_reach_origin_within(prev, remaining, scope_id, doc) {
+                    return true;
+                }
+                sib = prev;
             }
-            Combinator::SubsequentSibling => {
-                let Some(sib) = prev_element_sibling(curr, doc) else {
-                    return false;
-                };
-                curr = sib;
-            }
+            false
         }
     }
-    curr == scope_id || is_descendant_of(curr, scope_id, doc)
 }
 
 pub fn is_descendant_of(mut node_id: NodeId, ancestor_id: NodeId, doc: &Document) -> bool {
@@ -2182,5 +2212,35 @@ mod tests {
             case_sel.matches(el("chk"), &doc),
             "[type='CHECKBOX' i] matches 'checkbox'"
         );
+    }
+
+    #[test]
+    fn test_has_subsequent_sibling() {
+        let html = r#"
+            <div>
+                <h1 id="title">Title</h1>
+                <p id="p1">Intro</p>
+                <span id="target">Span</span>
+            </div>
+        "#;
+        let doc = mango_html::parse_html(html);
+        let root = doc.root();
+        let h1_id = doc.find_element_by_tag(root, "h1").unwrap();
+        let p1_id = doc.find_element_by_tag(root, "p").unwrap();
+
+        // h1 has subsequent sibling span (not immediate!)
+        let sel_sub = crate::parser::parse_selectors("h1:has(~ span)").unwrap();
+        assert!(sel_sub.matches(h1_id, &doc), "h1 must match :has(~ span)");
+
+        // h1 does NOT have immediate sibling span (+ span is false because p is immediate)
+        let sel_next = crate::parser::parse_selectors("h1:has(+ span)").unwrap();
+        assert!(
+            !sel_next.matches(h1_id, &doc),
+            "h1 must not match :has(+ span)"
+        );
+
+        // p1 has immediate sibling span (+ span is true)
+        let p1_next = crate::parser::parse_selectors("p:has(+ span)").unwrap();
+        assert!(p1_next.matches(p1_id, &doc), "p must match :has(+ span)");
     }
 }

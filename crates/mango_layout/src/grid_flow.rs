@@ -134,9 +134,14 @@ pub fn layout_grid(
         resolved_w
     };
 
-    let min_w = style.min_width.to_px_with_viewport(font_size, 16.0, container_width, container_height);
+    let min_w =
+        style
+            .min_width
+            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
     let max_w = if style.max_width != Length::Auto {
-        style.max_width.to_px_with_viewport(font_size, 16.0, container_width, container_height)
+        style
+            .max_width
+            .to_px_with_viewport(font_size, 16.0, container_width, container_height)
     } else {
         f32::INFINITY
     };
@@ -164,8 +169,12 @@ pub fn layout_grid(
         let is_percent_indefinite =
             matches!(style.height, Length::Percent(_)) && containing_block.content.height() <= 0.0;
         let h = if style.height != Length::Auto && !is_percent_indefinite {
-            let raw_h =
-                style.height.to_px_with_viewport(font_size, 16.0, container_height, container_height);
+            let raw_h = style.height.to_px_with_viewport(
+                font_size,
+                16.0,
+                container_height,
+                container_height,
+            );
             if style.box_sizing == BoxSizing::BorderBox {
                 (raw_h - pad_top - pad_bottom - border_top - border_bottom).max(0.0)
             } else {
@@ -174,9 +183,19 @@ pub fn layout_grid(
         } else {
             0.0
         };
-        let min_h = style.min_height.to_px_with_viewport(font_size, 16.0, container_height, container_height);
+        let min_h = style.min_height.to_px_with_viewport(
+            font_size,
+            16.0,
+            container_height,
+            container_height,
+        );
         let max_h = if style.max_height != Length::Auto {
-            style.max_height.to_px_with_viewport(font_size, 16.0, container_height, container_height)
+            style.max_height.to_px_with_viewport(
+                font_size,
+                16.0,
+                container_height,
+                container_height,
+            )
         } else {
             f32::INFINITY
         };
@@ -212,7 +231,11 @@ pub fn layout_grid(
         }
     }
     in_flow_indices.sort_by_key(|&idx| {
-        container.children[idx].style.as_ref().map(|s| s.order).unwrap_or(0)
+        container.children[idx]
+            .style
+            .as_ref()
+            .map(|s| s.order)
+            .unwrap_or(0)
     });
 
     // 4. Resolve column track templates (including auto-fill / auto-fit)
@@ -697,11 +720,11 @@ pub fn layout_grid(
 
     // Read any explicit grid-template-rows
     for (r, r_track) in style.grid_template_rows.iter().enumerate() {
-        if r < num_rows {
-            if let GridTrackSize::Length(l) = r_track {
-                row_heights[r] =
-                    l.to_px_with_viewport(font_size, 16.0, container_height, container_height);
-            }
+        if r < num_rows
+            && let GridTrackSize::Length(l) = r_track
+        {
+            row_heights[r] =
+                l.to_px_with_viewport(font_size, 16.0, container_height, container_height);
         }
     }
 
@@ -812,9 +835,13 @@ pub fn layout_grid(
         } else {
             (span_w - non_content_w).max(0.0)
         };
-        let min_w = child_style.min_width.to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+        let min_w = child_style
+            .min_width
+            .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
         let max_w = if child_style.max_width != Length::Auto {
-            child_style.max_width.to_px_with_viewport(c_fs, 16.0, span_w, container_height)
+            child_style
+                .max_width
+                .to_px_with_viewport(c_fs, 16.0, span_w, container_height)
         } else {
             f32::INFINITY
         };
@@ -848,9 +875,19 @@ pub fn layout_grid(
             } else {
                 raw_h
             };
-            let min_h = child_style.min_height.to_px_with_viewport(c_fs, 16.0, container_height, container_height);
+            let min_h = child_style.min_height.to_px_with_viewport(
+                c_fs,
+                16.0,
+                container_height,
+                container_height,
+            );
             let max_h = if child_style.max_height != Length::Auto {
-                child_style.max_height.to_px_with_viewport(c_fs, 16.0, container_height, container_height)
+                child_style.max_height.to_px_with_viewport(
+                    c_fs,
+                    16.0,
+                    container_height,
+                    container_height,
+                )
             } else {
                 f32::INFINITY
             };
@@ -1001,15 +1038,22 @@ pub fn layout_grid(
                     let b = child.dimensions.border;
                     let m = child.dimensions.margin;
                     let raw_stretch_h =
-                        (span_cell_h - p.top - p.bottom - b.top - b.bottom - m.top - m.bottom).max(0.0);
+                        (span_cell_h - p.top - p.bottom - b.top - b.bottom - m.top - m.bottom)
+                            .max(0.0);
                     let c_fs = child_style.font_size;
-                    let min_h = child_style
-                        .min_height
-                        .to_px_with_viewport(c_fs, 16.0, container_height, container_height);
+                    let min_h = child_style.min_height.to_px_with_viewport(
+                        c_fs,
+                        16.0,
+                        container_height,
+                        container_height,
+                    );
                     let max_h = if child_style.max_height != Length::Auto {
-                        child_style
-                            .max_height
-                            .to_px_with_viewport(c_fs, 16.0, container_height, container_height)
+                        child_style.max_height.to_px_with_viewport(
+                            c_fs,
+                            16.0,
+                            container_height,
+                            container_height,
+                        )
                     } else {
                         f32::INFINITY
                     };
@@ -1045,14 +1089,24 @@ pub fn layout_grid(
         container.dimensions.content.size.height = total_grid_h.max(0.0);
     }
 
-    let min_h = style.min_height.to_px_with_viewport(font_size, 16.0, container_height, container_height);
+    let min_h =
+        style
+            .min_height
+            .to_px_with_viewport(font_size, 16.0, container_height, container_height);
     let max_h = if style.max_height != Length::Auto {
-        style.max_height.to_px_with_viewport(font_size, 16.0, container_height, container_height)
+        style
+            .max_height
+            .to_px_with_viewport(font_size, 16.0, container_height, container_height)
     } else {
         f32::INFINITY
     };
-    container.dimensions.content.size.height =
-        container.dimensions.content.size.height.max(min_h).min(max_h);
+    container.dimensions.content.size.height = container
+        .dimensions
+        .content
+        .size
+        .height
+        .max(min_h)
+        .min(max_h);
 
     // 10. Position out-of-flow children
     layout_positioned_children(container, float_ctx);
@@ -1673,7 +1727,9 @@ mod tests {
         c_style.display = Display::Grid;
         c_style.width = Length::Px(500.0);
         c_style.column_gap = Length::Px(0.0);
-        c_style.grid_template_columns = vec![GridTrackSize::RepeatAutoFill(Box::new(GridTrackSize::Fr(1.0)))];
+        c_style.grid_template_columns = vec![GridTrackSize::RepeatAutoFill(Box::new(
+            GridTrackSize::Fr(1.0),
+        ))];
         container.style = Some(c_style);
 
         let mut item = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
@@ -1894,10 +1950,7 @@ mod tests {
         c_style.height = Length::Px(320.0);
         c_style.row_gap = Length::Px(20.0);
         c_style.grid_template_columns = vec![GridTrackSize::Fr(1.0)];
-        c_style.grid_template_rows = vec![
-            GridTrackSize::Fr(1.0),
-            GridTrackSize::Fr(2.0),
-        ];
+        c_style.grid_template_rows = vec![GridTrackSize::Fr(1.0), GridTrackSize::Fr(2.0)];
         container.style = Some(c_style);
 
         let mut item1 = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);

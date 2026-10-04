@@ -484,11 +484,7 @@ fn next_even(level: u8) -> u8 {
 ///
 /// Returns the resolved levels, resolved types, and a boolean array marking
 /// which positions are isolate initiators.
-fn resolve_explicit_levels(
-    chars: &[char],
-    types: &mut [BidiClass],
-    base_level: u8,
-) -> Vec<u8> {
+fn resolve_explicit_levels(chars: &[char], types: &mut [BidiClass], base_level: u8) -> Vec<u8> {
     let n = chars.len();
     let mut levels = vec![base_level; n];
 
@@ -512,7 +508,10 @@ fn resolve_explicit_levels(
             // X2: RLE
             BidiClass::RLE => {
                 let new_level = next_odd(current_level);
-                if new_level <= MAX_DEPTH && overflow_isolate_count == 0 && overflow_embedding_count == 0 {
+                if new_level <= MAX_DEPTH
+                    && overflow_isolate_count == 0
+                    && overflow_embedding_count == 0
+                {
                     stack.push(DirectionalEntry {
                         level: new_level,
                         override_status: None,
@@ -527,7 +526,10 @@ fn resolve_explicit_levels(
             // X3: LRE
             BidiClass::LRE => {
                 let new_level = next_even(current_level);
-                if new_level <= MAX_DEPTH && overflow_isolate_count == 0 && overflow_embedding_count == 0 {
+                if new_level <= MAX_DEPTH
+                    && overflow_isolate_count == 0
+                    && overflow_embedding_count == 0
+                {
                     stack.push(DirectionalEntry {
                         level: new_level,
                         override_status: None,
@@ -542,7 +544,10 @@ fn resolve_explicit_levels(
             // X4: RLO
             BidiClass::RLO => {
                 let new_level = next_odd(current_level);
-                if new_level <= MAX_DEPTH && overflow_isolate_count == 0 && overflow_embedding_count == 0 {
+                if new_level <= MAX_DEPTH
+                    && overflow_isolate_count == 0
+                    && overflow_embedding_count == 0
+                {
                     stack.push(DirectionalEntry {
                         level: new_level,
                         override_status: Some(BidiClass::R),
@@ -557,7 +562,10 @@ fn resolve_explicit_levels(
             // X5: LRO
             BidiClass::LRO => {
                 let new_level = next_even(current_level);
-                if new_level <= MAX_DEPTH && overflow_isolate_count == 0 && overflow_embedding_count == 0 {
+                if new_level <= MAX_DEPTH
+                    && overflow_isolate_count == 0
+                    && overflow_embedding_count == 0
+                {
                     stack.push(DirectionalEntry {
                         level: new_level,
                         override_status: Some(BidiClass::L),
@@ -573,7 +581,10 @@ fn resolve_explicit_levels(
             BidiClass::RLI => {
                 levels[i] = current_level;
                 let new_level = next_odd(current_level);
-                if new_level <= MAX_DEPTH && overflow_isolate_count == 0 && overflow_embedding_count == 0 {
+                if new_level <= MAX_DEPTH
+                    && overflow_isolate_count == 0
+                    && overflow_embedding_count == 0
+                {
                     valid_isolate_count += 1;
                     stack.push(DirectionalEntry {
                         level: new_level,
@@ -589,7 +600,10 @@ fn resolve_explicit_levels(
             BidiClass::LRI => {
                 levels[i] = current_level;
                 let new_level = next_even(current_level);
-                if new_level <= MAX_DEPTH && overflow_isolate_count == 0 && overflow_embedding_count == 0 {
+                if new_level <= MAX_DEPTH
+                    && overflow_isolate_count == 0
+                    && overflow_embedding_count == 0
+                {
                     valid_isolate_count += 1;
                     stack.push(DirectionalEntry {
                         level: new_level,
@@ -611,7 +625,10 @@ fn resolve_explicit_levels(
                 } else {
                     next_even(current_level)
                 };
-                if new_level <= MAX_DEPTH && overflow_isolate_count == 0 && overflow_embedding_count == 0 {
+                if new_level <= MAX_DEPTH
+                    && overflow_isolate_count == 0
+                    && overflow_embedding_count == 0
+                {
                     valid_isolate_count += 1;
                     stack.push(DirectionalEntry {
                         level: new_level,
@@ -863,12 +880,7 @@ pub fn bidi_visual_runs(text: &str, is_rtl_base: bool) -> Vec<BidiRun> {
 ///
 /// Implements UAX#9 BD16 (bracket pair detection using a stack, max depth 63)
 /// and Rule N0 (resolving pair types using embedding direction and inner/context strong types).
-fn resolve_bracket_pairs(
-    chars: &[char],
-    types: &mut [BidiClass],
-    levels: &[u8],
-    base_level: u8,
-) {
+fn resolve_bracket_pairs(chars: &[char], types: &mut [BidiClass], levels: &[u8], base_level: u8) {
     let n = chars.len();
     if n == 0 {
         return;
@@ -911,7 +923,7 @@ fn resolve_bracket_pairs(
 
     for (open_idx, close_idx) in pairs {
         let embedding_level = levels[open_idx];
-        let embedding_dir = if embedding_level % 2 == 0 {
+        let embedding_dir = if embedding_level.is_multiple_of(2) {
             BidiClass::L
         } else {
             BidiClass::R
@@ -981,7 +993,7 @@ fn resolve_bracket_pairs(
                 }
             }
 
-            let context_dir = prev_strong.unwrap_or(if base_level % 2 == 0 {
+            let context_dir = prev_strong.unwrap_or(if base_level.is_multiple_of(2) {
                 BidiClass::L
             } else {
                 BidiClass::R
@@ -1090,7 +1102,7 @@ fn apply_weak_and_neutral_rules(
     }
 
     // W7: EN preceded by L → L
-    let mut last_strong_l = base_level % 2 == 0;
+    let mut last_strong_l = base_level.is_multiple_of(2);
     for t in types.iter_mut() {
         if *t == BidiClass::L {
             last_strong_l = true;
@@ -1152,7 +1164,7 @@ fn apply_weak_and_neutral_rules(
     // I1–I2: Implicit levels
     for i in 0..n {
         let t = types[i];
-        if levels[i] % 2 == 0 {
+        if levels[i].is_multiple_of(2) {
             if t == BidiClass::R {
                 levels[i] += 1;
             } else if t == BidiClass::AN || t == BidiClass::EN {
@@ -1168,7 +1180,11 @@ fn apply_weak_and_neutral_rules(
     let orig_classes: Vec<BidiClass> = (0..n)
         .map(|idx| {
             // Use original character class, not resolved type
-            if idx < n { bidi_class(chars[idx]) } else { BidiClass::BN }
+            if idx < n {
+                bidi_class(chars[idx])
+            } else {
+                BidiClass::BN
+            }
         })
         .collect();
     let mut j = n;
@@ -1186,7 +1202,11 @@ fn apply_weak_and_neutral_rules(
                 let prev_oc = orig_classes[j - 1];
                 if matches!(
                     prev_oc,
-                    BidiClass::WS | BidiClass::LRI | BidiClass::RLI | BidiClass::FSI | BidiClass::PDI
+                    BidiClass::WS
+                        | BidiClass::LRI
+                        | BidiClass::RLI
+                        | BidiClass::FSI
+                        | BidiClass::PDI
                 ) {
                     j -= 1;
                     levels[j] = base_level;
@@ -1292,10 +1312,7 @@ mod tests {
         // After first PDF: EF back to R override
         // After second PDF: override fully popped
         // This tests that the stack handles nesting correctly
-        assert!(
-            !reordered.is_empty(),
-            "Nested override must produce output"
-        );
+        assert!(!reordered.is_empty(), "Nested override must produce output");
     }
 
     // G1: Isolate formatting
@@ -1343,10 +1360,7 @@ mod tests {
             runs
         );
         // Verify RTL run exists
-        assert!(
-            runs.iter().any(|r| r.is_rtl),
-            "Must contain an RTL run"
-        );
+        assert!(runs.iter().any(|r| r.is_rtl), "Must contain an RTL run");
     }
 
     // B5: ET runs adjacent to EN

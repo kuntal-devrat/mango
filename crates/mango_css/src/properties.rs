@@ -22,18 +22,64 @@ impl Declaration {
         }
     }
 
-    /// Expands shorthand properties into individual longhand declarations.
-    ///
-    /// For example:
-    /// - `margin: 10px 20px` -> `margin-top`, `margin-right`, `margin-bottom`, `margin-left`
-    /// - `padding: 5px` -> `padding-top`, `padding-right`, `padding-bottom`, `padding-left`
-    /// - `border: 1px solid red` -> `border-*-width`, `border-*-style`, `border-*-color`
-    /// - `background: #fff` -> `background-color: #fff`
-    pub fn expand_shorthand(self) -> Vec<Declaration> {
+    /// Returns true if the property name is a recognized CSS shorthand.
+    #[inline]
+    pub fn is_shorthand_name(name: &str) -> bool {
+        matches!(
+            name,
+            "margin"
+                | "padding"
+                | "inset"
+                | "inset-inline"
+                | "inset-block"
+                | "border"
+                | "border-top"
+                | "border-right"
+                | "border-bottom"
+                | "border-left"
+                | "border-width"
+                | "border-style"
+                | "border-color"
+                | "background"
+                | "font"
+                | "flex"
+                | "flex-flow"
+                | "gap"
+                | "border-radius"
+                | "overflow"
+                | "list-style"
+                | "outline"
+                | "columns"
+                | "mask"
+                | "-webkit-mask"
+                | "grid-column"
+                | "grid-row"
+                | "grid-area"
+                | "grid-template"
+                | "place-items"
+                | "place-content"
+                | "place-self"
+                | "column-rule"
+                | "text-emphasis"
+                | "container"
+        )
+    }
+
+    /// Returns true if this declaration is a shorthand property.
+    #[inline]
+    pub fn is_shorthand(&self) -> bool {
+        Self::is_shorthand_name(&self.name)
+    }
+
+    /// Expands shorthand properties into individual longhand declarations by reference.
+    pub fn expand_shorthand_ref(&self) -> Vec<Declaration> {
         let important = self.important;
         match self.name.as_str() {
             "margin" => expand_four_sides("margin", &self.value, important),
             "padding" => expand_four_sides("padding", &self.value, important),
+            "inset" => expand_inset_shorthand(&self.value, important),
+            "inset-inline" => expand_inset_inline_shorthand(&self.value, important),
+            "inset-block" => expand_inset_block_shorthand(&self.value, important),
 
             "border" => {
                 expand_border_sides(&["top", "right", "bottom", "left"], &self.value, important)
@@ -48,6 +94,7 @@ impl Declaration {
             "border-color" => expand_four_sides_scalar("border", "color", &self.value, important),
 
             "background" => expand_background_shorthand(&self.value, important),
+            "font" => expand_font_shorthand(&self.value, important),
 
             "flex" => expand_flex_shorthand(&self.value, important),
             "flex-flow" => expand_flex_flow_shorthand(&self.value, important),
@@ -77,8 +124,35 @@ impl Declaration {
             "text-emphasis" => expand_text_emphasis_shorthand(&self.value, important),
             "container" => expand_container_shorthand(&self.value, important),
 
-            _ => vec![self],
+            _ => vec![self.clone()],
         }
+    }
+
+    /// Expands shorthand properties into individual longhand declarations.
+    ///
+    /// For example:
+    /// - `margin: 10px 20px` -> `margin-top`, `margin-right`, `margin-bottom`, `margin-left`
+    /// - `padding: 5px` -> `padding-top`, `padding-right`, `padding-bottom`, `padding-left`
+    /// - `border: 1px solid red` -> `border-*-width`, `border-*-style`, `border-*-color`
+    /// - `background: #fff` -> `background-color: #fff`
+    pub fn expand_shorthand(self) -> Vec<Declaration> {
+        self.expand_shorthand_ref()
+    }
+}
+
+/// Expands `font` shorthand into font-style, font-weight, font-size, line-height, font-family.
+fn expand_font_shorthand(value: &Value, important: bool) -> Vec<Declaration> {
+    let text = match value {
+        Value::String(s) | Value::Keyword(s) => s.clone(),
+        _ => return vec![Declaration::new("font", value.clone(), important)],
+    };
+    let tokens = crate::tokenizer::CssTokenizer::tokenize(&text);
+    let parser = crate::parser::CssParser::new(tokens.clone());
+    let decls = parser.parse_font_shorthand(&tokens, important);
+    if decls.is_empty() {
+        vec![Declaration::new("font", value.clone(), important)]
+    } else {
+        decls
     }
 }
 
@@ -348,6 +422,83 @@ fn expand_four_sides(prefix: &str, value: &Value, important: bool) -> Vec<Declar
         Declaration::new(format!("{prefix}-right"), right, important),
         Declaration::new(format!("{prefix}-bottom"), bottom, important),
         Declaration::new(format!("{prefix}-left"), left, important),
+    ]
+}
+
+/// Expands `inset: <top> <right> <bottom> <left>` box offsets shorthand.
+fn expand_inset_shorthand(value: &Value, important: bool) -> Vec<Declaration> {
+    let values = match value {
+        Value::List(items) => items.clone(),
+        single => vec![single.clone()],
+    };
+
+    let (top, right, bottom, left) = match values.len() {
+        1 => (
+            values[0].clone(),
+            values[0].clone(),
+            values[0].clone(),
+            values[0].clone(),
+        ),
+        2 => (
+            values[0].clone(),
+            values[1].clone(),
+            values[0].clone(),
+            values[1].clone(),
+        ),
+        3 => (
+            values[0].clone(),
+            values[1].clone(),
+            values[2].clone(),
+            values[1].clone(),
+        ),
+        4 => (
+            values[0].clone(),
+            values[1].clone(),
+            values[2].clone(),
+            values[3].clone(),
+        ),
+        _ => return vec![Declaration::new("inset", value.clone(), important)],
+    };
+
+    vec![
+        Declaration::new("top", top, important),
+        Declaration::new("right", right, important),
+        Declaration::new("bottom", bottom, important),
+        Declaration::new("left", left, important),
+    ]
+}
+
+/// Expands `inset-inline: <left> <right>` logical shorthand.
+fn expand_inset_inline_shorthand(value: &Value, important: bool) -> Vec<Declaration> {
+    let values = match value {
+        Value::List(items) => items.clone(),
+        single => vec![single.clone()],
+    };
+    let (start, end) = match values.len() {
+        1 => (values[0].clone(), values[0].clone()),
+        2.. => (values[0].clone(), values[1].clone()),
+        _ => return vec![Declaration::new("inset-inline", value.clone(), important)],
+    };
+    vec![
+        Declaration::new("left", start, important),
+        Declaration::new("right", end, important),
+    ]
+}
+
+/// Expands `inset-block: <top> <bottom>` logical shorthand.
+fn expand_inset_block_shorthand(value: &Value, important: bool) -> Vec<Declaration> {
+    let values = match value {
+        Value::List(items) => items.clone(),
+        single => vec![single.clone()],
+    };
+    let (start, end) = match values.len() {
+        1 => (values[0].clone(), values[0].clone()),
+        2.. => (values[0].clone(), values[1].clone()),
+        _ => return vec![Declaration::new("inset-block", value.clone(), important)],
+    };
+    vec![
+        Declaration::new("top", start, important),
+        Declaration::new("bottom", end, important),
     ]
 }
 
@@ -661,18 +812,34 @@ fn expand_background_shorthand(value: &Value, important: bool) -> Vec<Declaratio
         }
     }
 
-    if let Some(c) = color {
-        decls.push(Declaration::new("background-color", c, important));
+    let found_any = color.is_some()
+        || image.is_some()
+        || gradient.is_some()
+        || repeat.is_some()
+        || size.is_some()
+        || !sizes.is_empty()
+        || !positions.is_empty()
+        || attachment.is_some()
+        || clip.is_some();
+
+    if !found_any {
+        return vec![Declaration::new("background", value.clone(), important)];
     }
-    if let Some(img) = image {
-        decls.push(Declaration::new("background-image", img, important));
-    }
+
+    let c = color.unwrap_or(Value::Color(mango_core::Color::TRANSPARENT));
+    decls.push(Declaration::new("background-color", c, important));
+
     if let Some(grad) = gradient {
         decls.push(Declaration::new("background-gradient", grad, important));
     }
-    if let Some(r) = repeat {
-        decls.push(Declaration::new("background-repeat", r, important));
-    }
+    let img = image.unwrap_or_else(|| Value::Keyword("none".to_string()));
+    decls.push(Declaration::new("background-image", img, important));
+
+    let r = repeat.unwrap_or(Value::BackgroundRepeat(
+        crate::values::BackgroundRepeat::Repeat,
+    ));
+    decls.push(Declaration::new("background-repeat", r, important));
+
     if let Some(s) = size {
         decls.push(Declaration::new("background-size", s, important));
     } else if !sizes.is_empty() {
@@ -689,7 +856,14 @@ fn expand_background_shorthand(value: &Value, important: bool) -> Vec<Declaratio
                 important,
             ));
         }
+    } else {
+        decls.push(Declaration::new(
+            "background-size",
+            Value::BackgroundSize(crate::values::BackgroundSize::Auto),
+            important,
+        ));
     }
+
     if !positions.is_empty() {
         if positions.len() == 1 {
             decls.push(Declaration::new(
@@ -704,19 +878,28 @@ fn expand_background_shorthand(value: &Value, important: bool) -> Vec<Declaratio
                 important,
             ));
         }
-    }
-    if let Some(a) = attachment {
-        decls.push(Declaration::new("background-attachment", a, important));
-    }
-    if let Some(c) = clip {
-        decls.push(Declaration::new("background-clip", c, important));
+    } else {
+        decls.push(Declaration::new(
+            "background-position",
+            Value::List(vec![
+                Value::Length(Length::Percent(0.0)),
+                Value::Length(Length::Percent(0.0)),
+            ]),
+            important,
+        ));
     }
 
-    if decls.is_empty() {
-        vec![Declaration::new("background", value.clone(), important)]
-    } else {
-        decls
-    }
+    let a = attachment.unwrap_or(Value::BackgroundAttachment(
+        crate::values::BackgroundAttachment::Scroll,
+    ));
+    decls.push(Declaration::new("background-attachment", a, important));
+
+    let cl = clip.unwrap_or(Value::BackgroundClip(
+        crate::values::BackgroundClip::BorderBox,
+    ));
+    decls.push(Declaration::new("background-clip", cl, important));
+
+    decls
 }
 
 /// Expands `border`, `border-top`, etc. into width, style, color across the specified edges.
@@ -1519,5 +1702,115 @@ mod tests {
             Value::MaskMode(crate::values::MaskMode::Alpha)
         );
         assert_eq!(expanded[2].name, "mask-repeat");
+    }
+
+    #[test]
+    fn test_expand_inset_shorthands() {
+        // 1 value -> all 4 sides
+        let decl1 = Declaration::new("inset", Value::Length(Length::Px(10.0)), false);
+        let exp1 = decl1.expand_shorthand();
+        assert_eq!(exp1.len(), 4);
+        assert_eq!(exp1[0].name, "top");
+        assert_eq!(exp1[0].value, Value::Length(Length::Px(10.0)));
+        assert_eq!(exp1[1].name, "right");
+        assert_eq!(exp1[2].name, "bottom");
+        assert_eq!(exp1[3].name, "left");
+
+        // 2 values -> top/bottom, left/right
+        let decl2 = Declaration::new(
+            "inset",
+            Value::List(vec![
+                Value::Length(Length::Px(5.0)),
+                Value::Length(Length::Px(15.0)),
+            ]),
+            false,
+        );
+        let exp2 = decl2.expand_shorthand();
+        assert_eq!(exp2.len(), 4);
+        assert_eq!(exp2[0].name, "top");
+        assert_eq!(exp2[0].value, Value::Length(Length::Px(5.0)));
+        assert_eq!(exp2[1].name, "right");
+        assert_eq!(exp2[1].value, Value::Length(Length::Px(15.0)));
+        assert_eq!(exp2[2].name, "bottom");
+        assert_eq!(exp2[2].value, Value::Length(Length::Px(5.0)));
+        assert_eq!(exp2[3].name, "left");
+        assert_eq!(exp2[3].value, Value::Length(Length::Px(15.0)));
+
+        // inset-inline
+        let decl_inline = Declaration::new(
+            "inset-inline",
+            Value::List(vec![
+                Value::Length(Length::Px(8.0)),
+                Value::Length(Length::Px(12.0)),
+            ]),
+            false,
+        );
+        let exp_inline = decl_inline.expand_shorthand();
+        assert_eq!(exp_inline.len(), 2);
+        assert_eq!(exp_inline[0].name, "left");
+        assert_eq!(exp_inline[0].value, Value::Length(Length::Px(8.0)));
+        assert_eq!(exp_inline[1].name, "right");
+        assert_eq!(exp_inline[1].value, Value::Length(Length::Px(12.0)));
+
+        // inset-block
+        let decl_block = Declaration::new("inset-block", Value::Length(Length::Px(20.0)), false);
+        let exp_block = decl_block.expand_shorthand();
+        assert_eq!(exp_block.len(), 2);
+        assert_eq!(exp_block[0].name, "top");
+        assert_eq!(exp_block[0].value, Value::Length(Length::Px(20.0)));
+        assert_eq!(exp_block[1].name, "bottom");
+        assert_eq!(exp_block[1].value, Value::Length(Length::Px(20.0)));
+    }
+
+    #[test]
+    fn test_expand_font_shorthand() {
+        let decl = Declaration::new(
+            "font",
+            Value::String("italic bold 16px/1.5 sans-serif".to_string()),
+            false,
+        );
+        let expanded = decl.expand_shorthand();
+        let map: std::collections::HashMap<_, _> =
+            expanded.into_iter().map(|d| (d.name, d.value)).collect();
+        assert_eq!(
+            map.get("font-style"),
+            Some(&Value::FontStyle(crate::values::FontStyle::Italic))
+        );
+        assert_eq!(
+            map.get("font-weight"),
+            Some(&Value::FontWeight(crate::values::FontWeight::Bold))
+        );
+        assert_eq!(map.get("font-size"), Some(&Value::Length(Length::Px(16.0))));
+        assert_eq!(map.get("line-height"), Some(&Value::Number(1.5)));
+        assert_eq!(
+            map.get("font-family"),
+            Some(&Value::String("sans-serif".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_expand_background_shorthand_resets_omitted() {
+        let decl = Declaration::new("background", Value::Color(mango_core::Color::RED), false);
+        let expanded = decl.expand_shorthand();
+        let map: std::collections::HashMap<_, _> =
+            expanded.into_iter().map(|d| (d.name, d.value)).collect();
+        assert_eq!(
+            map.get("background-color"),
+            Some(&Value::Color(mango_core::Color::RED))
+        );
+        assert_eq!(
+            map.get("background-image"),
+            Some(&Value::Keyword("none".to_string()))
+        );
+        assert_eq!(
+            map.get("background-repeat"),
+            Some(&Value::BackgroundRepeat(
+                crate::values::BackgroundRepeat::Repeat
+            ))
+        );
+        assert_eq!(
+            map.get("background-size"),
+            Some(&Value::BackgroundSize(crate::values::BackgroundSize::Auto))
+        );
     }
 }

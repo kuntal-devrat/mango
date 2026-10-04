@@ -4,7 +4,7 @@
 
 use mango_core::{EdgeSizes, Point, Rect};
 use mango_css::computed::ComputedStyle;
-use mango_css::values::TextAlign;
+use mango_css::values::{Display, Overflow, Position, TextAlign};
 
 use crate::box_model::BoxType;
 use crate::box_tree::LayoutBox;
@@ -511,18 +511,18 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
         // CSS 2.1 §9.5: If a line box is too small to contain any content due to floats, shift downward
         if line_atoms.is_empty()
             && (available_width <= 0.0
-                || (atom.width > available_width && float_ctx.has_floats_at(current_y, atom_height)))
+                || (atom.width > available_width
+                    && float_ctx.has_floats_at(current_y, atom_height)))
+            && let Some(next_y) = float_ctx.next_vertical_opportunity(current_y)
         {
-            if let Some(next_y) = float_ctx.next_vertical_opportunity(current_y) {
-                current_y = next_y;
-                let (new_min, new_max) =
-                    float_ctx.available_span(current_y, atom_height, container_x, container_width);
-                min_x = new_min;
-                max_x = new_max;
-                let (lx, aw) = get_line_x_and_width(min_x, max_x, is_first_line);
-                line_x = lx;
-                available_width = aw;
-            }
+            current_y = next_y;
+            let (new_min, new_max) =
+                float_ctx.available_span(current_y, atom_height, container_x, container_width);
+            min_x = new_min;
+            max_x = new_max;
+            let (lx, aw) = get_line_x_and_width(min_x, max_x, is_first_line);
+            line_x = lx;
+            available_width = aw;
         }
 
         let is_pre = matches!(
@@ -690,7 +690,9 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
                         let weight = font_weight_for(&prev.style);
                         let family = font_family_for(&prev.style);
                         let letter_spacing_px =
-                            prev.style.letter_spacing.to_px(font_size, 16.0, container_width);
+                            prev.style
+                                .letter_spacing
+                                .to_px(font_size, 16.0, container_width);
                         prev.width = measure_text_width_with_style_and_spacing(
                             text,
                             font_size,
@@ -1526,6 +1528,49 @@ fn extract_text_content(node: &LayoutBox, out: &mut String) {
     }
 }
 
+/// Computes the distance from the top margin edge of an inline-block to the baseline
+/// of its last in-flow line box, adhering to CSS 2.1 §10.8.1.
+fn find_inline_block_last_baseline_from_top(box_: &LayoutBox) -> Option<f32> {
+    if let Some(s) = &box_.style
+        && (s.overflow_x != Overflow::Visible || s.overflow_y != Overflow::Visible)
+    {
+        return None;
+    }
+
+    if matches!(box_.box_type, BoxType::TextNode(_)) {
+        let fs = box_.style.as_ref().map(|s| s.font_size).unwrap_or(16.0);
+        let family = font_family_for(box_.style.as_ref().unwrap_or(&ComputedStyle::default()));
+        let weight = font_weight_for(box_.style.as_ref().unwrap_or(&ComputedStyle::default()));
+        let (ascent, _, _) = mango_render::font::font_manager().font_metrics(family, weight, fs);
+        return Some(ascent);
+    }
+
+    for child in box_.children.iter().rev() {
+        let is_in_flow = child
+            .style
+            .as_ref()
+            .map(|s| matches!(s.position, Position::Static | Position::Relative))
+            .unwrap_or(true);
+        let is_visible_disp = child
+            .style
+            .as_ref()
+            .map(|s| s.display != Display::None)
+            .unwrap_or(true);
+
+        if is_in_flow
+            && is_visible_disp
+            && let Some(child_baseline) = find_inline_block_last_baseline_from_top(child)
+        {
+            let top_offset = (child.dimensions.content.y() - box_.dimensions.content.y()).max(0.0);
+            let margin_top = box_.dimensions.margin.top
+                + box_.dimensions.border.top
+                + box_.dimensions.padding.top;
+            return Some(margin_top + top_offset + child_baseline);
+        }
+    }
+    None
+}
+
 fn finalize_line(
     line_atoms: &[InlineAtom],
     start_x: f32,
@@ -1603,7 +1648,14 @@ fn finalize_line(
                 } else {
                     match atom.style.vertical_align {
                         mango_css::values::VerticalAlign::Baseline => {
-                            max_above = max_above.max(atom.height);
+                            if let Some(baseline_dist) =
+                                find_inline_block_last_baseline_from_top(atomic_box)
+                            {
+                                max_above = max_above.max(baseline_dist);
+                                max_below = max_below.max((atom.height - baseline_dist).max(0.0));
+                            } else {
+                                max_above = max_above.max(atom.height);
+                            }
                         }
                         mango_css::values::VerticalAlign::Middle => {
                             max_above = max_above.max(atom.height / 2.0);
@@ -1787,7 +1839,13 @@ fn finalize_line(
                 } else {
                     match atom.style.vertical_align {
                         mango_css::values::VerticalAlign::Baseline => {
-                            line_y + baseline_from_line_top - atom.height
+                            if let Some(baseline_dist) =
+                                find_inline_block_last_baseline_from_top(atomic_box)
+                            {
+                                line_y + baseline_from_line_top - baseline_dist
+                            } else {
+                                line_y + baseline_from_line_top - atom.height
+                            }
                         }
                         mango_css::values::VerticalAlign::Top => line_y,
                         mango_css::values::VerticalAlign::Bottom => {
@@ -1838,6 +1896,46 @@ fn finalize_line(
                 flush_text_runs(&mut runs, out);
             }
             InlineAtomKind::WordBreakOpportunity | InlineAtomKind::SoftHyphen => {}
+        }
+    }
+
+    // Handle text-overflow: ellipsis (RND-003)
+    let has_ellipsis = effective_atoms
+        .iter()
+        .any(|a| a.style.text_overflow == mango_css::values::TextOverflow::Ellipsis);
+    if has_ellipsis && available_width > 0.0 {
+        let max_x = start_x + available_width;
+        if let Some(overflow_idx) = runs.iter().position(|r| r.start_x + r.width > max_x) {
+            let mut target_idx = overflow_idx;
+            loop {
+                let r = &runs[target_idx];
+                let font_size = r.style.font_size;
+                let weight = font_weight_for(&r.style);
+                let family = font_family_for(&r.style);
+                let ell_w = measure_text_width_with_style("…", font_size, weight, family);
+                let avail_for_text = max_x - r.start_x - ell_w;
+
+                if avail_for_text > 0.0 || target_idx == 0 {
+                    let run = &mut runs[target_idx];
+                    let mut s = run.text.clone();
+                    while !s.is_empty() {
+                        let w = measure_text_width_with_style(&s, font_size, weight, family);
+                        if w <= avail_for_text.max(0.0) {
+                            break;
+                        }
+                        s.pop();
+                    }
+                    s.push('…');
+                    run.width = measure_text_width_with_style(&s, font_size, weight, family);
+                    run.text = s;
+                    runs.truncate(target_idx + 1);
+                    break;
+                } else if target_idx > 0 {
+                    target_idx -= 1;
+                } else {
+                    break;
+                }
+            }
         }
     }
 
@@ -2713,10 +2811,7 @@ mod tests {
         style.text_indent = mango_css::values::Length::Px(40.0);
         container.style = Some(style.clone());
 
-        let text = LayoutBox::new(
-            BoxType::TextNode("مرحبا".to_string()),
-            Some(style),
-        );
+        let text = LayoutBox::new(BoxType::TextNode("مرحبا".to_string()), Some(style));
         container.children.push(text);
 
         let mut float_ctx = FloatContext::new();
@@ -2731,5 +2826,95 @@ mod tests {
             "RTL text with text-indent: 40px should end at 260px, got {}",
             child_right
         );
+    }
+
+    #[test]
+    fn test_inline_block_baseline_alignment() {
+        let mut container = LayoutBox::new(BoxType::BlockNode, None);
+        container.dimensions.content = Rect::new(0.0, 0.0, 400.0, 0.0);
+        let mut style = ComputedStyle::default();
+        style.font_size = 16.0;
+        container.style = Some(style.clone());
+
+        // Text 1
+        let text1 = LayoutBox::new(BoxType::TextNode("Hello ".to_string()), Some(style.clone()));
+
+        // Inline-block containing Text 2 with top padding 10px
+        let mut ib_box = LayoutBox::new(BoxType::InlineBlock, None);
+        let mut ib_style = ComputedStyle::default();
+        ib_style.display = Display::InlineBlock;
+        ib_style.font_size = 16.0;
+        ib_style.padding_top = mango_css::values::Length::Px(10.0);
+        ib_style.padding_bottom = mango_css::values::Length::Px(10.0);
+        ib_box.style = Some(ib_style.clone());
+
+        let text2 = LayoutBox::new(BoxType::TextNode("Button".to_string()), Some(ib_style));
+        ib_box.children.push(text2);
+
+        container.children.push(text1);
+        container.children.push(ib_box);
+
+        let mut float_ctx = FloatContext::new();
+        layout_inline_children(&mut container, &mut float_ctx);
+
+        // Child 0 is TextNode "Hello ", Child 1 is InlineBlock
+        assert_eq!(container.children.len(), 2);
+        let text_child = &container.children[0];
+        let ib_child = &container.children[1];
+
+        // The text inside the inline block is child 0 of ib_child
+        assert_eq!(ib_child.children.len(), 1);
+        let inner_text = &ib_child.children[0];
+
+        // In CSS 2.1 §10.8.1, the inline-block baseline aligns with the line baseline.
+        // Therefore, the text inside the inline-block and the surrounding text have matching baseline Y coordinates.
+        let text1_baseline = text_child.dimensions.content.y() + (16.0 * 0.8);
+        let text2_baseline = inner_text.dimensions.content.y() + (16.0 * 0.8);
+        assert!(
+            (text1_baseline - text2_baseline).abs() < 2.0,
+            "Inline-block inner text baseline ({}) should align with line baseline ({})",
+            text2_baseline,
+            text1_baseline
+        );
+    }
+
+    #[test]
+    fn test_text_overflow_ellipsis_truncation() {
+        let mut container = LayoutBox::new(BoxType::BlockNode, None);
+        container.dimensions.content = Rect::new(0.0, 0.0, 100.0, 0.0);
+
+        let mut style = ComputedStyle::default();
+        style.font_size = 16.0;
+        style.white_space = mango_css::values::WhiteSpace::Nowrap;
+        style.text_overflow = mango_css::values::TextOverflow::Ellipsis;
+        container.style = Some(style.clone());
+
+        let long_text = LayoutBox::new(
+            BoxType::TextNode(
+                "This is a very long sentence that must be truncated with ellipsis".to_string(),
+            ),
+            Some(style),
+        );
+        container.children.push(long_text);
+
+        let mut float_ctx = FloatContext::new();
+        layout_inline_children(&mut container, &mut float_ctx);
+
+        assert!(!container.children.is_empty());
+        let child = &container.children[0];
+        if let BoxType::TextNode(ref t) = child.box_type {
+            assert!(
+                t.ends_with('…'),
+                "Truncated text must end with ellipsis '…', got: {}",
+                t
+            );
+            assert!(
+                child.dimensions.content.width() <= 100.0,
+                "Truncated text width ({}) must not exceed container available width (100.0)",
+                child.dimensions.content.width()
+            );
+        } else {
+            panic!("Expected TextNode child");
+        }
     }
 }

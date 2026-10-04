@@ -33,6 +33,349 @@ impl CalcLength {
     }
 }
 
+/// An identifier for an interned mathematical expression in CSS math functions (`calc()`, `min()`, `max()`, `clamp()`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct MathId(pub u32);
+
+/// An algebraic or mathematical expression tree in CSS math functions.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MathExpr {
+    /// A leaf length (Px, Em, Rem, Percent, Vw, Vh, Vmin, Vmax, etc.).
+    Length(Length),
+    /// A unitless scalar number (e.g. `2` in `calc(2 * 10px)`).
+    Number(f32),
+    /// Binary addition: `a + b`.
+    Add(Box<MathExpr>, Box<MathExpr>),
+    /// Binary subtraction: `a - b`.
+    Sub(Box<MathExpr>, Box<MathExpr>),
+    /// Binary multiplication: `a * b`.
+    Mul(Box<MathExpr>, Box<MathExpr>),
+    /// Binary division: `a / b`.
+    Div(Box<MathExpr>, Box<MathExpr>),
+    /// Variadic minimum: `min(a, b, ...)`.
+    Min(Vec<MathExpr>),
+    /// Variadic maximum: `max(a, b, ...)`.
+    Max(Vec<MathExpr>),
+    /// Clamping function: `clamp(min, val, max)`.
+    Clamp {
+        min: Box<MathExpr>,
+        val: Box<MathExpr>,
+        max: Box<MathExpr>,
+    },
+}
+
+impl MathExpr {
+    /// Resolves this expression to concrete pixels given contextual metrics.
+    pub fn to_px_with_viewports(
+        &self,
+        font_size: f32,
+        root_font_size: f32,
+        container_size: f32,
+        viewport_width: f32,
+        viewport_height: f32,
+    ) -> f32 {
+        match self {
+            MathExpr::Length(len) => len.to_px_with_viewports(
+                font_size,
+                root_font_size,
+                container_size,
+                viewport_width,
+                viewport_height,
+            ),
+            MathExpr::Number(n) => *n,
+            MathExpr::Add(a, b) => {
+                a.to_px_with_viewports(
+                    font_size,
+                    root_font_size,
+                    container_size,
+                    viewport_width,
+                    viewport_height,
+                ) + b.to_px_with_viewports(
+                    font_size,
+                    root_font_size,
+                    container_size,
+                    viewport_width,
+                    viewport_height,
+                )
+            }
+            MathExpr::Sub(a, b) => {
+                a.to_px_with_viewports(
+                    font_size,
+                    root_font_size,
+                    container_size,
+                    viewport_width,
+                    viewport_height,
+                ) - b.to_px_with_viewports(
+                    font_size,
+                    root_font_size,
+                    container_size,
+                    viewport_width,
+                    viewport_height,
+                )
+            }
+            MathExpr::Mul(a, b) => {
+                a.to_px_with_viewports(
+                    font_size,
+                    root_font_size,
+                    container_size,
+                    viewport_width,
+                    viewport_height,
+                ) * b.to_px_with_viewports(
+                    font_size,
+                    root_font_size,
+                    container_size,
+                    viewport_width,
+                    viewport_height,
+                )
+            }
+            MathExpr::Div(a, b) => {
+                let divisor = b.to_px_with_viewports(
+                    font_size,
+                    root_font_size,
+                    container_size,
+                    viewport_width,
+                    viewport_height,
+                );
+                if divisor.abs() > 1e-6 {
+                    a.to_px_with_viewports(
+                        font_size,
+                        root_font_size,
+                        container_size,
+                        viewport_width,
+                        viewport_height,
+                    ) / divisor
+                } else {
+                    0.0
+                }
+            }
+            MathExpr::Min(list) => {
+                let mut min_val = f32::INFINITY;
+                for item in list {
+                    let v = item.to_px_with_viewports(
+                        font_size,
+                        root_font_size,
+                        container_size,
+                        viewport_width,
+                        viewport_height,
+                    );
+                    if v < min_val {
+                        min_val = v;
+                    }
+                }
+                if min_val.is_infinite() { 0.0 } else { min_val }
+            }
+            MathExpr::Max(list) => {
+                let mut max_val = f32::NEG_INFINITY;
+                for item in list {
+                    let v = item.to_px_with_viewports(
+                        font_size,
+                        root_font_size,
+                        container_size,
+                        viewport_width,
+                        viewport_height,
+                    );
+                    if v > max_val {
+                        max_val = v;
+                    }
+                }
+                if max_val.is_infinite() { 0.0 } else { max_val }
+            }
+            MathExpr::Clamp { min, val, max } => {
+                let min_v = min.to_px_with_viewports(
+                    font_size,
+                    root_font_size,
+                    container_size,
+                    viewport_width,
+                    viewport_height,
+                );
+                let v = val.to_px_with_viewports(
+                    font_size,
+                    root_font_size,
+                    container_size,
+                    viewport_width,
+                    viewport_height,
+                );
+                let max_v = max.to_px_with_viewports(
+                    font_size,
+                    root_font_size,
+                    container_size,
+                    viewport_width,
+                    viewport_height,
+                );
+                v.max(min_v).min(max_v)
+            }
+        }
+    }
+
+    /// Attempts to fold constant pixel lengths at parse time.
+    pub fn try_fold_px(&self) -> Option<f32> {
+        match self {
+            MathExpr::Length(Length::Px(px)) => Some(*px),
+            MathExpr::Length(_) => None,
+            MathExpr::Number(n) => Some(*n),
+            MathExpr::Add(a, b) => Some(a.try_fold_px()? + b.try_fold_px()?),
+            MathExpr::Sub(a, b) => Some(a.try_fold_px()? - b.try_fold_px()?),
+            MathExpr::Mul(a, b) => Some(a.try_fold_px()? * b.try_fold_px()?),
+            MathExpr::Div(a, b) => {
+                let div = b.try_fold_px()?;
+                if div.abs() > 1e-6 {
+                    Some(a.try_fold_px()? / div)
+                } else {
+                    Some(0.0)
+                }
+            }
+            MathExpr::Min(list) => {
+                let mut m = f32::INFINITY;
+                for item in list {
+                    m = m.min(item.try_fold_px()?);
+                }
+                Some(if m.is_infinite() { 0.0 } else { m })
+            }
+            MathExpr::Max(list) => {
+                let mut m = f32::NEG_INFINITY;
+                for item in list {
+                    m = m.max(item.try_fold_px()?);
+                }
+                Some(if m.is_infinite() { 0.0 } else { m })
+            }
+            MathExpr::Clamp { min, val, max } => {
+                let min_v = min.try_fold_px()?;
+                let v = val.try_fold_px()?;
+                let max_v = max.try_fold_px()?;
+                Some(v.max(min_v).min(max_v))
+            }
+        }
+    }
+
+    /// Converts this expression into a linear CalcLength if it only contains linear additions/subtractions.
+    pub fn try_into_calc_length(&self) -> Option<CalcLength> {
+        let mut calc = CalcLength::default();
+        if self.accumulate_calc(&mut calc, 1.0) {
+            Some(calc)
+        } else {
+            None
+        }
+    }
+
+    fn accumulate_calc(&self, calc: &mut CalcLength, sign: f32) -> bool {
+        match self {
+            MathExpr::Length(len) => match len {
+                Length::Px(px) => {
+                    calc.px += px * sign;
+                    true
+                }
+                Length::Percent(pct) => {
+                    calc.percent += pct * sign;
+                    true
+                }
+                Length::Em(em) => {
+                    calc.em += em * sign;
+                    true
+                }
+                Length::Rem(rem) => {
+                    calc.rem += rem * sign;
+                    true
+                }
+                Length::Vw(vw) => {
+                    calc.vw += vw * sign;
+                    true
+                }
+                Length::Vh(vh) => {
+                    calc.vh += vh * sign;
+                    true
+                }
+                Length::Calc(c) => {
+                    calc.px += c.px * sign;
+                    calc.percent += c.percent * sign;
+                    calc.em += c.em * sign;
+                    calc.rem += c.rem * sign;
+                    calc.vw += c.vw * sign;
+                    calc.vh += c.vh * sign;
+                    true
+                }
+                _ => false,
+            },
+            MathExpr::Number(n) if *n == 0.0 => true,
+            MathExpr::Add(a, b) => a.accumulate_calc(calc, sign) && b.accumulate_calc(calc, sign),
+            MathExpr::Sub(a, b) => a.accumulate_calc(calc, sign) && b.accumulate_calc(calc, -sign),
+            _ => false,
+        }
+    }
+}
+
+static MATH_STORE: std::sync::OnceLock<std::sync::RwLock<Vec<MathExpr>>> =
+    std::sync::OnceLock::new();
+
+fn get_math_store() -> &'static std::sync::RwLock<Vec<MathExpr>> {
+    MATH_STORE.get_or_init(|| std::sync::RwLock::new(Vec::new()))
+}
+
+/// Interns a MathExpr into the thread-safe global store and returns its MathId,
+/// deduplicating existing identical expressions and enforcing an upper bound.
+pub fn intern_math(expr: MathExpr) -> MathId {
+    let store = get_math_store();
+    let mut guard = store.write().unwrap_or_else(|e| e.into_inner());
+    if let Some(pos) = guard.iter().rposition(|e| *e == expr) {
+        return MathId(pos as u32);
+    }
+    const MAX_MATH_STORE_SIZE: usize = 16_384;
+    if guard.len() >= MAX_MATH_STORE_SIZE {
+        return MathId(0);
+    }
+    let id = guard.len() as u32;
+    guard.push(expr);
+    MathId(id)
+}
+
+/// Clears all interned math expressions (useful for test harnesses or memory recovery).
+pub fn clear_math_store() {
+    let store = get_math_store();
+    let mut guard = store.write().unwrap_or_else(|e| e.into_inner());
+    guard.clear();
+}
+
+/// Resolves an interned MathId to concrete pixels.
+pub fn eval_math(
+    id: MathId,
+    font_size: f32,
+    root_font_size: f32,
+    container_size: f32,
+    viewport_width: f32,
+    viewport_height: f32,
+) -> f32 {
+    let store = get_math_store();
+    let guard = store.read().unwrap_or_else(|e| e.into_inner());
+    if let Some(expr) = guard.get(id.0 as usize) {
+        expr.to_px_with_viewports(
+            font_size,
+            root_font_size,
+            container_size,
+            viewport_width,
+            viewport_height,
+        )
+    } else {
+        0.0
+    }
+}
+
+/// Retrieves a clone of the interned MathExpr for a MathId.
+pub fn get_math(id: MathId) -> Option<MathExpr> {
+    let store = get_math_store();
+    let guard = store.read().unwrap_or_else(|e| e.into_inner());
+    guard.get(id.0 as usize).cloned()
+}
+
+/// Creates a Length from a MathExpr, performing constant folding to Length::Px or CalcLength if possible.
+pub fn make_math_length(expr: MathExpr) -> Length {
+    if let Some(px) = expr.try_fold_px() {
+        Length::Px(px)
+    } else if let Some(calc) = expr.try_into_calc_length() {
+        Length::Calc(calc)
+    } else {
+        Length::Math(intern_math(expr))
+    }
+}
+
 /// A CSS length or dimension value.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum Length {
@@ -54,6 +397,8 @@ pub enum Length {
     Vmax(f32),
     /// A computed mathematical length resulting from a `calc(...)` expression.
     Calc(CalcLength),
+    /// A dynamic mathematical expression (min, max, clamp, or non-linear calc).
+    Math(MathId),
     /// Keyword: content (e.g. `flex-basis: content`).
     Content,
     /// Keyword: min-content.
@@ -86,9 +431,17 @@ pub fn get_current_viewport() -> (f32, f32) {
 impl Length {
     pub const ZERO: Length = Length::Px(0.0);
 
-    /// Parses a CSS length string (e.g. `12px`, `1.5em`, `2rem`, `50%`, `auto`).
+    /// Parses a CSS length string (e.g. `12px`, `1.5em`, `2rem`, `50%`, `auto`, `min(...)`, `clamp(...)`).
     pub fn parse(s: &str) -> Option<Self> {
         let trimmed = s.trim();
+        let lower = trimmed.to_ascii_lowercase();
+        if lower.starts_with("calc(")
+            || lower.starts_with("min(")
+            || lower.starts_with("max(")
+            || lower.starts_with("clamp(")
+        {
+            return crate::parser::parse_math_length_from_str(trimmed);
+        }
         if trimmed.eq_ignore_ascii_case("auto") {
             return Some(Length::Auto);
         }
@@ -123,6 +476,34 @@ impl Length {
             num.trim().parse::<f32>().ok().map(Length::Vw)
         } else if let Some(num) = trimmed.strip_suffix("vh") {
             num.trim().parse::<f32>().ok().map(Length::Vh)
+        } else if let Some(num) = trimmed.strip_suffix("pt") {
+            num.trim()
+                .parse::<f32>()
+                .ok()
+                .map(|v| Length::Px(v * 4.0 / 3.0))
+        } else if let Some(num) = trimmed.strip_suffix("pc") {
+            num.trim().parse::<f32>().ok().map(|v| Length::Px(v * 16.0))
+        } else if let Some(num) = trimmed.strip_suffix("in") {
+            num.trim().parse::<f32>().ok().map(|v| Length::Px(v * 96.0))
+        } else if let Some(num) = trimmed.strip_suffix("cm") {
+            num.trim()
+                .parse::<f32>()
+                .ok()
+                .map(|v| Length::Px(v * 96.0 / 2.54))
+        } else if let Some(num) = trimmed.strip_suffix("mm") {
+            num.trim()
+                .parse::<f32>()
+                .ok()
+                .map(|v| Length::Px(v * 9.6 / 2.54))
+        } else if let Some(num) = trimmed.strip_suffix('q') {
+            num.trim()
+                .parse::<f32>()
+                .ok()
+                .map(|v| Length::Px(v * 96.0 / 101.6))
+        } else if let Some(num) = trimmed.strip_suffix("ch") {
+            num.trim().parse::<f32>().ok().map(|v| Length::Em(v * 0.5))
+        } else if let Some(num) = trimmed.strip_suffix("ex") {
+            num.trim().parse::<f32>().ok().map(|v| Length::Em(v * 0.5))
         } else if let Ok(n) = trimmed.parse::<f32>() {
             Some(Length::Px(n))
         } else {
@@ -179,6 +560,14 @@ impl Length {
                     + (calc.vw / 100.0) * viewport_width
                     + (calc.vh / 100.0) * viewport_height
             }
+            Length::Math(id) => eval_math(
+                id,
+                font_size,
+                root_font_size,
+                container_size,
+                viewport_width,
+                viewport_height,
+            ),
             Length::Auto
             | Length::Content
             | Length::MinContent
@@ -1804,7 +2193,7 @@ pub enum Value {
     /// CSS background-clip.
     BackgroundClip(BackgroundClip),
     /// CSS border-image.
-    BorderImage(BorderImage),
+    BorderImage(Box<BorderImage>),
     /// CSS mask-composite.
     MaskComposite(MaskComposite),
     /// CSS isolation.
@@ -3247,5 +3636,35 @@ mod tests {
         let radial_pixels = radial.rasterize(40, 40);
         assert_eq!(radial_pixels.len(), 1600);
         assert!(radial_pixels.iter().any(|&p| p != 0));
+    }
+
+    #[test]
+    fn test_intern_math_deduplication() {
+        let expr1 = MathExpr::Add(
+            Box::new(MathExpr::Length(Length::Px(10.0))),
+            Box::new(MathExpr::Length(Length::Vw(5.0))),
+        );
+        let expr2 = expr1.clone();
+        let id1 = intern_math(expr1);
+        let id2 = intern_math(expr2);
+        assert_eq!(id1, id2);
+    }
+
+    #[test]
+    fn test_length_parse_all_units() {
+        assert!(matches!(Length::parse("72pt"), Some(Length::Px(px)) if (px - 96.0).abs() < 0.01));
+        assert!(matches!(Length::parse("1in"), Some(Length::Px(px)) if (px - 96.0).abs() < 0.01));
+        assert!(matches!(Length::parse("1pc"), Some(Length::Px(px)) if (px - 16.0).abs() < 0.01));
+        assert!(
+            matches!(Length::parse("2.54cm"), Some(Length::Px(px)) if (px - 96.0).abs() < 0.01)
+        );
+        assert!(
+            matches!(Length::parse("25.4mm"), Some(Length::Px(px)) if (px - 96.0).abs() < 0.01)
+        );
+        assert!(
+            matches!(Length::parse("101.6q"), Some(Length::Px(px)) if (px - 96.0).abs() < 0.01)
+        );
+        assert!(matches!(Length::parse("2ch"), Some(Length::Em(em)) if (em - 1.0).abs() < 0.01));
+        assert!(matches!(Length::parse("2ex"), Some(Length::Em(em)) if (em - 1.0).abs() < 0.01));
     }
 }

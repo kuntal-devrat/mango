@@ -81,8 +81,36 @@ pub use crate::scroll::*;
 #[derive(Debug, Clone)]
 pub enum ScriptToRun {
     Inline(String),
-    External(String),
-    Preloaded { src: String, code: String },
+    External {
+        src: String,
+        is_defer: bool,
+        is_async: bool,
+    },
+    Preloaded {
+        src: String,
+        code: String,
+        is_defer: bool,
+        is_async: bool,
+    },
+}
+
+impl ScriptToRun {
+    pub fn is_defer(&self) -> bool {
+        match self {
+            ScriptToRun::External { is_defer, .. } | ScriptToRun::Preloaded { is_defer, .. } => {
+                *is_defer
+            }
+            _ => false,
+        }
+    }
+    pub fn is_async(&self) -> bool {
+        match self {
+            ScriptToRun::External { is_async, .. } | ScriptToRun::Preloaded { is_async, .. } => {
+                *is_async
+            }
+            _ => false,
+        }
+    }
 }
 
 pub struct PreparedDocument {
@@ -417,7 +445,7 @@ impl BrowserChrome {
     /// already running, and retargets `transition-*` declarations whose properties
     /// changed since the previous layout pass.
     fn refresh_animation_targets(&mut self) {
-        let Some(root) = self.root_box.as_ref() else {
+        let Some(root) = self.root_box.as_mut() else {
             return;
         };
 
@@ -426,14 +454,11 @@ impl BrowserChrome {
         let previous = std::mem::take(&mut self.style_snapshot);
 
         let mut starts: Vec<(mango_html::dom::NodeId, ComputedStyle)> = Vec::new();
-        mango_layout::apply_box_style_overrides(
-            self.root_box.as_mut().unwrap(),
-            &mut |node, style| {
-                if let Some(node) = node {
-                    starts.push((node, style.clone()));
-                }
-            },
-        );
+        mango_layout::apply_box_style_overrides(root, &mut |node, style| {
+            if let Some(node) = node {
+                starts.push((node, style.clone()));
+            }
+        });
 
         for (node, style) in starts {
             self.anim_state.sync_animations(node, &style);
@@ -447,23 +472,23 @@ impl BrowserChrome {
 
         self.style_snapshot = fresh;
 
-        if self.anim_state.is_animating() {
-            if let Some(mut root) = self.root_box.take() {
-                let snapshot = self.style_snapshot.clone();
-                let anim_state = &self.anim_state;
-                mango_layout::apply_box_style_overrides(&mut root, &mut |node, style| {
-                    let Some(node) = node else { return };
-                    let Some(base) = snapshot.get(&node.raw()) else {
-                        return;
-                    };
-                    let mut blended = anim_state.transitions.current_style(node, base);
-                    anim_state.animations.apply(node, &mut blended);
-                    *style = blended;
-                });
-                let viewport = Size::new(self.content_width(), self.content_height());
-                self.page_display_list = mango_layout::relayout_box_tree(&mut root, viewport);
-                self.root_box = Some(root);
-            }
+        if self.anim_state.is_animating()
+            && let Some(mut root) = self.root_box.take()
+        {
+            let snapshot = self.style_snapshot.clone();
+            let anim_state = &self.anim_state;
+            mango_layout::apply_box_style_overrides(&mut root, &mut |node, style| {
+                let Some(node) = node else { return };
+                let Some(base) = snapshot.get(&node.raw()) else {
+                    return;
+                };
+                let mut blended = anim_state.transitions.current_style(node, base);
+                anim_state.animations.apply(node, &mut blended);
+                *style = blended;
+            });
+            let viewport = Size::new(self.content_width(), self.content_height());
+            self.page_display_list = mango_layout::relayout_box_tree(&mut root, viewport);
+            self.root_box = Some(root);
         }
     }
 
@@ -805,8 +830,11 @@ impl BrowserChrome {
         );
 
         // Load web fonts and imported stylesheets from embedded and cached stylesheets
-        let embedded_sheets =
-            mango_layout::extract_style_elements(self.cached_document.as_ref().unwrap());
+        let embedded_sheets = self
+            .cached_document
+            .as_ref()
+            .map(mango_layout::extract_style_elements)
+            .unwrap_or_default();
         self.base_url = Url::parse(&url).ok();
         if !skip_embedded_sheets_and_fonts {
             if self.cached_stylesheets.is_empty()
@@ -889,31 +917,65 @@ impl BrowserChrome {
             s
         };
 
+        // Separate scripts into sync, async, and defer per HTML spec (§4.12.1)
+        let mut sync_scripts = Vec::new();
+        let mut async_scripts = Vec::new();
+        let mut defer_scripts = Vec::new();
+
+        for s in scripts {
+            if s.is_defer() {
+                defer_scripts.push(s);
+            } else if s.is_async() {
+                async_scripts.push(s);
+            } else {
+                sync_scripts.push(s);
+            }
+        }
+
         let mut external_count = 0;
-        for script in scripts {
-            match script {
-                ScriptToRun::Inline(code) => {
-                    let _ = js_rt.execute_script(&code);
-                }
-                ScriptToRun::Preloaded { code, .. } => {
-                    let _ = js_rt.execute_script(&code);
-                }
-                ScriptToRun::External(src) => {
-                    if external_count < 8
-                        && let Some(ref base) = self.base_url
-                        && let Ok(script_code) = self.loader.fetch_script(base, &src)
-                    {
-                        external_count += 1;
-                        let _ = js_rt.execute_script(&script_code);
-                    }
+        let run_script = |s: ScriptToRun, rt: &mut mango_js::JsRuntime, ext_cnt: &mut usize| match s
+        {
+            ScriptToRun::Inline(code) => {
+                let _ = rt.execute_script(&code);
+            }
+            ScriptToRun::Preloaded { code, .. } => {
+                let _ = rt.execute_script(&code);
+            }
+            ScriptToRun::External { src, .. } => {
+                const MAX_EXTERNAL_SCRIPTS: usize = 128;
+                if *ext_cnt < MAX_EXTERNAL_SCRIPTS
+                    && let Some(ref base) = self.base_url
+                    && let Ok(script_code) = self.loader.fetch_script(base, &src)
+                {
+                    *ext_cnt += 1;
+                    let _ = rt.execute_script(&script_code);
                 }
             }
+        };
+
+        // 1. Run synchronous inline and external scripts in document order
+        for s in sync_scripts {
+            run_script(s, &mut js_rt, &mut external_count);
+        }
+
+        // 2. Run async external scripts as available
+        for s in async_scripts {
+            run_script(s, &mut js_rt, &mut external_count);
         }
 
         // 3. Run extension content scripts (GAP-023)
         for js_code in ext_js {
             let _ = js_rt.execute_script(&js_code);
         }
+
+        // 4. Run defer scripts in document order (HTML-004)
+        for s in defer_scripts {
+            run_script(s, &mut js_rt, &mut external_count);
+        }
+
+        // 5. Dispatch DOMContentLoaded and window load events (ENG-005)
+        let _ = js_rt.dispatch_dom_content_loaded();
+        let _ = js_rt.dispatch_load();
 
         if let Some(alert_msg) = js_rt.take_status_text() {
             self.status_text = alert_msg;
@@ -3097,6 +3159,26 @@ impl BrowserChrome {
 
         let parsed_url = match Url::parse(&input) {
             Ok(url) => url,
+            Err(_) if !input.contains("://") && !input.starts_with('/') => {
+                let with_https = format!("https://{}", input);
+                match Url::parse(&with_https) {
+                    Ok(url) => {
+                        input = with_https;
+                        self.address_text = input.clone();
+                        url
+                    }
+                    Err(e) => {
+                        let err_msg = format!("Invalid URL: {}", e);
+                        let err_html = error_page_html(&input, &err_msg);
+                        self.base_url = None;
+                        self.cached_stylesheets.clear();
+                        self.status_text = err_msg;
+                        self.load_html_internal(err_html, input, push_history);
+                        self.address_focused = false;
+                        return;
+                    }
+                }
+            }
             Err(e) => {
                 let err_msg = format!("Invalid URL: {}", e);
                 let err_html = error_page_html(&input, &err_msg);
@@ -3207,7 +3289,9 @@ impl BrowserChrome {
 
         match pending.rx.try_recv() {
             Ok(res) => {
-                let pending = self.pending_navigation.take().unwrap();
+                let Some(pending) = self.pending_navigation.take() else {
+                    return false;
+                };
                 self.is_loading = false;
                 match res {
                     Ok(prep) => {
@@ -3319,20 +3403,48 @@ pub fn prepare_document_pipeline(
     for s in raw_scripts {
         match s {
             ScriptToRun::Inline(c) => preloaded_scripts.push(ScriptToRun::Inline(c)),
-            ScriptToRun::External(src) => {
-                if ext_count < 8 {
+            ScriptToRun::External {
+                src,
+                is_defer,
+                is_async,
+            } => {
+                const MAX_PRELOAD_SCRIPTS: usize = 128;
+                if ext_count < MAX_PRELOAD_SCRIPTS {
                     if let Ok(code) = loader.fetch_script(&final_url, &src) {
-                        preloaded_scripts.push(ScriptToRun::Preloaded { src, code });
+                        preloaded_scripts.push(ScriptToRun::Preloaded {
+                            src,
+                            code,
+                            is_defer,
+                            is_async,
+                        });
                         ext_count += 1;
                     } else {
-                        preloaded_scripts.push(ScriptToRun::External(src));
+                        preloaded_scripts.push(ScriptToRun::External {
+                            src,
+                            is_defer,
+                            is_async,
+                        });
                     }
                 } else {
-                    preloaded_scripts.push(ScriptToRun::External(src));
+                    preloaded_scripts.push(ScriptToRun::External {
+                        src,
+                        is_defer,
+                        is_async,
+                    });
                 }
             }
-            ScriptToRun::Preloaded { src, code } => {
-                preloaded_scripts.push(ScriptToRun::Preloaded { src, code });
+            ScriptToRun::Preloaded {
+                src,
+                code,
+                is_defer,
+                is_async,
+            } => {
+                preloaded_scripts.push(ScriptToRun::Preloaded {
+                    src,
+                    code,
+                    is_defer,
+                    is_async,
+                });
             }
         }
     }
@@ -3449,11 +3561,7 @@ impl BrowserChrome {
 
     /// Loads a fetched document into the browser, recursively fetching external stylesheets,
     /// web fonts, and images, and updating the page metadata and history.
-    pub fn process_and_load_document(
-        &mut self,
-        doc_result: FetchedDocument,
-        push_history: bool,
-    ) {
+    pub fn process_and_load_document(&mut self, doc_result: FetchedDocument, push_history: bool) {
         let prep = prepare_document_pipeline(&self.loader, doc_result);
         self.apply_prepared_document(prep, push_history);
     }
@@ -6001,10 +6109,16 @@ fn collect_scripts(doc: &Document, node_id: NodeId, scripts: &mut Vec<ScriptToRu
         && elem.tag_name.eq_ignore_ascii_case("script")
         && is_js_script_type(elem.get_attribute("type"))
     {
+        let is_defer = elem.get_attribute("defer").is_some();
+        let is_async = elem.get_attribute("async").is_some();
         if let Some(src) = elem.get_attribute("src") {
             let trimmed = src.trim();
             if !trimmed.is_empty() {
-                scripts.push(ScriptToRun::External(trimmed.to_string()));
+                scripts.push(ScriptToRun::External {
+                    src: trimmed.to_string(),
+                    is_defer,
+                    is_async,
+                });
             }
         } else {
             let code = doc.text_content(node_id);
@@ -8547,5 +8661,62 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(210));
         let _ = browser.tick_animations(150.0);
         assert!(browser.scroll_y >= 290.0);
+    }
+
+    #[test]
+    fn test_browser_dom_content_loaded_and_load_events() {
+        let mut browser = BrowserChrome::new(800, 600);
+        let html = r#"
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <script>
+                    window.dcl_fired = false;
+                    window.load_fired = false;
+                    document.addEventListener('DOMContentLoaded', function() {
+                        window.dcl_fired = true;
+                        var el = document.getElementById('target');
+                        if (el) el.setAttribute('data-dcl', 'yes');
+                    });
+                    window.addEventListener('load', function() {
+                        window.load_fired = true;
+                        var el = document.getElementById('target');
+                        if (el) el.setAttribute('data-load', 'yes');
+                    });
+                </script>
+            </head>
+            <body>
+                <div id="target">Content</div>
+            </body>
+            </html>
+        "#;
+        browser.load_html_internal(html.to_string(), "http://example.com".to_string(), false);
+
+        let doc = browser.active_document();
+        fn find_id(doc: &mango_html::Document, nid: NodeId, id: &str) -> Option<NodeId> {
+            if let Some(node) = doc.get(nid)
+                && let mango_html::NodeData::Element(el) = &node.data
+                && el.get_attribute("id") == Some(id)
+            {
+                return Some(nid);
+            }
+            for ch in doc.children(nid) {
+                if let Some(found) = find_id(doc, ch.id, id) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        let target_id = find_id(&doc, doc.root(), "target").expect("target found");
+        assert_eq!(
+            attr(&browser, target_id, "data-dcl").as_deref(),
+            Some("yes"),
+            "DOMContentLoaded event listener executed"
+        );
+        assert_eq!(
+            attr(&browser, target_id, "data-load").as_deref(),
+            Some("yes"),
+            "window load event listener executed"
+        );
     }
 }

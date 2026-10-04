@@ -243,7 +243,7 @@ fn format_counter_value(val: i32, style: &str) -> String {
     match style {
         "decimal" => val.to_string(),
         "decimal-leading-zero" => {
-            if val >= 0 && val < 10 {
+            if (0..10).contains(&val) {
                 format!("0{}", val)
             } else if val < 0 && val > -10 {
                 format!("-0{}", -val)
@@ -694,22 +694,26 @@ fn build_styled_node(
                 );
                 let should_keep = if text_to_use.is_empty() || is_non_inline_container {
                     false
-                } else if parent_style.map(|s| s.display == Display::Inline).unwrap_or(false) {
+                } else if parent_style
+                    .map(|s| s.display == Display::Inline)
+                    .unwrap_or(false)
+                {
                     true
                 } else if let Some(parent_id) = node.parent {
                     let siblings: Vec<_> = doc.children(parent_id).collect();
                     if let Some(pos) = siblings.iter().position(|c| c.id == node_id) {
-                        let prev_meaningful = siblings[..pos].iter().rev().find(|s| match &s.data {
-                            NodeData::Comment(_) => false,
-                            NodeData::Element(el) => {
-                                el.get_attribute("hidden").is_none()
-                                    && !el.tag_name.eq_ignore_ascii_case("template")
-                                    && !el.tag_name.eq_ignore_ascii_case("head")
-                                    && !el.tag_name.eq_ignore_ascii_case("style")
-                                    && !el.tag_name.eq_ignore_ascii_case("script")
-                            }
-                            _ => true,
-                        });
+                        let prev_meaningful =
+                            siblings[..pos].iter().rev().find(|s| match &s.data {
+                                NodeData::Comment(_) => false,
+                                NodeData::Element(el) => {
+                                    el.get_attribute("hidden").is_none()
+                                        && !el.tag_name.eq_ignore_ascii_case("template")
+                                        && !el.tag_name.eq_ignore_ascii_case("head")
+                                        && !el.tag_name.eq_ignore_ascii_case("style")
+                                        && !el.tag_name.eq_ignore_ascii_case("script")
+                                }
+                                _ => true,
+                            });
                         let next_meaningful = siblings[pos + 1..].iter().find(|s| match &s.data {
                             NodeData::Comment(_) => false,
                             NodeData::Element(el) => {
@@ -722,9 +726,9 @@ fn build_styled_node(
                             _ => true,
                         });
                         let prev_inline = prev_meaningful
-                            .map_or(false, |s| is_node_inline(doc, s.id, author_index, parent_style));
+                            .is_some_and(|s| is_node_inline(doc, s.id, author_index, parent_style));
                         let next_inline = next_meaningful
-                            .map_or(false, |s| is_node_inline(doc, s.id, author_index, parent_style));
+                            .is_some_and(|s| is_node_inline(doc, s.id, author_index, parent_style));
                         prev_inline && next_inline
                     } else {
                         false
@@ -1239,7 +1243,11 @@ mod tests {
         let p = &body.children[0];
 
         // Should have 3 children: <span>Hello</span>, " ", <span>World</span>
-        assert_eq!(p.children.len(), 3, "Inter-inline whitespace must be preserved");
+        assert_eq!(
+            p.children.len(),
+            3,
+            "Inter-inline whitespace must be preserved"
+        );
         assert_eq!(p.children[0].children[0].text.as_deref(), Some("Hello"));
         assert_eq!(p.children[1].text.as_deref(), Some(" "));
         assert_eq!(p.children[2].children[0].text.as_deref(), Some("World"));
@@ -1266,7 +1274,10 @@ mod tests {
 
         // When closed, only the FIRST summary is shown
         assert_eq!(details.children.len(), 1);
-        assert_eq!(details.children[0].children[0].text.as_deref(), Some("Summary 1"));
+        assert_eq!(
+            details.children[0].children[0].text.as_deref(),
+            Some("Summary 1")
+        );
     }
 
     #[test]

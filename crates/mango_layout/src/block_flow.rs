@@ -93,8 +93,8 @@ pub fn layout_block(
             .to_px_with_viewport(font_size, root_font_size, cb_h, vp_h);
         if tentative_h > 0.0 {
             let content_h = if style.box_sizing == BoxSizing::BorderBox {
-                let non_content_v = box_node.dimensions.padding.vertical()
-                    + box_node.dimensions.border.vertical();
+                let non_content_v =
+                    box_node.dimensions.padding.vertical() + box_node.dimensions.border.vertical();
                 (tentative_h - non_content_v).max(0.0)
             } else {
                 tentative_h
@@ -1215,10 +1215,11 @@ fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut FloatContext)
                     container_dims.content.width(),
                 );
                 let avail_w = max_x - min_x;
-                let child_box_w = child.dimensions.border_box().width()
-                    + child.dimensions.margin.left;
+                let child_box_w =
+                    child.dimensions.border_box().width() + child.dimensions.margin.left;
                 if child_box_w > avail_w
-                    && (min_x > container_dims.content.x() || max_x < container_dims.content.right())
+                    && (min_x > container_dims.content.x()
+                        || max_x < container_dims.content.right())
                 {
                     cursor_y = float_ctx.apply_clearance(cursor_y, Clear::Both);
                 } else if min_x > container_dims.content.x() {
@@ -1979,7 +1980,6 @@ fn layout_positioned_element(
     // Recursively position out-of-flow positioned children inside this positioned box
     layout_positioned_children(box_node, float_ctx);
 }
-
 
 pub(crate) fn shift_descendants(box_node: &mut LayoutBox, dx: f32, dy: f32) {
     for child in &mut box_node.children {
@@ -2987,7 +2987,10 @@ mod tests {
         // Parent's margin-top stays 10 (not collapsed to 30)
         assert_eq!(bfc_res.dimensions.margin.top, 10.0);
         // Child's margin-top pushes it down from parent's content top
-        assert_eq!(child_res.dimensions.content.y(), bfc_res.dimensions.content.y() + 30.0);
+        assert_eq!(
+            child_res.dimensions.content.y(),
+            bfc_res.dimensions.content.y() + 30.0
+        );
         // Parent's height encloses child's margin box: 80 + 30 + 20 = 130
         assert_eq!(bfc_res.dimensions.content.height(), 130.0);
     }
@@ -3084,5 +3087,69 @@ mod tests {
         // bfc_child starts to the right of float_left (x >= 150)
         assert!(bfc_res.dimensions.content.x() >= 150.0);
         assert_eq!(bfc_res.dimensions.content.y(), 0.0);
+    }
+
+    #[test]
+    fn test_layout_with_css_clamp_width() {
+        let mut root = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut containing_block = Dimensions::default();
+        containing_block.content = Rect::new(0.0, 0.0, 800.0, 600.0);
+
+        let mut child = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut style = ComputedStyle::default();
+        style.width = Length::parse("clamp(200px, 50%, 600px)").expect("clamp should parse");
+        child.style = Some(style);
+        root.children.push(child);
+
+        let mut float_ctx = FloatContext::new();
+        layout_block(&mut root, &containing_block, &mut float_ctx);
+
+        // 50% of 800 = 400px (clamped between 200px and 600px)
+        assert_eq!(root.children[0].dimensions.content.width(), 400.0);
+
+        // Now test containing block width = 1500px -> 50% = 750px -> clamped to 600px
+        containing_block.content = Rect::new(0.0, 0.0, 1500.0, 600.0);
+        let mut root_large = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut child_large = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut style_large = ComputedStyle::default();
+        style_large.width = Length::parse("clamp(200px, 50%, 600px)").unwrap();
+        child_large.style = Some(style_large);
+        root_large.children.push(child_large);
+
+        let mut float_ctx2 = FloatContext::new();
+        layout_block(&mut root_large, &containing_block, &mut float_ctx2);
+        assert_eq!(root_large.children[0].dimensions.content.width(), 600.0);
+
+        // Now test containing block width = 300px -> 50% = 150px -> clamped to 200px
+        containing_block.content = Rect::new(0.0, 0.0, 300.0, 600.0);
+        let mut root_small = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut child_small = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut style_small = ComputedStyle::default();
+        style_small.width = Length::parse("clamp(200px, 50%, 600px)").unwrap();
+        child_small.style = Some(style_small);
+        root_small.children.push(child_small);
+
+        let mut float_ctx3 = FloatContext::new();
+        layout_block(&mut root_small, &containing_block, &mut float_ctx3);
+        assert_eq!(root_small.children[0].dimensions.content.width(), 200.0);
+    }
+
+    #[test]
+    fn test_layout_with_css_min_width() {
+        let mut root = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut containing_block = Dimensions::default();
+        containing_block.content = Rect::new(0.0, 0.0, 1000.0, 600.0);
+
+        let mut child = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        let mut style = ComputedStyle::default();
+        // min(50%, 300px) -> for 1000px, min(500, 300) = 300px
+        style.width = Length::parse("min(50%, 300px)").expect("min should parse");
+        child.style = Some(style);
+        root.children.push(child);
+
+        let mut float_ctx = FloatContext::new();
+        layout_block(&mut root, &containing_block, &mut float_ctx);
+
+        assert_eq!(root.children[0].dimensions.content.width(), 300.0);
     }
 }

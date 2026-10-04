@@ -4,6 +4,7 @@
 //! ready for the layout engine.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use mango_core::Color;
 use mango_html::dom::{Document, NodeId};
@@ -21,7 +22,7 @@ use crate::values::{
 /// Fully resolved, typed computed styles for a single DOM element.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ComputedStyle {
-    pub custom_properties: HashMap<String, Value>,
+    pub custom_properties: Arc<HashMap<String, Value>>,
     pub display: Display,
     pub position: Position,
     pub float: Float,
@@ -267,7 +268,7 @@ impl ComputedStyle {
 impl Default for ComputedStyle {
     fn default() -> Self {
         Self {
-            custom_properties: HashMap::new(),
+            custom_properties: Arc::new(HashMap::new()),
             display: Display::Inline,
             position: Position::Static,
             float: Float::None,
@@ -525,7 +526,7 @@ pub fn compute_style_with_index(
     // ── 1. Inherited properties: start with parent values if available ──
     if let Some(parent) = parent_style {
         style.root_font_size = parent.root_font_size;
-        style.custom_properties = parent.custom_properties.clone();
+        style.custom_properties = Arc::clone(&parent.custom_properties);
         style.color = parent.color;
         style.font_size = parent.font_size;
         style.font_weight = parent.font_weight;
@@ -561,9 +562,16 @@ pub fn compute_style_with_index(
     }
 
     // Collect custom properties defined directly on this element
+    let mut custom_props = Vec::new();
     for (prop, val) in &cascaded {
         if prop.starts_with("--") {
-            style.custom_properties.insert(prop.clone(), val.clone());
+            custom_props.push((prop, val));
+        }
+    }
+    if !custom_props.is_empty() {
+        let cp = Arc::make_mut(&mut style.custom_properties);
+        for (prop, val) in custom_props {
+            cp.insert(prop.clone(), val.clone());
         }
     }
 
@@ -629,7 +637,7 @@ pub fn compute_pseudo_style_with_index(
         font_variation_settings: host_style.font_variation_settings.clone(),
         accent_color: host_style.accent_color,
         quotes: host_style.quotes.clone(),
-        custom_properties: host_style.custom_properties.clone(),
+        custom_properties: Arc::clone(&host_style.custom_properties),
         display: Display::Inline,
         ..Default::default()
     };
@@ -728,6 +736,83 @@ fn get_keyword_str(v: &Value) -> Option<&str> {
     }
 }
 
+fn apply_background_image(style: &mut ComputedStyle, val: &Value) {
+    match val {
+        Value::Url(url) => {
+            style.background_image = Some(url.clone());
+            style.background_layers = vec![BackgroundLayer {
+                image: Some(url.clone()),
+                repeat: style.background_repeat,
+                size: style.background_size,
+                position: style.background_position,
+                attachment: style.background_attachment,
+                clip: style.background_clip,
+                ..Default::default()
+            }];
+        }
+        Value::String(url) => {
+            style.background_image = Some(url.clone());
+            style.background_layers = vec![BackgroundLayer {
+                image: Some(url.clone()),
+                repeat: style.background_repeat,
+                size: style.background_size,
+                position: style.background_position,
+                attachment: style.background_attachment,
+                clip: style.background_clip,
+                ..Default::default()
+            }];
+        }
+        Value::Gradient(g) => {
+            let mut grad = (**g).clone();
+            grad.resolve_current_color(style.color);
+            style.background_gradient = Some(grad.clone());
+            style.background_layers = vec![BackgroundLayer {
+                gradient: Some(Box::new(grad)),
+                repeat: style.background_repeat,
+                size: style.background_size,
+                position: style.background_position,
+                attachment: style.background_attachment,
+                clip: style.background_clip,
+                ..Default::default()
+            }];
+        }
+        Value::List(items) => {
+            let mut layers = Vec::new();
+            for it in items {
+                let mut layer = BackgroundLayer {
+                    repeat: style.background_repeat,
+                    size: style.background_size,
+                    position: style.background_position,
+                    attachment: style.background_attachment,
+                    clip: style.background_clip,
+                    ..Default::default()
+                };
+                match it {
+                    Value::Url(u) | Value::String(u) => layer.image = Some(u.clone()),
+                    Value::Gradient(g) => {
+                        let mut grad = (**g).clone();
+                        grad.resolve_current_color(style.color);
+                        layer.gradient = Some(Box::new(grad));
+                    }
+                    _ => {}
+                }
+                layers.push(layer);
+            }
+            if let Some(first) = layers.first() {
+                style.background_image = first.image.clone();
+                style.background_gradient = first.gradient.as_ref().map(|g| (**g).clone());
+            }
+            style.background_layers = layers;
+        }
+        Value::Keyword(k) if k.eq_ignore_ascii_case("none") => {
+            style.background_image = None;
+            style.background_gradient = None;
+            style.background_layers.clear();
+        }
+        _ => {}
+    }
+}
+
 /// Applies parsed, variable-resolved declarations to a ComputedStyle.
 pub fn apply_cascaded_properties(
     style: &mut ComputedStyle,
@@ -760,6 +845,67 @@ pub fn apply_cascaded_properties(
         {
             style.color = p.color;
         }
+    }
+
+    // ── 2c. Pre-apply background base defaults & background-image deterministically ──
+    if let Some(val) = resolved_cascaded.get("background-repeat") {
+        match val {
+            Value::BackgroundRepeat(r) => style.background_repeat = *r,
+            Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
+                "repeat" => style.background_repeat = BackgroundRepeat::Repeat,
+                "repeat-x" => style.background_repeat = BackgroundRepeat::RepeatX,
+                "repeat-y" => style.background_repeat = BackgroundRepeat::RepeatY,
+                "no-repeat" => style.background_repeat = BackgroundRepeat::NoRepeat,
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+    if let Some(val) = resolved_cascaded.get("background-attachment") {
+        match val {
+            Value::BackgroundAttachment(a) => style.background_attachment = *a,
+            Value::Keyword(k) => {
+                if let Some(a) = BackgroundAttachment::parse(k) {
+                    style.background_attachment = a;
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(val) = resolved_cascaded.get("background-clip") {
+        match val {
+            Value::BackgroundClip(c) => style.background_clip = *c,
+            Value::Keyword(k) => {
+                if let Some(c) = BackgroundClip::parse(k) {
+                    style.background_clip = c;
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(pos) = resolved_cascaded
+        .get("background-position")
+        .and_then(parse_position_val)
+    {
+        style.background_position = pos;
+    }
+    if let Some(val) = resolved_cascaded.get("background-size") {
+        match val {
+            Value::BackgroundSize(s) => style.background_size = *s,
+            Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
+                "auto" => style.background_size = BackgroundSize::Auto,
+                "cover" => style.background_size = BackgroundSize::Cover,
+                "contain" => style.background_size = BackgroundSize::Contain,
+                _ => {}
+            },
+            Value::Length(len) => {
+                style.background_size = BackgroundSize::Explicit(*len, Length::Auto);
+            }
+            _ => {}
+        }
+    }
+    if let Some(val) = resolved_cascaded.get("background-image") {
+        apply_background_image(style, val);
     }
 
     // ── 3. Apply all remaining cascaded properties ──
@@ -837,80 +983,7 @@ pub fn apply_cascaded_properties(
                     style.background_color = style.color;
                 }
             }
-            "background-image" => match val {
-                Value::Url(url) => {
-                    style.background_image = Some(url.clone());
-                    style.background_layers = vec![BackgroundLayer {
-                        image: Some(url.clone()),
-                        repeat: style.background_repeat,
-                        size: style.background_size,
-                        position: style.background_position,
-                        attachment: style.background_attachment,
-                        clip: style.background_clip,
-                        ..Default::default()
-                    }];
-                }
-                Value::String(url) => {
-                    style.background_image = Some(url.clone());
-                    style.background_layers = vec![BackgroundLayer {
-                        image: Some(url.clone()),
-                        repeat: style.background_repeat,
-                        size: style.background_size,
-                        position: style.background_position,
-                        attachment: style.background_attachment,
-                        clip: style.background_clip,
-                        ..Default::default()
-                    }];
-                }
-                Value::Gradient(g) => {
-                    let mut grad = (**g).clone();
-                    grad.resolve_current_color(style.color);
-                    style.background_gradient = Some(grad.clone());
-                    style.background_layers = vec![BackgroundLayer {
-                        gradient: Some(Box::new(grad)),
-                        repeat: style.background_repeat,
-                        size: style.background_size,
-                        position: style.background_position,
-                        attachment: style.background_attachment,
-                        clip: style.background_clip,
-                        ..Default::default()
-                    }];
-                }
-                Value::List(items) => {
-                    let mut layers = Vec::new();
-                    for it in items {
-                        let mut layer = BackgroundLayer {
-                            repeat: style.background_repeat,
-                            size: style.background_size,
-                            position: style.background_position,
-                            attachment: style.background_attachment,
-                            clip: style.background_clip,
-                            ..Default::default()
-                        };
-                        match it {
-                            Value::Url(u) | Value::String(u) => layer.image = Some(u.clone()),
-                            Value::Gradient(g) => {
-                                let mut grad = (**g).clone();
-                                grad.resolve_current_color(style.color);
-                                layer.gradient = Some(Box::new(grad));
-                            }
-                            _ => {}
-                        }
-                        layers.push(layer);
-                    }
-                    if let Some(first) = layers.first() {
-                        style.background_image = first.image.clone();
-                        style.background_gradient = first.gradient.clone().map(|g| *g);
-                    }
-                    style.background_layers = layers;
-                }
-                Value::Keyword(k) if k.eq_ignore_ascii_case("none") => {
-                    style.background_image = None;
-                    style.background_gradient = None;
-                    style.background_layers.clear();
-                }
-                _ => {}
-            },
+            "background-image" => {}
             "background-gradient" => match val {
                 Value::Gradient(g) => {
                     let mut grad = (**g).clone();
@@ -1107,7 +1180,7 @@ pub fn apply_cascaded_properties(
             },
             "border-image" => {
                 if let Value::BorderImage(bi) = val {
-                    style.border_image = Some(bi.clone())
+                    style.border_image = Some((**bi).clone())
                 }
             }
             "border-image-source" => match val {
@@ -3290,5 +3363,32 @@ mod tests {
             .unwrap();
         let auto_style = compute_style(auto_div, &auto_doc, &[], None);
         assert_eq!(auto_style.accent_color, None);
+    }
+
+    #[test]
+    fn test_background_layers_deterministic_order() {
+        let html = r#"<div style="background-image: url('a.png'), url('b.png'); background-repeat: repeat-x, no-repeat;">MultiBg</div>"#;
+        let doc = parse_html(html);
+        let root = doc.root();
+        let div_id = doc.find_element_by_tag(root, "div").unwrap();
+
+        let div_style = compute_style(div_id, &doc, &[], None);
+        assert_eq!(div_style.background_layers.len(), 2);
+        assert_eq!(
+            div_style.background_layers[0].image.as_deref(),
+            Some("a.png")
+        );
+        assert_eq!(
+            div_style.background_layers[0].repeat,
+            BackgroundRepeat::RepeatX
+        );
+        assert_eq!(
+            div_style.background_layers[1].image.as_deref(),
+            Some("b.png")
+        );
+        assert_eq!(
+            div_style.background_layers[1].repeat,
+            BackgroundRepeat::NoRepeat
+        );
     }
 }

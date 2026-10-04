@@ -929,17 +929,15 @@ impl PropertyMap {
 
     /// Returns an iterator over property-value pairs.
     pub fn iter(&self) -> impl Iterator<Item = (&CssPropertyId, &Value)> {
-        static ALL_IDS: std::sync::OnceLock<Vec<CssPropertyId>> = std::sync::OnceLock::new();
-        let all = ALL_IDS.get_or_init(|| CssPropertyId::all().to_vec());
-        all.iter()
+        CssPropertyId::all()
+            .iter()
             .filter_map(move |id| self.entries[*id as usize].as_ref().map(|v| (id, v)))
     }
 
     /// Returns a mutable iterator over property-value pairs.
     pub fn iter_mut(&mut self) -> PropertyMapIterMut<'_> {
         PropertyMapIterMut {
-            entries: self.entries.as_mut(),
-            index: 0,
+            iter: self.entries.iter_mut().enumerate(),
         }
     }
 
@@ -967,23 +965,15 @@ impl PropertyMap {
 
 /// Mutable iterator for `PropertyMap`.
 pub struct PropertyMapIterMut<'a> {
-    entries: &'a mut [Option<Value>; CSS_PROPERTY_COUNT],
-    index: usize,
+    iter: std::iter::Enumerate<std::slice::IterMut<'a, Option<Value>>>,
 }
 
 impl<'a> Iterator for PropertyMapIterMut<'a> {
     type Item = (CssPropertyId, &'a mut Value);
 
     fn next(&mut self) -> Option<Self::Item> {
-        while self.index < CSS_PROPERTY_COUNT {
-            let idx = self.index;
-            self.index += 1;
-            // SAFETY: We guarantee unique access via the mutable borrow on `entries`,
-            // and each index is visited at most once.
-            let slot = unsafe { &mut *(self.entries.as_mut_ptr().add(idx)) };
+        for (idx, slot) in self.iter.by_ref() {
             if let Some(val) = slot {
-                // Reconstruct the CssPropertyId from the index.
-                // This is safe because all indices in 0..CSS_PROPERTY_COUNT are valid discriminants.
                 let id = CssPropertyId::all()[idx];
                 return Some((id, val));
             }

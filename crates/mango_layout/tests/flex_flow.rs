@@ -577,3 +577,27 @@ fn test_column_flex_align_items_shrink_to_fit() {
     assert_eq!(container.children[0].dimensions.content.width(), 80.0);
     assert_eq!(container.children[0].dimensions.content.x(), 60.0);
 }
+
+#[test]
+fn test_flex_item_auto_min_width_prevents_zero_collapse() {
+    // Under CSS Flexbox §4.5, flex items default to min-width: auto.
+    // When flex-basis is 0 and flex-shrink is 1 with content, the item must not collapse to 0.
+    let html = r#"
+        <div class="container">
+            <div class="item"><div class="inner" style="width: 120px; height: 20px;"></div></div>
+        </div>
+    "#;
+    let css = r#"
+        .container {
+            display: flex;
+            width: 200px;
+        }
+        .item {
+            flex-shrink: 1;
+            flex-basis: 0px;
+        }
+    "#;
+    let container = layout_html_flex(html, css, 400.0, 400.0);
+    // Item content width should not shrink below its child's intrinsic width 120px
+    assert!(container.children[0].dimensions.content.width() >= 120.0);
+}

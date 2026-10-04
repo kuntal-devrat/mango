@@ -296,7 +296,7 @@ impl LayoutBox {
     pub fn is_visible(&self) -> bool {
         self.style
             .as_ref()
-            .map_or(true, |s| s.visibility != mango_css::values::Visibility::Hidden)
+            .is_none_or(|s| s.visibility != mango_css::values::Visibility::Hidden)
     }
 
     /// Returns the intrinsic size `(width, height)` of this box if it is a replaced or media element.
@@ -1207,7 +1207,7 @@ pub fn parse_srcset_candidates(srcset: &str) -> Vec<&str> {
 pub(crate) fn parse_dimension_attr(val: &str) -> Option<f32> {
     let s = val.trim();
     let s = if s.to_ascii_lowercase().ends_with("px") {
-        &s[..s.len() - 2].trim_end()
+        s[..s.len() - 2].trim_end()
     } else {
         s
     };
@@ -2549,7 +2549,10 @@ mod tests {
 
         let anon = LayoutBox::new_anonymous_block(Some(parent_style));
         assert_eq!(anon.box_type, BoxType::AnonymousBlock);
-        assert!(!anon.is_scroll_container(), "Anonymous block must not establish a scroll container");
+        assert!(
+            !anon.is_scroll_container(),
+            "Anonymous block must not establish a scroll container"
+        );
         let style = anon.style.as_ref().unwrap();
         assert_eq!(style.overflow_x, mango_css::values::Overflow::Visible);
         assert_eq!(style.overflow_y, mango_css::values::Overflow::Visible);
@@ -2580,21 +2583,39 @@ mod tests {
         container.children.push(child);
 
         // Without scroll: clicking at (50, 120) hits child
-        assert_eq!(container.hit_test(mango_core::Point::new(50.0, 120.0)), Some(NodeId::from_raw(42)));
-        assert_eq!(container.hit_test_link(mango_core::Point::new(50.0, 120.0)), Some("https://example.com/item"));
+        assert_eq!(
+            container.hit_test(mango_core::Point::new(50.0, 120.0)),
+            Some(NodeId::from_raw(42))
+        );
+        assert_eq!(
+            container.hit_test_link(mango_core::Point::new(50.0, 120.0)),
+            Some("https://example.com/item")
+        );
 
         // Now scroll down by 50px: child visually appears at y = 50..100
         container.scroll_offset_y = 50.0;
 
         // Screen click at (50, 70) should hit the scrolled child (70 + 50 = 120 in child coordinates)
-        assert_eq!(container.hit_test(mango_core::Point::new(50.0, 70.0)), Some(NodeId::from_raw(42)));
-        assert_eq!(container.hit_test_link(mango_core::Point::new(50.0, 70.0)), Some("https://example.com/item"));
+        assert_eq!(
+            container.hit_test(mango_core::Point::new(50.0, 70.0)),
+            Some(NodeId::from_raw(42))
+        );
+        assert_eq!(
+            container.hit_test_link(mango_core::Point::new(50.0, 70.0)),
+            Some("https://example.com/item")
+        );
 
         // Screen click at (50, 120) now misses the child (120 + 50 = 170, beyond child bottom 150)
-        assert_eq!(container.hit_test_link(mango_core::Point::new(50.0, 120.0)), None);
+        assert_eq!(
+            container.hit_test_link(mango_core::Point::new(50.0, 120.0)),
+            None
+        );
 
         // Screen click outside padding box (e.g. y = 250) is clipped and returns None
-        assert_eq!(container.hit_test(mango_core::Point::new(50.0, 250.0)), None);
+        assert_eq!(
+            container.hit_test(mango_core::Point::new(50.0, 250.0)),
+            None
+        );
     }
 
     #[test]
@@ -2609,8 +2630,14 @@ mod tests {
         hidden_box.link_target = Some("https://example.com/hidden".to_string());
 
         assert!(!hidden_box.is_visible());
-        assert_eq!(hidden_box.hit_test(mango_core::Point::new(50.0, 50.0)), None);
-        assert_eq!(hidden_box.hit_test_link(mango_core::Point::new(50.0, 50.0)), None);
+        assert_eq!(
+            hidden_box.hit_test(mango_core::Point::new(50.0, 50.0)),
+            None
+        );
+        assert_eq!(
+            hidden_box.hit_test_link(mango_core::Point::new(50.0, 50.0)),
+            None
+        );
 
         // But a visible child inside a hidden parent DOES receive hits
         let mut child_style = ComputedStyle::default();
@@ -2622,10 +2649,19 @@ mod tests {
         visible_child.link_target = Some("https://example.com/visible-child".to_string());
         hidden_box.children.push(visible_child);
 
-        assert_eq!(hidden_box.hit_test(mango_core::Point::new(25.0, 25.0)), Some(NodeId::from_raw(20)));
-        assert_eq!(hidden_box.hit_test_link(mango_core::Point::new(25.0, 25.0)), Some("https://example.com/visible-child"));
+        assert_eq!(
+            hidden_box.hit_test(mango_core::Point::new(25.0, 25.0)),
+            Some(NodeId::from_raw(20))
+        );
+        assert_eq!(
+            hidden_box.hit_test_link(mango_core::Point::new(25.0, 25.0)),
+            Some("https://example.com/visible-child")
+        );
         // Outside the child but inside hidden parent still returns None
-        assert_eq!(hidden_box.hit_test(mango_core::Point::new(80.0, 80.0)), None);
+        assert_eq!(
+            hidden_box.hit_test(mango_core::Point::new(80.0, 80.0)),
+            None
+        );
     }
 
     #[test]
@@ -2635,14 +2671,20 @@ mod tests {
             cy: 50.0,
             r: 0.0,
         };
-        assert!(!zero_circle.contains_point(50.0, 50.0), "Zero radius circle area must have no effect");
+        assert!(
+            !zero_circle.contains_point(50.0, 50.0),
+            "Zero radius circle area must have no effect"
+        );
 
         let neg_circle = AreaShape::Circle {
             cx: 50.0,
             cy: 50.0,
             r: -5.0,
         };
-        assert!(!neg_circle.contains_point(50.0, 50.0), "Negative radius circle area must have no effect");
+        assert!(
+            !neg_circle.contains_point(50.0, 50.0),
+            "Negative radius circle area must have no effect"
+        );
 
         let valid_circle = AreaShape::Circle {
             cx: 50.0,
@@ -2673,7 +2715,10 @@ mod tests {
         rel_parent.children.push(abs_child);
 
         let (ext_x, ext_y) = rel_parent.scrollable_extent();
-        assert_eq!(ext_x, 350.0, "Absolute child must contribute to containing block scrollable extent");
+        assert_eq!(
+            ext_x, 350.0,
+            "Absolute child must contribute to containing block scrollable extent"
+        );
         assert_eq!(ext_y, 400.0);
 
         // Non-containing block parent (Static) must NOT include absolute child
@@ -2698,8 +2743,13 @@ mod tests {
         img_node.tag_name = Some("img".to_string());
         let data_url = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==";
         let sources_attr = format!("{data_url}\t(max-width: 500px)\timage/png");
-        img_node.attributes.push(("_mango_picture_sources".to_string(), sources_attr));
-        img_node.attributes.push(("src".to_string(), "http://example.com/fallback.jpg".to_string()));
+        img_node
+            .attributes
+            .push(("_mango_picture_sources".to_string(), sources_attr));
+        img_node.attributes.push((
+            "src".to_string(),
+            "http://example.com/fallback.jpg".to_string(),
+        ));
 
         // Under 350px viewport: source matches
         mango_css::set_current_viewport(350.0, 600.0);
@@ -2725,23 +2775,36 @@ mod tests {
         input_box.node_id = Some(NodeId::from_raw(99));
         input_box.tag_name = Some("input".to_string());
         input_box.dimensions.content = mango_core::Rect::new(20.0, 30.0, 100.0, 25.0);
-        input_box.attributes.push(("type".to_string(), "checkbox".to_string()));
-        input_box.attributes.push(("data-mango-checked".to_string(), "true".to_string()));
+        input_box
+            .attributes
+            .push(("type".to_string(), "checkbox".to_string()));
+        input_box
+            .attributes
+            .push(("data-mango-checked".to_string(), "true".to_string()));
 
         let hit = input_box.hit_test_form_control(mango_core::Point::new(35.0, 40.0));
         assert!(hit.is_some());
         let hit = hit.unwrap();
         assert_eq!(hit.node_id, Some(NodeId::from_raw(99)));
         assert_eq!(hit.form_type, "checkbox");
-        assert!(hit.checked, "data-mango-checked='true' must be recognized as checked");
-        assert_eq!(hit.click_offset_x, 15.0, "Click offset must accurately measure from content x (35 - 20 = 15)");
+        assert!(
+            hit.checked,
+            "data-mango-checked='true' must be recognized as checked"
+        );
+        assert_eq!(
+            hit.click_offset_x, 15.0,
+            "Click offset must accurately measure from content x (35 - 20 = 15)"
+        );
     }
 
     #[test]
     fn test_svg_xml_escaping_special_characters() {
         let mut svg_node = StyledNode::new(None, ComputedStyle::default());
         svg_node.tag_name = Some("svg".to_string());
-        svg_node.attributes.push(("data-label".to_string(), "test <tag> & \"quotes\"".to_string()));
+        svg_node.attributes.push((
+            "data-label".to_string(),
+            "test <tag> & \"quotes\"".to_string(),
+        ));
 
         let mut text_node = StyledNode::new(None, ComputedStyle::default());
         text_node.tag_name = Some("text".to_string());

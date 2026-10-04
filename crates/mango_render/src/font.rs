@@ -507,8 +507,16 @@ pub fn decode_font_bytes(bytes: &[u8]) -> Result<Font, String> {
         return Err("Font data is too short".to_string());
     }
 
-    let trimmed = if bytes.starts_with(b" ") || bytes.starts_with(b"\n") || bytes.starts_with(b"\r") || bytes.starts_with(b"\t") {
-        bytes.iter().copied().skip_while(|&b| b.is_ascii_whitespace()).collect::<Vec<u8>>()
+    let trimmed = if bytes.starts_with(b" ")
+        || bytes.starts_with(b"\n")
+        || bytes.starts_with(b"\r")
+        || bytes.starts_with(b"\t")
+    {
+        bytes
+            .iter()
+            .copied()
+            .skip_while(|&b| b.is_ascii_whitespace())
+            .collect::<Vec<u8>>()
     } else {
         Vec::new()
     };

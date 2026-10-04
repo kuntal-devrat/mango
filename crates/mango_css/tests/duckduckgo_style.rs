@@ -6,7 +6,6 @@ use mango_css::parser::CssParser;
 use mango_html::parse_html;
 
 #[test]
-#[ignore = "focuses on background shorthand edge cases; run explicitly with --ignored"]
 fn test_ddg_logo_style() {
     let html = r#"<div class="header header--html"><a class="header__logo-wrap"></a></div>"#;
     let doc = parse_html(html);
@@ -48,7 +47,6 @@ fn test_ddg_logo_style() {
 }
 
 #[test]
-#[ignore = "asserts custom-property border-radius resolution; run explicitly with --ignored"]
 fn test_ddg_button_style() {
     let html = r#"<form class="search has-text search--focus"><input id="search_button_homepage" class="search__button search__button--html" value="" title="Search" alt="Search" type="submit" /></form>"#;
     let doc = parse_html(html);

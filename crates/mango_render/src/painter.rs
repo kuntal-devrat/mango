@@ -577,8 +577,10 @@ pub fn paint(display_list: &DisplayList, buffer: &mut [u32], buf_width: u32, buf
                 if widths.left > 0.0 {
                     let side_y = y + widths.top;
                     let side_h = (h - widths.top - widths.bottom).max(0.0);
-                    let left_rect =
-                        intersect_rect(active_clip, mango_core::Rect::new(x, side_y, widths.left, side_h));
+                    let left_rect = intersect_rect(
+                        active_clip,
+                        mango_core::Rect::new(x, side_y, widths.left, side_h),
+                    );
                     if left_rect.width() > 0.0 && left_rect.height() > 0.0 {
                         fill_rect(
                             buffer,

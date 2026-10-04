@@ -992,10 +992,22 @@ fn test_rust_lang_footer() {
     let (root_box, _) = layout_document(&doc, &[], Size::new(1280.0, 900.0));
 
     let footer = find_box(&root_box, "footer").expect("footer must exist");
-    println!("FOOTER Y = {}, HEIGHT = {}", footer.dimensions.content.y(), footer.dimensions.content.height());
+    println!(
+        "FOOTER Y = {}, HEIGHT = {}",
+        footer.dimensions.content.y(),
+        footer.dimensions.content.height()
+    );
     let main_box = find_box(&root_box, "main").expect("main must exist");
-    println!("MAIN Y = {}, HEIGHT = {}", main_box.dimensions.content.y(), main_box.dimensions.content.height());
-    assert!(footer.dimensions.content.y() >= 1000.0, "footer must be below main content, got {}", footer.dimensions.content.y());
+    println!(
+        "MAIN Y = {}, HEIGHT = {}",
+        main_box.dimensions.content.y(),
+        main_box.dimensions.content.height()
+    );
+    assert!(
+        footer.dimensions.content.y() >= 1000.0,
+        "footer must be below main content, got {}",
+        footer.dimensions.content.y()
+    );
 }
 
 #[test]
@@ -1023,8 +1035,16 @@ fn test_rust_lang_footer_sticky_short_content() {
     let (root_box, _) = layout_document(&doc, &[], Size::new(1280.0, 900.0));
 
     let footer = find_box(&root_box, "footer").expect("footer must exist");
-    println!("STICKY FOOTER Y = {}, HEIGHT = {}", footer.dimensions.content.y(), footer.dimensions.content.height());
-    assert!(footer.dimensions.content.y() >= 800.0, "footer must be at bottom of 900px viewport, got {}", footer.dimensions.content.y());
+    println!(
+        "STICKY FOOTER Y = {}, HEIGHT = {}",
+        footer.dimensions.content.y(),
+        footer.dimensions.content.height()
+    );
+    assert!(
+        footer.dimensions.content.y() >= 800.0,
+        "footer must be at bottom of 900px viewport, got {}",
+        footer.dimensions.content.y()
+    );
 }
 
 #[test]
@@ -1036,10 +1056,24 @@ fn test_inline_image_spacing() {
     let p = find_box(&root_box, "p").expect("p must exist");
     println!("P children count = {}", p.children.len());
     for (i, c) in p.children.iter().enumerate() {
-        println!("Child {}: type={:?}, x={}, width={}", i, c.box_type, c.dimensions.content.x(), c.dimensions.content.width());
+        println!(
+            "Child {}: type={:?}, x={}, width={}",
+            i,
+            c.box_type,
+            c.dimensions.content.x(),
+            c.dimensions.content.width()
+        );
     }
-    assert_eq!(p.children.len(), 3, "p must have 3 children (img, space, img)");
-    assert!(p.children[2].dimensions.content.x() > 50.0, "second image must be spaced after first image + whitespace, got x={}", p.children[2].dimensions.content.x());
+    assert_eq!(
+        p.children.len(),
+        3,
+        "p must have 3 children (img, space, img)"
+    );
+    assert!(
+        p.children[2].dimensions.content.x() > 50.0,
+        "second image must be spaced after first image + whitespace, got x={}",
+        p.children[2].dimensions.content.x()
+    );
 }
 
 #[test]
@@ -1055,35 +1089,48 @@ fn test_button_border_zero_removal() {
     assert_eq!(btn.dimensions.border.right, 0.0);
 
     // Verify display list contains NO DrawBorder commands for this button
-    let has_border_cmd = dl.iter().any(|cmd| matches!(cmd, mango_render::DisplayCommand::DrawBorder { .. }));
-    assert!(!has_border_cmd, "button with border: 0 must not emit DrawBorder command");
+    let has_border_cmd = dl
+        .iter()
+        .any(|cmd| matches!(cmd, mango_render::DisplayCommand::DrawBorder { .. }));
+    assert!(
+        !has_border_cmd,
+        "button with border: 0 must not emit DrawBorder command"
+    );
 }
 
 #[test]
 fn test_transition_shorthand_retarget() {
-    use mango_css::animation::TransitionEngine;
     use mango_css::ComputedStyle;
-    use mango_css::values::{Transition, TimingFunction};
+    use mango_css::animation::TransitionEngine;
+    use mango_css::values::{TimingFunction, Transition};
     use mango_html::dom::NodeId;
 
     let mut engine = TransitionEngine::new();
     let node = NodeId::from_raw(1);
 
-    let mut old_style = ComputedStyle::default();
-    old_style.background_color = mango_core::Color::BLACK;
+    let old_style = ComputedStyle {
+        background_color: mango_core::Color::BLACK,
+        ..Default::default()
+    };
 
-    let mut new_style = ComputedStyle::default();
-    new_style.background_color = mango_core::Color::WHITE;
-    new_style.transitions = vec![Transition {
-        property: "background".to_string(),
-        duration_ms: 150.0,
-        delay_ms: 0.0,
-        timing: TimingFunction::Ease,
-    }];
+    let new_style = ComputedStyle {
+        background_color: mango_core::Color::WHITE,
+        transitions: vec![Transition {
+            property: "background".to_string(),
+            duration_ms: 150.0,
+            delay_ms: 0.0,
+            timing: TimingFunction::Ease,
+        }],
+        ..Default::default()
+    };
 
     let retargeted = engine.retarget(node, &old_style, &new_style);
-    assert!(retargeted, "transition: background must match background-color and trigger a transition");
-    assert!(engine.is_animating(), "engine should be animating background transition");
+    assert!(
+        retargeted,
+        "transition: background must match background-color and trigger a transition"
+    );
+    assert!(
+        engine.is_animating(),
+        "engine should be animating background transition"
+    );
 }
-
-

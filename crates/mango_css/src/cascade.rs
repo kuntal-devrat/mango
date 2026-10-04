@@ -709,11 +709,20 @@ impl<'a> RuleIndex<'a> {
                 if !seen_rules.insert(cand.source_order) {
                     continue;
                 }
+                let mut max_specificity: Option<Specificity> = None;
                 for complex_sel in &cand.style_rule.selectors.selectors {
                     if complex_sel.matches_pseudo_element(node_id, doc, pseudo) {
-                        let specificity = Specificity::of(complex_sel);
-                        for decl in &cand.style_rule.declarations {
-                            for expanded in decl.clone().expand_shorthand() {
+                        let spec = Specificity::of(complex_sel);
+                        max_specificity = Some(match max_specificity {
+                            Some(current) => current.max(spec),
+                            None => spec,
+                        });
+                    }
+                }
+                if let Some(specificity) = max_specificity {
+                    for decl in &cand.style_rule.declarations {
+                        if decl.is_shorthand() {
+                            for expanded in decl.expand_shorthand_ref() {
                                 *source_order += 1;
                                 out.push(MatchedDeclaration {
                                     declaration: expanded,
@@ -722,8 +731,15 @@ impl<'a> RuleIndex<'a> {
                                     source_order: *source_order,
                                 });
                             }
+                        } else {
+                            *source_order += 1;
+                            out.push(MatchedDeclaration {
+                                declaration: decl.clone(),
+                                specificity,
+                                origin: cand.origin,
+                                source_order: *source_order,
+                            });
                         }
-                        break;
                     }
                 }
             }
@@ -738,11 +754,20 @@ impl<'a> RuleIndex<'a> {
                 self.find_container_size_for_node(node_id, doc, cand.name.as_deref())
                 && matches_container_query(&cand.query, cw, ch)
             {
+                let mut max_specificity: Option<Specificity> = None;
                 for complex_sel in &cand.style_rule.selectors.selectors {
                     if complex_sel.matches_pseudo_element(node_id, doc, pseudo) {
-                        let specificity = Specificity::of(complex_sel);
-                        for decl in &cand.style_rule.declarations {
-                            for expanded in decl.clone().expand_shorthand() {
+                        let spec = Specificity::of(complex_sel);
+                        max_specificity = Some(match max_specificity {
+                            Some(current) => current.max(spec),
+                            None => spec,
+                        });
+                    }
+                }
+                if let Some(specificity) = max_specificity {
+                    for decl in &cand.style_rule.declarations {
+                        if decl.is_shorthand() {
+                            for expanded in decl.expand_shorthand_ref() {
                                 *source_order += 1;
                                 out.push(MatchedDeclaration {
                                     declaration: expanded,
@@ -751,8 +776,15 @@ impl<'a> RuleIndex<'a> {
                                     source_order: *source_order,
                                 });
                             }
+                        } else {
+                            *source_order += 1;
+                            out.push(MatchedDeclaration {
+                                declaration: decl.clone(),
+                                specificity,
+                                origin: cand.origin,
+                                source_order: *source_order,
+                            });
                         }
-                        break;
                     }
                 }
             }
@@ -847,27 +879,33 @@ impl<'a> RuleIndex<'a> {
                     for complex_sel in &cand.style_rule.selectors.selectors {
                         if complex_sel.matches(ancestor_id, doc) {
                             for decl in &cand.style_rule.declarations {
-                                for exp in decl.clone().expand_shorthand() {
-                                    let dname = exp.name.to_ascii_lowercase();
+                                let mut check_decl = |dname: &str, dval: &Value| {
                                     if dname == "container-type" && container_type.is_none() {
-                                        container_type = Some(exp.value);
+                                        container_type = Some(dval.clone());
                                     } else if dname == "container-name" && container_name.is_none()
                                     {
-                                        if let Value::String(s) = exp.value {
-                                            container_name = Some(s);
-                                        } else if let Value::Keyword(s) = exp.value {
-                                            container_name = Some(s);
+                                        if let Value::String(s) = dval {
+                                            container_name = Some(s.clone());
+                                        } else if let Value::Keyword(s) = dval {
+                                            container_name = Some(s.clone());
                                         }
                                     } else if dname == "width" && explicit_width.is_none() {
-                                        if let Value::Length(Length::Px(px)) = exp.value {
-                                            explicit_width = Some(px);
+                                        if let Value::Length(Length::Px(px)) = dval {
+                                            explicit_width = Some(*px);
                                         }
                                     } else if dname == "height"
                                         && explicit_height.is_none()
-                                        && let Value::Length(Length::Px(px)) = exp.value
+                                        && let Value::Length(Length::Px(px)) = dval
                                     {
-                                        explicit_height = Some(px);
+                                        explicit_height = Some(*px);
                                     }
+                                };
+                                if decl.is_shorthand() {
+                                    for exp in decl.expand_shorthand_ref() {
+                                        check_decl(&exp.name.to_ascii_lowercase(), &exp.value);
+                                    }
+                                } else {
+                                    check_decl(&decl.name.to_ascii_lowercase(), &decl.value);
                                 }
                             }
                             break;
@@ -985,10 +1023,20 @@ pub fn resolve_cascade_with_index(
         if let Some(style_attr) = elem.get_attribute("style") {
             let inline_decls = parse_declaration_list(style_attr);
             for decl in inline_decls {
-                for expanded in decl.expand_shorthand() {
+                if decl.is_shorthand() {
+                    for expanded in decl.expand_shorthand() {
+                        source_order += 1;
+                        matched_decls.push(MatchedDeclaration {
+                            declaration: expanded,
+                            specificity: Specificity(1, 0, 0),
+                            origin: Origin::Inline,
+                            source_order,
+                        });
+                    }
+                } else {
                     source_order += 1;
                     matched_decls.push(MatchedDeclaration {
-                        declaration: expanded,
+                        declaration: decl,
                         specificity: Specificity(1, 0, 0),
                         origin: Origin::Inline,
                         source_order,
@@ -1498,11 +1546,21 @@ fn apply_style_rule(
     source_order: &mut usize,
     out: &mut Vec<MatchedDeclaration>,
 ) {
+    let mut max_specificity: Option<Specificity> = None;
     for complex_sel in &style_rule.selectors.selectors {
         if complex_sel.matches(node_id, doc) {
-            let specificity = Specificity::of(complex_sel);
-            for decl in &style_rule.declarations {
-                for expanded in decl.clone().expand_shorthand() {
+            let spec = Specificity::of(complex_sel);
+            max_specificity = Some(match max_specificity {
+                Some(current) => current.max(spec),
+                None => spec,
+            });
+        }
+    }
+
+    if let Some(specificity) = max_specificity {
+        for decl in &style_rule.declarations {
+            if decl.is_shorthand() {
+                for expanded in decl.expand_shorthand_ref() {
                     *source_order += 1;
                     out.push(MatchedDeclaration {
                         declaration: expanded,
@@ -1511,9 +1569,15 @@ fn apply_style_rule(
                         source_order: *source_order,
                     });
                 }
+            } else {
+                *source_order += 1;
+                out.push(MatchedDeclaration {
+                    declaration: decl.clone(),
+                    specificity,
+                    origin,
+                    source_order: *source_order,
+                });
             }
-            // Only match once per style rule even if multiple selectors in the rule match
-            break;
         }
     }
 }
@@ -2713,6 +2777,33 @@ mod tests {
         assert_eq!(
             cascaded.get("font-size"),
             Some(&Value::Length(Length::Px(20.0)))
+        );
+    }
+
+    #[test]
+    fn test_multi_selector_max_specificity() {
+        let html = r#"<h1 id="hero" class="title">Hello World</h1>"#;
+        let doc = parse_html(html);
+        let root = doc.root();
+        let h1_id = doc.find_element_by_id(root, "hero").unwrap();
+
+        // Rule 1: h1, #hero { color: red; } (matches both h1 and #hero; max specificity is (1, 0, 0))
+        // Rule 2: .title { color: blue; } (specificity (0, 1, 0))
+        // Rule 1 has higher specificity (1, 0, 0) > (0, 1, 0), so red must win!
+        let css = r#"
+            h1, #hero {
+                color: red;
+            }
+            .title {
+                color: blue;
+            }
+        "#;
+        let sheet = parse_stylesheet(css);
+        let cascaded = resolve_cascade(h1_id, &doc, &[&sheet]);
+        assert_eq!(
+            cascaded.get("color"),
+            Some(&Value::Color(Color::RED)),
+            "Multi-selector rule must use max specificity (1, 0, 0) over class (0, 1, 0)"
         );
     }
 }

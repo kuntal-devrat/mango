@@ -16,4 +16,4 @@ pub mod types;
 
 pub use arena::{Arena, Id};
 pub use string_interner::{InternedString, StringInterner};
-pub use types::{Color, EdgeSizes, Point, Rect, Size};
+pub use types::{Color, CornerRadii, EdgeSizes, Point, Rect, Size};

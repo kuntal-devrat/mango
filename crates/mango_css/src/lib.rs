@@ -70,4 +70,10 @@ const _: () = {
     assert_send_sync::<PropertyMap>();
     assert_send_sync::<MediaEnvironment>();
     assert_send_sync::<MatchedDeclaration>();
+    assert_send_sync::<RuleIndex>();
+    assert_send_sync::<AnimationEngine>();
+    assert_send_sync::<TransitionEngine>();
+    assert_send_sync::<Keyframes>();
+    assert_send_sync::<crate::values::MathExpr>();
+    assert_send_sync::<crate::values::BorderImage>();
 };

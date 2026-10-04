@@ -1037,7 +1037,9 @@ fn render_layout_box_inner(
             let is_clip_text = s.background_clip == mango_css::values::BackgroundClip::Text;
             let text_gradient = if is_clip_text {
                 s.background_gradient.as_ref().or_else(|| {
-                    s.background_layers.iter().find_map(|l| l.gradient.as_deref())
+                    s.background_layers
+                        .iter()
+                        .find_map(|l| l.gradient.as_deref())
                 })
             } else {
                 None
@@ -4827,21 +4829,24 @@ mod tests {
         let has_scrollbar = dl_none
             .iter()
             .any(|c| matches!(c, DisplayCommand::FillRoundedRect { .. }));
-        assert!(!has_scrollbar, "scrollbar-width: none must suppress scrollbar");
+        assert!(
+            !has_scrollbar,
+            "scrollbar-width: none must suppress scrollbar"
+        );
 
         // Custom colors: thumb = red, track = blue
         let b_custom = make_container(ScrollbarWidth::Auto, Some((Color::RED, Color::BLUE)));
         let dl_custom = build_display_list(&b_custom);
-        let track_cmd = dl_custom.iter().find(|c| {
-            matches!(c, DisplayCommand::FillRect { color, .. } if *color == Color::BLUE)
-        });
+        let track_cmd = dl_custom
+            .iter()
+            .find(|c| matches!(c, DisplayCommand::FillRect { color, .. } if *color == Color::BLUE));
         assert!(
             track_cmd.is_some(),
             "Custom track color (blue) should be emitted"
         );
-        let thumb_cmd = dl_custom.iter().find(|c| {
-            matches!(c, DisplayCommand::FillRoundedRect { color, .. } if *color == Color::RED)
-        });
+        let thumb_cmd = dl_custom.iter().find(
+            |c| matches!(c, DisplayCommand::FillRoundedRect { color, .. } if *color == Color::RED),
+        );
         assert!(
             thumb_cmd.is_some(),
             "Custom thumb color (red) should be emitted"
@@ -4901,10 +4906,7 @@ mod tests {
             push_clips, 1,
             "Child must remain clipped; exactly 1 PushClip"
         );
-        assert_eq!(
-            pop_clips, 1,
-            "Child must remain clipped; exactly 1 PopClip"
-        );
+        assert_eq!(pop_clips, 1, "Child must remain clipped; exactly 1 PopClip");
     }
 
     #[test]
@@ -5009,7 +5011,7 @@ mod tests {
     #[test]
     fn test_border_image_display_command() {
         use mango_css::values::{BorderImage, BorderImageRepeat, Length};
-        use mango_render::image_decode::{cache_image, DecodedImage};
+        use mango_render::image_decode::{DecodedImage, cache_image};
 
         let dummy_img = DecodedImage {
             width: 30,
@@ -5118,4 +5120,3 @@ mod tests {
         assert_eq!(inflow_rect.y(), 30.0);
     }
 }
-

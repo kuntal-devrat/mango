@@ -677,12 +677,7 @@ pub struct LogicalRect {
 }
 
 impl LogicalRect {
-    pub fn new(
-        inline_offset: f32,
-        block_offset: f32,
-        inline_size: f32,
-        block_size: f32,
-    ) -> Self {
+    pub fn new(inline_offset: f32, block_offset: f32, inline_size: f32, block_size: f32) -> Self {
         Self {
             inline_offset,
             block_offset,
@@ -845,11 +840,10 @@ pub fn resolve_replaced_size(
     aspect_ratio: Option<f32>,
     default_fallback: (f32, f32),
 ) -> (f32, f32) {
-    let ratio = aspect_ratio
-        .or_else(|| match (intrinsic_width, intrinsic_height) {
-            (Some(w), Some(h)) if w > 0.0 && h > 0.0 => Some(w / h),
-            _ => None,
-        });
+    let ratio = aspect_ratio.or_else(|| match (intrinsic_width, intrinsic_height) {
+        (Some(w), Some(h)) if w > 0.0 && h > 0.0 => Some(w / h),
+        _ => None,
+    });
 
     match (specified_width, specified_height) {
         // 1. Both dimensions specified explicitly.
@@ -1243,14 +1237,7 @@ mod tests {
 
         // Both auto, intrinsic sizes exist
         assert_eq!(
-            resolve_replaced_size(
-                None,
-                None,
-                Some(640.0),
-                Some(480.0),
-                None,
-                (300.0, 150.0)
-            ),
+            resolve_replaced_size(None, None, Some(640.0), Some(480.0), None, (300.0, 150.0)),
             (640.0, 480.0)
         );
     }
@@ -1261,8 +1248,7 @@ mod tests {
         let natural = (200.0, 100.0); // 2:1 aspect ratio
 
         // Contain: scaled to 100x50, centered vertically at y=25
-        let contain =
-            resolve_object_fit_rect(content_box, natural, ObjectFit::Contain, (0.5, 0.5));
+        let contain = resolve_object_fit_rect(content_box, natural, ObjectFit::Contain, (0.5, 0.5));
         assert_eq!(contain, Rect::new(0.0, 25.0, 100.0, 50.0));
 
         // Cover: scaled to 200x100, centered horizontally at x=-50

@@ -14,18 +14,47 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::ops::Index;
+use std::sync::Arc;
 
-/// A handle to an interned string. Cheap to copy and compare (just a `u32`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// A handle to an interned string. Cheap to copy, compare, and order (just a `u32`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InternedString {
     index: u32,
 }
 
 impl InternedString {
+    /// The canonical empty interned string handle (index 0).
+    pub const EMPTY: InternedString = InternedString { index: 0 };
+
+    /// Creates a new `InternedString` handle from a raw index.
+    #[inline]
+    pub const fn from_raw(index: u32) -> Self {
+        Self { index }
+    }
+
+    /// Creates a new `InternedString` handle from a raw index. Alias for [`from_raw`](Self::from_raw).
+    #[inline]
+    pub const fn new(index: u32) -> Self {
+        Self { index }
+    }
+
     /// Returns the raw index of this interned string.
     #[inline]
     pub fn raw(self) -> u32 {
         self.index
+    }
+
+    /// Returns the raw index of this interned string. Alias for [`raw`](Self::raw).
+    #[inline]
+    pub fn index(self) -> u32 {
+        self.index
+    }
+
+    /// Returns `true` if this handle refers to the empty string `""` at index 0.
+    #[inline]
+    pub fn is_empty(self) -> bool {
+        self.index == 0
     }
 }
 
@@ -36,6 +65,9 @@ impl fmt::Display for InternedString {
 }
 
 /// Stores unique strings and hands out [`InternedString`] handles.
+///
+/// Uses `Arc<str>` internally to ensure exactly one heap allocation per unique
+/// string, eliminating duplicate string storage across hash map keys and index lists.
 ///
 /// # Example
 /// ```
@@ -49,13 +81,14 @@ impl fmt::Display for InternedString {
 /// assert_eq!(a, b);      // Same string → same handle
 /// assert_ne!(a, c);      // Different string → different handle
 /// assert_eq!(interner.resolve(a), "div");
+/// assert_eq!(&interner[a], "div");
 /// ```
 #[derive(Debug, Clone)]
 pub struct StringInterner {
     /// Map from string content to its index in `strings`.
-    map: HashMap<String, InternedString>,
+    map: HashMap<Arc<str>, InternedString>,
     /// The actual stored strings, indexed by `InternedString::index`.
-    strings: Vec<String>,
+    strings: Vec<Arc<str>>,
 }
 
 impl StringInterner {
@@ -79,10 +112,11 @@ impl StringInterner {
     /// Creates a new interner pre-loaded with common HTML/CSS strings.
     ///
     /// Pre-allocates capacity for the known set (~90 entries) plus headroom
-    /// for page-specific strings.
+    /// for page-specific strings. The empty string `""` is always pre-interned at index 0.
     pub fn with_common_strings() -> Self {
-        // Pre-intern the most common HTML tag names
+        // Pre-intern the empty string followed by common HTML tag and attribute names
         let common = [
+            "",
             "html",
             "head",
             "body",
@@ -198,11 +232,8 @@ impl StringInterner {
     /// Interns a string, returning its handle. If the string was already
     /// interned, returns the existing handle without allocating.
     ///
-    /// Only performs a single heap allocation for new strings (the `to_string()`
-    /// call). The `HashMap` key shares the same `String` reference via index
-    /// lookup — but since we can't store `&str` references into our own `Vec`
-    /// without self-referential borrows, we clone once into the map and once
-    /// into the vec. The clone is optimized by the allocator for small strings.
+    /// Performs exactly a single heap allocation (`Arc::from(s)`) for new strings.
+    /// The `Arc` is shared between the lookup map and index vector.
     pub fn intern(&mut self, s: &str) -> InternedString {
         if let Some(&existing) = self.map.get(s) {
             return existing;
@@ -211,20 +242,45 @@ impl StringInterner {
         let index = u32::try_from(self.strings.len())
             .expect("StringInterner overflow: exceeded u32::MAX unique strings");
         let handle = InternedString { index };
-        let owned = s.to_string();
-        self.strings.push(owned.clone());
-        self.map.insert(owned, handle);
+        let arc: Arc<str> = Arc::from(s);
+        self.strings.push(Arc::clone(&arc));
+        self.map.insert(arc, handle);
         handle
     }
 
     /// Normalizes an ASCII string to lowercase and interns it.
+    ///
+    /// For inputs up to 64 bytes, uses a stack buffer to convert to lowercase and check
+    /// whether the normalized string is already interned, avoiding all heap allocations on cache hits.
     pub fn intern_ascii_lowercase(&mut self, s: &str) -> InternedString {
-        if s.bytes().any(|b| b.is_ascii_uppercase()) {
-            let lower = s.to_ascii_lowercase();
-            self.intern(&lower)
-        } else {
-            self.intern(s)
+        if !s.bytes().any(|b| b.is_ascii_uppercase()) {
+            return self.intern(s);
         }
+
+        // Fast path for tag and attribute names up to 64 bytes: check map without heap allocation
+        if s.len() <= 64 {
+            let mut buf = [0u8; 64];
+            let slice = &mut buf[..s.len()];
+            slice.copy_from_slice(s.as_bytes());
+            slice.make_ascii_lowercase();
+            if let Ok(lower_str) = std::str::from_utf8(slice) {
+                if let Some(&existing) = self.map.get(lower_str) {
+                    return existing;
+                }
+                return self.intern(lower_str);
+            }
+        }
+
+        let lower = s.to_ascii_lowercase();
+        self.intern(&lower)
+    }
+
+    /// Looks up an already-interned string without mutating the interner.
+    ///
+    /// Returns `Some(handle)` if present, or `None` if the string has not been interned.
+    #[inline]
+    pub fn get(&self, s: &str) -> Option<InternedString> {
+        self.map.get(s).copied()
     }
 
     /// Resolves an [`InternedString`] back to its string content.
@@ -240,7 +296,15 @@ impl StringInterner {
     /// if the handle is invalid or from a different interner instance.
     #[inline]
     pub fn try_resolve(&self, handle: InternedString) -> Option<&str> {
-        self.strings.get(handle.index as usize).map(|s| s.as_str())
+        self.strings.get(handle.index as usize).map(|s| s.as_ref())
+    }
+
+    /// Returns an iterator over all interned strings and their handles in index order.
+    pub fn iter(&self) -> impl Iterator<Item = (InternedString, &str)> {
+        self.strings
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (InternedString::from_raw(i as u32), s.as_ref()))
     }
 
     /// Returns the number of unique strings interned.
@@ -253,6 +317,24 @@ impl StringInterner {
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.strings.is_empty()
+    }
+
+    /// Returns the allocated capacity of the internal string storage.
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        self.strings.capacity()
+    }
+
+    /// Reserves capacity for at least `additional` more unique strings.
+    pub fn reserve(&mut self, additional: usize) {
+        self.map.reserve(additional);
+        self.strings.reserve(additional);
+    }
+
+    /// Shrinks the capacity of internal collections to fit the number of elements.
+    pub fn shrink_to_fit(&mut self) {
+        self.map.shrink_to_fit();
+        self.strings.shrink_to_fit();
     }
 
     /// Clears all interned strings, resetting the interner to an empty state.
@@ -277,6 +359,15 @@ impl Default for StringInterner {
     }
 }
 
+impl Index<InternedString> for StringInterner {
+    type Output = str;
+
+    #[inline]
+    fn index(&self, handle: InternedString) -> &str {
+        self.resolve(handle)
+    }
+}
+
 // Compile-time assertions: StringInterner is Send+Sync.
 const _: () = {
     #[allow(dead_code)]
@@ -295,6 +386,7 @@ const _: () = {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
 
     #[test]
     fn test_intern_returns_same_handle() {
@@ -303,6 +395,7 @@ mod tests {
         let b = interner.intern("hello");
         assert_eq!(a, b);
         assert_eq!(interner.len(), 1);
+        assert_eq!(&interner[a], "hello");
     }
 
     #[test]
@@ -315,17 +408,43 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve() {
+    fn test_resolve_and_try_resolve() {
         let mut interner = StringInterner::new();
         let handle = interner.intern("mango");
         assert_eq!(interner.resolve(handle), "mango");
+        assert_eq!(interner.try_resolve(handle), Some("mango"));
+        let bad = InternedString::from_raw(9999);
+        assert_eq!(interner.try_resolve(bad), None);
     }
 
     #[test]
     fn test_with_common_strings() {
         let interner = StringInterner::with_common_strings();
-        // Should have pre-interned a bunch of strings
+        // Empty string is at index 0
+        assert_eq!(interner.resolve(InternedString::EMPTY), "");
+        assert_eq!(interner.get(""), Some(InternedString::EMPTY));
         assert!(interner.len() > 50);
+        assert!(interner.contains("div"));
+        assert!(interner.contains("span"));
+    }
+
+    #[test]
+    fn test_read_only_get() {
+        let mut interner = StringInterner::new();
+        let handle = interner.intern("foo");
+        assert_eq!(interner.get("foo"), Some(handle));
+        assert_eq!(interner.get("bar"), None);
+    }
+
+    #[test]
+    fn test_intern_ascii_lowercase() {
+        let mut interner = StringInterner::new();
+        let h1 = interner.intern("div");
+        let h2 = interner.intern_ascii_lowercase("DIV");
+        let h3 = interner.intern_ascii_lowercase("DiV");
+        assert_eq!(h1, h2);
+        assert_eq!(h1, h3);
+        assert_eq!(interner.len(), 1);
     }
 
     #[test]
@@ -336,7 +455,6 @@ mod tests {
         assert_eq!(interner.len(), 2);
         interner.clear();
         assert!(interner.is_empty());
-        // Re-interning after clear should work
         let h = interner.intern("c");
         assert_eq!(interner.resolve(h), "c");
     }
@@ -350,16 +468,42 @@ mod tests {
     }
 
     #[test]
+    fn test_iter() {
+        let mut interner = StringInterner::new();
+        interner.intern("alpha");
+        interner.intern("beta");
+        let items: Vec<(InternedString, &str)> = interner.iter().collect();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].1, "alpha");
+        assert_eq!(items[1].1, "beta");
+    }
+
+    #[test]
+    fn test_interned_string_ordering() {
+        let a = InternedString::from_raw(1);
+        let b = InternedString::from_raw(2);
+        assert!(a < b);
+        let mut set = BTreeSet::new();
+        set.insert(b);
+        set.insert(a);
+        let sorted: Vec<_> = set.into_iter().collect();
+        assert_eq!(sorted, vec![a, b]);
+    }
+
+    #[test]
+    fn test_capacity_and_shrink() {
+        let mut interner = StringInterner::with_capacity(100);
+        assert!(interner.capacity() >= 100);
+        interner.intern("item");
+        interner.shrink_to_fit();
+        assert!(interner.capacity() >= 1);
+    }
+
+    #[test]
     fn test_interned_string_display() {
         let mut interner = StringInterner::new();
         let h = interner.intern("test");
         assert_eq!(format!("{h}"), "InternedString(0)");
-    }
-
-    #[test]
-    fn test_with_capacity() {
-        let interner = StringInterner::with_capacity(100);
-        assert!(interner.is_empty());
     }
 
     #[test]

@@ -1582,7 +1582,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "mango-browser"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "arboard",
  "env_logger",
@@ -1604,11 +1604,11 @@ dependencies = [
 
 [[package]]
 name = "mango_core"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "mango_css"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "log",
  "mango_core",
@@ -1618,7 +1618,7 @@ dependencies = [
 
 [[package]]
 name = "mango_engine"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "log",
  "mango_core",
@@ -1631,14 +1631,14 @@ dependencies = [
 
 [[package]]
 name = "mango_events"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "mango_core",
 ]
 
 [[package]]
 name = "mango_html"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "log",
  "mango_core",
@@ -1646,7 +1646,7 @@ dependencies = [
 
 [[package]]
 name = "mango_js"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "boa_engine",
  "boa_gc",
@@ -1660,7 +1660,7 @@ dependencies = [
 
 [[package]]
 name = "mango_layout"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "log",
  "mango_core",
@@ -1671,7 +1671,7 @@ dependencies = [
 
 [[package]]
 name = "mango_net"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "log",
  "mango_core",
@@ -1681,7 +1681,7 @@ dependencies = [
 
 [[package]]
 name = "mango_platform"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "arboard",
  "log",
@@ -1692,7 +1692,7 @@ dependencies = [
 
 [[package]]
 name = "mango_render"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "fontdue",
  "image",

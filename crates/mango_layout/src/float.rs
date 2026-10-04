@@ -211,9 +211,7 @@ impl FloatContext {
                 self.available_span(float_y, margin_box_h, container_x, container_width);
             let avail_w = max_x - min_x;
 
-            if margin_box_w <= avail_w
-                || (min_x <= container_x && max_x >= container_right)
-            {
+            if margin_box_w <= avail_w || (min_x <= container_x && max_x >= container_right) {
                 let x = if is_right {
                     max_x - margin_box_w
                 } else {
@@ -222,11 +220,11 @@ impl FloatContext {
                 return (x, float_y);
             }
 
-            if let Some(next_y) = self.next_vertical_opportunity(float_y) {
-                if next_y > float_y {
-                    float_y = next_y;
-                    continue;
-                }
+            if let Some(next_y) = self.next_vertical_opportunity(float_y)
+                && next_y > float_y
+            {
+                float_y = next_y;
+                continue;
             }
             break;
         }
@@ -269,7 +267,7 @@ impl FloatContext {
     /// Computes the bounding box of all active floats, if any.
     pub fn total_bounds(&self) -> Option<Rect> {
         let mut iter = self.left_floats.iter().chain(self.right_floats.iter());
-        let first = iter.next()?.clone();
+        let first = *iter.next()?;
         let mut min_x = first.x();
         let mut min_y = first.y();
         let mut max_x = first.right();
@@ -336,7 +334,10 @@ mod tests {
 
         // Probing with height = 0 at the exact top edge of the float (25.0)
         let (left, _) = ctx.available_span(25.0, 0.0, 0.0, 300.0);
-        assert_eq!(left, 60.0, "Zero-height probe at float top edge must detect float");
+        assert_eq!(
+            left, 60.0,
+            "Zero-height probe at float top edge must detect float"
+        );
     }
 
     #[test]

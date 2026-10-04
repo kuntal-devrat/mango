@@ -153,7 +153,12 @@ pub fn resolve_omnibox_input_with_config(
     } else if is_search_query(trimmed) {
         NavigationTarget::SearchQuery(config.format_search_url(trimmed))
     } else {
-        NavigationTarget::NetworkUrl(trimmed.to_string())
+        let url_str = if !trimmed.contains("://") && !trimmed.starts_with('/') {
+            format!("https://{}", trimmed)
+        } else {
+            trimmed.to_string()
+        };
+        NavigationTarget::NetworkUrl(url_str)
     }
 }
 
@@ -259,5 +264,21 @@ mod tests {
         assert!(!html.contains("<script>alert(1)</script>"));
         assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
         assert!(html.contains("error &amp; fail"));
+    }
+
+    #[test]
+    fn test_resolve_omnibox_input_auto_https() {
+        assert_eq!(
+            resolve_omnibox_input("example.com"),
+            NavigationTarget::NetworkUrl("https://example.com".to_string())
+        );
+        assert_eq!(
+            resolve_omnibox_input("wikipedia.org/wiki/Rust"),
+            NavigationTarget::NetworkUrl("https://wikipedia.org/wiki/Rust".to_string())
+        );
+        assert_eq!(
+            resolve_omnibox_input("http://insecure.example.com"),
+            NavigationTarget::NetworkUrl("http://insecure.example.com".to_string())
+        );
     }
 }

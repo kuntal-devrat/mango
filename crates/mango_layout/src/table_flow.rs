@@ -138,9 +138,10 @@ fn calculate_table_width(table_box: &mut LayoutBox, containing_block: &Dimension
         }
     };
 
-    let min_w = style
-        .min_width
-        .to_px_with_viewport(font_size, 16.0, container_width, container_height);
+    let min_w =
+        style
+            .min_width
+            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
     if min_w > 0.0 {
         let min_content_w = match style.box_sizing {
             BoxSizing::ContentBox => min_w,
@@ -148,9 +149,10 @@ fn calculate_table_width(table_box: &mut LayoutBox, containing_block: &Dimension
         };
         content_width = content_width.max(min_content_w);
     }
-    let max_w = style
-        .max_width
-        .to_px_with_viewport(font_size, 16.0, container_width, container_height);
+    let max_w =
+        style
+            .max_width
+            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
     if max_w > 0.0 && style.max_width != Length::Auto {
         let max_content_w = match style.box_sizing {
             BoxSizing::ContentBox => max_w,

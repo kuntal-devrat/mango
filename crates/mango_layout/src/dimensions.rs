@@ -422,12 +422,8 @@ mod tests {
         assert_eq!(dims.hit_test(mango_core::Point::new(-20.0, -20.0)), None);
 
         // From border box reconstruction
-        let reconstructed = Dimensions::from_border_box(
-            dims.border_box(),
-            dims.padding,
-            dims.border,
-            dims.margin,
-        );
+        let reconstructed =
+            Dimensions::from_border_box(dims.border_box(), dims.padding, dims.border, dims.margin);
         assert_eq!(reconstructed.content_box(), dims.content_box());
         assert_eq!(reconstructed.padding_box(), dims.padding_box());
         assert_eq!(reconstructed.border_box(), dims.border_box());
@@ -494,9 +490,9 @@ mod tests {
         assert_eq!(dims.inline_size(WritingMode::HorizontalTb), 120.0);
         assert_eq!(dims.block_size(WritingMode::HorizontalTb), 80.0);
         assert_eq!(dims.non_content_inline(WritingMode::HorizontalTb), 72.0); // 60 + 12
-        assert_eq!(dims.non_content_block(WritingMode::HorizontalTb), 48.0);  // 40 + 8
+        assert_eq!(dims.non_content_block(WritingMode::HorizontalTb), 48.0); // 40 + 8
         assert_eq!(dims.total_inline_edges(WritingMode::HorizontalTb), 102.0); // 60 + 12 + 30
-        assert_eq!(dims.total_block_edges(WritingMode::HorizontalTb), 68.0);   // 40 + 8 + 20
+        assert_eq!(dims.total_block_edges(WritingMode::HorizontalTb), 68.0); // 40 + 8 + 20
 
         // Vertical-Rl: Inline = Vertical (height), Block = Horizontal (width)
         assert_eq!(dims.inline_size(WritingMode::VerticalRl), 80.0);
@@ -508,17 +504,41 @@ mod tests {
 
         // Border box dimensions
         let bb = dims.border_box();
-        assert_eq!(dims.border_box_inline_size(WritingMode::HorizontalTb), bb.width());
-        assert_eq!(dims.border_box_block_size(WritingMode::HorizontalTb), bb.height());
-        assert_eq!(dims.border_box_inline_size(WritingMode::VerticalRl), bb.height());
-        assert_eq!(dims.border_box_block_size(WritingMode::VerticalRl), bb.width());
+        assert_eq!(
+            dims.border_box_inline_size(WritingMode::HorizontalTb),
+            bb.width()
+        );
+        assert_eq!(
+            dims.border_box_block_size(WritingMode::HorizontalTb),
+            bb.height()
+        );
+        assert_eq!(
+            dims.border_box_inline_size(WritingMode::VerticalRl),
+            bb.height()
+        );
+        assert_eq!(
+            dims.border_box_block_size(WritingMode::VerticalRl),
+            bb.width()
+        );
 
         // Margin box dimensions
         let mb = dims.margin_box();
-        assert_eq!(dims.margin_box_inline_size(WritingMode::HorizontalTb), mb.width());
-        assert_eq!(dims.margin_box_block_size(WritingMode::HorizontalTb), mb.height());
-        assert_eq!(dims.margin_box_inline_size(WritingMode::VerticalLr), mb.height());
-        assert_eq!(dims.margin_box_block_size(WritingMode::VerticalLr), mb.width());
+        assert_eq!(
+            dims.margin_box_inline_size(WritingMode::HorizontalTb),
+            mb.width()
+        );
+        assert_eq!(
+            dims.margin_box_block_size(WritingMode::HorizontalTb),
+            mb.height()
+        );
+        assert_eq!(
+            dims.margin_box_inline_size(WritingMode::VerticalLr),
+            mb.height()
+        );
+        assert_eq!(
+            dims.margin_box_block_size(WritingMode::VerticalLr),
+            mb.width()
+        );
     }
 
     #[test]
@@ -585,10 +605,21 @@ mod tests {
             EdgeSizes::all(10.0),
         );
 
-        assert_eq!(dims.area_rect(crate::box_model::BoxArea::Content), dims.content_box());
-        assert_eq!(dims.area_rect(crate::box_model::BoxArea::Padding), dims.padding_box());
-        assert_eq!(dims.area_rect(crate::box_model::BoxArea::Border), dims.border_box());
-        assert_eq!(dims.area_rect(crate::box_model::BoxArea::Margin), dims.margin_box());
+        assert_eq!(
+            dims.area_rect(crate::box_model::BoxArea::Content),
+            dims.content_box()
+        );
+        assert_eq!(
+            dims.area_rect(crate::box_model::BoxArea::Padding),
+            dims.padding_box()
+        );
+        assert_eq!(
+            dims.area_rect(crate::box_model::BoxArea::Border),
+            dims.border_box()
+        );
+        assert_eq!(
+            dims.area_rect(crate::box_model::BoxArea::Margin),
+            dims.margin_box()
+        );
     }
 }
-
