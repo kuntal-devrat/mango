@@ -74,6 +74,79 @@ impl PixelBuffer {
     }
 }
 
+/// Unified presentation surface that manages either hardware GPU compositing via `wgpu`
+/// or high-speed software compositing via `softbuffer`.
+pub enum WindowSurface {
+    Gpu(Box<crate::gpu::GpuCompositor>),
+    Software {
+        pixel_buffer: PixelBuffer,
+        compositor: mango_render::SoftwareCompositor,
+    },
+}
+
+impl WindowSurface {
+    /// Creates a new window surface, attempting hardware GPU initialization first
+    /// and cleanly falling back to software tile compositing if unsupported.
+    pub fn new(window: Arc<Window>) -> Self {
+        match crate::gpu::GpuCompositor::new(window.clone()) {
+            Ok(gpu) => {
+                log::info!("Hardware GPU Compositor active (wgpu) 🚀");
+                Self::Gpu(Box::new(gpu))
+            }
+            Err(err) => {
+                log::info!("GPU Compositor unavailable ({}), using software compositor", err);
+                let pixel_buffer = PixelBuffer::new(window);
+                let compositor = mango_render::SoftwareCompositor::new();
+                Self::Software {
+                    pixel_buffer,
+                    compositor,
+                }
+            }
+        }
+    }
+
+    /// Resizes the surface when the window changes size.
+    pub fn resize(&mut self, width: u32, height: u32) {
+        match self {
+            Self::Gpu(gpu) => gpu.resize(width, height),
+            Self::Software { pixel_buffer, .. } => pixel_buffer.resize(width, height),
+        }
+    }
+
+    /// Returns the current surface dimensions in pixels.
+    pub fn size(&self) -> (u32, u32) {
+        match self {
+            Self::Gpu(gpu) => (gpu.width, gpu.height),
+            Self::Software { pixel_buffer, .. } => pixel_buffer.size(),
+        }
+    }
+
+    /// Returns `true` if this surface is backed by a hardware GPU device.
+    pub fn is_gpu(&self) -> bool {
+        matches!(self, Self::Gpu(_))
+    }
+
+    /// Composites the entire layer tree and presents the frame.
+    pub fn composite_and_present(
+        &mut self,
+        layers: &mango_render::layer::LayerTree,
+        bg_color: Color,
+    ) -> Result<(), String> {
+        match self {
+            Self::Gpu(gpu) => gpu.render(layers, bg_color),
+            Self::Software {
+                pixel_buffer,
+                compositor,
+            } => {
+                pixel_buffer.draw(|buffer, w, h| {
+                    compositor.composite(layers, buffer, w, h, bg_color);
+                });
+                Ok(())
+            }
+        }
+    }
+}
+
 /// Creates the Mango browser window with default settings.
 ///
 /// Returns the window and a suggested initial size.

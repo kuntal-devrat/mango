@@ -237,7 +237,13 @@ pub fn layout_flex(
         (0.0, 0.0)
     };
 
-    let mut content_width = if is_width_auto {
+    let is_pre_resolved_width = container.dimensions.content.size.width > 0.0
+        && ((containing_block.content.width() - total_non_content_h - container.dimensions.content.size.width).abs() < 1.0
+            || (containing_block.content.width() - container.dimensions.content.size.width).abs() < 1.0);
+
+    let mut content_width = if is_pre_resolved_width {
+        container.dimensions.content.size.width
+    } else if is_width_auto {
         if is_margin_left_auto {
             margin_left = 0.0;
         }
@@ -279,77 +285,79 @@ pub fn layout_flex(
         }
     };
 
-    if style.max_width != Length::Auto {
-        let max_content_w = match style.max_width {
-            Length::MinContent => (intrinsic_min - total_non_content_h).max(0.0),
-            Length::MaxContent | Length::Content => (intrinsic_max - total_non_content_h).max(0.0),
-            Length::FitContent => {
-                let avail =
-                    (container_width - total_non_content_h - margin_left - margin_right).max(0.0);
-                let max_c = (intrinsic_max - total_non_content_h).max(0.0);
-                let min_c = (intrinsic_min - total_non_content_h).max(0.0);
-                avail.min(max_c).max(min_c)
-            }
-            _ => {
-                let raw_max = style.max_width.to_px_with_viewport(
-                    font_size,
-                    root_font_size,
-                    container_width,
-                    container_height,
-                );
-                if style.box_sizing == BoxSizing::BorderBox {
-                    (raw_max - total_non_content_h).max(0.0)
-                } else {
-                    raw_max
+    if !is_pre_resolved_width {
+        if style.max_width != Length::Auto {
+            let max_content_w = match style.max_width {
+                Length::MinContent => (intrinsic_min - total_non_content_h).max(0.0),
+                Length::MaxContent | Length::Content => (intrinsic_max - total_non_content_h).max(0.0),
+                Length::FitContent => {
+                    let avail =
+                        (container_width - total_non_content_h - margin_left - margin_right).max(0.0);
+                    let max_c = (intrinsic_max - total_non_content_h).max(0.0);
+                    let min_c = (intrinsic_min - total_non_content_h).max(0.0);
+                    avail.min(max_c).max(min_c)
                 }
-            }
-        };
-        content_width = content_width.min(max_content_w);
-    }
-    if style.min_width != Length::Auto {
-        let min_content_w = match style.min_width {
-            Length::MinContent => (intrinsic_min - total_non_content_h).max(0.0),
-            Length::MaxContent | Length::Content => (intrinsic_max - total_non_content_h).max(0.0),
-            Length::FitContent => {
-                let avail =
-                    (container_width - total_non_content_h - margin_left - margin_right).max(0.0);
-                let max_c = (intrinsic_max - total_non_content_h).max(0.0);
-                let min_c = (intrinsic_min - total_non_content_h).max(0.0);
-                avail.min(max_c).max(min_c)
-            }
-            _ => {
-                let raw_min = style.min_width.to_px_with_viewport(
-                    font_size,
-                    root_font_size,
-                    container_width,
-                    container_height,
-                );
-                if style.box_sizing == BoxSizing::BorderBox {
-                    (raw_min - total_non_content_h).max(0.0)
-                } else {
-                    raw_min
+                _ => {
+                    let raw_max = style.max_width.to_px_with_viewport(
+                        font_size,
+                        root_font_size,
+                        container_width,
+                        container_height,
+                    );
+                    if style.box_sizing == BoxSizing::BorderBox {
+                        (raw_max - total_non_content_h).max(0.0)
+                    } else {
+                        raw_max
+                    }
                 }
-            }
-        };
-        content_width = content_width.max(min_content_w);
+            };
+            content_width = content_width.min(max_content_w);
+        }
+        if style.min_width != Length::Auto {
+            let min_content_w = match style.min_width {
+                Length::MinContent => (intrinsic_min - total_non_content_h).max(0.0),
+                Length::MaxContent | Length::Content => (intrinsic_max - total_non_content_h).max(0.0),
+                Length::FitContent => {
+                    let avail =
+                        (container_width - total_non_content_h - margin_left - margin_right).max(0.0);
+                    let max_c = (intrinsic_max - total_non_content_h).max(0.0);
+                    let min_c = (intrinsic_min - total_non_content_h).max(0.0);
+                    avail.min(max_c).max(min_c)
+                }
+                _ => {
+                    let raw_min = style.min_width.to_px_with_viewport(
+                        font_size,
+                        root_font_size,
+                        container_width,
+                        container_height,
+                    );
+                    if style.box_sizing == BoxSizing::BorderBox {
+                        (raw_min - total_non_content_h).max(0.0)
+                    } else {
+                        raw_min
+                    }
+                }
+            };
+            content_width = content_width.max(min_content_w);
+        }
+
+        let underflow =
+            container_width - (content_width + total_non_content_h + margin_left + margin_right);
+
+        if is_margin_left_auto && is_margin_right_auto {
+            margin_left = (underflow / 2.0).max(0.0);
+            margin_right = (underflow / 2.0).max(0.0);
+        } else if is_margin_left_auto {
+            margin_left = underflow.max(0.0);
+        } else if is_margin_right_auto {
+            margin_right = underflow.max(0.0);
+        } else if !is_width_auto {
+            margin_right += underflow;
+        }
+
+        container.dimensions.margin =
+            EdgeSizes::new(margin_top, margin_right, margin_bottom, margin_left);
     }
-
-    let underflow =
-        container_width - (content_width + total_non_content_h + margin_left + margin_right);
-
-    if is_margin_left_auto && is_margin_right_auto {
-        margin_left = (underflow / 2.0).max(0.0);
-        margin_right = (underflow / 2.0).max(0.0);
-    } else if is_margin_left_auto {
-        margin_left = underflow.max(0.0);
-    } else if is_margin_right_auto {
-        margin_right = underflow.max(0.0);
-    } else if !is_width_auto {
-        margin_right += underflow;
-    }
-
-    container.dimensions.margin =
-        EdgeSizes::new(margin_top, margin_right, margin_bottom, margin_left);
     container.dimensions.content.size.width = content_width;
 
     // Position container in parent
@@ -545,7 +553,7 @@ pub fn layout_flex(
                     mango_render::FontFamily::SansSerif,
                     &mut memo,
                 );
-                (c_min - pad_main - border_main).max(0.0)
+                (c_min - pad_main - border_main - margin_main).max(0.0)
             } else if is_basis_max_content || is_basis_content {
                 let mut memo = std::collections::HashMap::new();
                 let (_, c_max) = crate::table_flow::measure_box_intrinsic_widths(
@@ -555,7 +563,7 @@ pub fn layout_flex(
                     mango_render::FontFamily::SansSerif,
                     &mut memo,
                 );
-                (c_max - pad_main - border_main).max(0.0)
+                (c_max - pad_main - border_main - margin_main).max(0.0)
             } else if is_basis_fit_content {
                 let mut memo = std::collections::HashMap::new();
                 let (c_min, c_max) = crate::table_flow::measure_box_intrinsic_widths(
@@ -566,7 +574,7 @@ pub fn layout_flex(
                     &mut memo,
                 );
                 let fit = content_width.min(c_max).max(c_min);
-                (fit - pad_main - border_main).max(0.0)
+                (fit - pad_main - border_main - margin_main).max(0.0)
             } else if !is_basis_auto {
                 is_main_explicit = true;
                 basis.to_px_with_viewport(c_fs, c_root_fs, content_width, container_height)
@@ -579,7 +587,7 @@ pub fn layout_flex(
                     mango_render::FontFamily::SansSerif,
                     &mut memo,
                 );
-                (c_min - pad_main - border_main).max(0.0)
+                (c_min - pad_main - border_main - margin_main).max(0.0)
             } else if matches!(child_style.width, Length::MaxContent | Length::Content) {
                 let mut memo = std::collections::HashMap::new();
                 let (_, c_max) = crate::table_flow::measure_box_intrinsic_widths(
@@ -589,7 +597,7 @@ pub fn layout_flex(
                     mango_render::FontFamily::SansSerif,
                     &mut memo,
                 );
-                (c_max - pad_main - border_main).max(0.0)
+                (c_max - pad_main - border_main - margin_main).max(0.0)
             } else if matches!(child_style.width, Length::FitContent) {
                 let mut memo = std::collections::HashMap::new();
                 let (c_min, c_max) = crate::table_flow::measure_box_intrinsic_widths(
@@ -600,7 +608,7 @@ pub fn layout_flex(
                     &mut memo,
                 );
                 let fit = content_width.min(c_max).max(c_min);
-                (fit - pad_main - border_main).max(0.0)
+                (fit - pad_main - border_main - margin_main).max(0.0)
             } else if child_style.width != Length::Auto {
                 is_main_explicit = true;
                 child_style.width.to_px_with_viewport(
@@ -666,7 +674,17 @@ pub fn layout_flex(
                             *intrinsic_width
                         }
                     }
-                    _ => 0.0,
+                    _ => {
+                        let mut memo = std::collections::HashMap::new();
+                        let (_, c_max) = crate::table_flow::measure_box_intrinsic_widths(
+                            child,
+                            c_fs,
+                            mango_render::FontWeight::Regular,
+                            mango_render::FontFamily::SansSerif,
+                            &mut memo,
+                        );
+                        (c_max - pad_main - border_main - margin_main).max(0.0)
+                    }
                 }
             }
         } else if is_basis_min_content
@@ -961,7 +979,7 @@ pub fn layout_flex(
                         &mut memo,
                     );
                     if max_w > 0.0 {
-                        (max_w - pad_cross - border_cross).max(0.0)
+                        (max_w - pad_cross - border_cross - margin_cross).max(0.0)
                     } else {
                         (content_width - pad_cross - border_cross - margin_cross).max(0.0)
                     }
@@ -1161,7 +1179,7 @@ pub fn layout_flex(
                             mango_render::FontFamily::SansSerif,
                             &mut memo,
                         );
-                        min_w
+                        (min_w - pad_main - border_main - margin_main).max(0.0)
                     }
                 };
                 min_main = auto_min.min(max_main);
@@ -1716,7 +1734,7 @@ pub fn layout_flex(
                             .map(|s| s.height == Length::Auto)
                             .unwrap_or(true))
             } else {
-                child_style.width == Length::Auto
+                child_style.width == Length::Auto || matches!(child_style.width, Length::Percent(p) if p >= 99.9)
             };
 
             let mut item_cross = m.cross;

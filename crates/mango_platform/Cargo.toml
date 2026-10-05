@@ -6,7 +6,11 @@ description = "Window management, input handling, and platform abstractions for 
 
 [dependencies]
 mango_core.workspace = true
+mango_render.workspace = true
 winit.workspace = true
 softbuffer.workspace = true
 arboard.workspace = true
 log.workspace = true
+wgpu.workspace = true
+bytemuck.workspace = true
+pollster.workspace = true

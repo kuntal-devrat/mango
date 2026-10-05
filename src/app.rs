@@ -12,7 +12,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::{Window, WindowId};
 
 use mango_platform::input::{KeyEvent, KeyState, MangoKey, Modifiers};
-use mango_platform::window::{PixelBuffer, create_window};
+use mango_platform::window::{WindowSurface, create_window};
 
 use crate::browser::BrowserChrome;
 
@@ -20,8 +20,8 @@ use crate::browser::BrowserChrome;
 pub struct MangoApp {
     /// The main window (created on resume).
     window: Option<Arc<Window>>,
-    /// The pixel buffer for rendering.
-    pixel_buffer: Option<PixelBuffer>,
+    /// Unified presentation surface (GPU compositor or software tile blitter).
+    surface: Option<WindowSurface>,
     /// The browser chrome (UI, tabs, navigation, JS runtime).
     browser: Option<BrowserChrome>,
     /// Current modifier key state.
@@ -40,29 +40,28 @@ impl MangoApp {
     pub fn new() -> Self {
         Self {
             window: None,
-            pixel_buffer: None,
+            surface: None,
             browser: None,
             modifiers: Modifiers::default(),
             last_frame: None,
         }
     }
 
-    /// Redraws the entire window.
+    /// Redraws the browser window via hardware GPU compositing or software tile blits.
     fn redraw(&mut self) {
-        let Some(browser) = &self.browser else {
+        let Some(browser) = &mut self.browser else {
             return;
         };
-        let Some(pixel_buffer) = &mut self.pixel_buffer else {
+        let Some(surface) = &mut self.surface else {
             return;
         };
 
-        let display_list = browser.build_display_list(pixel_buffer.size());
+        let size = surface.size();
+        browser.update_layers(size);
 
-        pixel_buffer.draw(|buffer, width, height| {
-            let bg = mango_core::Color::MANGO_LIGHT;
-            buffer.fill(bg.to_rgb_u32());
-            mango_render::painter::paint(&display_list, buffer, width, height);
-        });
+        if let Err(err) = surface.composite_and_present(&browser.layer_tree, browser.canvas_bg()) {
+            log::warn!("Compositor presentation error: {err}");
+        }
     }
 }
 
@@ -74,18 +73,18 @@ impl ApplicationHandler for MangoApp {
 
         log::info!("Creating Mango window...");
         let window = create_window(event_loop);
-        let pixel_buffer = PixelBuffer::new(window.clone());
+        let surface = WindowSurface::new(window.clone());
 
         let size = window.inner_size();
         let mut browser = BrowserChrome::new(size.width, size.height);
         browser.async_navigation = true;
 
         self.window = Some(window.clone());
-        self.pixel_buffer = Some(pixel_buffer);
+        self.surface = Some(surface);
         self.browser = Some(browser);
 
         window.request_redraw();
-        log::info!("Mango is ready with Phase 7 Web Layout & Viewport Engine! 🥭");
+        log::info!("Mango is ready with Hardware GPU Compositing & Viewport Engine! 🥭");
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
@@ -153,12 +152,18 @@ impl ApplicationHandler for MangoApp {
                 if let Some(browser) = &self.browser {
                     browser.persist_profile();
                 }
+                self.surface = None;
+                self.browser = None;
+                self.window = None;
                 event_loop.exit();
             }
 
             WindowEvent::Resized(size) => {
-                if let Some(pb) = &mut self.pixel_buffer {
-                    pb.resize(size.width, size.height);
+                if size.width == 0 || size.height == 0 {
+                    return;
+                }
+                if let Some(surface) = &mut self.surface {
+                    surface.resize(size.width, size.height);
                 }
                 if let Some(browser) = &mut self.browser {
                     browser.resize(size.width, size.height);
@@ -321,5 +326,15 @@ impl ApplicationHandler for MangoApp {
 
             _ => {}
         }
+    }
+
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        log::info!("Exiting Mango application...");
+        if let Some(browser) = &self.browser {
+            browser.persist_profile();
+        }
+        self.surface = None;
+        self.browser = None;
+        self.window = None;
     }
 }

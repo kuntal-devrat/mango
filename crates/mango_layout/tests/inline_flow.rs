@@ -455,3 +455,27 @@ fn test_white_space_break_spaces_and_pre_wrap() {
     assert_eq!(pl_container.children[0].text(), Some("Word1 Word2"));
     assert_eq!(pl_container.children[1].text(), Some("Word3 Word4"));
 }
+
+#[test]
+fn test_wikipedia_ongoing_spacing() {
+    let html = r##"<div class="mw-parser-output">
+<style>
+.mw-parser-output .hlist dl,.mw-parser-output .hlist ol,.mw-parser-output .hlist ul{margin:0;padding:0}
+.mw-parser-output .hlist dd,.mw-parser-output .hlist dt,.mw-parser-output .hlist li{margin:0;display:inline}
+.mw-parser-output .hlist.inline,.mw-parser-output .hlist.inline dl,.mw-parser-output .hlist.inline ol,.mw-parser-output .hlist.inline ul{display:inline}
+</style>
+<div><b>Ongoing</b>: <link rel="foo"><div class="hlist inline"><ul><li><a href="#">Iran war</a></li></ul></div></div>
+</div>"##;
+    let doc = mango_html::parse_html(html);
+    let sheets = mango_layout::extract_style_elements(&doc);
+    let sheet_refs: Vec<&mango_css::parser::Stylesheet> = sheets.iter().collect();
+    let styled = mango_layout::build_style_tree(&doc, &sheet_refs).unwrap();
+    let mut box_tree = mango_layout::build_box_tree(&styled);
+    let cb = mango_layout::Dimensions::new(mango_core::Rect::new(0.0, 0.0, 800.0, 600.0));
+    let mut float_ctx = mango_layout::FloatContext::new();
+    mango_layout::layout_block(&mut box_tree, &cb, &mut float_ctx);
+
+    assert!(box_tree.dimensions.content.size.width > 0.0);
+}
+
+

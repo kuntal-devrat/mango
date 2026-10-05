@@ -14,7 +14,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 authors = ["Mango Contributors"]
 license = "MIT"
@@ -47,6 +47,9 @@ arboard = "3.4"
 boa_engine = "0.22"
 boa_gc = "0.22"
 wuff = "0.2.9"
+wgpu = "30"
+bytemuck = { version = "1.25", features = ["derive"] }
+pollster = "1.0"
 
 [package]
 name = "mango-browser"

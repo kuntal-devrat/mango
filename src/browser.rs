@@ -243,6 +243,10 @@ pub struct BrowserChrome {
     pub async_navigation: bool,
     /// Channel receiver for images decoded by background workers.
     image_rx: Option<std::sync::mpsc::Receiver<String>>,
+    /// Compositor layer tree for GPU/tiled layer presentation.
+    pub layer_tree: mango_render::LayerTree,
+    /// Monotonic frame counter for tile cache lifecycle.
+    pub frame_counter: u64,
 }
 
 /// Pre-populates Wikipedia Vector 2022 appearance controls (Text size, Width, Color)
@@ -251,12 +255,60 @@ fn preprocess_wikipedia_appearance_html(html: &mut String, url: &str) {
     if url.contains("wikipedia.org") || html.contains("client-nojs") {
         *html = html.replacen("client-nojs", "client-js", 1);
     }
-    if url.contains("wikipedia.org") || html.contains("vector-appearance") {
-        let hide_style = "<style>.vector-pinned-container, #vector-appearance-pinned-container, .vector-column-end { display: none !important; }</style>";
-        if let Some(pos) = html.find("</head>") {
-            html.insert_str(pos, hide_style);
-        } else {
-            html.push_str(hide_style);
+    if (url.contains("wikipedia.org") || html.contains("vector-appearance"))
+        && !html.contains("vector-appearance-content")
+    {
+        let content_html = r#"<div id="vector-appearance-content" class="vector-appearance-content" style="padding: 4px 0; font-family: sans-serif; color: #202122; font-size: 14px;">
+    <div style="padding: 12px 0 8px 0; border-bottom: 1px solid #eaecf0;">
+        <div style="color: #54595d; font-size: 13px; margin-bottom: 8px;">Text</div>
+        <div style="display: flex; align-items: center; margin: 6px 0; gap: 8px; cursor: pointer;">
+            <input type="radio" id="text-size-small" name="text-size" value="small" style="margin: 0; cursor: pointer;">
+            <label for="text-size-small" style="font-size: 14px; cursor: pointer;">Small</label>
+        </div>
+        <div style="display: flex; align-items: center; margin: 6px 0; gap: 8px; cursor: pointer;">
+            <input type="radio" id="text-size-standard" name="text-size" value="standard" checked style="margin: 0; cursor: pointer;">
+            <label for="text-size-standard" style="font-size: 14px; cursor: pointer;">Standard</label>
+        </div>
+        <div style="display: flex; align-items: center; margin: 6px 0; gap: 8px; cursor: pointer;">
+            <input type="radio" id="text-size-large" name="text-size" value="large" style="margin: 0; cursor: pointer;">
+            <label for="text-size-large" style="font-size: 14px; cursor: pointer;">Large</label>
+        </div>
+    </div>
+    <div style="padding: 12px 0 8px 0; border-bottom: 1px solid #eaecf0;">
+        <div style="color: #54595d; font-size: 13px; margin-bottom: 8px;">Width</div>
+        <div style="display: flex; align-items: center; margin: 6px 0; gap: 8px; cursor: pointer;">
+            <input type="radio" id="width-standard" name="page-width" value="standard" checked style="margin: 0; cursor: pointer;">
+            <label for="width-standard" style="font-size: 14px; cursor: pointer;">Standard</label>
+        </div>
+        <div style="display: flex; align-items: center; margin: 6px 0; gap: 8px; cursor: pointer;">
+            <input type="radio" id="width-wide" name="page-width" value="wide" style="margin: 0; cursor: pointer;">
+            <label for="width-wide" style="font-size: 14px; cursor: pointer;">Wide</label>
+        </div>
+    </div>
+    <div style="padding: 12px 0 8px 0;">
+        <div style="color: #54595d; font-size: 13px; margin-bottom: 8px;">Color</div>
+        <div style="display: flex; align-items: center; margin: 6px 0; gap: 8px; cursor: pointer;">
+            <input type="radio" id="color-auto" name="color-scheme" value="auto" style="margin: 0; cursor: pointer;">
+            <label for="color-auto" style="font-size: 14px; cursor: pointer;">Automatic</label>
+        </div>
+        <div style="display: flex; align-items: center; margin: 6px 0; gap: 8px; cursor: pointer;">
+            <input type="radio" id="color-light" name="color-scheme" value="light" checked style="margin: 0; cursor: pointer;">
+            <label for="color-light" style="font-size: 14px; cursor: pointer;">Light</label>
+        </div>
+        <div style="display: flex; align-items: center; margin: 6px 0; gap: 8px; cursor: pointer;">
+            <input type="radio" id="color-dark" name="color-scheme" value="dark" style="margin: 0; cursor: pointer;">
+            <label for="color-dark" style="font-size: 14px; cursor: pointer;">Dark</label>
+        </div>
+    </div>
+</div>"#;
+
+        if let Some(pos) = html.find("vector-appearance-pinnable-header") {
+            if let Some(hide_pos) = html[pos..].find("hide</button>") {
+                if let Some(close_div) = html[pos + hide_pos..].find("</div>") {
+                    let insert_pos = pos + hide_pos + close_div + 6;
+                    html.insert_str(insert_pos, content_html);
+                }
+            }
         }
     }
 }
@@ -340,6 +392,8 @@ impl BrowserChrome {
             pending_navigation: None,
             async_navigation: false,
             image_rx: None,
+            layer_tree: mango_render::LayerTree::new(width, height),
+            frame_counter: 0,
         };
 
         chrome.load_html_internal(initial_html, "about:welcome".to_string(), false);
@@ -553,12 +607,18 @@ impl BrowserChrome {
     pub fn resize(&mut self, width: u32, height: u32) {
         self.width = width;
         self.height = height;
+        self.layer_tree.resize(width, height);
         self.relayout();
         let cw = self.content_width();
         let ch = self.content_height();
         if let Some(ref mut js_rt) = self.js_runtime {
             let _ = js_rt.dispatch_window_resize(cw, ch);
         }
+    }
+
+    /// Returns the active canvas background color.
+    pub fn canvas_bg(&self) -> Color {
+        self.canvas_bg
     }
 
     /// Returns the active document's layout root box, if layout has completed.
@@ -1560,6 +1620,84 @@ impl BrowserChrome {
         }
 
         dl.push(DisplayCommand::PopClip);
+
+        // Append Chrome UI display commands
+        let chrome_dl = self.build_chrome_display_list((width, height));
+        for cmd in chrome_dl.into_iter() {
+            dl.push(cmd);
+        }
+
+        dl
+    }
+
+    /// Updates the layer tree with the latest chrome and page display lists,
+    /// driving incremental tile rasterization and damage repair.
+    pub fn update_layers(&mut self, (width, height): (u32, u32)) {
+        if self.width != width || self.height != height {
+            self.resize(width, height);
+        }
+        self.frame_counter = self.frame_counter.wrapping_add(1);
+        let w = width as f32;
+        let h = height as f32;
+        let content_y = HEADER_HEIGHT + 1.0;
+        let content_h = (h - HEADER_HEIGHT - STATUS_BAR_HEIGHT - 1.0).max(10.0);
+        let scroll_h = self.scrollable_height();
+        let chrome_dl = self.build_chrome_display_list((width, height));
+
+        let page_raw = if let Some(root) = &self.root_box {
+            mango_layout::display_list::build_display_list(root)
+        } else {
+            self.page_display_list.clone()
+        };
+
+        // 1. Page Content Layer (unscrolled coordinates, tiled)
+        self.layer_tree.page_layer.bounds = Rect::new(0.0, content_y, w, content_h);
+        self.layer_tree.page_layer.scroll_offset = (0.0, self.scroll_y);
+
+        if self.layer_tree.page_layer.display_list != page_raw {
+            self.layer_tree.page_layer.display_list = page_raw;
+            self.layer_tree.page_layer.invalidate_all();
+        }
+
+        if let Some(grid) = &mut self.layer_tree.page_layer.tile_grid {
+            grid.update_content_size(w, scroll_h);
+        }
+
+        // 2. Chrome UI Layer
+        if self.layer_tree.chrome_layer.display_list != chrome_dl {
+            self.layer_tree.chrome_layer.display_list = chrome_dl;
+            self.layer_tree.chrome_layer.invalidate_all();
+        }
+
+        // 3. Rasterize dirty regions
+        self.layer_tree.chrome_layer.rasterize_if_dirty(Color::TRANSPARENT, self.frame_counter);
+        self.layer_tree.page_layer.rasterize_if_dirty(self.canvas_bg, self.frame_counter);
+
+        // 4. Stale tile eviction
+        if let Some(grid) = &mut self.layer_tree.page_layer.tile_grid {
+            grid.prune_unused_tiles(self.frame_counter, 300);
+        }
+    }
+
+    /// Marks a specific rectangle in the page content area as damaged.
+    pub fn invalidate_page_rect(&mut self, rect: Rect) {
+        self.layer_tree.page_layer.invalidate_rect(rect);
+    }
+
+    /// Marks a specific rectangle in the chrome area as damaged.
+    pub fn invalidate_chrome_rect(&mut self, rect: Rect) {
+        self.layer_tree.chrome_layer.invalidate_rect(rect);
+    }
+
+    /// Builds the display list for the browser chrome UI (scrollbar, tab strip,
+    /// toolbar, omnibox, bookmark bar, status bar, popups, and devtools).
+    pub fn build_chrome_display_list(&self, (width, height): (u32, u32)) -> DisplayList {
+        let mut dl = DisplayList::new();
+        let w = width as f32;
+        let h = height as f32;
+
+        let content_y = HEADER_HEIGHT + 1.0;
+        let content_h = (h - HEADER_HEIGHT - STATUS_BAR_HEIGHT - 1.0).max(10.0);
 
         // ── SCROLLBAR (y = content_y..content_y + content_h) ──
         let max_s = self.max_scroll();
@@ -6529,6 +6667,11 @@ fn collect_box_background_images(b: &mango_layout::box_tree::LayoutBox, out: &mu
         if let Some(ref bg) = s.background_image {
             out.push(bg.clone());
         }
+        for layer in &s.background_layers {
+            if let Some(ref bg) = layer.image {
+                out.push(bg.clone());
+            }
+        }
         if let Some(ref mask) = s.mask_image {
             out.push(mask.clone());
         }
@@ -6690,6 +6833,11 @@ fn welcome_page_html() -> String {
                 border: 1px solid #dfe1e5;
                 border-radius: 24px;
                 box-sizing: border-box;
+                outline: none;
+            }
+            input[type="text"]:focus {
+                border-color: #ffa136;
+                outline: none;
             }
             .buttons-row {
                 margin-top: 18px;

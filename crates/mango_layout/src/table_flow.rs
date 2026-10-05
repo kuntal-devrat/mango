@@ -304,6 +304,31 @@ fn extract_colgroup_specs(table_box: &LayoutBox, table_width: f32) -> Vec<Option
     specs
 }
 
+fn get_node_horizontal_spacing(node: &LayoutBox, font_size: f32) -> f32 {
+    if let Some(s) = &node.style {
+        let p_l = s.padding_left.to_px(font_size, font_size, 0.0);
+        let p_r = s.padding_right.to_px(font_size, font_size, 0.0);
+        let b_l = s.border_left_width;
+        let b_r = s.border_right_width;
+        let m_l = match s.margin_left {
+            Length::Px(px) if px > 0.0 => px,
+            _ => 0.0,
+        };
+        let m_r = match s.margin_right {
+            Length::Px(px) if px > 0.0 => px,
+            _ => 0.0,
+        };
+        p_l + p_r + b_l + b_r + m_l + m_r
+    } else {
+        node.dimensions.padding.left
+            + node.dimensions.padding.right
+            + node.dimensions.border.left
+            + node.dimensions.border.right
+            + node.dimensions.margin.left
+            + node.dimensions.margin.right
+    }
+}
+
 /// Measures the intrinsic min-content and max-content width of a node.
 /// Recognizes nested tables and computes their min/max content recursively.
 pub(crate) fn measure_box_intrinsic_widths(
@@ -316,6 +341,19 @@ pub(crate) fn measure_box_intrinsic_widths(
     let key = node as *const LayoutBox as usize;
     if let Some(&res) = memo.get(&key) {
         return res;
+    }
+
+    if let Some(style) = &node.style {
+        if style.display == Display::None
+            || matches!(
+                style.position,
+                mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
+            )
+        {
+            let res = (0.0, 0.0);
+            memo.insert(key, res);
+            return res;
+        }
     }
 
     let font_size = node
@@ -368,15 +406,125 @@ pub(crate) fn measure_box_intrinsic_widths(
         return res;
     }
 
-    // 2. Replaced elements
+    // 2. Form controls & Replaced elements
+    if node.tag_name.as_deref() == Some("select") {
+        let mut w = None;
+        if let Some(style) = &node.style {
+            match style.width {
+                Length::Px(px) if px > 0.0 => w = Some(px),
+                _ => {}
+            }
+        }
+        let fixed_w = w.unwrap_or_else(|| {
+            let text = node
+                .get_attribute("_mango_selected_text")
+                .or_else(|| node.get_attribute("value"))
+                .unwrap_or("Select...");
+            let pad_h = node.dimensions.padding.left
+                + node.dimensions.padding.right
+                + node.dimensions.border.left
+                + node.dimensions.border.right;
+            let text_w = crate::inline_flow::measure_text_width_with_style(
+                text, font_size, weight, family,
+            );
+            let arrow_space = if node
+                .style
+                .as_ref()
+                .map(|s| s.appearance == mango_css::values::Appearance::None)
+                .unwrap_or(false)
+            {
+                20.0
+            } else {
+                28.0
+            };
+            (text_w + pad_h + arrow_space).max(60.0)
+        });
+        let res = (fixed_w, fixed_w);
+        memo.insert(key, res);
+        return res;
+    }
+
+    if node.tag_name.as_deref() == Some("input") {
+        let mut w = None;
+        if let Some(w_attr) = node.get_attribute("width") {
+            let trimmed = w_attr.trim().trim_end_matches("px");
+            if let Ok(val) = trimmed.parse::<f32>()
+                && val > 0.0
+            {
+                w = Some(val);
+            }
+        }
+        if w.is_none()
+            && let Some(style) = &node.style
+        {
+            match style.width {
+                Length::Px(px) if px > 0.0 => w = Some(px),
+                _ => {}
+            }
+        }
+        let fixed_w = w.unwrap_or_else(|| {
+            let itype = node.get_attribute("type").unwrap_or("text");
+            if itype == "checkbox" || itype == "radio" {
+                return 16.0;
+            }
+            let pad_h = node.dimensions.padding.left
+                + node.dimensions.padding.right
+                + node.dimensions.border.left
+                + node.dimensions.border.right;
+            if itype == "submit" || itype == "button" || itype == "reset" {
+                let val = node.get_attribute("value").unwrap_or("Submit");
+                let text_w = crate::inline_flow::measure_text_width_with_style(
+                    val, font_size, weight, family,
+                );
+                return (text_w + pad_h + 16.0).max(40.0);
+            }
+            let size = node
+                .get_attribute("size")
+                .and_then(|s| s.trim().parse::<f32>().ok())
+                .unwrap_or(20.0);
+            (size * (font_size * 0.55) + pad_h + 8.0).max(60.0)
+        });
+        let res = (fixed_w, fixed_w);
+        memo.insert(key, res);
+        return res;
+    }
+
+    if node.tag_name.as_deref() == Some("button") {
+        let mut w = None;
+        if let Some(style) = &node.style {
+            match style.width {
+                Length::Px(px) if px > 0.0 => w = Some(px),
+                _ => {}
+            }
+        }
+        if let Some(fixed_w) = w {
+            let res = (fixed_w, fixed_w);
+            memo.insert(key, res);
+            return res;
+        }
+        // If button has children (text/elements), measure child content
+        let mut sum_min = 0.0f32;
+        let mut sum_max = 0.0f32;
+        for child in &node.children {
+            let (c_min, c_max) = measure_box_intrinsic_widths(child, font_size, weight, family, memo);
+            sum_min += c_min;
+            sum_max += c_max;
+        }
+        let pad_h = get_node_horizontal_spacing(node, font_size);
+        let btn_min = (sum_min + pad_h + 12.0).max(32.0);
+        let btn_max = (sum_max + pad_h + 12.0).max(32.0);
+        let res = (btn_min, btn_max);
+        memo.insert(key, res);
+        return res;
+    }
+
     if matches!(
         node.tag_name.as_deref(),
         Some("img")
             | Some("svg")
-            | Some("input")
-            | Some("button")
-            | Some("select")
             | Some("iframe")
+            | Some("canvas")
+            | Some("video")
     ) {
         let mut w = None;
         if let Some(w_attr) = node.get_attribute("width") {
@@ -461,10 +609,7 @@ pub(crate) fn measure_box_intrinsic_widths(
         if is_row && child_count > 1 {
             max_w += (child_count - 1) as f32 * col_gap;
         }
-        let non_content_h = node.dimensions.padding.left
-            + node.dimensions.padding.right
-            + node.dimensions.border.left
-            + node.dimensions.border.right;
+        let non_content_h = get_node_horizontal_spacing(node, font_size);
         let res = (min_w + non_content_h, max_w + non_content_h);
         memo.insert(key, res);
         return res;
@@ -537,10 +682,7 @@ pub(crate) fn measure_box_intrinsic_widths(
             }
         }
 
-        let non_content_h = node.dimensions.padding.left
-            + node.dimensions.padding.right
-            + node.dimensions.border.left
-            + node.dimensions.border.right;
+        let non_content_h = get_node_horizontal_spacing(node, font_size);
 
         let table_min = n_cols_min.iter().sum::<f32>() + non_content_h;
         let table_max = explicit_table_w.unwrap_or(n_cols_max.iter().sum::<f32>() + non_content_h);
@@ -554,10 +696,7 @@ pub(crate) fn measure_box_intrinsic_widths(
     if let Some(style) = &node.style {
         match style.width {
             Length::Px(px) if px >= 0.0 => {
-                let non_content_h = node.dimensions.padding.left
-                    + node.dimensions.padding.right
-                    + node.dimensions.border.left
-                    + node.dimensions.border.right;
+                let non_content_h = get_node_horizontal_spacing(node, font_size);
                 let w = if style.box_sizing == mango_css::values::BoxSizing::BorderBox {
                     (px - non_content_h).max(0.0)
                 } else {
@@ -574,11 +713,22 @@ pub(crate) fn measure_box_intrinsic_widths(
     let mut sum_min = 0.0f32;
     let mut sum_max = 0.0f32;
     for child in &node.children {
+        if let Some(child_style) = &child.style {
+            if child_style.display == Display::None
+                || matches!(
+                    child_style.position,
+                    mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
+                )
+            {
+                continue;
+            }
+        }
         let (c_min, c_max) = measure_box_intrinsic_widths(child, font_size, weight, family, memo);
         sum_min = sum_min.max(c_min);
         sum_max = sum_max.max(c_max);
     }
-    let res = (sum_min, sum_max);
+    let non_content_h = get_node_horizontal_spacing(node, font_size);
+    let res = (sum_min + non_content_h, sum_max + non_content_h);
     memo.insert(key, res);
     res
 }

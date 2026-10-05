@@ -4,6 +4,7 @@
 
 **An ultra-lightweight, memory-efficient web browser and rendering engine written from scratch in 100% pure Rust.**
 
+[![Version](https://img.shields.io/badge/version-v0.1.2-blue.svg)](Cargo.toml)
 [![CI](https://github.com/kuntal-devrat/mango/actions/workflows/ci.yml/badge.svg)](https://github.com/kuntal-devrat/mango/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
@@ -30,7 +31,7 @@ Modern web browsers have evolved into multi-gigabyte operating systems that cons
 
 > **The Web is fundamentally a document platform, not an operating system runtime.**
 
-Every single layer of Mango — from the WHATWG HTML5 tokenizer and tree builder, to the CSS cascade, multi-formatting-context layout engine, 2D software rasterizer, networking pipeline, and JavaScript runtime — has been engineered from the ground up in memory-safe, fearless Rust with zero C/C++ engine dependencies.
+Every single layer of Mango — from the WHATWG HTML5 tokenizer and tree builder, to the CSS cascade, multi-formatting-context layout engine, 2D software rasterizer, GPU compositor, networking pipeline, and JavaScript runtime — has been engineered from the ground up in memory-safe, fearless Rust with zero C/C++ engine dependencies.
 
 ---
 
@@ -48,18 +49,25 @@ Every single layer of Mango — from the WHATWG HTML5 tokenizer and tree builder
 
 ## Screenshots
 
-### Rust Language Official Website (`https://www.rust-lang.org/`)
-Rendered by Mango's headless engine: multi-column flexbox cards, custom Fira Sans web fonts, hero section CTA buttons, and responsive grid layouts without element overlap.
+### Welcome Page (`about:welcome`)
+Mango's native tabbed browser chrome: custom omnibox search bar with continuous analytical Signed Distance Field (SDF) anti-aliased pill borders, vertically aligned fruit logo, and responsive quick-navigation shortcuts.
 
 <div align="center">
-  <img src="assets/screenshots/rust_lang.png" width="90%" alt="Rust Language Website rendered in Mango Browser" />
+  <img src="assets/screenshots/welcome_page.png" width="90%" alt="Mango Browser Welcome Page rendered in 1080p" />
 </div>
 
-### YouTube Desktop Homepage (`https://www.youtube.com/`)
-Rendered by Mango's layout pipeline: fixed masthead with brand SVG logo, unclipped navigation icons, and responsive 3-column video skeleton cards grid.
+### Rust Language Official Website (`https://www.rust-lang.org/`)
+1:1 visual parity against modern Chromium/Safari: multi-column flexbox cards, custom Fira Sans web fonts, hero section CTA buttons, and native form controls (`.select` language picker with aligned chevron indicator).
 
 <div align="center">
-  <img src="assets/screenshots/youtube.png" width="90%" alt="YouTube Desktop Homepage rendered in Mango Browser" />
+  <img src="assets/screenshots/rust_lang.png" width="90%" alt="Rust Language Website rendered in Mango Browser at 1080p" />
+</div>
+
+### Wikipedia 25th Anniversary Main Page (`https://en.wikipedia.org/wiki/Main_Page`)
+Full MediaWiki Vector 2022 layout: 25th anniversary globe brand logo, cleanly separated navigation tabs ("Main Page", "Talk", "Read", "View source", "View history"), multi-column article grids, and interactive Vector appearance sidebar.
+
+<div align="center">
+  <img src="assets/screenshots/wikipedia.png" width="90%" alt="Wikipedia Main Page rendered in Mango Browser at 1080p" />
 </div>
 
 ---
@@ -124,12 +132,14 @@ flowchart TD
 - **Table Layout**: Fixed and auto table layout, `colspan` and `rowspan` spanning, `border-collapse`, and `<colgroup>` width distributions.
 - **Positioning**: `static`, `relative`, `absolute`, `fixed`, and `sticky` with four-direction clamping and overflow clip isolation.
 
-### 🖌️ Software Rasterization & Graphics
-- Deterministic display list generation: separates layout calculation from pixel drawing.
-- Pure CPU-based scanline rasterizer: no GPU or OpenGL/Vulkan requirements, runs seamlessly in headless CI and minimal containers.
-- Subpixel text anti-aliasing with embedded font fallbacks and WOFF2 web font streaming.
-- Vector graphics: SVG parser and rasterizer supporting `<path>`, `<rect>`, `<circle>`, `<use>`, `<symbol>`, and viewbox scaling.
-- Vector PDF printer: export any web page directly to paginated, searchable PDF documents.
+### 🖌️ Graphics, Compositing & Rasterization
+- **Multi-Layer Compositing Engine**: Separates page content, fixed overlays, and chrome UI into independent compositing layers with damage region tracking and dirty tile invalidation.
+- **Hardware-Accelerated GPU Compositor**: Zero-copy textured quad compositor powered by `wgpu` (Vulkan/Metal/DX12) with transparent Wayland/X11 surface presentation and smooth 60+ FPS scrolling.
+- **Pure Software Fallback**: Robust CPU scanline rasterizer runs seamlessly in headless CI and minimal containerized environments without GPU dependencies.
+- **Analytical Signed Distance Field (SDF) Anti-Aliasing**: High-fidelity subpixel rounded rect rasterization producing perfectly continuous borders and corner radii without diagonal stepping or dotted artifacts.
+- **Subpixel Text Rendering**: Glyph cache with embedded fallback fonts and WOFF2/WOFF/TTF web font streaming.
+- **Vector Graphics**: Full SVG parser and rasterizer supporting `<path>`, `<rect>`, `<circle>`, `<use>`, `<symbol>`, and viewbox scaling.
+- **Vector PDF Printer**: Direct export of web pages to paginated, searchable vector PDF documents.
 
 ### ⚡ JavaScript & Web Platform APIs
 - ECMAScript 2024 runtime with Promises, async/await, and microtask job queues.

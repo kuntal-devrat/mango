@@ -21,5 +21,7 @@ fn main() {
 
     // Create and run the application
     let mut app = MangoApp::new();
-    event_loop.run_app(&mut app).expect("event loop error");
+    if let Err(err) = event_loop.run_app(&mut app) {
+        log::error!("Event loop terminated: {err:?}");
+    }
 }

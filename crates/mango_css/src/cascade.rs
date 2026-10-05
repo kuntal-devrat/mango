@@ -262,7 +262,7 @@ pub fn user_agent_stylesheet() -> &'static Stylesheet {
                 width: 300px;
                 height: 36px;
             }
-            :focus-visible, input:focus, select:focus, textarea:focus, button:focus {
+            :focus-visible {
                 outline: 2px solid #0078d7;
             }
             input[type="checkbox"], input[type="radio"] {

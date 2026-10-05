@@ -423,7 +423,16 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
         intrinsic_width, ..
     } = &box_node.box_type
     {
-        return (*intrinsic_width).min(max_width);
+        let w = if let Some(s) = box_node.style.as_ref() {
+            if !matches!(s.width, mango_css::values::Length::Auto | mango_css::values::Length::Percent(_)) {
+                s.width.to_px_with_viewport(s.font_size, s.root_font_size, max_width, max_width)
+            } else {
+                *intrinsic_width
+            }
+        } else {
+            *intrinsic_width
+        };
+        return w.min(max_width);
     }
 
     if let Some(s) = box_node.style.as_ref() {
@@ -744,23 +753,27 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                 }
                 crate::box_model::BoxType::TextNode(raw_text) => {
                     let style = node.style.as_ref().or(parent_style);
-                    let (font_size, is_bold, family_name, transformed_text) = if let Some(s) = style
-                    {
-                        let bold = match s.font_weight {
-                            mango_css::values::FontWeight::Bold
-                            | mango_css::values::FontWeight::Bolder => true,
-                            mango_css::values::FontWeight::Numeric(w) => w >= 600,
-                            _ => false,
+                    let (font_size, is_bold, family_name, transformed_text, letter_spacing, word_spacing) =
+                        if let Some(s) = style {
+                            let bold = match s.font_weight {
+                                mango_css::values::FontWeight::Bold
+                                | mango_css::values::FontWeight::Bolder => true,
+                                mango_css::values::FontWeight::Numeric(w) => w >= 600,
+                                _ => false,
+                            };
+                            let ls = s.letter_spacing.to_px(s.font_size, s.root_font_size, max_width);
+                            let ws = s.word_spacing.to_px(s.font_size, s.root_font_size, max_width);
+                            (
+                                s.font_size,
+                                bold,
+                                s.font_family.clone(),
+                                s.text_transform.apply(raw_text),
+                                ls,
+                                ws,
+                            )
+                        } else {
+                            (16.0, false, "sans-serif".to_string(), raw_text.clone(), 0.0, 0.0)
                         };
-                        (
-                            s.font_size,
-                            bold,
-                            s.font_family.clone(),
-                            s.text_transform.apply(raw_text),
-                        )
-                    } else {
-                        (16.0, false, "sans-serif".to_string(), raw_text.clone())
-                    };
                     let weight = if is_bold {
                         mango_render::FontWeight::Bold
                     } else {
@@ -774,27 +787,33 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                     for ch in transformed_text.chars() {
                         if ch.is_ascii_whitespace() {
                             if !current_word.is_empty() {
-                                text_w += crate::inline_flow::measure_text_width_with_style(
+                                text_w += crate::inline_flow::measure_text_width_with_style_and_spacing(
                                     &current_word,
                                     font_size,
                                     weight,
                                     family,
+                                    letter_spacing,
                                 );
                                 current_word.clear();
                             }
-                            text_w += crate::inline_flow::measure_text_width_with_style(
-                                " ", font_size, weight, family,
-                            );
+                            text_w += (crate::inline_flow::measure_text_width_with_style_and_spacing(
+                                " ",
+                                font_size,
+                                weight,
+                                family,
+                                letter_spacing,
+                            ) + word_spacing).max(0.0);
                         } else {
                             current_word.push(ch);
                         }
                     }
                     if !current_word.is_empty() {
-                        text_w += crate::inline_flow::measure_text_width_with_style(
+                        text_w += crate::inline_flow::measure_text_width_with_style_and_spacing(
                             &current_word,
                             font_size,
                             weight,
                             family,
+                            letter_spacing,
                         );
                     }
                     *curr_line += text_w.ceil() + 2.0;
@@ -814,7 +833,30 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                 | crate::box_model::BoxType::Canvas {
                     intrinsic_width, ..
                 } => {
-                    *curr_line += *intrinsic_width;
+                    let w = if let Some(s) = node.style.as_ref() {
+                        if !matches!(s.width, mango_css::values::Length::Auto | mango_css::values::Length::Percent(_)) {
+                            s.width.to_px_with_viewport(s.font_size, s.root_font_size, max_width, max_width)
+                        } else {
+                            *intrinsic_width
+                        }
+                    } else {
+                        *intrinsic_width
+                    };
+                    let (p_left, p_right, b_left, b_right, m_left, m_right) = if let Some(cs) = node.style.as_ref() {
+                        let c_fs = cs.font_size;
+                        let c_root_fs = cs.root_font_size;
+                        (
+                            cs.padding_left.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                            cs.padding_right.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                            cs.border_left_width,
+                            cs.border_right_width,
+                            cs.margin_left.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                            cs.margin_right.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                        )
+                    } else {
+                        (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+                    };
+                    *curr_line += w + p_left + p_right + b_left + b_right + m_left + m_right;
                 }
                 _ => {
                     let next_parent_style = node.style.as_ref().or(parent_style);
@@ -855,16 +897,17 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
         match &child.box_type {
             crate::box_model::BoxType::TextNode(text) => {
                 let style = child.style.as_ref().or(box_node.style.as_ref());
-                let (font_size, is_bold, family_name) = if let Some(s) = style {
+                let (font_size, is_bold, family_name, letter_spacing) = if let Some(s) = style {
                     let bold = match s.font_weight {
                         mango_css::values::FontWeight::Bold
                         | mango_css::values::FontWeight::Bolder => true,
                         mango_css::values::FontWeight::Numeric(w) => w >= 600,
                         _ => false,
                     };
-                    (s.font_size, bold, s.font_family.clone())
+                    let ls = s.letter_spacing.to_px(s.font_size, s.root_font_size, max_width);
+                    (s.font_size, bold, s.font_family.clone(), ls)
                 } else {
-                    (16.0, false, "sans-serif".to_string())
+                    (16.0, false, "sans-serif".to_string(), 0.0)
                 };
                 let weight = if is_bold {
                     mango_render::FontWeight::Bold
@@ -872,8 +915,8 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                     mango_render::FontWeight::Regular
                 };
                 let family = mango_render::FontFamily::from_css_name(&family_name);
-                let w = crate::inline_flow::measure_text_width_with_style(
-                    text, font_size, weight, family,
+                let w = crate::inline_flow::measure_text_width_with_style_and_spacing(
+                    text, font_size, weight, family, letter_spacing,
                 );
                 measured = measured.max(w);
             }
@@ -892,7 +935,30 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
             | crate::box_model::BoxType::Canvas {
                 intrinsic_width, ..
             } => {
-                measured = measured.max(*intrinsic_width);
+                let w = if let Some(s) = child.style.as_ref() {
+                    if !matches!(s.width, mango_css::values::Length::Auto | mango_css::values::Length::Percent(_)) {
+                        s.width.to_px_with_viewport(s.font_size, s.root_font_size, max_width, max_width)
+                    } else {
+                        *intrinsic_width
+                    }
+                } else {
+                    *intrinsic_width
+                };
+                let (p_left, p_right, b_left, b_right, m_left, m_right) = if let Some(cs) = child.style.as_ref() {
+                    let c_fs = cs.font_size;
+                    let c_root_fs = cs.root_font_size;
+                    (
+                        cs.padding_left.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                        cs.padding_right.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                        cs.border_left_width,
+                        cs.border_right_width,
+                        cs.margin_left.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                        cs.margin_right.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                    )
+                } else {
+                    (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+                };
+                measured = measured.max(w + p_left + p_right + b_left + b_right + m_left + m_right);
             }
             _ => {
                 let child_w = calculate_shrink_to_fit_width(child, max_width);

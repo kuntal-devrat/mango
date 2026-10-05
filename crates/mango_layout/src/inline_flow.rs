@@ -1658,8 +1658,9 @@ fn finalize_line(
                             }
                         }
                         mango_css::values::VerticalAlign::Middle => {
-                            max_above = max_above.max(atom.height / 2.0);
-                            max_below = max_below.max(atom.height / 2.0);
+                            let x_mid = atom.style.font_size * 0.25;
+                            max_above = max_above.max(atom.height * 0.5 + x_mid);
+                            max_below = max_below.max((atom.height * 0.5 - x_mid).max(0.0));
                         }
                         _ => {
                             max_above = max_above.max(atom.height);
@@ -1852,7 +1853,8 @@ fn finalize_line(
                             line_y + (actual_line_height - atom.height).max(0.0)
                         }
                         mango_css::values::VerticalAlign::Middle => {
-                            line_y + baseline_from_line_top - (atom.height / 2.0)
+                            let x_mid = atom.style.font_size * 0.25;
+                            line_y + baseline_from_line_top - x_mid - (atom.height * 0.5)
                         }
                         mango_css::values::VerticalAlign::Super => {
                             line_y + baseline_from_line_top - atom.height - 4.0

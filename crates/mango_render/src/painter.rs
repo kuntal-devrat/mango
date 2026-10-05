@@ -35,9 +35,50 @@ fn intersect_rect(a: mango_core::Rect, b: mango_core::Rect) -> mango_core::Rect 
 /// width and height. Scroll offset is NOT applied here — the caller must
 /// translate coordinates before building the display list.
 pub fn paint(display_list: &DisplayList, buffer: &mut [u32], buf_width: u32, buf_height: u32) {
+    paint_with_clip(
+        display_list,
+        buffer,
+        buf_width,
+        buf_height,
+        mango_core::Rect::new(0.0, 0.0, buf_width as f32, buf_height as f32),
+    );
+}
+
+/// Rasterizes only the damaged areas of a [`DisplayList`] into a pixel buffer.
+pub fn paint_damage(
+    display_list: &DisplayList,
+    buffer: &mut [u32],
+    buf_width: u32,
+    buf_height: u32,
+    damage: &crate::damage::DamageRegion,
+) {
+    if damage.is_empty() {
+        return;
+    }
+    for rect in damage.rects() {
+        paint_with_clip(display_list, buffer, buf_width, buf_height, *rect);
+    }
+}
+
+/// Rasterizes a [`DisplayList`] restricted to a specified clipping rectangle.
+///
+/// Commands outside the bounding box of `clip_rect` are skipped, minimizing
+/// rasterization cost during localized damage repairs and tile generation.
+pub fn paint_with_clip(
+    display_list: &DisplayList,
+    buffer: &mut [u32],
+    buf_width: u32,
+    buf_height: u32,
+    clip_rect: mango_core::Rect,
+) {
+    let surface_clip = mango_core::Rect::new(0.0, 0.0, buf_width as f32, buf_height as f32);
+    let default_clip = intersect_rect(surface_clip, clip_rect);
+    if default_clip.width() <= 0.0 || default_clip.height() <= 0.0 {
+        return;
+    }
+
     let fm = font_manager();
     let mut clip_stack: Vec<mango_core::Rect> = Vec::new();
-    let default_clip = mango_core::Rect::new(0.0, 0.0, buf_width as f32, buf_height as f32);
     let mut transform_stack: Vec<[f32; 6]> = Vec::new();
     let mut blend_mode_stack: Vec<mango_css::values::BlendMode> = Vec::new();
     let mut filter_stack: Vec<(Vec<mango_css::values::FilterFunction>, mango_core::Rect)> =
@@ -52,6 +93,14 @@ pub fn paint(display_list: &DisplayList, buffer: &mut [u32], buf_width: u32, buf
             .last()
             .copied()
             .unwrap_or(mango_css::values::BlendMode::Normal);
+
+        // Fast bounding box culling: skip drawing commands that cannot touch active_clip
+        if transform_stack.is_empty()
+            && let Some(bounds) = command.bounds()
+            && !bounds.intersects(&active_clip)
+        {
+            continue;
+        }
         match command {
             DisplayCommand::PushClip { rect } => {
                 let current = clip_stack.last().copied().unwrap_or(default_clip);
@@ -2221,13 +2270,15 @@ fn fill_rect_mode(
     }
 }
 
-fn is_inside_rounded_rect(fx: f32, fy: f32, rect: &mango_core::Rect, radii: [f32; 4]) -> bool {
+/// Evaluates the signed distance field (SDF) of a point (fx, fy) relative to a rounded rectangle.
+/// Negative distance is inside, zero is boundary, positive is outside.
+fn sdf_rounded_rect(fx: f32, fy: f32, rect: &mango_core::Rect, radii: [f32; 4]) -> f32 {
     let rx = rect.x();
     let ry = rect.y();
     let rw = rect.width();
     let rh = rect.height();
-    if fx < rx || fx >= rx + rw || fy < ry || fy >= ry + rh {
-        return false;
+    if rw <= 0.0 || rh <= 0.0 {
+        return 1e6;
     }
     let max_r = (rw * 0.5).min(rh * 0.5);
     let r_tl = radii[0].max(0.0).min(max_r);
@@ -2235,35 +2286,57 @@ fn is_inside_rounded_rect(fx: f32, fy: f32, rect: &mango_core::Rect, radii: [f32
     let r_br = radii[2].max(0.0).min(max_r);
     let r_bl = radii[3].max(0.0).min(max_r);
 
-    if r_tl > 0.0 && fx < rx + r_tl && fy < ry + r_tl {
-        let dx = (rx + r_tl) - fx;
-        let dy = (ry + r_tl) - fy;
-        if dx * dx + dy * dy > r_tl * r_tl {
-            return false;
+    let mid_x = rx + rw * 0.5;
+    let mid_y = ry + rh * 0.5;
+
+    if fx < mid_x {
+        if fy < mid_y {
+            // Top-left quadrant
+            let dx = (rx + r_tl) - fx;
+            let dy = (ry + r_tl) - fy;
+            if dx > 0.0 && dy > 0.0 {
+                (dx * dx + dy * dy).sqrt() - r_tl
+            } else {
+                dx.max(dy) - r_tl
+            }
+        } else {
+            // Bottom-left quadrant
+            let dx = (rx + r_bl) - fx;
+            let dy = fy - (ry + rh - r_bl);
+            if dx > 0.0 && dy > 0.0 {
+                (dx * dx + dy * dy).sqrt() - r_bl
+            } else {
+                dx.max(dy) - r_bl
+            }
         }
-    } else if r_tr > 0.0 && fx > rx + rw - r_tr && fy < ry + r_tr {
+    } else if fy < mid_y {
+        // Top-right quadrant
         let dx = fx - (rx + rw - r_tr);
         let dy = (ry + r_tr) - fy;
-        if dx * dx + dy * dy > r_tr * r_tr {
-            return false;
+        if dx > 0.0 && dy > 0.0 {
+            (dx * dx + dy * dy).sqrt() - r_tr
+        } else {
+            dx.max(dy) - r_tr
         }
-    } else if r_br > 0.0 && fx > rx + rw - r_br && fy > ry + rh - r_br {
+    } else {
+        // Bottom-right quadrant
         let dx = fx - (rx + rw - r_br);
         let dy = fy - (ry + rh - r_br);
-        if dx * dx + dy * dy > r_br * r_br {
-            return false;
-        }
-    } else if r_bl > 0.0 && fx < rx + r_bl && fy > ry + rh - r_bl {
-        let dx = (rx + r_bl) - fx;
-        let dy = fy - (ry + rh - r_bl);
-        if dx * dx + dy * dy > r_bl * r_bl {
-            return false;
+        if dx > 0.0 && dy > 0.0 {
+            (dx * dx + dy * dy).sqrt() - r_br
+        } else {
+            dx.max(dy) - r_br
         }
     }
-    true
+}
+
+fn is_inside_rounded_rect(fx: f32, fy: f32, rect: &mango_core::Rect, radii: [f32; 4]) -> bool {
+    sdf_rounded_rect(fx, fy, rect, radii) <= 0.0
 }
 
 /// Fill a rounded rectangle in the pixel buffer, optionally clipping out an inner region.
+/// Uses analytical SDF subpixel coverage anti-aliasing so thin 1px/2px borders and curves
+/// render continuous, unbroken lines.
 #[allow(clippy::too_many_arguments)]
 fn fill_rounded_rect_clipped(
     buffer: &mut [u32],
@@ -2287,13 +2360,6 @@ fn fill_rounded_rect_clipped(
         return;
     }
 
-    // Clamp radii so opposing corners don't overlap
-    let max_r = (rw * 0.5).min(rh * 0.5);
-    let r_tl = radii[0].max(0.0).min(max_r);
-    let r_tr = radii[1].max(0.0).min(max_r);
-    let r_br = radii[2].max(0.0).min(max_r);
-    let r_bl = radii[3].max(0.0).min(max_r);
-
     let solid_pixel = color.to_rgb_u32();
     let has_alpha = color.a < 255;
 
@@ -2302,10 +2368,13 @@ fn fill_rounded_rect_clipped(
     let cx2 = ((clip.x() + clip.width()) as i32).min(buf_width as i32);
     let cy2 = ((clip.y() + clip.height()) as i32).min(buf_height as i32);
 
-    let x_start = (rx as i32).max(cx1).max(0) as u32;
-    let y_start = (ry as i32).max(cy1).max(0) as u32;
-    let x_end = (((rx + rw) as i32).min(cx2).max(0) as u32).min(buf_width);
-    let y_end = (((ry + rh) as i32).min(cy2).max(0) as u32).min(buf_height);
+    let x_start = ((rx - 1.0) as i32).max(cx1).max(0) as u32;
+    let y_start = ((ry - 1.0) as i32).max(cy1).max(0) as u32;
+    let x_end = ((((rx + rw + 1.0).ceil()) as i32).min(cx2).max(0) as u32).min(buf_width);
+    let y_end = ((((ry + rh + 1.0).ceil()) as i32).min(cy2).max(0) as u32).min(buf_height);
+
+    let has_clip_out = clip_out.is_some();
+    let (clip_rect, clip_radii) = clip_out.unwrap_or((rect, [0.0; 4]));
 
     for py in y_start..y_end {
         let fy = py as f32 + 0.5;
@@ -2313,54 +2382,33 @@ fn fill_rounded_rect_clipped(
         for px in x_start..x_end {
             let fx = px as f32 + 0.5;
 
-            if let Some((clip_rect, clip_radii)) = clip_out
-                && is_inside_rounded_rect(fx, fy, clip_rect, clip_radii)
-            {
+            let d_out = sdf_rounded_rect(fx, fy, rect, radii);
+            let cov_out = (0.5 - d_out).clamp(0.0, 1.0);
+            if cov_out <= 0.0 {
                 continue;
             }
 
-            let mut inside = true;
+            let cov = if has_clip_out {
+                let d_in = sdf_rounded_rect(fx, fy, clip_rect, clip_radii);
+                let cov_in = (0.5 - d_in).clamp(0.0, 1.0);
+                cov_out * (1.0 - cov_in)
+            } else {
+                cov_out
+            };
 
-            // Top-left corner
-            if r_tl > 0.0 && fx < rx + r_tl && fy < ry + r_tl {
-                let dx = (rx + r_tl) - fx;
-                let dy = (ry + r_tl) - fy;
-                if dx * dx + dy * dy > r_tl * r_tl {
-                    inside = false;
-                }
-            }
-            // Top-right corner
-            else if r_tr > 0.0 && fx > rx + rw - r_tr && fy < ry + r_tr {
-                let dx = fx - (rx + rw - r_tr);
-                let dy = (ry + r_tr) - fy;
-                if dx * dx + dy * dy > r_tr * r_tr {
-                    inside = false;
-                }
-            }
-            // Bottom-right corner
-            else if r_br > 0.0 && fx > rx + rw - r_br && fy > ry + rh - r_br {
-                let dx = fx - (rx + rw - r_br);
-                let dy = fy - (ry + rh - r_br);
-                if dx * dx + dy * dy > r_br * r_br {
-                    inside = false;
-                }
-            }
-            // Bottom-left corner
-            else if r_bl > 0.0 && fx < rx + r_bl && fy > ry + rh - r_bl {
-                let dx = (rx + r_bl) - fx;
-                let dy = fy - (ry + rh - r_bl);
-                if dx * dx + dy * dy > r_bl * r_bl {
-                    inside = false;
-                }
+            if cov <= 0.001 {
+                continue;
             }
 
-            if inside {
-                let idx = row_offset + px as usize;
-                if idx < buffer.len() {
-                    if has_alpha {
-                        buffer[idx] = blend_pixel(color, buffer[idx]);
-                    } else {
-                        buffer[idx] = solid_pixel;
+            let idx = row_offset + px as usize;
+            if idx < buffer.len() {
+                if cov >= 0.999 && !has_alpha {
+                    buffer[idx] = solid_pixel;
+                } else {
+                    let eff_a = ((color.a as f32) * cov).round() as u8;
+                    if eff_a > 0 {
+                        let blended_color = Color::rgba(color.r, color.g, color.b, eff_a);
+                        buffer[idx] = blend_pixel(blended_color, buffer[idx]);
                     }
                 }
             }

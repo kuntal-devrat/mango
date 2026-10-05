@@ -377,6 +377,8 @@ fn is_node_inline(
                 || el.tag_name.eq_ignore_ascii_case("head")
                 || el.tag_name.eq_ignore_ascii_case("style")
                 || el.tag_name.eq_ignore_ascii_case("script")
+                || el.tag_name.eq_ignore_ascii_case("link")
+                || el.tag_name.eq_ignore_ascii_case("meta")
             {
                 return false;
             }
@@ -711,6 +713,8 @@ fn build_styled_node(
                                         && !el.tag_name.eq_ignore_ascii_case("head")
                                         && !el.tag_name.eq_ignore_ascii_case("style")
                                         && !el.tag_name.eq_ignore_ascii_case("script")
+                                        && !el.tag_name.eq_ignore_ascii_case("link")
+                                        && !el.tag_name.eq_ignore_ascii_case("meta")
                                 }
                                 _ => true,
                             });
@@ -722,6 +726,8 @@ fn build_styled_node(
                                     && !el.tag_name.eq_ignore_ascii_case("head")
                                     && !el.tag_name.eq_ignore_ascii_case("style")
                                     && !el.tag_name.eq_ignore_ascii_case("script")
+                                    && !el.tag_name.eq_ignore_ascii_case("link")
+                                    && !el.tag_name.eq_ignore_ascii_case("meta")
                             }
                             _ => true,
                         });

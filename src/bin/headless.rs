@@ -219,6 +219,21 @@ fn main() {
     }
     println!("DrawText stats: bold={}, regular={}", bold_count, reg_count);
 
+    for cmd in dl.as_slice() {
+        match cmd {
+            mango_render::DisplayCommand::DrawText { text, x, y, font_size, .. } if *x >= 1000.0 && *y <= 150.0 => {
+                println!("CMD TEXT: {:?} at ({}, {}) size={}", text, x, y, font_size);
+            }
+            mango_render::DisplayCommand::FillRect { rect, color } if rect.x() >= 1000.0 && rect.y() <= 150.0 => {
+                println!("CMD RECT: {:?} {:?}", rect, color);
+            }
+            mango_render::DisplayCommand::DrawBorder { rect, color, widths, .. } if rect.x() >= 1000.0 && rect.y() <= 150.0 => {
+                println!("CMD BORDER: {:?} {:?} {:?}", rect, color, widths);
+            }
+            _ => {}
+        }
+    }
+
     let mut buffer = vec![0u32; (width * window_height) as usize];
     buffer.fill(mango_core::Color::rgb(255, 255, 255).to_rgb_u32());
     paint(&dl, &mut buffer, width, window_height);
@@ -315,8 +330,10 @@ fn probe(browser: &BrowserChrome, selector: &str) {
             style.map(|s| s.clear),
         );
         println!(
-            "      box_type: {:?}, attrs: {:?}",
-            b.box_type, b.attributes
+            "      box_type: {:?}, appearance: {:?}, attrs: {:?}",
+            b.box_type,
+            style.map(|s| s.appearance),
+            b.attributes
         );
         for child in &b.children {
             if let BoxType::TextNode(text) = &child.box_type

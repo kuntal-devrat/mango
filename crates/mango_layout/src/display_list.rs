@@ -808,7 +808,12 @@ fn render_layout_box_inner(
                                 radii: border_radii,
                             });
                         } else {
-                            // Rectangular borders with distinct side colors: emit per-side DrawBorder
+                            // Rectangular borders with distinct side colors: emit per-side DrawBorder.
+                            // If the element has zero (or near-zero) content dimensions, borders form CSS triangles
+                            // meeting at the apex; preserve adjacent widths so the triangle slope can be rasterized.
+                            let is_zero_content = box_node.dimensions.content.size.width <= 0.5
+                                && box_node.dimensions.content.size.height <= 0.5;
+
                             if widths.top > 0.0
                                 && s.border_top_style != mango_css::values::BorderStyle::None
                             {
@@ -817,9 +822,9 @@ fn render_layout_box_inner(
                                     color: s_top_color,
                                     widths: BorderWidths {
                                         top: widths.top,
-                                        right: 0.0,
+                                        right: if is_zero_content { widths.right } else { 0.0 },
                                         bottom: 0.0,
-                                        left: 0.0,
+                                        left: if is_zero_content { widths.left } else { 0.0 },
                                     },
                                     radii: [0.0; 4],
                                 });
@@ -831,9 +836,9 @@ fn render_layout_box_inner(
                                     rect: border_box,
                                     color: s_right_color,
                                     widths: BorderWidths {
-                                        top: 0.0,
+                                        top: if is_zero_content { widths.top } else { 0.0 },
                                         right: widths.right,
-                                        bottom: 0.0,
+                                        bottom: if is_zero_content { widths.bottom } else { 0.0 },
                                         left: 0.0,
                                     },
                                     radii: [0.0; 4],
@@ -847,9 +852,9 @@ fn render_layout_box_inner(
                                     color: s_bottom_color,
                                     widths: BorderWidths {
                                         top: 0.0,
-                                        right: 0.0,
+                                        right: if is_zero_content { widths.right } else { 0.0 },
                                         bottom: widths.bottom,
-                                        left: 0.0,
+                                        left: if is_zero_content { widths.left } else { 0.0 },
                                     },
                                     radii: [0.0; 4],
                                 });
@@ -861,9 +866,9 @@ fn render_layout_box_inner(
                                     rect: border_box,
                                     color: s_left_color,
                                     widths: BorderWidths {
-                                        top: 0.0,
+                                        top: if is_zero_content { widths.top } else { 0.0 },
                                         right: 0.0,
-                                        bottom: 0.0,
+                                        bottom: if is_zero_content { widths.bottom } else { 0.0 },
                                         left: widths.left,
                                     },
                                     radii: [0.0; 4],

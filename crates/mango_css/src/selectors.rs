@@ -2243,4 +2243,14 @@ mod tests {
         let p1_next = crate::parser::parse_selectors("p:has(+ span)").unwrap();
         assert!(p1_next.matches(p1_id, &doc), "p must match :has(+ span)");
     }
+
+    #[test]
+    fn test_compound_class_descendant() {
+        let html = r#"<div class="mw-parser-output"><div class="hlist inline" id="target"></div></div>"#;
+        let doc = mango_html::parse_html(html);
+        let target_id = doc.find_element_by_id(doc.root(), "target").unwrap();
+        let sel = crate::parser::parse_selectors(".mw-parser-output .hlist.inline").unwrap();
+        assert!(sel.matches(target_id, &doc), ".mw-parser-output .hlist.inline must match <div class='hlist inline'>");
+    }
 }
+
