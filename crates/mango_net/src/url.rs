@@ -85,7 +85,15 @@ impl Url {
 
         // Custom browser schemes (case-insensitive per RFC 3986 §3.1)
         let lower_prefix = trimmed.to_ascii_lowercase();
-        for scheme_name in ["about:", "test:", "data:", "javascript:", "mailto:", "blob:", "tel:"] {
+        for scheme_name in [
+            "about:",
+            "test:",
+            "data:",
+            "javascript:",
+            "mailto:",
+            "blob:",
+            "tel:",
+        ] {
             if lower_prefix.starts_with(scheme_name) {
                 let rest = trimmed[scheme_name.len()..].to_string();
                 let scheme = scheme_name.trim_end_matches(':').to_string();
@@ -142,7 +150,9 @@ impl Url {
         let (username, password) = match userinfo {
             Some(info) => {
                 if info.is_empty() {
-                    return Err(UrlError::Malformed("Empty userinfo in authority".to_string()));
+                    return Err(UrlError::Malformed(
+                        "Empty userinfo in authority".to_string(),
+                    ));
                 }
                 match info.split_once(':') {
                     Some((u, p)) => (Some(u.to_string()), Some(p.to_string())),

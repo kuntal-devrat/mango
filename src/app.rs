@@ -301,7 +301,9 @@ impl ApplicationHandler for MangoApp {
                             if is_full {
                                 window.set_fullscreen(None);
                             } else {
-                                window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+                                window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(
+                                    None,
+                                )));
                             }
                         }
                         if let Some(browser) = &mut self.browser {

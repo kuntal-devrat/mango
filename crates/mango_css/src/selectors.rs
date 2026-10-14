@@ -1466,10 +1466,7 @@ pub fn subsequent_element_siblings(node_id: NodeId, doc: &Document) -> Vec<NodeI
 
 /// Expands a child selector list nested within a parent selector list according to
 /// the CSS Nesting Module Level 1 specification.
-pub fn expand_nested_selectors(
-    parent: &SelectorList,
-    child: &SelectorList,
-) -> SelectorList {
+pub fn expand_nested_selectors(parent: &SelectorList, child: &SelectorList) -> SelectorList {
     let mut expanded = Vec::new();
     for p in &parent.selectors {
         for c in &child.selectors {
@@ -1484,12 +1481,18 @@ fn contains_nesting_simple(simple: &SimpleSelector) -> bool {
 }
 
 fn contains_nesting_compound(compound: &CompoundSelector) -> bool {
-    compound.simple_selectors.iter().any(contains_nesting_simple)
+    compound
+        .simple_selectors
+        .iter()
+        .any(contains_nesting_simple)
 }
 
 fn contains_nesting_complex(complex: &ComplexSelector) -> bool {
     contains_nesting_compound(&complex.head)
-        || complex.tail.iter().any(|(_, comp)| contains_nesting_compound(comp))
+        || complex
+            .tail
+            .iter()
+            .any(|(_, comp)| contains_nesting_compound(comp))
 }
 
 fn expand_single_complex_selector(
@@ -1498,7 +1501,8 @@ fn expand_single_complex_selector(
 ) -> ComplexSelector {
     if !contains_nesting_complex(child) {
         // No & present: per spec, implicitly treated as `& <child>` or `& <comb> <child>`
-        if child.head.simple_selectors == vec![SimpleSelector::Universal] && !child.tail.is_empty() {
+        if child.head.simple_selectors == vec![SimpleSelector::Universal] && !child.tail.is_empty()
+        {
             let mut tail = parent.tail.clone();
             tail.extend(child.tail.clone());
             return ComplexSelector::new(parent.head.clone(), tail);

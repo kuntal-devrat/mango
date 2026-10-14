@@ -574,9 +574,11 @@ impl CookieJar {
         }
 
         let now = now_secs();
-        if let Some(existing) = self.cookies.iter_mut().find(|c| {
-            c.name == cookie.name && c.domain == cookie.domain && c.path == cookie.path
-        }) {
+        if let Some(existing) = self
+            .cookies
+            .iter_mut()
+            .find(|c| c.name == cookie.name && c.domain == cookie.domain && c.path == cookie.path)
+        {
             // RFC 6265 §5.3 step 11: preserve creation_time of existing cookie
             cookie.creation_time = existing.creation_time;
             cookie.last_access_time = now;
@@ -850,10 +852,7 @@ impl CookieJar {
         if meta.len() > MAX_PROFILE_READ_BYTES as u64 {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!(
-                    "Cookie profile exceeds {} byte cap",
-                    MAX_PROFILE_READ_BYTES
-                ),
+                format!("Cookie profile exceeds {} byte cap", MAX_PROFILE_READ_BYTES),
             ));
         }
         match std::fs::read_to_string(path) {

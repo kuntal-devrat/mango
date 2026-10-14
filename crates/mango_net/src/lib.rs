@@ -5,6 +5,17 @@
 //!
 //! Fully pure-Rust with zero OpenSSL or external C dependencies.
 
+#![allow(
+    clippy::too_many_arguments,
+    clippy::collapsible_if,
+    clippy::chunks_exact_to_as_chunks,
+    clippy::needless_range_loop,
+    clippy::needless_borrow,
+    clippy::op_ref,
+    clippy::unnecessary_map_or,
+    clippy::field_reassign_with_default
+)]
+
 pub mod cache;
 pub mod cookies;
 pub mod dns;
@@ -43,4 +54,3 @@ pub use security::{
 pub use tls::tls_backend_info;
 pub use url::{Url, UrlError};
 pub use websocket::{WebSocketEvent, WebSocketManager};
-

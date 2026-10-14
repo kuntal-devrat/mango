@@ -121,4 +121,3 @@ fn test_ddg_actual_header_logo_style() {
         Some("/assets/logo_header.v109.svg")
     );
 }
-

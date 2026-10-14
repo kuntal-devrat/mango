@@ -3762,7 +3762,6 @@ impl CssParser {
 
     // ── Text-shadow parsing ───────────────────────────────────────────────────
 
-
     /// Tries to parse `text-shadow: offset-x offset-y blur? color?` from token slice,
     /// supporting multiple comma-separated shadow layers.
     fn try_parse_text_shadow(&self, tokens: &[Token]) -> Option<Value> {
@@ -4907,8 +4906,10 @@ impl CssParser {
                                 }
                                 i += 1;
                             }
-                            let func_str: String =
-                                func_tokens.iter().map(|t| self.token_to_string(t)).collect();
+                            let func_str: String = func_tokens
+                                .iter()
+                                .map(|t| self.token_to_string(t))
+                                .collect();
                             if let Some(tf) = crate::values::parse_timing_function(&func_str) {
                                 timing = Some(Value::TimingFunction(tf));
                             }
@@ -6453,23 +6454,40 @@ mod tests {
         let sheet = CssParser::parse_stylesheet(css);
         assert_eq!(sheet.rules.len(), 1);
         if let Rule::Style(sr) = &sheet.rules[0] {
-            let decl_prop = sr.declarations.iter().find(|d| d.name == "transition-property").unwrap();
+            let decl_prop = sr
+                .declarations
+                .iter()
+                .find(|d| d.name == "transition-property")
+                .unwrap();
             assert_eq!(decl_prop.name, "transition-property");
 
-            let decl_dur = sr.declarations.iter().find(|d| d.name == "transition-duration").unwrap();
+            let decl_dur = sr
+                .declarations
+                .iter()
+                .find(|d| d.name == "transition-duration")
+                .unwrap();
             assert_eq!(decl_dur.value, Value::Time(300.0));
 
-            let decl_tf = sr.declarations.iter().find(|d| d.name == "transition-timing-function").unwrap();
+            let decl_tf = sr
+                .declarations
+                .iter()
+                .find(|d| d.name == "transition-timing-function")
+                .unwrap();
             assert_eq!(
                 decl_tf.value,
-                Value::TimingFunction(crate::values::TimingFunction::CubicBezier(0.25, 0.1, 0.25, 1.0))
+                Value::TimingFunction(crate::values::TimingFunction::CubicBezier(
+                    0.25, 0.1, 0.25, 1.0
+                ))
             );
 
-            let decl_del = sr.declarations.iter().find(|d| d.name == "transition-delay").unwrap();
+            let decl_del = sr
+                .declarations
+                .iter()
+                .find(|d| d.name == "transition-delay")
+                .unwrap();
             assert_eq!(decl_del.value, Value::Time(50.0));
         } else {
             panic!("expected style rule");
         }
     }
 }
-

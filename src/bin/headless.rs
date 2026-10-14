@@ -207,7 +207,11 @@ fn main() {
         }
         (width, doc_height, full_dl)
     } else {
-        (width, window_height, browser.build_display_list((width, window_height)))
+        (
+            width,
+            window_height,
+            browser.build_display_list((width, window_height)),
+        )
     };
     println!("Generated {} display list commands", dl.len());
     let mut bold_count = 0;
@@ -368,8 +372,8 @@ fn probe(browser: &BrowserChrome, selector: &str) {
                     mango_render::FontWeight::Regular,
                     font_size,
                 );
-                let ls = child.style.as_ref().map(|s| s.letter_spacing.clone());
-                let ws = child.style.as_ref().map(|s| s.word_spacing.clone());
+                let ls = child.style.as_ref().map(|s| s.letter_spacing);
+                let ws = child.style.as_ref().map(|s| s.word_spacing);
                 let fw = child.style.as_ref().map(|s| s.font_weight);
                 let ff = child.style.as_ref().map(|s| s.font_family.clone());
                 println!(

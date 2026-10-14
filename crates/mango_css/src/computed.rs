@@ -288,9 +288,18 @@ impl ComputedStyle {
         };
         [
             resolve(self.border_top_left_radius_len, self.border_top_left_radius),
-            resolve(self.border_top_right_radius_len, self.border_top_right_radius),
-            resolve(self.border_bottom_right_radius_len, self.border_bottom_right_radius),
-            resolve(self.border_bottom_left_radius_len, self.border_bottom_left_radius),
+            resolve(
+                self.border_top_right_radius_len,
+                self.border_top_right_radius,
+            ),
+            resolve(
+                self.border_bottom_right_radius_len,
+                self.border_bottom_right_radius,
+            ),
+            resolve(
+                self.border_bottom_left_radius_len,
+                self.border_bottom_left_radius,
+            ),
         ]
     }
 
@@ -1390,7 +1399,9 @@ pub fn apply_cascaded_properties(
             },
             "line-height" => match val {
                 Value::Number(n) => style.line_height = Some(*n * style.font_size),
-                Value::Percentage(pct) => style.line_height = Some((*pct / 100.0) * style.font_size),
+                Value::Percentage(pct) => {
+                    style.line_height = Some((*pct / 100.0) * style.font_size)
+                }
                 Value::Length(len) => {
                     style.line_height = Some(len.to_px_with_viewport(
                         style.font_size,

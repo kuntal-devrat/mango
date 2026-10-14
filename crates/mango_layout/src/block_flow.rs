@@ -86,7 +86,18 @@ pub fn layout_block(
         )
     ) || matches!(
         box_node.tag_name.as_deref(),
-        Some("table" | "tr" | "td" | "th" | "tbody" | "thead" | "tfoot" | "caption" | "colgroup" | "col")
+        Some(
+            "table"
+                | "tr"
+                | "td"
+                | "th"
+                | "tbody"
+                | "thead"
+                | "tfoot"
+                | "caption"
+                | "colgroup"
+                | "col"
+        )
     ) {
         crate::table_flow::layout_table(box_node, containing_block, float_ctx);
         return;
@@ -425,10 +436,16 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
             s.max_width,
             mango_css::values::Length::Auto | mango_css::values::Length::Percent(_)
         ) {
-            let px = s.max_width.to_px_with_viewport(fs, rfs, max_width, max_width);
+            let px = s
+                .max_width
+                .to_px_with_viewport(fs, rfs, max_width, max_width);
             let non_content = if s.box_sizing == BoxSizing::BorderBox {
-                let pl = s.padding_left.to_px_with_viewport(fs, rfs, max_width, max_width);
-                let pr = s.padding_right.to_px_with_viewport(fs, rfs, max_width, max_width);
+                let pl = s
+                    .padding_left
+                    .to_px_with_viewport(fs, rfs, max_width, max_width);
+                let pr = s
+                    .padding_right
+                    .to_px_with_viewport(fs, rfs, max_width, max_width);
                 pl + pr + s.border_left_width + s.border_right_width
             } else {
                 0.0
@@ -441,10 +458,16 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
             s.min_width,
             mango_css::values::Length::Auto | mango_css::values::Length::Percent(_)
         ) {
-            let px = s.min_width.to_px_with_viewport(fs, rfs, max_width, max_width);
+            let px = s
+                .min_width
+                .to_px_with_viewport(fs, rfs, max_width, max_width);
             let non_content = if s.box_sizing == BoxSizing::BorderBox {
-                let pl = s.padding_left.to_px_with_viewport(fs, rfs, max_width, max_width);
-                let pr = s.padding_right.to_px_with_viewport(fs, rfs, max_width, max_width);
+                let pl = s
+                    .padding_left
+                    .to_px_with_viewport(fs, rfs, max_width, max_width);
+                let pr = s
+                    .padding_right
+                    .to_px_with_viewport(fs, rfs, max_width, max_width);
                 pl + pr + s.border_left_width + s.border_right_width
             } else {
                 0.0
@@ -1206,8 +1229,13 @@ pub fn is_empty_block_collapsing_through(box_node: &LayoutBox) -> bool {
         }
     }
     box_node.children.iter().all(|c| {
-        let c_pos = c.style.as_ref().map(|s| s.position).unwrap_or(Position::Static);
-        matches!(c_pos, Position::Absolute | Position::Fixed) || is_empty_block_collapsing_through(c)
+        let c_pos = c
+            .style
+            .as_ref()
+            .map(|s| s.position)
+            .unwrap_or(Position::Static);
+        matches!(c_pos, Position::Absolute | Position::Fixed)
+            || is_empty_block_collapsing_through(c)
     })
 }
 
@@ -1512,7 +1540,8 @@ fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut FloatContext)
 
             // Advance cursor
             if is_empty_block_collapsing_through(child) {
-                let collapsed = collapse_margins(child.dimensions.margin.top, child.dimensions.margin.bottom);
+                let collapsed =
+                    collapse_margins(child.dimensions.margin.top, child.dimensions.margin.bottom);
                 child.dimensions.margin.top = collapsed;
                 child.dimensions.margin.bottom = 0.0;
                 prev_margin_bottom = collapsed;

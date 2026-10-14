@@ -80,7 +80,10 @@ fn test_wpt_css_cascade_and_selectors_suite() {
         let (root, _) = layout_document(&doc, &[], Size::new(800.0, 600.0));
         let p_box = find_box_by_tag(&root, "p").unwrap();
         let color = p_box.style.as_ref().unwrap().color;
-        stats.record("origin_important_beats_inline", color.r == 0 && color.g == 255 && color.b == 0);
+        stats.record(
+            "origin_important_beats_inline",
+            color.r == 0 && color.g == 255 && color.b == 0,
+        );
     }
 
     // Test 2: Specificity math: ID beats 10 classes
@@ -95,7 +98,10 @@ fn test_wpt_css_cascade_and_selectors_suite() {
         let doc = parse_html(html);
         let (root, _) = layout_document(&doc, &[], Size::new(800.0, 600.0));
         let div_box = find_box_by_tag(&root, "div").unwrap();
-        stats.record("specificity_id_beats_classes", div_box.dimensions.content.width() == 250.0);
+        stats.record(
+            "specificity_id_beats_classes",
+            div_box.dimensions.content.width() == 250.0,
+        );
     }
 
     // Test 3: CSS @layer ordering (unlayered rules override layered rules)
@@ -112,7 +118,10 @@ fn test_wpt_css_cascade_and_selectors_suite() {
         let doc = parse_html(html);
         let (root, _) = layout_document(&doc, &[], Size::new(800.0, 600.0));
         let div_box = find_box_by_tag(&root, "div").unwrap();
-        stats.record("layer_unlayered_beats_layered", div_box.dimensions.content.width() == 320.0);
+        stats.record(
+            "layer_unlayered_beats_layered",
+            div_box.dimensions.content.width() == 320.0,
+        );
     }
 
     // Test 4: CSS @layer priority (later declared layer overrides earlier layer)
@@ -131,7 +140,10 @@ fn test_wpt_css_cascade_and_selectors_suite() {
         let doc = parse_html(html);
         let (root, _) = layout_document(&doc, &[], Size::new(800.0, 600.0));
         let div_box = find_box_by_tag(&root, "div").unwrap();
-        stats.record("layer_later_overrides_earlier", div_box.dimensions.content.width() == 200.0);
+        stats.record(
+            "layer_later_overrides_earlier",
+            div_box.dimensions.content.width() == 200.0,
+        );
     }
 
     // Test 5: CSS Container Queries (@container)
@@ -161,7 +173,10 @@ fn test_wpt_css_cascade_and_selectors_suite() {
         let (root, _) = layout_document(&doc, &[], Size::new(800.0, 600.0));
         let container_box = find_box_by_tag(&root, "div").unwrap();
         let child_box = &container_box.children[0];
-        stats.record("container_query_inline_size", child_box.dimensions.content.width() == 450.0);
+        stats.record(
+            "container_query_inline_size",
+            child_box.dimensions.content.width() == 450.0,
+        );
     }
 
     // Test 6: Advanced selector :is(...)
@@ -177,7 +192,10 @@ fn test_wpt_css_cascade_and_selectors_suite() {
         let doc = parse_html(html);
         let (root, _) = layout_document(&doc, &[], Size::new(800.0, 600.0));
         let highlight = find_box_by_tag(&root, "div").unwrap();
-        stats.record("selector_is_pseudo", highlight.dimensions.content.width() == 350.0);
+        stats.record(
+            "selector_is_pseudo",
+            highlight.dimensions.content.width() == 350.0,
+        );
     }
 
     // Test 7: Advanced selector :where(...) has 0 specificity
@@ -194,7 +212,10 @@ fn test_wpt_css_cascade_and_selectors_suite() {
         let doc = parse_html(html);
         let (root, _) = layout_document(&doc, &[], Size::new(800.0, 600.0));
         let div_box = find_box_by_tag(&root, "div").unwrap();
-        stats.record("selector_where_zero_specificity", div_box.dimensions.content.width() == 150.0);
+        stats.record(
+            "selector_where_zero_specificity",
+            div_box.dimensions.content.width() == 150.0,
+        );
     }
 
     // Test 8: Advanced selector :has(...)
@@ -210,7 +231,10 @@ fn test_wpt_css_cascade_and_selectors_suite() {
         let doc = parse_html(html);
         let (root, _) = layout_document(&doc, &[], Size::new(800.0, 600.0));
         let parent_box = find_box_by_tag(&root, "div").unwrap();
-        stats.record("selector_has_pseudo", parent_box.dimensions.content.width() == 420.0);
+        stats.record(
+            "selector_has_pseudo",
+            parent_box.dimensions.content.width() == 420.0,
+        );
     }
 
     // Test 9: Attribute substring selectors ([attr^=], [attr$=], [attr*=], [attr~=])
@@ -262,7 +286,10 @@ fn test_wpt_css_cascade_and_selectors_suite() {
         stats.failed,
         stats.pass_percentage()
     );
-    assert_eq!(stats.failed, 0, "All WPT CSS cascade and selector tests must pass");
+    assert_eq!(
+        stats.failed, 0,
+        "All WPT CSS cascade and selector tests must pass"
+    );
 }
 
 // ============================================================================
@@ -298,7 +325,10 @@ fn test_wpt_css_flexbox_suite() {
         let c2 = &flex.children[2].dimensions.content;
         // 600 - 300 = 300 remaining space divided between 2 gaps = 150px gap
         // c0: 0..100, c1: 250..350, c2: 500..600
-        stats.record("flex_space_between", c0.x() == 0.0 && (c1.x() - 250.0).abs() < 1.0 && (c2.x() - 500.0).abs() < 1.0);
+        stats.record(
+            "flex_space_between",
+            c0.x() == 0.0 && (c1.x() - 250.0).abs() < 1.0 && (c2.x() - 500.0).abs() < 1.0,
+        );
     }
 
     // Test 2: Flex grow proportional expansion
@@ -323,7 +353,10 @@ fn test_wpt_css_flexbox_suite() {
         let flex = &body.children[0];
         let w1 = flex.children[0].dimensions.content.width();
         let w2 = flex.children[1].dimensions.content.width();
-        stats.record("flex_grow_proportional", (w1 - 200.0).abs() < 1.0 && (w2 - 400.0).abs() < 1.0);
+        stats.record(
+            "flex_grow_proportional",
+            (w1 - 200.0).abs() < 1.0 && (w2 - 400.0).abs() < 1.0,
+        );
     }
 
     // Test 3: Flex wrap multi-line distribution
@@ -393,7 +426,10 @@ fn test_wpt_css_flexbox_suite() {
         let body = &root.children[0];
         let flex = &body.children[0];
         let item = &flex.children[0].dimensions.content;
-        stats.record("flex_auto_margin_center", (item.x() - 100.0).abs() < 1.0 && (item.y() - 60.0).abs() < 1.0);
+        stats.record(
+            "flex_auto_margin_center",
+            (item.x() - 100.0).abs() < 1.0 && (item.y() - 60.0).abs() < 1.0,
+        );
     }
 
     println!(
@@ -435,7 +471,10 @@ fn test_wpt_css_grid_suite() {
         let grid = &body.children[0];
         let w0 = grid.children[0].dimensions.content.width();
         let w1 = grid.children[1].dimensions.content.width();
-        stats.record("grid_fr_tracks", (w0 - 200.0).abs() < 1.0 && (w1 - 400.0).abs() < 1.0);
+        stats.record(
+            "grid_fr_tracks",
+            (w0 - 200.0).abs() < 1.0 && (w1 - 400.0).abs() < 1.0,
+        );
     }
 
     // Test 2: Grid minmax track constraints
@@ -484,7 +523,10 @@ fn test_wpt_css_grid_suite() {
         let grid = &body.children[0];
         let span_w = grid.children[0].dimensions.content.width();
         let normal_w = grid.children[1].dimensions.content.width();
-        stats.record("grid_column_span", (span_w - 200.0).abs() < 1.0 && (normal_w - 100.0).abs() < 1.0);
+        stats.record(
+            "grid_column_span",
+            (span_w - 200.0).abs() < 1.0 && (normal_w - 100.0).abs() < 1.0,
+        );
     }
 
     // Test 4: Grid template areas named placement
@@ -586,7 +628,10 @@ fn test_wpt_css_table_suite() {
         let td1_w = tr.children[0].dimensions.margin_box().width();
         let td2_w = tr.children[1].dimensions.margin_box().width();
         println!("  [DEBUG table 1] td1_w: {}, td2_w: {}", td1_w, td2_w);
-        stats.record("table_fixed_width_distribution", (td1_w - 200.0).abs() < 2.0 && (td2_w - 400.0).abs() < 2.0);
+        stats.record(
+            "table_fixed_width_distribution",
+            (td1_w - 200.0).abs() < 2.0 && (td2_w - 400.0).abs() < 2.0,
+        );
     }
 
     // Test 2: Table border-collapse: collapse joins cell borders
@@ -606,7 +651,10 @@ fn test_wpt_css_table_suite() {
         let doc = parse_html(html);
         let (root, _) = layout_document(&doc, &[], Size::new(800.0, 600.0));
         let table = find_box_by_tag(&root, "table").unwrap();
-        stats.record("table_border_collapse", table.dimensions.content.width() > 0.0);
+        stats.record(
+            "table_border_collapse",
+            table.dimensions.content.width() > 0.0,
+        );
     }
 
     // Test 3: Colspan cell stretching
@@ -676,7 +724,10 @@ fn test_wpt_css_table_suite() {
         let doc = parse_html(html);
         let (root, _) = layout_document(&doc, &[], Size::new(800.0, 600.0));
         let caption = find_box_by_tag(&root, "caption").unwrap();
-        stats.record("table_caption_positioning", caption.dimensions.content.height() == 30.0);
+        stats.record(
+            "table_caption_positioning",
+            caption.dimensions.content.height() == 30.0,
+        );
     }
 
     println!(

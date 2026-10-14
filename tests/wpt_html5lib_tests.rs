@@ -52,10 +52,10 @@ fn find_all_tags(doc: &Document, root: NodeId, tag: &str) -> Vec<NodeId> {
 
 fn collect_tags(doc: &Document, root: NodeId, tag: &str, out: &mut Vec<NodeId>) {
     for child in doc.children(root) {
-        if let NodeData::Element(elem) = &child.data {
-            if elem.tag_name.eq_ignore_ascii_case(tag) {
-                out.push(child.id);
-            }
+        if let NodeData::Element(elem) = &child.data
+            && elem.tag_name.eq_ignore_ascii_case(tag)
+        {
+            out.push(child.id);
         }
         collect_tags(doc, child.id, tag, out);
     }
@@ -90,8 +90,12 @@ fn test_wpt_html5lib_tokenizer_suite() {
         let mut found_end = false;
         loop {
             match tok.next_token() {
-                Token::StartTag { name, attributes, .. } => {
-                    if name == "div" && attributes == vec![("class".to_string(), "container".to_string())] {
+                Token::StartTag {
+                    name, attributes, ..
+                } => {
+                    if name == "div"
+                        && attributes == vec![("class".to_string(), "container".to_string())]
+                    {
                         found_start = true;
                     }
                 }
@@ -131,10 +135,22 @@ fn test_wpt_html5lib_tokenizer_suite() {
         loop {
             match tok.next_token() {
                 Token::StartTag { attributes, .. } => {
-                    let href = attributes.iter().find(|(k, _)| k == "href").map(|(_, v)| v.as_str());
-                    let title = attributes.iter().find(|(k, _)| k == "title").map(|(_, v)| v.as_str());
-                    let data = attributes.iter().find(|(k, _)| k == "data-test").map(|(_, v)| v.as_str());
-                    if href == Some("?foo=&&bar=1") && title == Some("Tom & Jerry") && data == Some("foo&bar") {
+                    let href = attributes
+                        .iter()
+                        .find(|(k, _)| k == "href")
+                        .map(|(_, v)| v.as_str());
+                    let title = attributes
+                        .iter()
+                        .find(|(k, _)| k == "title")
+                        .map(|(_, v)| v.as_str());
+                    let data = attributes
+                        .iter()
+                        .find(|(k, _)| k == "data-test")
+                        .map(|(_, v)| v.as_str());
+                    if href == Some("?foo=&&bar=1")
+                        && title == Some("Tom & Jerry")
+                        && data == Some("foo&bar")
+                    {
                         ok = true;
                     }
                 }
@@ -167,8 +183,17 @@ fn test_wpt_html5lib_tokenizer_suite() {
         let mut ok = false;
         loop {
             match tok.next_token() {
-                Token::Doctype { name, public_id, system_id, force_quirks } => {
-                    if name == Some("html".to_string()) && public_id.is_none() && system_id.is_none() && !force_quirks {
+                Token::Doctype {
+                    name,
+                    public_id,
+                    system_id,
+                    force_quirks,
+                } => {
+                    if name == Some("html".to_string())
+                        && public_id.is_none()
+                        && system_id.is_none()
+                        && !force_quirks
+                    {
                         ok = true;
                     }
                 }
@@ -186,7 +211,9 @@ fn test_wpt_html5lib_tokenizer_suite() {
         let mut ok = false;
         loop {
             match tok.next_token() {
-                Token::StartTag { name, self_closing, .. } => {
+                Token::StartTag {
+                    name, self_closing, ..
+                } => {
                     if name == "img" && self_closing {
                         ok = true;
                     }
@@ -265,7 +292,10 @@ fn test_wpt_html5lib_tokenizer_suite() {
         stats.failed,
         stats.pass_percentage()
     );
-    assert_eq!(stats.failed, 0, "All WPT html5lib tokenizer tests must pass");
+    assert_eq!(
+        stats.failed, 0,
+        "All WPT html5lib tokenizer tests must pass"
+    );
 }
 
 // ============================================================================
@@ -330,9 +360,9 @@ fn test_wpt_html5lib_tree_construction_suite() {
         let root = doc.root();
         let textarea = doc.find_element_by_tag(root, "textarea").unwrap();
         let text = doc.text_content(textarea);
-        let has_child_element = doc.children(textarea).any(|c| {
-            matches!(c.data, NodeData::Element(_))
-        });
+        let has_child_element = doc
+            .children(textarea)
+            .any(|c| matches!(c.data, NodeData::Element(_)));
         stats.record(!has_child_element && text == "<div> & ©");
     }
 
@@ -400,7 +430,9 @@ fn test_wpt_html5lib_tree_construction_suite() {
         let root = doc.root();
         let ul = doc.find_element_by_tag(root, "ul").unwrap();
         let li_nodes = find_all_tags(&doc, ul, "li");
-        let all_direct_children = li_nodes.iter().all(|&li| doc.get(li).unwrap().parent == Some(ul));
+        let all_direct_children = li_nodes
+            .iter()
+            .all(|&li| doc.get(li).unwrap().parent == Some(ul));
         stats.record(li_nodes.len() == 3 && all_direct_children);
     }
 
@@ -416,7 +448,9 @@ fn test_wpt_html5lib_tree_construction_suite() {
 
     // Test 14: <select> options structure
     {
-        let doc = parse_html("<select><option>A<option>B<optgroup label='G'><option>C</optgroup></select>");
+        let doc = parse_html(
+            "<select><option>A<option>B<optgroup label='G'><option>C</optgroup></select>",
+        );
         let root = doc.root();
         let select = doc.find_element_by_tag(root, "select").unwrap();
         let options = find_all_tags(&doc, select, "option");
@@ -438,5 +472,8 @@ fn test_wpt_html5lib_tree_construction_suite() {
         stats.failed,
         stats.pass_percentage()
     );
-    assert_eq!(stats.failed, 0, "All WPT html5lib tree construction tests must pass");
+    assert_eq!(
+        stats.failed, 0,
+        "All WPT html5lib tree construction tests must pass"
+    );
 }

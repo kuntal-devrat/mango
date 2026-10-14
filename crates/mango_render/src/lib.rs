@@ -13,7 +13,9 @@
     clippy::manual_checked_ops,
     clippy::manual_clamp,
     clippy::needless_range_loop,
-    clippy::field_reassign_with_default
+    clippy::field_reassign_with_default,
+    clippy::unnecessary_cast,
+    clippy::collapsible_if
 )]
 
 pub mod color;

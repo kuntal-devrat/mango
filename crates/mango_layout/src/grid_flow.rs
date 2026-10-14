@@ -25,11 +25,7 @@ struct PlacedItem {
 }
 
 /// Formats a single grid item within its assigned cell span width.
-fn format_grid_item(
-    child: &mut LayoutBox,
-    span_w: f32,
-    container_height: f32,
-) -> f32 {
+fn format_grid_item(child: &mut LayoutBox, span_w: f32, container_height: f32) -> f32 {
     use mango_core::EdgeSizes;
     let child_style = child.style.clone().unwrap_or_default();
     let c_fs = child_style.font_size;
@@ -38,12 +34,14 @@ fn format_grid_item(
     let p_top = child_style
         .padding_top
         .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
-    let p_right = child_style
-        .padding_right
-        .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
-    let p_bottom = child_style
-        .padding_bottom
-        .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+    let p_right =
+        child_style
+            .padding_right
+            .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+    let p_bottom =
+        child_style
+            .padding_bottom
+            .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
     let p_left = child_style
         .padding_left
         .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
@@ -56,12 +54,14 @@ fn format_grid_item(
     let m_top = child_style
         .margin_top
         .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
-    let m_right = child_style
-        .margin_right
-        .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
-    let m_bottom = child_style
-        .margin_bottom
-        .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+    let m_right =
+        child_style
+            .margin_right
+            .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+    let m_bottom =
+        child_style
+            .margin_bottom
+            .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
     let m_left = child_style
         .margin_left
         .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
@@ -113,12 +113,10 @@ fn format_grid_item(
 
     // Resolve height if specified or measured
     if child_style.height != Length::Auto {
-        let raw_h = child_style.height.to_px_with_viewport(
-            c_fs,
-            16.0,
-            container_height,
-            container_height,
-        );
+        let raw_h =
+            child_style
+                .height
+                .to_px_with_viewport(c_fs, 16.0, container_height, container_height);
         let content_h = if child_style.box_sizing == BoxSizing::BorderBox {
             (raw_h - p_top - p_bottom - b_top - b_bottom).max(0.0)
         } else {

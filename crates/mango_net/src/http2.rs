@@ -484,13 +484,19 @@ impl AltSvcCache {
             }
             let mut parts = entry.split(';');
             let Some(first) = parts.next() else { continue };
-            let Some((alpn_raw, target_raw)) = first.split_once('=') else { continue };
+            let Some((alpn_raw, target_raw)) = first.split_once('=') else {
+                continue;
+            };
 
             let alpn = alpn_raw.trim().to_string();
             let target = target_raw.trim().trim_matches('"');
 
             let (host, port) = if let Some((h, p_str)) = target.rsplit_once(':') {
-                let h_opt = if h.is_empty() { None } else { Some(h.to_string()) };
+                let h_opt = if h.is_empty() {
+                    None
+                } else {
+                    Some(h.to_string())
+                };
                 let p = p_str.parse::<u16>().unwrap_or(443);
                 (h_opt, p)
             } else if let Ok(p) = target.parse::<u16>() {
@@ -634,7 +640,10 @@ impl Http3Frame {
     pub const MAX_PUSH_ID: u64 = 0x0D;
 
     pub fn new(frame_type: u64, payload: Vec<u8>) -> Self {
-        Self { frame_type, payload }
+        Self {
+            frame_type,
+            payload,
+        }
     }
 
     /// Serializes an HTTP/3 frame using QUIC varint for type and length.
@@ -657,7 +666,13 @@ impl Http3Frame {
             return None;
         }
         let payload = buf[header_len..header_len + payload_len].to_vec();
-        Some((Self { frame_type, payload }, header_len + payload_len))
+        Some((
+            Self {
+                frame_type,
+                payload,
+            },
+            header_len + payload_len,
+        ))
     }
 }
 
@@ -752,14 +767,19 @@ mod tests {
         let mut cache = AltSvcCache::new();
         cache.add_records("https://example.com", records);
         assert!(cache.supports_h3("https://example.com"));
-        assert_eq!(cache.get_h3_alternative("https://example.com"), Some((None, 443)));
+        assert_eq!(
+            cache.get_h3_alternative("https://example.com"),
+            Some((None, 443))
+        );
         assert!(!cache.supports_h3("https://other.com"));
     }
 
     #[test]
     fn test_quic_varint_and_http3_framing() {
         // Test varint 1, 2, 4, 8 byte boundaries
-        let cases = [0u64, 25, 63, 64, 15000, 16383, 16384, 1073741823, 1073741824];
+        let cases = [
+            0u64, 25, 63, 64, 15000, 16383, 16384, 1073741823, 1073741824,
+        ];
         for val in cases {
             let enc = encode_quic_varint(val);
             let (dec, consumed) = decode_quic_varint(&enc).expect("decode varint");

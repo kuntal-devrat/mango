@@ -31,10 +31,7 @@ impl<T: Read + Write + Send> ReadWrite for T {}
 ///
 /// Uses the same `ureq`-compatible rustls+webpki root store so TLS certificates
 /// are validated by the same engine as regular HTTPS navigation.
-fn make_tls_stream(
-    tcp: TcpStream,
-    hostname: &str,
-) -> Result<impl Read + Write + Send, String> {
+fn make_tls_stream(tcp: TcpStream, hostname: &str) -> Result<impl Read + Write + Send, String> {
     use std::sync::Arc;
 
     // Build a rustls client configuration with the system webpki root store.
@@ -125,7 +122,12 @@ pub fn sha1(data: &[u8]) -> [u8; 20] {
     for chunk in msg.chunks_exact(64) {
         let mut w = [0u32; 80];
         for i in 0..16 {
-            w[i] = u32::from_be_bytes([chunk[i * 4], chunk[i * 4 + 1], chunk[i * 4 + 2], chunk[i * 4 + 3]]);
+            w[i] = u32::from_be_bytes([
+                chunk[i * 4],
+                chunk[i * 4 + 1],
+                chunk[i * 4 + 2],
+                chunk[i * 4 + 3],
+            ]);
         }
         for i in 16..80 {
             w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
@@ -144,7 +146,8 @@ pub fn sha1(data: &[u8]) -> [u8; 20] {
                 40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1BBCDC),
                 _ => (b ^ c ^ d, 0xCA62C1D6),
             };
-            let temp = a.rotate_left(5)
+            let temp = a
+                .rotate_left(5)
                 .wrapping_add(f)
                 .wrapping_add(e)
                 .wrapping_add(k)
@@ -376,10 +379,7 @@ pub fn decode_frame<R: Read>(reader: &mut R) -> std::io::Result<(Opcode, Vec<u8>
         ));
     }
     // Close reason (bytes 2..) must be valid UTF-8 per RFC 6455 §5.5.1.
-    if opcode == Opcode::Close
-        && payload.len() > 2
-        && std::str::from_utf8(&payload[2..]).is_err()
-    {
+    if opcode == Opcode::Close && payload.len() > 2 && std::str::from_utf8(&payload[2..]).is_err() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "Invalid UTF-8 in close reason",
@@ -392,11 +392,23 @@ pub fn decode_frame<R: Read>(reader: &mut R) -> std::io::Result<(Opcode, Vec<u8>
 /// Events dispatched from a WebSocket connection to the host runtime.
 #[derive(Debug, Clone)]
 pub enum WebSocketEvent {
-    Open { protocol: String },
-    Message { data: String },
-    BinaryMessage { data: Vec<u8> },
-    Error { message: String },
-    Close { code: u16, reason: String, was_clean: bool },
+    Open {
+        protocol: String,
+    },
+    Message {
+        data: String,
+    },
+    BinaryMessage {
+        data: Vec<u8>,
+    },
+    Error {
+        message: String,
+    },
+    Close {
+        code: u16,
+        reason: String,
+        was_clean: bool,
+    },
 }
 
 /// Internal commands sent to the WebSocket background thread.
@@ -452,15 +464,9 @@ impl WebSocketManager {
         self.next_id.fetch_add(1, Ordering::Relaxed)
     }
 
-
     /// Spawns a background worker thread to connect and manage a WebSocket session.
-    pub fn connect<F>(
-        &self,
-        id: u64,
-        url_str: &str,
-        protocols: &str,
-        event_callback: F,
-    ) where
+    pub fn connect<F>(&self, id: u64, url_str: &str, protocols: &str, event_callback: F)
+    where
         F: Fn(WebSocketEvent) + Send + Sync + 'static,
     {
         let (cmd_tx, cmd_rx) = mpsc::channel::<WebSocketCommand>();
@@ -557,7 +563,9 @@ fn run_websocket_client<F>(
         }
     };
 
-    let port = parsed_url.port.unwrap_or(if scheme == "wss" { 443 } else { 80 });
+    let port = parsed_url
+        .port
+        .unwrap_or(if scheme == "wss" { 443 } else { 80 });
     let use_tls = scheme == "wss";
     let mut path = if parsed_url.path.is_empty() {
         "/".to_string()
@@ -701,7 +709,10 @@ fn run_websocket_client<F>(
                 }
             }
             Ok(_) => thread::sleep(Duration::from_millis(10)),
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {
+            Err(ref e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
                 thread::sleep(Duration::from_millis(10));
             }
             Err(_) => break,
@@ -723,7 +734,10 @@ fn run_websocket_client<F>(
     let resp_str = String::from_utf8_lossy(&response_buf);
     if !resp_str.contains("101 Switching Protocols") {
         cb(WebSocketEvent::Error {
-            message: format!("Server rejected WebSocket upgrade: {}", resp_str.lines().next().unwrap_or("")),
+            message: format!(
+                "Server rejected WebSocket upgrade: {}",
+                resp_str.lines().next().unwrap_or("")
+            ),
         });
         cb(WebSocketEvent::Close {
             code: 1006,
@@ -835,9 +849,14 @@ fn run_websocket_client<F>(
             Ok((Opcode::Text, payload, fin)) => {
                 if frag_opcode.is_some() {
                     cb(WebSocketEvent::Error {
-                        message: "Protocol error: new data frame while fragmented message pending".to_string(),
+                        message: "Protocol error: new data frame while fragmented message pending"
+                            .to_string(),
                     });
-                    cb(WebSocketEvent::Close { code: 1002, reason: "Protocol error".to_string(), was_clean: false });
+                    cb(WebSocketEvent::Close {
+                        code: 1002,
+                        reason: "Protocol error".to_string(),
+                        was_clean: false,
+                    });
                     break;
                 }
                 if fin {
@@ -846,7 +865,9 @@ fn run_websocket_client<F>(
                     cb(WebSocketEvent::Message { data: msg });
                 } else {
                     if payload.len() > MAX_WS_PAYLOAD {
-                        cb(WebSocketEvent::Error { message: "Fragment exceeds cap".to_string() });
+                        cb(WebSocketEvent::Error {
+                            message: "Fragment exceeds cap".to_string(),
+                        });
                         break;
                     }
                     frag_opcode = Some(Opcode::Text);
@@ -856,16 +877,23 @@ fn run_websocket_client<F>(
             Ok((Opcode::Binary, payload, fin)) => {
                 if frag_opcode.is_some() {
                     cb(WebSocketEvent::Error {
-                        message: "Protocol error: new data frame while fragmented message pending".to_string(),
+                        message: "Protocol error: new data frame while fragmented message pending"
+                            .to_string(),
                     });
-                    cb(WebSocketEvent::Close { code: 1002, reason: "Protocol error".to_string(), was_clean: false });
+                    cb(WebSocketEvent::Close {
+                        code: 1002,
+                        reason: "Protocol error".to_string(),
+                        was_clean: false,
+                    });
                     break;
                 }
                 if fin {
                     cb(WebSocketEvent::BinaryMessage { data: payload });
                 } else {
                     if payload.len() > MAX_WS_PAYLOAD {
-                        cb(WebSocketEvent::Error { message: "Fragment exceeds cap".to_string() });
+                        cb(WebSocketEvent::Error {
+                            message: "Fragment exceeds cap".to_string(),
+                        });
                         break;
                     }
                     frag_opcode = Some(Opcode::Binary);
@@ -877,29 +905,45 @@ fn run_websocket_client<F>(
                     cb(WebSocketEvent::Error {
                         message: "Protocol error: unexpected continuation frame".to_string(),
                     });
-                    cb(WebSocketEvent::Close { code: 1002, reason: "Protocol error".to_string(), was_clean: false });
+                    cb(WebSocketEvent::Close {
+                        code: 1002,
+                        reason: "Protocol error".to_string(),
+                        was_clean: false,
+                    });
                     break;
                 };
                 if frag_buffer.len().saturating_add(payload.len()) > MAX_WS_PAYLOAD {
-                    cb(WebSocketEvent::Error { message: "Reassembled message exceeds 16MiB cap".to_string() });
-                    cb(WebSocketEvent::Close { code: 1009, reason: "Message too big".to_string(), was_clean: false });
+                    cb(WebSocketEvent::Error {
+                        message: "Reassembled message exceeds 16MiB cap".to_string(),
+                    });
+                    cb(WebSocketEvent::Close {
+                        code: 1009,
+                        reason: "Message too big".to_string(),
+                        was_clean: false,
+                    });
                     break;
                 }
                 frag_buffer.extend_from_slice(&payload);
                 if fin {
                     match start {
-                        Opcode::Text => {
-                            match String::from_utf8(std::mem::take(&mut frag_buffer)) {
-                                Ok(msg) => cb(WebSocketEvent::Message { data: msg }),
-                                Err(_) => {
-                                    cb(WebSocketEvent::Error { message: "Invalid UTF-8 in fragmented text".to_string() });
-                                    cb(WebSocketEvent::Close { code: 1007, reason: "Invalid UTF-8".to_string(), was_clean: false });
-                                    break;
-                                }
+                        Opcode::Text => match String::from_utf8(std::mem::take(&mut frag_buffer)) {
+                            Ok(msg) => cb(WebSocketEvent::Message { data: msg }),
+                            Err(_) => {
+                                cb(WebSocketEvent::Error {
+                                    message: "Invalid UTF-8 in fragmented text".to_string(),
+                                });
+                                cb(WebSocketEvent::Close {
+                                    code: 1007,
+                                    reason: "Invalid UTF-8".to_string(),
+                                    was_clean: false,
+                                });
+                                break;
                             }
-                        }
+                        },
                         _ => {
-                            cb(WebSocketEvent::BinaryMessage { data: std::mem::take(&mut frag_buffer) });
+                            cb(WebSocketEvent::BinaryMessage {
+                                data: std::mem::take(&mut frag_buffer),
+                            });
                         }
                     }
                     frag_opcode = None;
@@ -932,7 +976,10 @@ fn run_websocket_client<F>(
                 break;
             }
             Ok((Opcode::Pong, _, _)) => {}
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {
+            Err(ref e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
                 thread::sleep(Duration::from_millis(5));
             }
             Err(e) => {
@@ -957,11 +1004,17 @@ mod tests {
     #[test]
     fn test_sha1_and_base64() {
         let digest = sha1(b"The quick brown fox jumps over the lazy dog");
-        let hex = digest.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+        let hex = digest
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>();
         assert_eq!(hex, "2fd4e1c67a2d28fced849ee1bb76e7391b93eb12");
 
         let empty = sha1(b"");
-        let empty_hex = empty.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+        let empty_hex = empty
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>();
         assert_eq!(empty_hex, "da39a3ee5e6b4b0d3255bfef95601890afd80709");
 
         let b64 = base64_encode(b"Hello world");

@@ -39,7 +39,9 @@ impl<K: std::hash::Hash + Eq + Clone> BoundedImageStore<K> {
         while (self.total_bytes + entry_bytes > self.max_bytes || self.entries.len() >= 1024)
             && !self.entries.is_empty()
         {
-            let Some(k) = self.entries.keys().next().cloned() else { break; };
+            let Some(k) = self.entries.keys().next().cloned() else {
+                break;
+            };
             if let Some(removed) = self.entries.remove(&k) {
                 self.total_bytes = self.total_bytes.saturating_sub(removed.pixels.len() * 4);
             }

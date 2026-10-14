@@ -149,9 +149,7 @@ fn read_body_capped(body: ureq::Body) -> Result<Vec<u8>, NetworkError> {
                 NetworkError::ConnectionFailed("Connection failed".to_string())
             }
             ureq::Error::Tls(msg) => NetworkError::TlsError(msg.to_string()),
-            ureq::Error::StatusCode(code) => {
-                NetworkError::HttpError(*code, format!("HTTP {code}"))
-            }
+            ureq::Error::StatusCode(code) => NetworkError::HttpError(*code, format!("HTTP {code}")),
             other => NetworkError::IoError(format!("Failed to read response body: {other}")),
         })
 }
@@ -566,9 +564,7 @@ impl HttpClient {
         let fut = tokio::task::spawn_blocking(move || client.get_single(&url));
         match tokio::time::timeout(Duration::from_secs(20), fut).await {
             Err(_) => Err(NetworkError::Timeout),
-            Ok(Err(e)) => Err(NetworkError::Other(format!(
-                "HTTP GET task panicked: {e}"
-            ))),
+            Ok(Err(e)) => Err(NetworkError::Other(format!("HTTP GET task panicked: {e}"))),
             Ok(Ok(res)) => res,
         }
     }

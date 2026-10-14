@@ -12,13 +12,13 @@
 //! document pipeline checks the epoch between each bounded fetch batch.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender, TryRecvError};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use crate::browser::{PreparedDocument, prepare_document_pipeline_cancellable};
 use mango_net::{ResourceLoader, Url};
-use crate::browser::{prepare_document_pipeline_cancellable, PreparedDocument};
 
 /// Number of background navigation workers (fixed pool, no per-nav spawn).
 pub const NAV_WORKER_COUNT: usize = 4;
@@ -55,10 +55,7 @@ pub enum NavResult {
         epoch: u64,
     },
     /// Progressive first contentful paint (early snapshot while downloading).
-    ProgressiveReady {
-        prep: PreparedDocument,
-        epoch: u64,
-    },
+    ProgressiveReady { prep: PreparedDocument, epoch: u64 },
     /// Navigation failed with a network or protocol error.
     Error {
         url: Url,
@@ -189,7 +186,8 @@ impl NavigationActorHandle {
                                                     std::thread::Builder::new()
                                                         .name("mango-preload-css".into())
                                                         .spawn(move || {
-                                                            let _ = loader_sub.fetch_stylesheet(&base_sub, &href);
+                                                            let _ = loader_sub
+                                                                .fetch_stylesheet(&base_sub, &href);
                                                         })
                                                         .ok();
                                                 }
@@ -197,7 +195,8 @@ impl NavigationActorHandle {
                                                     std::thread::Builder::new()
                                                         .name("mango-preload-js".into())
                                                         .spawn(move || {
-                                                            let _ = loader_sub.fetch_script(&base_sub, &href);
+                                                            let _ = loader_sub
+                                                                .fetch_script(&base_sub, &href);
                                                         })
                                                         .ok();
                                                 }
@@ -205,7 +204,9 @@ impl NavigationActorHandle {
                                                     std::thread::Builder::new()
                                                         .name("mango-preload-img".into())
                                                         .spawn(move || {
-                                                            let _ = loader_sub.fetch_image_bytes(&base_sub, &href);
+                                                            let _ = loader_sub.fetch_image_bytes(
+                                                                &base_sub, &href,
+                                                            );
                                                         })
                                                         .ok();
                                                 }
@@ -217,27 +218,32 @@ impl NavigationActorHandle {
                                     // First Contentful Paint: check if <head> completed or <body> started
                                     if !early_fcp_cb.swap(true, Ordering::SeqCst) {
                                         let accumulated = {
-                                            let guard = inc_parser_cb.lock().expect("inc_parser lock");
+                                            let guard =
+                                                inc_parser_cb.lock().expect("inc_parser lock");
                                             guard.accumulated_html().to_ascii_lowercase()
                                         };
                                         if accumulated.len() >= 512
-                                            && (accumulated.contains("</head>") || accumulated.contains("<body"))
+                                            && (accumulated.contains("</head>")
+                                                || accumulated.contains("<body"))
                                         {
                                             let partial_doc = inc_parser_cb
                                                 .lock()
                                                 .expect("inc_parser lock")
                                                 .current_document();
-                                            let prep = crate::browser::prepare_document_pipeline_from_doc(
-                                                &loader_cb,
-                                                partial_doc,
-                                                url_cb.clone(),
-                                                &|| cancel_flag_cb.load(Ordering::SeqCst) != epoch,
-                                            );
+                                            let prep =
+                                                crate::browser::prepare_document_pipeline_from_doc(
+                                                    &loader_cb,
+                                                    partial_doc,
+                                                    url_cb.clone(),
+                                                    &|| {
+                                                        cancel_flag_cb.load(Ordering::SeqCst)
+                                                            != epoch
+                                                    },
+                                                );
                                             if cancel_flag_cb.load(Ordering::SeqCst) == epoch {
-                                                let _ = result_tx_cb.send(NavResult::ProgressiveReady {
-                                                    prep,
-                                                    epoch,
-                                                });
+                                                let _ = result_tx_cb.send(
+                                                    NavResult::ProgressiveReady { prep, epoch },
+                                                );
                                             }
                                         } else {
                                             early_fcp_cb.store(false, Ordering::SeqCst);
@@ -427,15 +433,12 @@ where
             let _ = tx.send(f());
         })
         .map_err(|e| format!("failed to spawn fetch thread: {e}"))?;
-    rx.recv_timeout(timeout)
-        .map_err(|e| match e {
-            RecvTimeoutError::Timeout => {
-                format!("navigation fetch timed out after {:?}", timeout)
-            }
-            RecvTimeoutError::Disconnected => {
-                "navigation fetch worker disconnected".to_string()
-            }
-        })
+    rx.recv_timeout(timeout).map_err(|e| match e {
+        RecvTimeoutError::Timeout => {
+            format!("navigation fetch timed out after {:?}", timeout)
+        }
+        RecvTimeoutError::Disconnected => "navigation fetch worker disconnected".to_string(),
+    })
 }
 
 #[cfg(test)]
@@ -455,7 +458,8 @@ mod tests {
         assert_eq!(actor.active_epoch(), initial_epoch + 1);
 
         // Navigate to a data: HTML URL
-        let url = Url::parse("data:text/html,<html><body><h1>Actor Test</h1></body></html>").unwrap();
+        let url =
+            Url::parse("data:text/html,<html><body><h1>Actor Test</h1></body></html>").unwrap();
         actor.navigate(url.clone(), true);
 
         // Wait for result
@@ -464,7 +468,11 @@ mod tests {
                 NavResult::ProgressiveReady { .. } => {
                     continue;
                 }
-                NavResult::DocumentReady { prep, push_history, epoch } => {
+                NavResult::DocumentReady {
+                    prep,
+                    push_history,
+                    epoch,
+                } => {
                     assert!(push_history);
                     assert_eq!(epoch, actor.active_epoch());
                     assert!(prep.html.contains("Actor Test"));

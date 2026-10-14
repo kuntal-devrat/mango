@@ -638,9 +638,9 @@ impl Document {
                 NodeData::Element(el) if el.shadow_root.is_some() => {
                     Err(DomError::HierarchyRequestError)
                 }
-                NodeData::Element(_) => Ok(self.attach_shadow(host_id).ok_or(
-                    DomError::HierarchyRequestError,
-                )?),
+                NodeData::Element(_) => Ok(self
+                    .attach_shadow(host_id)
+                    .ok_or(DomError::HierarchyRequestError)?),
                 _ => Err(DomError::HierarchyRequestError),
             },
         }
@@ -931,10 +931,7 @@ impl Document {
         match self.arena.get(child) {
             None => return Err(DomError::NotFoundError),
             Some(c) => {
-                if matches!(
-                    c.data,
-                    NodeData::Document | NodeData::DocumentType { .. }
-                ) {
+                if matches!(c.data, NodeData::Document | NodeData::DocumentType { .. }) {
                     return Err(DomError::HierarchyRequestError);
                 }
             }

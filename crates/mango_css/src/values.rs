@@ -3272,10 +3272,7 @@ impl Value {
         }
 
         // hwb(h w b [/ a]) — CSS Color 4 hue-whiteness-blackness.
-        if let Some(inner) = lower
-            .strip_prefix("hwb(")
-            .and_then(|s| s.strip_suffix(')'))
-        {
+        if let Some(inner) = lower.strip_prefix("hwb(").and_then(|s| s.strip_suffix(')')) {
             let (hwb_part, alpha_part) = if let Some((hwb_s, a_s)) = split_slash_depth0(inner) {
                 (hwb_s.trim(), Some(a_s.trim()))
             } else {
@@ -3348,10 +3345,7 @@ impl Value {
         }
 
         // lab(l a b [/ alpha]) — CIE Lab with D50 white point.
-        if let Some(inner) = lower
-            .strip_prefix("lab(")
-            .and_then(|s| s.strip_suffix(')'))
-        {
+        if let Some(inner) = lower.strip_prefix("lab(").and_then(|s| s.strip_suffix(')')) {
             let (lab_part, alpha_part) = if let Some((lab_s, a_s)) = split_slash_depth0(inner) {
                 (lab_s.trim(), Some(a_s.trim()))
             } else {
@@ -3417,10 +3411,7 @@ impl Value {
         }
 
         // lch(l c h [/ alpha]) — CIE LCh with D50 white point.
-        if let Some(inner) = lower
-            .strip_prefix("lch(")
-            .and_then(|s| s.strip_suffix(')'))
-        {
+        if let Some(inner) = lower.strip_prefix("lch(").and_then(|s| s.strip_suffix(')')) {
             let (lch_part, alpha_part) = if let Some((lch_s, a_s)) = split_slash_depth0(inner) {
                 (lch_s.trim(), Some(a_s.trim()))
             } else {
@@ -3481,8 +3472,7 @@ impl Value {
 
             let to_srgb = |l: f32, c: f32, h: f32, a: u8| -> Color {
                 let rad = h.to_radians();
-                let (r, g, b) =
-                    lab_to_srgb(l, c * rad.cos(), c * rad.sin());
+                let (r, g, b) = lab_to_srgb(l, c * rad.cos(), c * rad.sin());
                 Color::rgba(r, g, b, a)
             };
             if parts.len() == 3 {

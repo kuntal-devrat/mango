@@ -519,7 +519,10 @@ fn render_layout_box_inner(
                                 radii: if s.has_border_radius()
                                     && layer.clip == mango_css::values::BackgroundClip::BorderBox
                                 {
-                                    s.border_radius_with_size(target_rect.width(), target_rect.height())
+                                    s.border_radius_with_size(
+                                        target_rect.width(),
+                                        target_rect.height(),
+                                    )
                                 } else {
                                     [0.0; 4]
                                 },
@@ -563,7 +566,10 @@ fn render_layout_box_inner(
                                 rect: target_rect,
                                 gradient: Box::new(resolved_grad),
                                 radii: if s.has_border_radius() {
-                                    s.border_radius_with_size(target_rect.width(), target_rect.height())
+                                    s.border_radius_with_size(
+                                        target_rect.width(),
+                                        target_rect.height(),
+                                    )
                                 } else {
                                     [0.0; 4]
                                 },
@@ -1027,7 +1033,9 @@ fn render_layout_box_inner(
             // Multiple shadows paint back-to-front (first shadow painted on top per CSS specs).
             for shadow in s.all_text_shadows().iter().rev() {
                 if shadow.color.a > 0
-                    && (shadow.offset_x != 0.0 || shadow.offset_y != 0.0 || shadow.blur_radius > 0.0)
+                    && (shadow.offset_x != 0.0
+                        || shadow.offset_y != 0.0
+                        || shadow.blur_radius > 0.0)
                 {
                     list.push(DisplayCommand::DrawTextShadow {
                         text: text.clone(),
@@ -3478,7 +3486,10 @@ mod tests {
             color: Color::rgba(0, 0, 0, 128),
         });
 
-        let mut text_box = LayoutBox::new(BoxType::TextNode("Shadowed".to_string()), Some(style.into()));
+        let mut text_box = LayoutBox::new(
+            BoxType::TextNode("Shadowed".to_string()),
+            Some(style.into()),
+        );
         text_box.dimensions.content = Rect::new(5.0, 5.0, 80.0, 20.0);
 
         let dl = build_display_list(&text_box);
@@ -3768,7 +3779,8 @@ mod tests {
 
     #[test]
     fn test_input_caret_fill_rect() {
-        let mut input_box = LayoutBox::new(BoxType::BlockNode, Some(ComputedStyle::default().into()));
+        let mut input_box =
+            LayoutBox::new(BoxType::BlockNode, Some(ComputedStyle::default().into()));
         input_box.tag_name = Some("input".to_string());
         input_box
             .attributes
@@ -4299,7 +4311,8 @@ mod tests {
 
     #[test]
     fn test_modal_dialog_backdrop() {
-        let mut dialog_box = LayoutBox::new(BoxType::BlockNode, Some(ComputedStyle::default().into()));
+        let mut dialog_box =
+            LayoutBox::new(BoxType::BlockNode, Some(ComputedStyle::default().into()));
         dialog_box.tag_name = Some("dialog".to_string());
         dialog_box
             .attributes
@@ -4327,7 +4340,8 @@ mod tests {
     #[test]
     fn test_progress_and_meter_rendering() {
         // 1. Determinate progress
-        let mut progress_box = LayoutBox::new(BoxType::InlineBlock, Some(ComputedStyle::default().into()));
+        let mut progress_box =
+            LayoutBox::new(BoxType::InlineBlock, Some(ComputedStyle::default().into()));
         progress_box.tag_name = Some("progress".to_string());
         progress_box
             .attributes
@@ -4350,7 +4364,8 @@ mod tests {
         );
 
         // 2. Meter (optimal zone -> green)
-        let mut meter_box = LayoutBox::new(BoxType::InlineBlock, Some(ComputedStyle::default().into()));
+        let mut meter_box =
+            LayoutBox::new(BoxType::InlineBlock, Some(ComputedStyle::default().into()));
         meter_box.tag_name = Some("meter".to_string());
         meter_box
             .attributes
@@ -4388,7 +4403,8 @@ mod tests {
     #[test]
     fn test_select_optgroup_and_multiple() {
         // Multi-select rendering
-        let mut select_box = LayoutBox::new(BoxType::InlineBlock, Some(ComputedStyle::default().into()));
+        let mut select_box =
+            LayoutBox::new(BoxType::InlineBlock, Some(ComputedStyle::default().into()));
         select_box.tag_name = Some("select".to_string());
         select_box
             .attributes
@@ -4528,7 +4544,8 @@ mod tests {
         style2.text_emphasis_style = TextEmphasisStyle::FilledCircle;
         style2.text_emphasis_color = Some(Color::rgb(255, 0, 0));
 
-        let mut text_box2 = LayoutBox::new(BoxType::TextNode("ABC".to_string()), Some(style2.into()));
+        let mut text_box2 =
+            LayoutBox::new(BoxType::TextNode("ABC".to_string()), Some(style2.into()));
         text_box2.dimensions.content = Rect::new(10.0, 50.0, 60.0, 24.0);
 
         let dl2 = build_display_list(&text_box2);
@@ -5014,8 +5031,10 @@ mod tests {
             repeating: false,
         });
 
-        let mut text_box =
-            LayoutBox::new(BoxType::TextNode("Hello Gradient".to_string()), Some(style.into()));
+        let mut text_box = LayoutBox::new(
+            BoxType::TextNode("Hello Gradient".to_string()),
+            Some(style.into()),
+        );
         text_box.dimensions.content = Rect::new(10.0, 10.0, 100.0, 20.0);
 
         let dl = build_display_list(&text_box);

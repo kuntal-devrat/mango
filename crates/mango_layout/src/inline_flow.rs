@@ -1444,36 +1444,37 @@ fn collect_ruby_atoms(
     }
 
     // Pair bases and annotations
-    let pairs: Vec<(String, Arc<ComputedStyle>, String, Arc<ComputedStyle>)> = if bases.len() == rts.len() {
-        bases
-            .into_iter()
-            .zip(rts)
-            .map(|((b_txt, b_s), (rt_txt, rt_s))| (b_txt, b_s, rt_txt, rt_s))
-            .collect()
-    } else if rts.len() == 1 {
-        let combined_base: String = bases.iter().map(|(t, _)| t.as_str()).collect();
-        let b_style = bases
-            .first()
-            .map(|(_, s)| s.clone())
-            .unwrap_or_else(|| ruby_style.clone());
-        let (rt_txt, rt_s) = rts.remove(0);
-        vec![(combined_base, b_style, rt_txt, rt_s)]
-    } else {
-        let max_len = bases.len().max(rts.len());
-        let mut result = Vec::new();
-        for i in 0..max_len {
-            let (b_txt, b_s) = bases
-                .get(i)
-                .cloned()
-                .unwrap_or_else(|| (String::new(), ruby_style.clone()));
-            let (rt_txt, rt_s) = rts
-                .get(i)
-                .cloned()
-                .unwrap_or_else(|| (String::new(), ruby_style.clone()));
-            result.push((b_txt, b_s, rt_txt, rt_s));
-        }
-        result
-    };
+    let pairs: Vec<(String, Arc<ComputedStyle>, String, Arc<ComputedStyle>)> =
+        if bases.len() == rts.len() {
+            bases
+                .into_iter()
+                .zip(rts)
+                .map(|((b_txt, b_s), (rt_txt, rt_s))| (b_txt, b_s, rt_txt, rt_s))
+                .collect()
+        } else if rts.len() == 1 {
+            let combined_base: String = bases.iter().map(|(t, _)| t.as_str()).collect();
+            let b_style = bases
+                .first()
+                .map(|(_, s)| s.clone())
+                .unwrap_or_else(|| ruby_style.clone());
+            let (rt_txt, rt_s) = rts.remove(0);
+            vec![(combined_base, b_style, rt_txt, rt_s)]
+        } else {
+            let max_len = bases.len().max(rts.len());
+            let mut result = Vec::new();
+            for i in 0..max_len {
+                let (b_txt, b_s) = bases
+                    .get(i)
+                    .cloned()
+                    .unwrap_or_else(|| (String::new(), ruby_style.clone()));
+                let (rt_txt, rt_s) = rts
+                    .get(i)
+                    .cloned()
+                    .unwrap_or_else(|| (String::new(), ruby_style.clone()));
+                result.push((b_txt, b_s, rt_txt, rt_s));
+            }
+            result
+        };
 
     for (b_txt, b_style, rt_txt, rt_style) in pairs {
         let b_w = measure_text_width_with_style(
@@ -2308,7 +2309,10 @@ mod tests {
         let mut super_style = ComputedStyle::default();
         super_style.font_size = 12.0;
         super_style.vertical_align = mango_css::values::VerticalAlign::Super;
-        let super_child = LayoutBox::new(BoxType::TextNode("[1]".to_string()), Some(super_style.into()));
+        let super_child = LayoutBox::new(
+            BoxType::TextNode("[1]".to_string()),
+            Some(super_style.into()),
+        );
 
         container.children.push(normal_child);
         container.children.push(super_child);
@@ -2390,7 +2394,10 @@ mod tests {
         bdo_style.direction = mango_css::values::Direction::Rtl;
         bdo_style.unicode_bidi = mango_css::values::UnicodeBidi::BidiOverride;
 
-        let bdo_text = LayoutBox::new(BoxType::TextNode("Hello".to_string()), Some(bdo_style.into()));
+        let bdo_text = LayoutBox::new(
+            BoxType::TextNode("Hello".to_string()),
+            Some(bdo_style.into()),
+        );
         container.children.push(bdo_text);
 
         let mut float_ctx = FloatContext::new();
@@ -2661,7 +2668,10 @@ mod tests {
         let mut container_thai = LayoutBox::new(BoxType::BlockNode, None);
         container_thai.dimensions.content = Rect::new(0.0, 0.0, 30.0, 0.0);
         let thai_raw = "ที่นี่"; // "thi-ni" (at this place): Consonant 'ท' + Sara I + Mai Ek, Consonant 'น' + Sara I + Mai Ek
-        let text_thai = LayoutBox::new(BoxType::TextNode(thai_raw.to_string()), Some(child_style.into()));
+        let text_thai = LayoutBox::new(
+            BoxType::TextNode(thai_raw.to_string()),
+            Some(child_style.into()),
+        );
         container_thai.children.push(text_thai);
         let mut float_ctx3 = FloatContext::new();
         layout_inline_children(&mut container_thai, &mut float_ctx3);
@@ -2856,7 +2866,10 @@ mod tests {
         container.style = Some(style.clone().into());
 
         // Text 1
-        let text1 = LayoutBox::new(BoxType::TextNode("Hello ".to_string()), Some(style.clone().into()));
+        let text1 = LayoutBox::new(
+            BoxType::TextNode("Hello ".to_string()),
+            Some(style.clone().into()),
+        );
 
         // Inline-block containing Text 2 with top padding 10px
         let mut ib_box = LayoutBox::new(BoxType::InlineBlock, None);
@@ -2867,7 +2880,10 @@ mod tests {
         ib_style.padding_bottom = mango_css::values::Length::Px(10.0);
         ib_box.style = Some(ib_style.clone().into());
 
-        let text2 = LayoutBox::new(BoxType::TextNode("Button".to_string()), Some(ib_style.into()));
+        let text2 = LayoutBox::new(
+            BoxType::TextNode("Button".to_string()),
+            Some(ib_style.into()),
+        );
         ib_box.children.push(text2);
 
         container.children.push(text1);

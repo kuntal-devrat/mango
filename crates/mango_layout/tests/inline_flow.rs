@@ -73,7 +73,10 @@ fn test_bidi_uax9_algorithm_mixed_scripts_and_mirroring() {
     bdo_style.direction = Direction::Rtl;
     bdo_style.unicode_bidi = UnicodeBidi::BidiOverride;
 
-    let bdo_child = LayoutBox::new(BoxType::TextNode("MANGO".to_string()), Some(bdo_style.into()));
+    let bdo_child = LayoutBox::new(
+        BoxType::TextNode("MANGO".to_string()),
+        Some(bdo_style.into()),
+    );
     container.children.push(bdo_child);
 
     let mut float_ctx = FloatContext::new();

@@ -10,6 +10,14 @@
 //! - **Timers**: `setTimeout()`, `setInterval()`, and their cancellation.
 //! - **Web APIs**: `alert()`, `innerWidth`, `innerHeight`.
 
+#![allow(
+    clippy::collapsible_if,
+    clippy::manual_strip,
+    clippy::too_many_arguments,
+    clippy::type_complexity,
+    clippy::needless_range_loop
+)]
+
 pub mod console;
 pub mod dom_bindings;
 pub mod event_loop;
@@ -19,4 +27,3 @@ pub mod worker;
 
 pub use runtime::JsRuntime;
 pub use worker::WorkerManager;
-

@@ -318,8 +318,15 @@ pub fn paint_with_clip(
                         );
                         let clip_out = Some((&inner_rect, *radii));
                         fill_rounded_rect_clipped(
-                            buffer, buf_width, buf_height, rect, *color, *radii, clip_out,
-                            inset_clip, active_blend,
+                            buffer,
+                            buf_width,
+                            buf_height,
+                            rect,
+                            *color,
+                            *radii,
+                            clip_out,
+                            inset_clip,
+                            active_blend,
                         );
                     } else {
                         let steps = (blur.min(16.0) / 2.0).ceil().max(1.0) as i32;
@@ -342,8 +349,15 @@ pub fn paint_with_clip(
                             );
                             let clip_out = Some((&inner_rect, *radii));
                             fill_rounded_rect_clipped(
-                                buffer, buf_width, buf_height, rect, step_color, *radii, clip_out,
-                                inset_clip, active_blend,
+                                buffer,
+                                buf_width,
+                                buf_height,
+                                rect,
+                                step_color,
+                                *radii,
+                                clip_out,
+                                inset_clip,
+                                active_blend,
                             );
                         }
                     }
@@ -641,15 +655,33 @@ pub fn paint_with_clip(
                 let snap_w = (snap_r - snap_x).max(0.0);
                 let snap_h = (snap_b - snap_y).max(0.0);
 
-                let snap_top = if widths.top > 0.0 { widths.top.round().max(1.0) } else { 0.0 };
-                let snap_bottom = if widths.bottom > 0.0 { widths.bottom.round().max(1.0) } else { 0.0 };
-                let snap_left = if widths.left > 0.0 { widths.left.round().max(1.0) } else { 0.0 };
-                let snap_right = if widths.right > 0.0 { widths.right.round().max(1.0) } else { 0.0 };
+                let snap_top = if widths.top > 0.0 {
+                    widths.top.round().max(1.0)
+                } else {
+                    0.0
+                };
+                let snap_bottom = if widths.bottom > 0.0 {
+                    widths.bottom.round().max(1.0)
+                } else {
+                    0.0
+                };
+                let snap_left = if widths.left > 0.0 {
+                    widths.left.round().max(1.0)
+                } else {
+                    0.0
+                };
+                let snap_right = if widths.right > 0.0 {
+                    widths.right.round().max(1.0)
+                } else {
+                    0.0
+                };
 
                 // Top border
                 if snap_top > 0.0 {
-                    let top_rect =
-                        intersect_rect(active_clip, mango_core::Rect::new(snap_x, snap_y, snap_w, snap_top));
+                    let top_rect = intersect_rect(
+                        active_clip,
+                        mango_core::Rect::new(snap_x, snap_y, snap_w, snap_top),
+                    );
                     if top_rect.width() > 0.0 && top_rect.height() > 0.0 {
                         fill_rect_mode(
                             buffer,
@@ -861,7 +893,7 @@ pub fn paint_with_clip(
                             r.width() as u32,
                             r.height() as u32,
                             *color,
-                                    active_blend,
+                            active_blend,
                         );
                     }
                 }
@@ -909,12 +941,8 @@ pub fn paint_with_clip(
                     // Map endpoints into device space; scale thickness by mean axis scale.
                     let (dx1, dy1) = apply_matrix(transform, *x1, *y1);
                     let (dx2, dy2) = apply_matrix(transform, *x2, *y2);
-                    let sx = (transform[0] * transform[0]
-                        + transform[1] * transform[1])
-                        .sqrt();
-                    let sy = (transform[2] * transform[2]
-                        + transform[3] * transform[3])
-                        .sqrt();
+                    let sx = (transform[0] * transform[0] + transform[1] * transform[1]).sqrt();
+                    let sy = (transform[2] * transform[2] + transform[3] * transform[3]).sqrt();
                     let mean_scale = ((sx + sy) * 0.5).max(0.0001);
                     draw_line_segment(
                         buffer,
@@ -1236,9 +1264,7 @@ fn fill_rect_transformed(
             }
             let idx = row + px as usize;
             if idx < buffer.len() {
-                if color.a == 255
-                    && blend_mode == mango_css::values::BlendMode::Normal
-                {
+                if color.a == 255 && blend_mode == mango_css::values::BlendMode::Normal {
                     buffer[idx] = color.to_rgb_u32();
                 } else {
                     buffer[idx] = blend_pixel_mode(color, buffer[idx], blend_mode);
@@ -1291,11 +1317,15 @@ fn draw_line_segment(
     // Bounding box expanded by half thickness + 1px AA fringe.
     let min_x = (x1.min(x2) - half - 1.0).max(clip.x()).max(0.0).floor() as i32;
     let min_y = (y1.min(y2) - half - 1.0).max(clip.y()).max(0.0).floor() as i32;
-    let max_x = ((x1.max(x2) + half + 1.0).min(clip.right()).min(buf_width as f32).ceil()
-        as i32)
+    let max_x = ((x1.max(x2) + half + 1.0)
+        .min(clip.right())
+        .min(buf_width as f32)
+        .ceil() as i32)
         .clamp(0, buf_width as i32);
-    let max_y = ((y1.max(y2) + half + 1.0).min(clip.bottom()).min(buf_height as f32).ceil()
-        as i32)
+    let max_y = ((y1.max(y2) + half + 1.0)
+        .min(clip.bottom())
+        .min(buf_height as f32)
+        .ceil() as i32)
         .clamp(0, buf_height as i32);
     if min_x >= max_x || min_y >= max_y {
         return;
@@ -1326,9 +1356,7 @@ fn draw_line_segment(
             if idx >= buffer.len() {
                 continue;
             }
-            if cov >= 0.999
-                && color.a == 255
-                && blend_mode == mango_css::values::BlendMode::Normal
+            if cov >= 0.999 && color.a == 255 && blend_mode == mango_css::values::BlendMode::Normal
             {
                 buffer[idx] = color.to_rgb_u32();
             } else {
@@ -2516,7 +2544,12 @@ fn fill_rect_mode(
 /// two adjacent radii exceeds the corresponding side length, all four radii
 /// are scaled proportionally by `min(1, available / sum)` so the shape stays valid.
 fn normalize_radii(w: f32, h: f32, radii: [f32; 4]) -> [f32; 4] {
-    let r = [radii[0].max(0.0), radii[1].max(0.0), radii[2].max(0.0), radii[3].max(0.0)];
+    let r = [
+        radii[0].max(0.0),
+        radii[1].max(0.0),
+        radii[2].max(0.0),
+        radii[3].max(0.0),
+    ];
     if w <= 0.0 || h <= 0.0 {
         return [0.0; 4];
     }
@@ -2630,8 +2663,7 @@ fn fill_rounded_rect_clipped(
     }
 
     let solid_pixel = color.to_rgb_u32();
-    let needs_blend =
-        color.a < 255 || blend_mode != mango_css::values::BlendMode::Normal;
+    let needs_blend = color.a < 255 || blend_mode != mango_css::values::BlendMode::Normal;
 
     let cx1 = clip.x().max(0.0) as i32;
     let cy1 = clip.y().max(0.0) as i32;
@@ -2678,8 +2710,7 @@ fn fill_rounded_rect_clipped(
                     let eff_a = ((color.a as f32) * cov).round() as u8;
                     if eff_a > 0 {
                         let blended_color = Color::rgba(color.r, color.g, color.b, eff_a);
-                        buffer[idx] =
-                            blend_pixel_mode(blended_color, buffer[idx], blend_mode);
+                        buffer[idx] = blend_pixel_mode(blended_color, buffer[idx], blend_mode);
                     }
                 }
             }

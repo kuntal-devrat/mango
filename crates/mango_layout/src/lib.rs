@@ -18,7 +18,9 @@
     clippy::too_many_arguments,
     clippy::large_enum_variant,
     clippy::if_same_then_else,
-    clippy::manual_memcpy
+    clippy::manual_memcpy,
+    clippy::type_complexity,
+    clippy::collapsible_if
 )]
 
 pub mod a11y;

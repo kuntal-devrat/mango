@@ -202,7 +202,11 @@ fn parse_hue(s: &str) -> Option<f32> {
         return v.trim().parse::<f32>().ok().map(|x| x * 0.9);
     }
     if let Some(v) = t.strip_suffix("rad") {
-        return v.trim().parse::<f32>().ok().map(|x| x * 180.0 / std::f32::consts::PI);
+        return v
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .map(|x| x * 180.0 / std::f32::consts::PI);
     }
     if let Some(v) = t.strip_suffix("deg") {
         return v.trim().parse::<f32>().ok();

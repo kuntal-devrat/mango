@@ -38,7 +38,11 @@ impl StyledNode {
         }
     }
 
-    pub fn with_text(node_id: Option<NodeId>, style: impl Into<Arc<ComputedStyle>>, text: String) -> Self {
+    pub fn with_text(
+        node_id: Option<NodeId>,
+        style: impl Into<Arc<ComputedStyle>>,
+        text: String,
+    ) -> Self {
         Self {
             node_id,
             style: style.into(),
@@ -552,7 +556,13 @@ fn build_styled_node(
                     .par_iter()
                     .map(|&child_id| {
                         let mut local_counter = counter_ctx.clone();
-                        build_styled_node(doc, child_id, author_index, Some(&style), &mut local_counter)
+                        build_styled_node(
+                            doc,
+                            child_id,
+                            author_index,
+                            Some(&style),
+                            &mut local_counter,
+                        )
                     })
                     .collect();
                 for sc in results.into_iter().flatten() {
@@ -1466,7 +1476,12 @@ fn update_styled_subtree(
         match &dom_node.data {
             NodeData::Element(elem) => {
                 let old_style = node.style.clone();
-                node.style = Arc::new(compute_style_with_index(nid, doc, author_index, parent_style));
+                node.style = Arc::new(compute_style_with_index(
+                    nid,
+                    doc,
+                    author_index,
+                    parent_style,
+                ));
                 node.attributes = elem
                     .attributes
                     .iter()

@@ -54,7 +54,9 @@ fn is_ui_thread() -> bool {
 /// on this guard.
 fn assert_not_on_ui_thread(context: &'static str) {
     if is_ui_thread() {
-        log::warn!("Blocking network fetch on UI thread at {context}; use the NavigationActor/background worker instead");
+        log::warn!(
+            "Blocking network fetch on UI thread at {context}; use the NavigationActor/background worker instead"
+        );
         debug_assert!(
             false,
             "Blocking network fetch on UI thread at {context}: dispatch via NavigationActor"
@@ -592,7 +594,8 @@ impl BrowserChrome {
         self.canvas_bg = canvas_color;
         self.page_display_list = page_dl;
         self.root_box = Some(root_box);
-        self.cached_scrollable_height = crate::scroll::compute_scrollable_height(self.root_box.as_ref());
+        self.cached_scrollable_height =
+            crate::scroll::compute_scrollable_height(self.root_box.as_ref());
         self.page_dirty = true;
         self.display_list_cache.borrow_mut().invalidate(None);
 
@@ -824,7 +827,9 @@ impl BrowserChrome {
                 style_snapshot: std::mem::take(&mut self.style_snapshot),
                 focused_control: self.focused_control.take(),
                 page_display_list: std::mem::take(&mut self.page_display_list),
-                display_list_cache: self.display_list_cache.replace(mango_layout::display_list::DisplayListCache::new()),
+                display_list_cache: self
+                    .display_list_cache
+                    .replace(mango_layout::display_list::DisplayListCache::new()),
                 image_rx: self.image_rx.take(),
                 has_active_animations: self.anim_state.is_animating(),
                 canvas_bg: self.canvas_bg,
@@ -852,7 +857,8 @@ impl BrowserChrome {
                 self.display_list_cache = std::cell::RefCell::new(contents.display_list_cache);
                 self.image_rx = contents.image_rx;
                 self.canvas_bg = contents.canvas_bg;
-                self.cached_scrollable_height = crate::scroll::compute_scrollable_height(self.root_box.as_ref());
+                self.cached_scrollable_height =
+                    crate::scroll::compute_scrollable_height(self.root_box.as_ref());
                 self.page_dirty = true;
                 self.status_text = format!("Tab: {}", self.page_title);
                 return;
@@ -967,7 +973,12 @@ impl BrowserChrome {
                         let len_frac = (char_len as f32 / total_chars).clamp(0.01, 1.0);
                         let mx = bbox.x() + bbox.width() * start_frac;
                         let mw = (bbox.width() * len_frac).max(6.0);
-                        out.push(mango_core::Rect::new(mx, bbox.y(), mw, bbox.height().max(12.0)));
+                        out.push(mango_core::Rect::new(
+                            mx,
+                            bbox.y(),
+                            mw,
+                            bbox.height().max(12.0),
+                        ));
                         start = absolute_byte_idx + q.len();
                         if start >= text_lower.len() {
                             break;
@@ -983,9 +994,13 @@ impl BrowserChrome {
 
         matches.sort_by(|a, b| {
             if (a.y() - b.y()).abs() > 4.0 {
-                a.y().partial_cmp(&b.y()).unwrap_or(std::cmp::Ordering::Equal)
+                a.y()
+                    .partial_cmp(&b.y())
+                    .unwrap_or(std::cmp::Ordering::Equal)
             } else {
-                a.x().partial_cmp(&b.x()).unwrap_or(std::cmp::Ordering::Equal)
+                a.x()
+                    .partial_cmp(&b.x())
+                    .unwrap_or(std::cmp::Ordering::Equal)
             }
         });
 
@@ -1022,10 +1037,9 @@ impl BrowserChrome {
         if self.find_in_page.matches.is_empty() {
             return;
         }
-        self.find_in_page.current_match = (self.find_in_page.current_match
-            + self.find_in_page.matches.len()
-            - 1)
-            % self.find_in_page.matches.len();
+        self.find_in_page.current_match =
+            (self.find_in_page.current_match + self.find_in_page.matches.len() - 1)
+                % self.find_in_page.matches.len();
         let target_match = self.find_in_page.matches[self.find_in_page.current_match];
         let target_y = (target_match.y() - 100.0).max(0.0).min(self.max_scroll());
         self.scroll_y = target_y;
@@ -1408,10 +1422,7 @@ impl BrowserChrome {
         // set during script execution.  The pre-layout already ran above at line
         // ~1080; a second unconditional full layout wastes ~50ms on every page
         // load for pages with no script-driven DOM mutations. (B-06 fix)
-        let needs_post_layout = self
-            .js_runtime
-            .as_ref()
-            .is_some_and(|rt| rt.is_dom_dirty());
+        let needs_post_layout = self.js_runtime.as_ref().is_some_and(|rt| rt.is_dom_dirty());
         if needs_post_layout {
             self.relayout();
         }
@@ -3228,25 +3239,19 @@ impl BrowserChrome {
         }
 
         // Ctrl+T: New tab
-        if event.modifiers.ctrl
-            && matches!(&event.key, MangoKey::Char('t') | MangoKey::Char('T'))
-        {
+        if event.modifiers.ctrl && matches!(&event.key, MangoKey::Char('t') | MangoKey::Char('T')) {
             self.new_tab();
             return;
         }
 
         // Ctrl+W: Close active tab
-        if event.modifiers.ctrl
-            && matches!(&event.key, MangoKey::Char('w') | MangoKey::Char('W'))
-        {
+        if event.modifiers.ctrl && matches!(&event.key, MangoKey::Char('w') | MangoKey::Char('W')) {
             self.close_active_tab();
             return;
         }
 
         // Ctrl+L: Focus Omnibox / Address bar
-        if event.modifiers.ctrl
-            && matches!(&event.key, MangoKey::Char('l') | MangoKey::Char('L'))
-        {
+        if event.modifiers.ctrl && matches!(&event.key, MangoKey::Char('l') | MangoKey::Char('L')) {
             self.clear_form_focus();
             if self.find_in_page.active {
                 self.find_in_page.active = false;
@@ -3258,33 +3263,25 @@ impl BrowserChrome {
         }
 
         // Ctrl+H: History
-        if event.modifiers.ctrl
-            && matches!(&event.key, MangoKey::Char('h') | MangoKey::Char('H'))
-        {
+        if event.modifiers.ctrl && matches!(&event.key, MangoKey::Char('h') | MangoKey::Char('H')) {
             self.navigate("about:history");
             return;
         }
 
         // Ctrl+F: Find in page
-        if event.modifiers.ctrl
-            && matches!(&event.key, MangoKey::Char('f') | MangoKey::Char('F'))
-        {
+        if event.modifiers.ctrl && matches!(&event.key, MangoKey::Char('f') | MangoKey::Char('F')) {
             self.toggle_find();
             return;
         }
 
         // Ctrl++ or Ctrl+=: Zoom in
-        if event.modifiers.ctrl
-            && matches!(&event.key, MangoKey::Char('+') | MangoKey::Char('='))
-        {
+        if event.modifiers.ctrl && matches!(&event.key, MangoKey::Char('+') | MangoKey::Char('=')) {
             self.zoom_in();
             return;
         }
 
         // Ctrl+-: Zoom out
-        if event.modifiers.ctrl
-            && matches!(&event.key, MangoKey::Char('-') | MangoKey::Char('_'))
-        {
+        if event.modifiers.ctrl && matches!(&event.key, MangoKey::Char('-') | MangoKey::Char('_')) {
             self.zoom_out();
             return;
         }
@@ -4014,7 +4011,9 @@ impl BrowserChrome {
             let (epoch, is_final) = match res {
                 crate::navigation_actor::NavResult::DocumentReady { epoch, .. }
                 | crate::navigation_actor::NavResult::Error { epoch, .. } => (*epoch, true),
-                crate::navigation_actor::NavResult::ProgressiveReady { epoch, .. } => (*epoch, false),
+                crate::navigation_actor::NavResult::ProgressiveReady { epoch, .. } => {
+                    (*epoch, false)
+                }
             };
             if epoch > best_epoch || (epoch == best_epoch && is_final && !best_is_final) {
                 best_epoch = epoch;
@@ -4032,19 +4031,14 @@ impl BrowserChrome {
         }
         match batch.into_iter().nth(idx).expect("best index valid") {
             crate::navigation_actor::NavResult::DocumentReady {
-                prep,
-                push_history,
-                ..
+                prep, push_history, ..
             } => {
                 self.is_loading = false;
                 self.apply_prepared_document(prep, push_history);
                 self.persist_cookies();
                 true
             }
-            crate::navigation_actor::NavResult::ProgressiveReady {
-                prep,
-                ..
-            } => {
+            crate::navigation_actor::NavResult::ProgressiveReady { prep, .. } => {
                 self.apply_prepared_document(prep, false);
                 self.page_dirty = true;
                 true
@@ -4097,11 +4091,11 @@ impl BrowserChrome {
             if self.tick_navigation() {
                 return;
             }
-            match self.nav_actor.recv_timeout(remaining.min(std::time::Duration::from_millis(200))) {
-                Ok(crate::navigation_actor::NavResult::ProgressiveReady {
-                    prep,
-                    epoch,
-                }) => {
+            match self
+                .nav_actor
+                .recv_timeout(remaining.min(std::time::Duration::from_millis(200)))
+            {
+                Ok(crate::navigation_actor::NavResult::ProgressiveReady { prep, epoch }) => {
                     if epoch == self.nav_actor.active_epoch() {
                         self.apply_prepared_document(prep, false);
                         self.page_dirty = true;
@@ -4240,7 +4234,8 @@ fn prepare_document_pipeline_internal(
     let mut stylesheet_links = Vec::new();
     collect_stylesheet_links(&doc, doc.root(), &mut stylesheet_links);
     for hint in early_hints {
-        if hint.kind == mango_html::PreloadHintKind::Style && !stylesheet_links.contains(&hint.url) {
+        if hint.kind == mango_html::PreloadHintKind::Style && !stylesheet_links.contains(&hint.url)
+        {
             stylesheet_links.push(hint.url);
         }
     }
@@ -4322,8 +4317,10 @@ fn prepare_document_pipeline_internal(
     // Bounded parallel script prefetch: at most MAX_CONCURRENT_FETCHES in
     // flight, per-fetch timeout, epoch abandonment between batches. Sequence
     // numbers (idx) preserve document order regardless of completion order.
-    let mut fetched_scripts: std::collections::HashMap<usize, Result<String, mango_net::NetworkError>> =
-        std::collections::HashMap::new();
+    let mut fetched_scripts: std::collections::HashMap<
+        usize,
+        Result<String, mango_net::NetworkError>,
+    > = std::collections::HashMap::new();
     if !to_fetch.is_empty() && !should_cancel() {
         for chunk in to_fetch.chunks(MAX_CONCURRENT_FETCHES) {
             if should_cancel() {
@@ -4371,7 +4368,8 @@ fn prepare_document_pipeline_internal(
                 if should_cancel() {
                     break;
                 }
-                match rx.recv_timeout(SUBRESOURCE_FETCH_TIMEOUT + std::time::Duration::from_secs(2)) {
+                match rx.recv_timeout(SUBRESOURCE_FETCH_TIMEOUT + std::time::Duration::from_secs(2))
+                {
                     Ok((idx, res)) => {
                         fetched_scripts.insert(idx, res);
                     }
@@ -4481,7 +4479,10 @@ impl BrowserChrome {
         // the previous page so its late worker cannot pollute this page, dedup
         // URLs, then fetch on a single epoch-checked background worker.
         self.close_stale_image_channel();
-        let epoch = self.image_epoch.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        let epoch = self
+            .image_epoch
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
         let mut seen_img = std::collections::HashSet::new();
         let mut deduped: Vec<String> = Vec::with_capacity(prep.image_sources.len());
         for src in prep.image_sources {
@@ -4671,7 +4672,10 @@ impl BrowserChrome {
     /// epoch-checked worker; `data:` URIs and cache hits resolve inline.
     fn queue_image_backlog(&mut self, sources: Vec<String>, base: Url) {
         self.close_stale_image_channel();
-        let epoch = self.image_epoch.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        let epoch = self
+            .image_epoch
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
         let mut seen = std::collections::HashSet::new();
         let mut deduped = Vec::with_capacity(sources.len());
         for src in sources {
@@ -7403,7 +7407,12 @@ fn load_stylesheets_parallel_cancellable(
     // sequence numbers (idx) restore document order.
     let mut results_map: std::collections::HashMap<usize, Result<String, mango_net::NetworkError>> =
         std::collections::HashMap::new();
-    for chunk in to_fetch.iter().enumerate().collect::<Vec<_>>().chunks(MAX_CONCURRENT_FETCHES) {
+    for chunk in to_fetch
+        .iter()
+        .enumerate()
+        .collect::<Vec<_>>()
+        .chunks(MAX_CONCURRENT_FETCHES)
+    {
         if should_cancel() {
             break;
         }
@@ -7483,7 +7492,13 @@ fn load_stylesheets_parallel_cancellable(
     }
 
     if !should_cancel() {
-        load_imported_stylesheets_parallel_cancellable(loader, import_rules, visited, out, should_cancel);
+        load_imported_stylesheets_parallel_cancellable(
+            loader,
+            import_rules,
+            visited,
+            out,
+            should_cancel,
+        );
     }
 }
 
@@ -7493,7 +7508,9 @@ fn load_imported_stylesheets_parallel(
     visited: &mut std::collections::HashSet<String>,
     out: &mut Vec<Stylesheet>,
 ) {
-    load_imported_stylesheets_parallel_cancellable(loader, pending_imports, visited, out, &|| false);
+    load_imported_stylesheets_parallel_cancellable(loader, pending_imports, visited, out, &|| {
+        false
+    });
 }
 
 fn load_imported_stylesheets_parallel_cancellable(
@@ -7529,7 +7546,12 @@ fn load_imported_stylesheets_parallel_cancellable(
 
         // Bounded fan-out preserving order via sequence numbers.
         let mut results: Vec<(usize, Url, Result<String, mango_net::NetworkError>)> = Vec::new();
-        for chunk in to_fetch.into_iter().enumerate().collect::<Vec<_>>().chunks(MAX_CONCURRENT_FETCHES) {
+        for chunk in to_fetch
+            .into_iter()
+            .enumerate()
+            .collect::<Vec<_>>()
+            .chunks(MAX_CONCURRENT_FETCHES)
+        {
             if should_cancel() {
                 break;
             }
@@ -7571,7 +7593,8 @@ fn load_imported_stylesheets_parallel_cancellable(
                 if should_cancel() {
                     break;
                 }
-                match rx.recv_timeout(SUBRESOURCE_FETCH_TIMEOUT + std::time::Duration::from_secs(2)) {
+                match rx.recv_timeout(SUBRESOURCE_FETCH_TIMEOUT + std::time::Duration::from_secs(2))
+                {
                     Ok(item) => results.push(item),
                     Err(_) => break,
                 }
@@ -7677,7 +7700,9 @@ fn load_web_fonts(loader: &ResourceLoader, base_url: Option<&Url>, stylesheets: 
             }
             drop(tx);
             // Bounded join: wait at most timeout + grace per chunk, then move on.
-            let deadline = std::time::Instant::now() + SUBRESOURCE_FETCH_TIMEOUT + std::time::Duration::from_secs(2);
+            let deadline = std::time::Instant::now()
+                + SUBRESOURCE_FETCH_TIMEOUT
+                + std::time::Duration::from_secs(2);
             for _ in 0..n {
                 let remaining = deadline.saturating_duration_since(std::time::Instant::now());
                 if remaining.is_zero() {
@@ -7712,11 +7737,17 @@ fn load_web_fonts(loader: &ResourceLoader, base_url: Option<&Url>, stylesheets: 
         };
         if is_true_bold {
             if !font_manager().has_web_font_weight(&face.font_family, FontWeight::Bold) {
-                jobs.push(FontJob { face_idx: i, weight: FontWeight::Bold });
+                jobs.push(FontJob {
+                    face_idx: i,
+                    weight: FontWeight::Bold,
+                });
             }
         } else if is_regular {
             if !font_manager().has_web_font_weight(&face.font_family, FontWeight::Regular) {
-                jobs.push(FontJob { face_idx: i, weight: FontWeight::Regular });
+                jobs.push(FontJob {
+                    face_idx: i,
+                    weight: FontWeight::Regular,
+                });
             }
         }
     }
@@ -7731,9 +7762,14 @@ fn load_web_fonts(loader: &ResourceLoader, base_url: Option<&Url>, stylesheets: 
         };
         if is_semi_bold
             && !font_manager().has_web_font_weight(&face.font_family, FontWeight::Bold)
-            && !jobs.iter().any(|j| j.face_idx == i && j.weight == FontWeight::Bold)
+            && !jobs
+                .iter()
+                .any(|j| j.face_idx == i && j.weight == FontWeight::Bold)
         {
-            jobs.push(FontJob { face_idx: i, weight: FontWeight::Bold });
+            jobs.push(FontJob {
+                face_idx: i,
+                weight: FontWeight::Bold,
+            });
         }
     }
     if jobs.is_empty() {
@@ -7756,7 +7792,13 @@ fn load_web_fonts(loader: &ResourceLoader, base_url: Option<&Url>, stylesheets: 
                 }
             }
             // Keep job_seq stable by storing weight alongside below.
-            remote_jobs.push((job_seq, FontJob { face_idx: job.face_idx, weight: job.weight }));
+            remote_jobs.push((
+                job_seq,
+                FontJob {
+                    face_idx: job.face_idx,
+                    weight: job.weight,
+                },
+            ));
             // Mark data jobs as already-fetched so the parallel phase skips them.
             continue;
         } else {
@@ -7777,7 +7819,12 @@ fn load_web_fonts(loader: &ResourceLoader, base_url: Option<&Url>, stylesheets: 
         .iter()
         .filter(|(seq, _, _)| !fetched.contains_key(seq))
         .map(|(seq, face_idx, weight)| {
-            (*seq, *face_idx, *weight, font_faces[*face_idx].src_url.clone())
+            (
+                *seq,
+                *face_idx,
+                *weight,
+                font_faces[*face_idx].src_url.clone(),
+            )
         })
         .collect();
     if let Some(base) = base_url {
@@ -7819,7 +7866,8 @@ fn load_web_fonts(loader: &ResourceLoader, base_url: Option<&Url>, stylesheets: 
             }
             drop(tx);
             for _ in 0..n {
-                match rx.recv_timeout(SUBRESOURCE_FETCH_TIMEOUT + std::time::Duration::from_secs(2)) {
+                match rx.recv_timeout(SUBRESOURCE_FETCH_TIMEOUT + std::time::Duration::from_secs(2))
+                {
                     Ok((seq, bytes)) => {
                         fetched.insert(seq, bytes);
                     }

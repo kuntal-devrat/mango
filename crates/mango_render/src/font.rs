@@ -1979,8 +1979,6 @@ unsafe impl Sync for FontManager {}
 mod tests {
     use super::*;
 
-
-
     #[test]
     fn test_font_manager_initializes() {
         let fm = font_manager();
@@ -2402,8 +2400,16 @@ mod tests {
     fn test_web_font_multiple_slices() {
         if let Ok(bytes) = std::fs::read("/tmp/fira.woff2") {
             let fm = font_manager();
-            let id = fm.register_web_font("TestSliceFamily", FontWeight::Regular, &bytes).unwrap();
-            let (w, _) = fm.measure_text_with_spacing("Install", 18.0, FontWeight::Regular, FontFamily::Custom(id), 0.0);
+            let id = fm
+                .register_web_font("TestSliceFamily", FontWeight::Regular, &bytes)
+                .unwrap();
+            let (w, _) = fm.measure_text_with_spacing(
+                "Install",
+                18.0,
+                FontWeight::Regular,
+                FontFamily::Custom(id),
+                0.0,
+            );
             assert!((w - 51.1).abs() < 1.0);
         }
     }

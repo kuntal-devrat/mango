@@ -3,6 +3,13 @@
 //! CSS tokenizer, parser, selector matching, specificity calculation,
 //! cascade, and computed style resolution for the Mango browser engine.
 
+#![allow(
+    clippy::collapsible_if,
+    clippy::excessive_precision,
+    clippy::too_many_arguments,
+    clippy::needless_range_loop
+)]
+
 pub mod animation;
 pub mod cascade;
 pub mod computed;
@@ -33,8 +40,8 @@ pub use computed::{
     compute_style_with_index,
 };
 pub use parser::{
-    ContainerRule, CssParser, FontFaceRule, KeyframeRule, KeyframesRule, LayerRule, MediaRule, Rule,
-    StyleRule, Stylesheet, parse_declaration_list, parse_selectors, parse_stylesheet,
+    ContainerRule, CssParser, FontFaceRule, KeyframeRule, KeyframesRule, LayerRule, MediaRule,
+    Rule, StyleRule, Stylesheet, parse_declaration_list, parse_selectors, parse_stylesheet,
 };
 pub use properties::Declaration;
 pub use property_id::{CSS_PROPERTY_COUNT, CssPropertyId, PropertyMap};

@@ -181,7 +181,10 @@ fn resolve_script_content(
                     }
                     return Ok(String::from_utf8_lossy(&resp.body).to_string());
                 } else {
-                    return Err(format!("Worker script fetch failed with HTTP status {}", resp.status));
+                    return Err(format!(
+                        "Worker script fetch failed with HTTP status {}",
+                        resp.status
+                    ));
                 }
             }
         }
@@ -217,11 +220,18 @@ fn resolve_script_content(
     }
 
     // 5. If it looks like raw executable JavaScript (e.g., inline code passed in tests), use it
-    if trimmed.contains(';') || trimmed.contains('{') || trimmed.contains("self.") || trimmed.contains("postMessage") {
+    if trimmed.contains(';')
+        || trimmed.contains('{')
+        || trimmed.contains("self.")
+        || trimmed.contains("postMessage")
+    {
         return Ok(trimmed.to_string());
     }
 
-    Err(format!("Could not load worker script from '{}'", script_url))
+    Err(format!(
+        "Could not load worker script from '{}'",
+        script_url
+    ))
 }
 
 /// Execution loop inside the dedicated background worker OS thread.
@@ -267,11 +277,7 @@ fn run_worker_thread(
         running_close.store(false, Ordering::Relaxed);
         Ok(JsValue::undefined())
     });
-    let _ = ctx.register_global_callable(
-        boa_engine::js_string!("_workerNativeClose"),
-        0,
-        close_fn,
-    );
+    let _ = ctx.register_global_callable(boa_engine::js_string!("_workerNativeClose"), 0, close_fn);
 
     // Register native `importScripts()`
     let base_import = base_url.clone();
@@ -293,11 +299,7 @@ fn run_worker_thread(
         }
         Ok(JsValue::undefined())
     });
-    let _ = ctx.register_global_callable(
-        boa_engine::js_string!("importScripts"),
-        1,
-        import_fn,
-    );
+    let _ = ctx.register_global_callable(boa_engine::js_string!("importScripts"), 1, import_fn);
 
     // Install worker global environment shim
     let init_shim = r#"

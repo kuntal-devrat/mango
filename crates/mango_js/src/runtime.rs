@@ -362,7 +362,6 @@ impl JsRuntime {
         dirty
     }
 
-
     /// Drains any queued Promise microtasks, MutationObserver callbacks, or deferred jobs.
     pub fn run_jobs(&mut self) {
         let _ = self.context.run_jobs();
@@ -1426,7 +1425,9 @@ mod tests {
 
     #[test]
     fn test_webgl_webgl2_and_webgpu_apis() {
-        let doc = parse_html("<html><body><canvas id='c1' width='300' height='150'></canvas></body></html>");
+        let doc = parse_html(
+            "<html><body><canvas id='c1' width='300' height='150'></canvas></body></html>",
+        );
         let mut rt = JsRuntime::new(doc, 800.0, 600.0);
         let script = r#"
             var c = document.getElementById('c1');
@@ -3871,7 +3872,8 @@ mod tests {
             if (closeEvt.code !== 1000 || closeEvt.wasClean !== true) throw new Error("CloseEvent props mismatch");
         "#;
 
-        rt.execute_script(script).expect("Web IDL hierarchy test failed");
+        rt.execute_script(script)
+            .expect("Web IDL hierarchy test failed");
     }
 
     #[test]
@@ -3905,8 +3907,13 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
 
-        let res = rt.eval("globalThis.workerResult").expect("eval workerResult");
-        assert_eq!(res, "42", "Threaded Web Worker should calculate 21 * 2 = 42 in background");
+        let res = rt
+            .eval("globalThis.workerResult")
+            .expect("eval workerResult");
+        assert_eq!(
+            res, "42",
+            "Threaded Web Worker should calculate 21 * 2 = 42 in background"
+        );
     }
 
     #[test]
@@ -3940,7 +3947,9 @@ mod tests {
                     let _ = stream.write_all(resp.as_bytes());
 
                     // Read one client frame and echo it back unmasked (server frames are not masked)
-                    if let Ok((opcode, payload, _fin)) = mango_net::websocket::decode_frame(&mut stream) {
+                    if let Ok((opcode, payload, _fin)) =
+                        mango_net::websocket::decode_frame(&mut stream)
+                    {
                         if opcode == mango_net::websocket::Opcode::Text {
                             let mut server_frame = vec![0x81, payload.len() as u8];
                             server_frame.extend_from_slice(&payload);
@@ -3988,8 +3997,13 @@ mod tests {
         let open_res = rt.eval("globalThis.openFired").expect("eval openFired");
         assert_eq!(open_res, "true", "WebSocket onopen should have fired");
 
-        let msg_res = rt.eval("globalThis.receivedMessage").expect("eval receivedMessage");
-        assert_eq!(msg_res, "Ping from Mango", "WebSocket echoed message mismatch");
+        let msg_res = rt
+            .eval("globalThis.receivedMessage")
+            .expect("eval receivedMessage");
+        assert_eq!(
+            msg_res, "Ping from Mango",
+            "WebSocket echoed message mismatch"
+        );
     }
 
     #[test]
@@ -4004,13 +4018,17 @@ mod tests {
             globalThis.moduleCalc = add(x, 8);
         "#;
 
-        rt.execute_module(module_src).expect("execute_module failed");
+        rt.execute_module(module_src)
+            .expect("execute_module failed");
 
         let calc_res = rt.eval("globalThis.moduleCalc").expect("eval moduleCalc");
         assert_eq!(calc_res, "50", "ES Module execution calculation mismatch");
 
         let var_res = rt.eval("globalThis.moduleVar").expect("eval moduleVar");
-        assert_eq!(var_res, "100", "ES Module execution global assignment mismatch");
+        assert_eq!(
+            var_res, "100",
+            "ES Module execution global assignment mismatch"
+        );
     }
 
     #[test]
@@ -4160,8 +4178,9 @@ mod tests {
             })()
         "#;
 
-        let res = rt.eval(script).expect("eval audio and offscreen canvas test");
+        let res = rt
+            .eval(script)
+            .expect("eval audio and offscreen canvas test");
         assert_eq!(res, "ok");
     }
 }
-

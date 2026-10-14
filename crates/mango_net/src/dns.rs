@@ -253,9 +253,7 @@ impl DnsCache {
         let fut = self.resolve_async(&host_owned, port);
         let res = tokio::time::timeout(timeout, fut)
             .await
-            .map_err(|_| {
-                format!("DNS resolution timed out after {:?} for '{host}'", timeout)
-            })?
+            .map_err(|_| format!("DNS resolution timed out after {:?} for '{host}'", timeout))?
             .map_err(|e| e.to_string());
         if let Ok(mut s) = self.inflight.lock() {
             s.remove(&cache_key);

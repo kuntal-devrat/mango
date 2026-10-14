@@ -8,6 +8,14 @@
 //! - **DOM**: Arena-allocated node graph for performant memory management
 //! - **Entities**: Character entity reference resolution
 
+#![allow(
+    clippy::manual_ignore_case_cmp,
+    clippy::question_mark,
+    clippy::collapsible_if,
+    clippy::needless_range_loop,
+    clippy::too_many_arguments
+)]
+
 pub mod dom;
 pub mod elements;
 pub mod entities;

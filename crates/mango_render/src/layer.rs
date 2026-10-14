@@ -225,7 +225,6 @@ impl RenderLayer {
     }
 }
 
-
 /// The hierarchical compositor layer tree managing all top-level browser layers.
 #[derive(Debug, Clone)]
 pub struct LayerTree {
@@ -350,7 +349,10 @@ mod tests {
         assert_eq!(LayerTree::should_promote("auto"), None);
 
         let mut tree = LayerTree::new(800, 600);
-        let idx = tree.promote_layer(Rect::new(10.0, 10.0, 100.0, 100.0), LayerPromotionReason::WillChangeTransform);
+        let idx = tree.promote_layer(
+            Rect::new(10.0, 10.0, 100.0, 100.0),
+            LayerPromotionReason::WillChangeTransform,
+        );
         assert_eq!(idx, 0);
         assert_eq!(tree.promoted_layers.len(), 1);
         assert_eq!(
@@ -375,7 +377,11 @@ mod tests {
 
         // Now scroll to y = 3840 WITHOUT setting is_dirty or damage
         layer.scroll_offset = (0.0, 3840.0);
-        layer.tile_grid.as_mut().unwrap().update_content_size(800.0, 5000.0);
+        layer
+            .tile_grid
+            .as_mut()
+            .unwrap()
+            .update_content_size(800.0, 5000.0);
         layer.rasterize_if_dirty(Color::rgb(255, 255, 255), 200);
 
         let grid = layer.tile_grid.as_ref().unwrap();
@@ -385,5 +391,3 @@ mod tests {
         assert!(grid.get_tile(crate::tile::TileCoord::new(0, 0)).is_none());
     }
 }
-
-

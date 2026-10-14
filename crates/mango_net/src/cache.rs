@@ -176,9 +176,9 @@ impl ResourceCache {
             }
         }
 
-        let has_explicit_max_age = headers.get("cache-control").map_or(false, |cc| {
-            cc.to_ascii_lowercase().contains("max-age=")
-        });
+        let has_explicit_max_age = headers
+            .get("cache-control")
+            .map_or(false, |cc| cc.to_ascii_lowercase().contains("max-age="));
 
         // RFC 9111: Do not cache 4xx/5xx responses unless explicit Cache-Control max-age is present
         if status >= 400 && !has_explicit_max_age && custom_ttl.is_none() {
@@ -436,7 +436,10 @@ mod tests {
             b"404 Not Found".to_vec(),
             None,
         );
-        assert!(cache.get(url_404).is_none(), "404 without max-age must not be cached");
+        assert!(
+            cache.get(url_404).is_none(),
+            "404 without max-age must not be cached"
+        );
 
         let url_500 = "https://example.com/error.html";
         cache.insert(
@@ -447,7 +450,10 @@ mod tests {
             b"500 Internal Error".to_vec(),
             None,
         );
-        assert!(cache.get(url_500).is_none(), "500 without max-age must not be cached");
+        assert!(
+            cache.get(url_500).is_none(),
+            "500 without max-age must not be cached"
+        );
 
         // With explicit max-age, error can be cached per RFC 9111
         let mut cc_headers = HashMap::new();
@@ -460,6 +466,9 @@ mod tests {
             b"404 Not Found".to_vec(),
             None,
         );
-        assert!(cache.get(url_404).is_some(), "404 with explicit max-age may be cached");
+        assert!(
+            cache.get(url_404).is_some(),
+            "404 with explicit max-age may be cached"
+        );
     }
 }

@@ -260,7 +260,9 @@ fn parse_tag_for_preload(tag_content: &str) -> Vec<PreloadHint> {
 
     if tag_name.eq_ignore_ascii_case("link") {
         let rel = find_attr(rest, "rel").unwrap_or_default();
-        let href = find_attr(rest, "href").map(|s| s.trim().to_string()).unwrap_or_default();
+        let href = find_attr(rest, "href")
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
         let imagesrcset = find_attr(rest, "imagesrcset");
 
         if rel_token_contains(&rel, "stylesheet") && !href.is_empty() {
@@ -276,7 +278,12 @@ fn parse_tag_for_preload(tag_content: &str) -> Vec<PreloadHint> {
 
         if rel_token_contains(&rel, "preload") {
             let as_attr = find_attr(rest, "as");
-            let kind = match as_attr.as_deref().unwrap_or("").to_ascii_lowercase().as_str() {
+            let kind = match as_attr
+                .as_deref()
+                .unwrap_or("")
+                .to_ascii_lowercase()
+                .as_str()
+            {
                 "style" => PreloadHintKind::Style,
                 "script" => PreloadHintKind::Script,
                 "font" => PreloadHintKind::Font,
@@ -618,14 +625,17 @@ mod tests {
         assert_eq!(hints2[1].kind, PreloadHintKind::Script);
 
         // Feed chunk 3: body with image
-        let hints3 = parser.feed_str("</head><body><img src=\"hero.png\"><h1>Hello</h1></body></html>");
+        let hints3 =
+            parser.feed_str("</head><body><img src=\"hero.png\"><h1>Hello</h1></body></html>");
         assert_eq!(hints3.len(), 1);
         assert_eq!(hints3[0].url, "hero.png");
         assert_eq!(hints3[0].kind, PreloadHintKind::Image);
 
         // Finish parsing
         let doc = parser.finish();
-        let h1_id = doc.find_element_by_tag(doc.root(), "h1").expect("h1 element found");
+        let h1_id = doc
+            .find_element_by_tag(doc.root(), "h1")
+            .expect("h1 element found");
         assert_eq!(doc.text_content(h1_id), "Hello");
     }
 
@@ -642,14 +652,20 @@ mod tests {
     #[test]
     fn test_incremental_current_document_progressive_fcp() {
         let mut parser = IncrementalParser::new();
-        parser.feed_str("<!DOCTYPE html><html><head><title>Test Page</title></head><body><p>Chunk 1</p>");
+        parser.feed_str(
+            "<!DOCTYPE html><html><head><title>Test Page</title></head><body><p>Chunk 1</p>",
+        );
         let doc1 = parser.current_document();
-        let p1 = doc1.find_element_by_tag(doc1.root(), "p").expect("p element present in chunk 1");
+        let p1 = doc1
+            .find_element_by_tag(doc1.root(), "p")
+            .expect("p element present in chunk 1");
         assert_eq!(doc1.text_content(p1), "Chunk 1");
 
         parser.feed_str("<div>Chunk 2</div></body></html>");
         let doc2 = parser.finish();
-        let div = doc2.find_element_by_tag(doc2.root(), "div").expect("div element present in final doc");
+        let div = doc2
+            .find_element_by_tag(doc2.root(), "div")
+            .expect("div element present in final doc");
         assert_eq!(doc2.text_content(div), "Chunk 2");
     }
 }

@@ -1543,10 +1543,11 @@ impl<'a> TreeBuilder<'a> {
                                 }
                             });
                         if let Some(_cached_idx) = has_a {
-                            let old_node_id_opt = match &self.active_formatting_elements[_cached_idx] {
-                                FormattingEntry::Element { node_id, .. } => Some(*node_id),
-                                FormattingEntry::Marker => None,
-                            };
+                            let old_node_id_opt =
+                                match &self.active_formatting_elements[_cached_idx] {
+                                    FormattingEntry::Element { node_id, .. } => Some(*node_id),
+                                    FormattingEntry::Marker => None,
+                                };
                             self.handle_formatting_end_tag("a");
                             // Re-lookup by NodeId after AAA instead of cached idx
                             // (AAA may have shifted/removed entries; avoid double-remove).

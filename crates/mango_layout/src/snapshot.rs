@@ -90,7 +90,11 @@ impl LayoutSnapshot {
         let styled_root = crate::style_tree::build_style_tree_with_env(doc, author_styles, env)?;
         let maps = crate::style_tree::collect_image_maps(doc);
         let viewport = Size::new(env.viewport_width, env.viewport_height);
-        Some(Self::from_styled_tree_with_maps(&styled_root, Some(&maps), viewport))
+        Some(Self::from_styled_tree_with_maps(
+            &styled_root,
+            Some(&maps),
+            viewport,
+        ))
     }
 
     /// Returns an immutable reference to the root layout box.

@@ -385,7 +385,9 @@ impl ResourceLoader {
         }
 
         // 2. Fetch over network as subresource (is_top_level=false with initiator)
-        let resp = self.client.fetch_with_context(&resolved_url, Some(base_url), false, true)?;
+        let resp = self
+            .client
+            .fetch_with_context(&resolved_url, Some(base_url), false, true)?;
         if !resp.is_success() {
             return Err(NetworkError::HttpError(resp.status, resp.status_text));
         }
@@ -439,7 +441,9 @@ impl ResourceLoader {
         }
 
         // 2. Fetch over network as subresource (is_top_level=false with initiator)
-        let resp = self.client.fetch_with_context(&resolved_url, Some(base_url), false, true)?;
+        let resp = self
+            .client
+            .fetch_with_context(&resolved_url, Some(base_url), false, true)?;
         if !resp.is_success() {
             return Err(NetworkError::HttpError(resp.status, resp.status_text));
         }
@@ -501,7 +505,9 @@ impl ResourceLoader {
         }
 
         // 2. Fetch over network as subresource (is_top_level=false with initiator)
-        let resp: HttpResponse = self.client.fetch_with_context(&resolved_url, Some(base_url), false, true)?;
+        let resp: HttpResponse =
+            self.client
+                .fetch_with_context(&resolved_url, Some(base_url), false, true)?;
         if !resp.is_success() {
             return Err(NetworkError::HttpError(resp.status, resp.status_text));
         }
@@ -553,7 +559,9 @@ impl ResourceLoader {
         }
 
         // 2. Fetch over network as subresource (is_top_level=false with initiator)
-        let resp: HttpResponse = self.client.fetch_with_context(&resolved_url, Some(base_url), false, true)?;
+        let resp: HttpResponse =
+            self.client
+                .fetch_with_context(&resolved_url, Some(base_url), false, true)?;
         if !resp.is_success() {
             return Err(NetworkError::HttpError(resp.status, resp.status_text));
         }
@@ -1320,6 +1328,9 @@ mod tests {
         loader.remember_csp(&page_url, &headers);
 
         let script_res = loader.fetch_script(&page_url, "data:text/javascript,console.log('hi')");
-        assert!(script_res.is_err(), "CSP should block data: script when script-src is 'self'");
+        assert!(
+            script_res.is_err(),
+            "CSP should block data: script when script-src is 'self'"
+        );
     }
 }

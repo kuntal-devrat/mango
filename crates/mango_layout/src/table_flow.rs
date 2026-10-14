@@ -307,7 +307,12 @@ fn layout_standalone_row(
     let row_w = row_box.dimensions.content.width().max(1.0);
     let row_x = row_box.dimensions.content.x();
     let row_y = row_box.dimensions.content.y();
-    let n = row_box.children.iter().filter(|c| is_table_cell(c)).count().max(1);
+    let n = row_box
+        .children
+        .iter()
+        .filter(|c| is_table_cell(c))
+        .count()
+        .max(1);
     let cell_w = (row_w / n as f32).max(1.0);
     let mut max_h = 0.0f32;
     let mut cur_x = row_x;
@@ -352,17 +357,27 @@ fn layout_standalone_row(
             cs.margin_bottom.to_px_with_viewport(fs, rfs, cell_w, 0.0),
             cs.margin_left.to_px_with_viewport(fs, rfs, cell_w, 0.0),
         );
-        let non_content =
-            cell.dimensions.padding.left + cell.dimensions.padding.right + cell.dimensions.border.left + cell.dimensions.border.right;
+        let non_content = cell.dimensions.padding.left
+            + cell.dimensions.padding.right
+            + cell.dimensions.border.left
+            + cell.dimensions.border.right;
         cell.dimensions.content.size.width = (cell_w - non_content).max(1.0);
         cell.dimensions.content.origin = Point::new(
-            cur_x + cell.dimensions.margin.left + cell.dimensions.border.left + cell.dimensions.padding.left,
-            row_y + cell.dimensions.margin.top + cell.dimensions.border.top + cell.dimensions.padding.top,
+            cur_x
+                + cell.dimensions.margin.left
+                + cell.dimensions.border.left
+                + cell.dimensions.padding.left,
+            row_y
+                + cell.dimensions.margin.top
+                + cell.dimensions.border.top
+                + cell.dimensions.padding.top,
         );
         crate::block_flow::layout_block_contents(cell, &cb, &mut fctx);
         // Re-anchor after contents changed height.
-        cell.dimensions.content.origin.x =
-            cur_x + cell.dimensions.margin.left + cell.dimensions.border.left + cell.dimensions.padding.left;
+        cell.dimensions.content.origin.x = cur_x
+            + cell.dimensions.margin.left
+            + cell.dimensions.border.left
+            + cell.dimensions.padding.left;
         max_h = max_h.max(cell.dimensions.margin_box().height());
         cur_x += cell_w;
     }
@@ -372,10 +387,7 @@ fn layout_standalone_row(
             + cell.dimensions.padding.bottom
             + cell.dimensions.border.top
             + cell.dimensions.border.bottom;
-        let target = (max_h
-            - cell.dimensions.margin.top
-            - cell.dimensions.margin.bottom
-            - non_v)
+        let target = (max_h - cell.dimensions.margin.top - cell.dimensions.margin.bottom - non_v)
             .max(cell.dimensions.content.height())
             .max(0.0);
         cell.dimensions.content.size.height = target;

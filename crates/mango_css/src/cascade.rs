@@ -883,7 +883,10 @@ impl<'a> RuleIndex<'a> {
                             container_type = Some(d.value);
                         } else if name == "contain" {
                             let val_str = format!("{:?}", d.value).to_ascii_lowercase();
-                            if val_str.contains("size") || val_str.contains("inline-size") || val_str.contains("strict") {
+                            if val_str.contains("size")
+                                || val_str.contains("inline-size")
+                                || val_str.contains("strict")
+                            {
                                 if container_type.is_none() {
                                     container_type = Some(Value::Keyword("inline-size".into()));
                                 }
@@ -955,8 +958,12 @@ impl<'a> RuleIndex<'a> {
                                         container_type = Some(dval.clone());
                                     } else if dname == "contain" && container_type.is_none() {
                                         let val_str = format!("{:?}", dval).to_ascii_lowercase();
-                                        if val_str.contains("size") || val_str.contains("inline-size") || val_str.contains("strict") {
-                                            container_type = Some(Value::Keyword("inline-size".into()));
+                                        if val_str.contains("size")
+                                            || val_str.contains("inline-size")
+                                            || val_str.contains("strict")
+                                        {
+                                            container_type =
+                                                Some(Value::Keyword("inline-size".into()));
                                         }
                                     } else if dname == "container-name" && container_name.is_none()
                                     {
@@ -1240,14 +1247,24 @@ fn collect_presentational_hints(
     if let Some(bg) = elem.get_attribute("bgcolor")
         && let Some(c) = parse_presentational_color(bg)
     {
-        push_hint(matched_decls, source_order, "background-color", Value::Color(c));
+        push_hint(
+            matched_decls,
+            source_order,
+            "background-color",
+            Value::Color(c),
+        );
     }
 
     // background -> background-image
     if let Some(bg_img) = elem.get_attribute("background") {
         let trimmed = bg_img.trim();
         if !trimmed.is_empty() {
-            push_hint(matched_decls, source_order, "background-image", Value::Url(trimmed.to_string()));
+            push_hint(
+                matched_decls,
+                source_order,
+                "background-image",
+                Value::Url(trimmed.to_string()),
+            );
         }
     }
 
@@ -1271,16 +1288,46 @@ fn collect_presentational_hints(
         if tag == "table" || tag == "hr" {
             match a.as_str() {
                 "center" => {
-                    push_hint(matched_decls, source_order, "margin-left", Value::Keyword("auto".to_string()));
-                    push_hint(matched_decls, source_order, "margin-right", Value::Keyword("auto".to_string()));
+                    push_hint(
+                        matched_decls,
+                        source_order,
+                        "margin-left",
+                        Value::Keyword("auto".to_string()),
+                    );
+                    push_hint(
+                        matched_decls,
+                        source_order,
+                        "margin-right",
+                        Value::Keyword("auto".to_string()),
+                    );
                 }
                 "right" => {
-                    push_hint(matched_decls, source_order, "margin-left", Value::Keyword("auto".to_string()));
-                    push_hint(matched_decls, source_order, "margin-right", Value::Length(Length::Px(0.0)));
+                    push_hint(
+                        matched_decls,
+                        source_order,
+                        "margin-left",
+                        Value::Keyword("auto".to_string()),
+                    );
+                    push_hint(
+                        matched_decls,
+                        source_order,
+                        "margin-right",
+                        Value::Length(Length::Px(0.0)),
+                    );
                 }
                 "left" => {
-                    push_hint(matched_decls, source_order, "margin-left", Value::Length(Length::Px(0.0)));
-                    push_hint(matched_decls, source_order, "margin-right", Value::Keyword("auto".to_string()));
+                    push_hint(
+                        matched_decls,
+                        source_order,
+                        "margin-left",
+                        Value::Length(Length::Px(0.0)),
+                    );
+                    push_hint(
+                        matched_decls,
+                        source_order,
+                        "margin-right",
+                        Value::Keyword("auto".to_string()),
+                    );
                 }
                 _ => {}
             }
@@ -1293,7 +1340,12 @@ fn collect_presentational_hints(
                 _ => None,
             };
             if let Some(ta_val) = ta {
-                push_hint(matched_decls, source_order, "text-align", Value::TextAlign(ta_val));
+                push_hint(
+                    matched_decls,
+                    source_order,
+                    "text-align",
+                    Value::TextAlign(ta_val),
+                );
             }
         }
     }
@@ -1308,7 +1360,12 @@ fn collect_presentational_hints(
             _ => None,
         };
         if let Some(va_val) = va {
-            push_hint(matched_decls, source_order, "vertical-align", Value::VerticalAlign(va_val));
+            push_hint(
+                matched_decls,
+                source_order,
+                "vertical-align",
+                Value::VerticalAlign(va_val),
+            );
         }
     }
 
@@ -1323,7 +1380,12 @@ fn collect_presentational_hints(
                 "border-bottom-style",
                 "border-left-style",
             ] {
-                push_hint(matched_decls, source_order, *side, Value::BorderStyle(crate::values::BorderStyle::None));
+                push_hint(
+                    matched_decls,
+                    source_order,
+                    *side,
+                    Value::BorderStyle(crate::values::BorderStyle::None),
+                );
             }
             for side in &[
                 "border-top-width",
@@ -1331,7 +1393,12 @@ fn collect_presentational_hints(
                 "border-bottom-width",
                 "border-left-width",
             ] {
-                push_hint(matched_decls, source_order, *side, Value::Length(Length::Px(0.0)));
+                push_hint(
+                    matched_decls,
+                    source_order,
+                    *side,
+                    Value::Length(Length::Px(0.0)),
+                );
             }
         } else {
             for side in &[
@@ -1340,7 +1407,12 @@ fn collect_presentational_hints(
                 "border-bottom-style",
                 "border-left-style",
             ] {
-                push_hint(matched_decls, source_order, *side, Value::BorderStyle(crate::values::BorderStyle::Solid));
+                push_hint(
+                    matched_decls,
+                    source_order,
+                    *side,
+                    Value::BorderStyle(crate::values::BorderStyle::Solid),
+                );
             }
             for side in &[
                 "border-top-width",
@@ -1348,7 +1420,12 @@ fn collect_presentational_hints(
                 "border-bottom-width",
                 "border-left-width",
             ] {
-                push_hint(matched_decls, source_order, *side, Value::Length(Length::Px(b_val)));
+                push_hint(
+                    matched_decls,
+                    source_order,
+                    *side,
+                    Value::Length(Length::Px(b_val)),
+                );
             }
         }
     }
@@ -1365,7 +1442,12 @@ fn collect_presentational_hints(
                 "border-bottom-style",
                 "border-left-style",
             ] {
-                push_hint(matched_decls, source_order, *side, Value::BorderStyle(crate::values::BorderStyle::None));
+                push_hint(
+                    matched_decls,
+                    source_order,
+                    *side,
+                    Value::BorderStyle(crate::values::BorderStyle::None),
+                );
             }
             for side in &[
                 "border-top-width",
@@ -1373,7 +1455,12 @@ fn collect_presentational_hints(
                 "border-bottom-width",
                 "border-left-width",
             ] {
-                push_hint(matched_decls, source_order, *side, Value::Length(Length::Px(0.0)));
+                push_hint(
+                    matched_decls,
+                    source_order,
+                    *side,
+                    Value::Length(Length::Px(0.0)),
+                );
             }
         }
     }
@@ -1383,7 +1470,12 @@ fn collect_presentational_hints(
         && let Some(cs_str) = elem.get_attribute("cellspacing")
         && let Ok(cs) = cs_str.trim().parse::<f32>()
     {
-        push_hint(matched_decls, source_order, "border-spacing", Value::Length(Length::Px(cs)));
+        push_hint(
+            matched_decls,
+            source_order,
+            "border-spacing",
+            Value::Length(Length::Px(cs)),
+        );
     }
 
     // For td or th, inherit cellpadding from ancestor table, and valign/align from parent tr
@@ -1405,7 +1497,12 @@ fn collect_presentational_hints(
                     _ => None,
                 };
                 if let Some(va_val) = va {
-                    push_hint(matched_decls, source_order, "vertical-align", Value::VerticalAlign(va_val));
+                    push_hint(
+                        matched_decls,
+                        source_order,
+                        "vertical-align",
+                        Value::VerticalAlign(va_val),
+                    );
                 }
             }
             if elem.get_attribute("align").is_none()
@@ -1419,7 +1516,12 @@ fn collect_presentational_hints(
                     _ => None,
                 };
                 if let Some(ta_val) = ta {
-                    push_hint(matched_decls, source_order, "text-align", Value::TextAlign(ta_val));
+                    push_hint(
+                        matched_decls,
+                        source_order,
+                        "text-align",
+                        Value::TextAlign(ta_val),
+                    );
                 }
             }
         }
@@ -1440,7 +1542,12 @@ fn collect_presentational_hints(
                         "padding-bottom",
                         "padding-left",
                     ] {
-                        push_hint(matched_decls, source_order, *side, Value::Length(Length::Px(cp)));
+                        push_hint(
+                            matched_decls,
+                            source_order,
+                            *side,
+                            Value::Length(Length::Px(cp)),
+                        );
                     }
                 }
                 break;
@@ -1596,9 +1703,7 @@ thread_local! {
 
 /// Returns the current media environment for the active thread.
 pub fn current_media_environment() -> MediaEnvironment {
-    CURRENT_MEDIA_ENV.with(|cell| {
-        cell.borrow().clone().unwrap_or_default()
-    })
+    CURRENT_MEDIA_ENV.with(|cell| cell.borrow().clone().unwrap_or_default())
 }
 
 /// Updates the media environment for the active thread.
@@ -2824,8 +2929,12 @@ mod tests {
         let sheet = parse_stylesheet(css);
         assert!(!sheet.rules.is_empty(), "Parsed sheet should contain rules");
 
-        let title_id = doc.find_element_by_id(root, "t1").expect("Should find title element");
-        let active_id = doc.find_element_by_id(root, "c2").expect("Should find active card");
+        let title_id = doc
+            .find_element_by_id(root, "t1")
+            .expect("Should find title element");
+        let active_id = doc
+            .find_element_by_id(root, "c2")
+            .expect("Should find active card");
 
         let cascaded_title = resolve_cascade(title_id, &doc, &[&sheet]);
         assert_eq!(
@@ -2847,4 +2956,3 @@ mod tests {
         );
     }
 }
-

@@ -182,9 +182,7 @@ pub fn register_image_map(name: &str, areas: Vec<MapArea>) {
 
 pub fn get_image_map(name: &str) -> Option<Vec<MapArea>> {
     let clean_name = name.trim().trim_start_matches('#').to_ascii_lowercase();
-    IMAGE_MAP_REGISTRY.with(|reg| {
-        reg.borrow().get(&clean_name).cloned()
-    })
+    IMAGE_MAP_REGISTRY.with(|reg| reg.borrow().get(&clean_name).cloned())
 }
 
 pub fn clear_image_maps() {
@@ -931,7 +929,9 @@ fn resolve_map_areas(
     maps: Option<&std::collections::HashMap<String, Vec<MapArea>>>,
 ) -> Option<Vec<MapArea>> {
     let clean_name = usemap.trim().trim_start_matches('#').to_ascii_lowercase();
-    if let Some(m) = maps && let Some(areas) = m.get(&clean_name) {
+    if let Some(m) = maps
+        && let Some(areas) = m.get(&clean_name)
+    {
         return Some(areas.clone());
     }
     get_image_map(usemap)
@@ -1161,8 +1161,7 @@ pub fn build_box_tree_with_maps(
                 if is_ws {
                     continue;
                 }
-                let mut anon =
-                    LayoutBox::new_anonymous_block(Some(styled_node.style.clone()));
+                let mut anon = LayoutBox::new_anonymous_block(Some(styled_node.style.clone()));
                 anon.is_independent_formatting_context = true;
                 child.is_independent_formatting_context = false;
                 anon.children.push(child);
@@ -2857,7 +2856,8 @@ mod tests {
         let mut static_parent_style = ComputedStyle::default();
         static_parent_style.display = Display::Block;
         static_parent_style.position = mango_css::values::Position::Static;
-        let mut static_parent = LayoutBox::new(BoxType::BlockNode, Some(static_parent_style.into()));
+        let mut static_parent =
+            LayoutBox::new(BoxType::BlockNode, Some(static_parent_style.into()));
         static_parent.dimensions.content = mango_core::Rect::new(0.0, 0.0, 200.0, 200.0);
         static_parent.children = rel_parent.children.clone();
 

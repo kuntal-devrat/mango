@@ -775,18 +775,42 @@ impl DevTools {
             let mar = target_box.dimensions.margin;
 
             let computed_props = [
-                ("display", format!("{:?}", target_box.box_type), "Author Stylesheet"),
+                (
+                    "display",
+                    format!("{:?}", target_box.box_type),
+                    "Author Stylesheet",
+                ),
                 ("position", "static".to_string(), "User Agent"),
                 ("box-sizing", "content-box".to_string(), "User Agent"),
                 ("width", format!("{:.1}px", bb.width()), "Calculated Layout"),
-                ("height", format!("{:.1}px", bb.height()), "Calculated Layout"),
+                (
+                    "height",
+                    format!("{:.1}px", bb.height()),
+                    "Calculated Layout",
+                ),
                 ("margin-top", format!("{:.0}px", mar.top), "Inline Style"),
-                ("margin-right", format!("{:.0}px", mar.right), "Inline Style"),
-                ("margin-bottom", format!("{:.0}px", mar.bottom), "Inline Style"),
+                (
+                    "margin-right",
+                    format!("{:.0}px", mar.right),
+                    "Inline Style",
+                ),
+                (
+                    "margin-bottom",
+                    format!("{:.0}px", mar.bottom),
+                    "Inline Style",
+                ),
                 ("margin-left", format!("{:.0}px", mar.left), "Inline Style"),
                 ("padding-top", format!("{:.0}px", pad.top), "Inline Style"),
-                ("padding-right", format!("{:.0}px", pad.right), "Inline Style"),
-                ("padding-bottom", format!("{:.0}px", pad.bottom), "Inline Style"),
+                (
+                    "padding-right",
+                    format!("{:.0}px", pad.right),
+                    "Inline Style",
+                ),
+                (
+                    "padding-bottom",
+                    format!("{:.0}px", pad.bottom),
+                    "Inline Style",
+                ),
                 ("padding-left", format!("{:.0}px", pad.left), "Inline Style"),
             ];
 
@@ -932,7 +956,10 @@ impl DevTools {
 
         for bp in self.breakpoints.iter().take(4) {
             let status = if bp.enabled { "enabled" } else { "disabled" };
-            let line = format!("  #{}: {}:{} [{}]", bp.id, bp.script_url, bp.line_number, status);
+            let line = format!(
+                "  #{}: {}:{} [{}]",
+                bp.id, bp.script_url, bp.line_number, status
+            );
             cmds.push(DisplayCommand::DrawText {
                 text: line,
                 x: 16.0,
@@ -964,7 +991,10 @@ impl DevTools {
         row_y += 18.0;
 
         for (idx, frame) in self.call_stack.iter().enumerate().take(4) {
-            let line = format!("  #{}: {}() at {}:{}", idx, frame.function_name, frame.script_url, frame.line_number);
+            let line = format!(
+                "  #{}: {}() at {}:{}",
+                idx, frame.function_name, frame.script_url, frame.line_number
+            );
             cmds.push(DisplayCommand::DrawText {
                 text: line,
                 x: 16.0,
@@ -1178,7 +1208,9 @@ impl CdpSession {
                         child_count
                     )
                 } else {
-                    format!(r##"{{"jsonrpc":"2.0","id":{id},"result":{{"root":{{"nodeId":1,"nodeType":9,"nodeName":"#document"}}}}}}"##)
+                    format!(
+                        r##"{{"jsonrpc":"2.0","id":{id},"result":{{"root":{{"nodeId":1,"nodeType":9,"nodeName":"#document"}}}}}}"##
+                    )
                 }
             }
             "DOM.querySelector" => {
@@ -1195,7 +1227,8 @@ impl CdpSession {
                 if let Some(target_id_str) = params.get("nodeId")
                     && let Ok(nid_idx) = target_id_str.parse::<usize>()
                     && let Some(root) = root_box
-                    && let Some(target_box) = root.find_box_for_node(NodeId::from_raw(nid_idx as u32))
+                    && let Some(target_box) =
+                        root.find_box_for_node(NodeId::from_raw(nid_idx as u32))
                 {
                     let bb = target_box.dimensions.border_box();
                     let x = bb.x();
@@ -1376,16 +1409,21 @@ mod tests {
         assert!(session.enabled_domains.contains(&"Page".to_string()));
 
         // DOM.getDocument
-        let doc_resp = session.handle_message(r#"{"id":2,"method":"DOM.getDocument"}"#, Some(&doc), None);
+        let doc_resp =
+            session.handle_message(r#"{"id":2,"method":"DOM.getDocument"}"#, Some(&doc), None);
         assert!(doc_resp.contains("\"nodeName\":\"#document\""));
 
         // CSS.getComputedStyleForNode
-        let css_resp = session.handle_message(r#"{"id":3,"method":"CSS.getComputedStyleForNode","params":{"nodeId":"1"}}"#, Some(&doc), None);
+        let css_resp = session.handle_message(
+            r#"{"id":3,"method":"CSS.getComputedStyleForNode","params":{"nodeId":"1"}}"#,
+            Some(&doc),
+            None,
+        );
         assert!(css_resp.contains("computedStyle"));
 
         // Unknown method returns -32601 error
-        let err_resp = session.handle_message(r#"{"id":4,"method":"NonExistent.method"}"#, None, None);
+        let err_resp =
+            session.handle_message(r#"{"id":4,"method":"NonExistent.method"}"#, None, None);
         assert!(err_resp.contains("-32601"));
     }
 }
-

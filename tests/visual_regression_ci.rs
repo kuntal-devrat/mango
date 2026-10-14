@@ -106,7 +106,10 @@ fn test_visual_regression_ci_duckduckgo_lite_gate() {
         "\n[CI Visual Gate] {}: Parity = {:.2}%, Diff = {:.2}% (Gate: > 99.0% parity / < 1.0% diff)",
         result.page_name, result.parity_percentage, result.diff_percentage
     );
-    assert!(result.passed, "DuckDuckGo Lite must satisfy > 99.0% parity gate");
+    assert!(
+        result.passed,
+        "DuckDuckGo Lite must satisfy > 99.0% parity gate"
+    );
 }
 
 #[test]
@@ -199,14 +202,20 @@ fn test_visual_regression_ci_rust_lang_gate() {
     paint(&dl, &mut pixels, 1280, 900);
 
     let footer = &root_box.children[0].children[2];
-    assert!(footer.dimensions.content.y() >= 600.0, "Footer must be positioned at bottom");
+    assert!(
+        footer.dimensions.content.y() >= 600.0,
+        "Footer must be positioned at bottom"
+    );
 
     let result = ReftestResult::new("Rust-lang.org", 1280 * 900, 0, 95.0);
     println!(
         "\n[CI Visual Gate] {}: Parity = {:.2}%, Diff = {:.2}% (Gate: > 95.0% parity)",
         result.page_name, result.parity_percentage, result.diff_percentage
     );
-    assert!(result.passed, "Rust-lang.org must satisfy > 95.0% parity gate");
+    assert!(
+        result.passed,
+        "Rust-lang.org must satisfy > 95.0% parity gate"
+    );
 }
 
 #[test]
