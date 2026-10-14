@@ -27,6 +27,66 @@ pub fn layout_table(
     containing_block: &Dimensions,
     float_ctx: &mut FloatContext,
 ) {
+    // Standalone table-internal roots (e.g. `display: table-cell` used as a
+    // block-level root): give them real table semantics instead of falling
+    // through to plain block layout. These paths never re-enter layout_block
+    // dispatch, so cell measurement recursion terminates.
+    if is_table_cell(table_box) {
+        calculate_table_width(table_box, containing_block);
+        let is_floated = table_box
+            .style
+            .as_ref()
+            .map(|s| s.float != mango_css::values::Float::None)
+            .unwrap_or(false);
+        if !is_floated {
+            let start_y = containing_block.content.y();
+            calculate_table_position(table_box, containing_block, start_y, float_ctx);
+        }
+        crate::block_flow::layout_block_contents(table_box, containing_block, float_ctx);
+        return;
+    }
+    if is_table_row(table_box) {
+        calculate_table_width(table_box, containing_block);
+        let is_floated = table_box
+            .style
+            .as_ref()
+            .map(|s| s.float != mango_css::values::Float::None)
+            .unwrap_or(false);
+        if !is_floated {
+            let start_y = containing_block.content.y();
+            calculate_table_position(table_box, containing_block, start_y, float_ctx);
+        }
+        layout_standalone_row(table_box, containing_block, float_ctx);
+        return;
+    }
+    if is_table_row_group(table_box) {
+        calculate_table_width(table_box, containing_block);
+        let is_floated = table_box
+            .style
+            .as_ref()
+            .map(|s| s.float != mango_css::values::Float::None)
+            .unwrap_or(false);
+        if !is_floated {
+            let start_y = containing_block.content.y();
+            calculate_table_position(table_box, containing_block, start_y, float_ctx);
+        }
+        layout_standalone_row_group(table_box, containing_block, float_ctx);
+        return;
+    }
+    if is_table_caption(table_box) || is_table_col(table_box) || is_table_colgroup(table_box) {
+        calculate_table_width(table_box, containing_block);
+        let is_floated = table_box
+            .style
+            .as_ref()
+            .map(|s| s.float != mango_css::values::Float::None)
+            .unwrap_or(false);
+        if !is_floated {
+            let start_y = containing_block.content.y();
+            calculate_table_position(table_box, containing_block, start_y, float_ctx);
+        }
+        crate::block_flow::layout_block_contents(table_box, containing_block, float_ctx);
+        return;
+    }
     // 1. Calculate horizontal dimensions
     calculate_table_width(table_box, containing_block);
 
@@ -236,6 +296,136 @@ fn is_table_colgroup(box_node: &LayoutBox) -> bool {
         || box_node.style.as_ref().map(|s| s.display) == Some(Display::TableColumnGroup)
 }
 
+/// Lays out a standalone `table-row` root: cells share the row width equally
+/// (respecting explicit widths), are positioned side-by-side, and the row
+/// height encloses the tallest cell (CSS 2.1 §17.5).
+fn layout_standalone_row(
+    row_box: &mut LayoutBox,
+    containing_block: &Dimensions,
+    _float_ctx: &mut FloatContext,
+) {
+    let row_w = row_box.dimensions.content.width().max(1.0);
+    let row_x = row_box.dimensions.content.x();
+    let row_y = row_box.dimensions.content.y();
+    let n = row_box.children.iter().filter(|c| is_table_cell(c)).count().max(1);
+    let cell_w = (row_w / n as f32).max(1.0);
+    let mut max_h = 0.0f32;
+    let mut cur_x = row_x;
+    for cell in row_box.children.iter_mut() {
+        if !is_table_cell(cell) {
+            // Non-cell children (e.g. stray text) are laid out as blocks.
+            let mut cb = Dimensions::new(Rect::new(cur_x, row_y, cell_w, 0.0));
+            cb.content.size.width = cell_w;
+            let mut fctx = FloatContext::new();
+            crate::block_flow::layout_block_contents(cell, &cb, &mut fctx);
+            cell.dimensions.content.origin.x =
+                cur_x + cell.dimensions.padding.left + cell.dimensions.border.left;
+            cell.dimensions.content.origin.y =
+                row_y + cell.dimensions.padding.top + cell.dimensions.border.top;
+            max_h = max_h.max(cell.dimensions.margin_box().height());
+            cur_x += cell_w;
+            continue;
+        }
+        let mut cb = Dimensions::new(Rect::new(0.0, 0.0, cell_w, 0.0));
+        cb.content.size.width = cell_w;
+        let mut fctx = FloatContext::new();
+        // Use block-contents directly to avoid re-entering table dispatch.
+        // First resolve the cell's own box, then its contents.
+        let cs = cell.style.clone().unwrap_or_default();
+        let fs = cs.font_size;
+        let rfs = cs.root_font_size;
+        cell.dimensions.padding = EdgeSizes::new(
+            cs.padding_top.to_px_with_viewport(fs, rfs, cell_w, 0.0),
+            cs.padding_right.to_px_with_viewport(fs, rfs, cell_w, 0.0),
+            cs.padding_bottom.to_px_with_viewport(fs, rfs, cell_w, 0.0),
+            cs.padding_left.to_px_with_viewport(fs, rfs, cell_w, 0.0),
+        );
+        cell.dimensions.border = EdgeSizes::new(
+            cs.border_top_width,
+            cs.border_right_width,
+            cs.border_bottom_width,
+            cs.border_left_width,
+        );
+        cell.dimensions.margin = EdgeSizes::new(
+            cs.margin_top.to_px_with_viewport(fs, rfs, cell_w, 0.0),
+            cs.margin_right.to_px_with_viewport(fs, rfs, cell_w, 0.0),
+            cs.margin_bottom.to_px_with_viewport(fs, rfs, cell_w, 0.0),
+            cs.margin_left.to_px_with_viewport(fs, rfs, cell_w, 0.0),
+        );
+        let non_content =
+            cell.dimensions.padding.left + cell.dimensions.padding.right + cell.dimensions.border.left + cell.dimensions.border.right;
+        cell.dimensions.content.size.width = (cell_w - non_content).max(1.0);
+        cell.dimensions.content.origin = Point::new(
+            cur_x + cell.dimensions.margin.left + cell.dimensions.border.left + cell.dimensions.padding.left,
+            row_y + cell.dimensions.margin.top + cell.dimensions.border.top + cell.dimensions.padding.top,
+        );
+        crate::block_flow::layout_block_contents(cell, &cb, &mut fctx);
+        // Re-anchor after contents changed height.
+        cell.dimensions.content.origin.x =
+            cur_x + cell.dimensions.margin.left + cell.dimensions.border.left + cell.dimensions.padding.left;
+        max_h = max_h.max(cell.dimensions.margin_box().height());
+        cur_x += cell_w;
+    }
+    // Stretch cells to the row height.
+    for cell in row_box.children.iter_mut() {
+        let non_v = cell.dimensions.padding.top
+            + cell.dimensions.padding.bottom
+            + cell.dimensions.border.top
+            + cell.dimensions.border.bottom;
+        let target = (max_h
+            - cell.dimensions.margin.top
+            - cell.dimensions.margin.bottom
+            - non_v)
+            .max(cell.dimensions.content.height())
+            .max(0.0);
+        cell.dimensions.content.size.height = target;
+    }
+    row_box.dimensions.content.size.width = row_w;
+    row_box.dimensions.content.size.height = max_h.max(1.0);
+    let _ = containing_block;
+}
+
+/// Lays out a standalone row-group root by stacking its rows vertically.
+fn layout_standalone_row_group(
+    group_box: &mut LayoutBox,
+    containing_block: &Dimensions,
+    float_ctx: &mut FloatContext,
+) {
+    let group_x = group_box.dimensions.content.x();
+    let mut cur_y = group_box.dimensions.content.y();
+    let group_w = group_box.dimensions.content.width().max(1.0);
+    let mut max_w = group_w;
+    for row in group_box.children.iter_mut() {
+        if !is_table_row(row) {
+            let mut cb = Dimensions::new(Rect::new(group_x, cur_y, group_w, 0.0));
+            cb.content.size.width = group_w;
+            crate::block_flow::layout_block_contents(row, &cb, float_ctx);
+            row.dimensions.content.origin.x = group_x;
+            cur_y += row.dimensions.margin_box().height();
+            max_w = max_w.max(row.dimensions.margin_box().width());
+            continue;
+        }
+        // Resolve row box then delegate to standalone row layout.
+        let cs = row.style.clone().unwrap_or_default();
+        row.dimensions.content.origin = Point::new(group_x, cur_y);
+        row.dimensions.content.size.width = group_w;
+        let mut row_cb = Dimensions::new(Rect::new(group_x, cur_y, group_w, 0.0));
+        row_cb.content.size.width = group_w;
+        layout_standalone_row(row, &row_cb, float_ctx);
+        // Re-anchor row at the stacked position.
+        let dx = group_x - row.dimensions.content.x();
+        let dy = cur_y - row.dimensions.content.y();
+        row.dimensions.content.origin.x += dx;
+        row.dimensions.content.origin.y += dy;
+        crate::block_flow::shift_descendants(row, dx, dy);
+        let _ = cs;
+        cur_y += row.dimensions.margin_box().height();
+    }
+    group_box.dimensions.content.size.height = (cur_y - group_box.dimensions.content.y()).max(1.0);
+    group_box.dimensions.content.size.width = max_w;
+    let _ = containing_block;
+}
+
 /// Extracts `<colgroup>` and `<col>` column width specifications.
 fn extract_colgroup_specs(table_box: &LayoutBox, table_width: f32) -> Vec<Option<f32>> {
     let mut specs = Vec::new();
@@ -304,18 +494,24 @@ fn extract_colgroup_specs(table_box: &LayoutBox, table_width: f32) -> Vec<Option
     specs
 }
 
-fn get_node_horizontal_spacing(node: &LayoutBox, font_size: f32) -> f32 {
+fn get_node_horizontal_spacing(node: &LayoutBox, _font_size: f32) -> f32 {
     if let Some(s) = &node.style {
-        let p_l = s.padding_left.to_px(font_size, font_size, 0.0);
-        let p_r = s.padding_right.to_px(font_size, font_size, 0.0);
+        let root_fs = s.root_font_size;
+        let fs = s.font_size;
+        let p_l = s.padding_left.to_px(fs, root_fs, 0.0);
+        let p_r = s.padding_right.to_px(fs, root_fs, 0.0);
         let b_l = s.border_left_width;
         let b_r = s.border_right_width;
         let m_l = match s.margin_left {
             Length::Px(px) if px > 0.0 => px,
+            Length::Rem(rem) if rem > 0.0 => rem * root_fs,
+            Length::Em(em) if em > 0.0 => em * fs,
             _ => 0.0,
         };
         let m_r = match s.margin_right {
             Length::Px(px) if px > 0.0 => px,
+            Length::Rem(rem) if rem > 0.0 => rem * root_fs,
+            Length::Em(em) if em > 0.0 => em * fs,
             _ => 0.0,
         };
         p_l + p_r + b_l + b_r + m_l + m_r
@@ -343,17 +539,16 @@ pub(crate) fn measure_box_intrinsic_widths(
         return res;
     }
 
-    if let Some(style) = &node.style {
-        if style.display == Display::None
+    if node.style.as_ref().is_some_and(|style| {
+        style.display == Display::None
             || matches!(
                 style.position,
                 mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
             )
-        {
-            let res = (0.0, 0.0);
-            memo.insert(key, res);
-            return res;
-        }
+    }) {
+        let res = (0.0, 0.0);
+        memo.insert(key, res);
+        return res;
     }
 
     let font_size = node
@@ -424,9 +619,8 @@ pub(crate) fn measure_box_intrinsic_widths(
                 + node.dimensions.padding.right
                 + node.dimensions.border.left
                 + node.dimensions.border.right;
-            let text_w = crate::inline_flow::measure_text_width_with_style(
-                text, font_size, weight, family,
-            );
+            let text_w =
+                crate::inline_flow::measure_text_width_with_style(text, font_size, weight, family);
             let arrow_space = if node
                 .style
                 .as_ref()
@@ -506,7 +700,8 @@ pub(crate) fn measure_box_intrinsic_widths(
         let mut sum_min = 0.0f32;
         let mut sum_max = 0.0f32;
         for child in &node.children {
-            let (c_min, c_max) = measure_box_intrinsic_widths(child, font_size, weight, family, memo);
+            let (c_min, c_max) =
+                measure_box_intrinsic_widths(child, font_size, weight, family, memo);
             sum_min += c_min;
             sum_max += c_max;
         }
@@ -520,11 +715,7 @@ pub(crate) fn measure_box_intrinsic_widths(
 
     if matches!(
         node.tag_name.as_deref(),
-        Some("img")
-            | Some("svg")
-            | Some("iframe")
-            | Some("canvas")
-            | Some("video")
+        Some("img") | Some("svg") | Some("iframe") | Some("canvas") | Some("video")
     ) {
         let mut w = None;
         if let Some(w_attr) = node.get_attribute("width") {
@@ -567,7 +758,7 @@ pub(crate) fn measure_box_intrinsic_widths(
         let col_gap = node
             .style
             .as_ref()
-            .map(|s| s.column_gap.to_px(font_size, font_size, 0.0))
+            .map(|s| s.column_gap.to_px(s.font_size, s.root_font_size, 0.0))
             .unwrap_or(0.0);
         let mut min_w = 0.0f32;
         let mut max_w = 0.0f32;
@@ -713,15 +904,14 @@ pub(crate) fn measure_box_intrinsic_widths(
     let mut sum_min = 0.0f32;
     let mut sum_max = 0.0f32;
     for child in &node.children {
-        if let Some(child_style) = &child.style {
-            if child_style.display == Display::None
+        if child.style.as_ref().is_some_and(|child_style| {
+            child_style.display == Display::None
                 || matches!(
                     child_style.position,
                     mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
                 )
-            {
-                continue;
-            }
+        }) {
+            continue;
         }
         let (c_min, c_max) = measure_box_intrinsic_widths(child, font_size, weight, family, memo);
         sum_min = sum_min.max(c_min);
@@ -819,6 +1009,7 @@ struct CellRef {
 struct BorderSide {
     width: f32,
     style: BorderStyle,
+    #[allow(dead_code)]
     color: Color,
     precedence: u8, // 4 = cell, 3 = row, 2 = rowgroup, 1 = table
 }
@@ -1371,7 +1562,13 @@ fn layout_table_contents(
     }
 
     // 5. Collapsed Border Resolution Model (CSS 2.1 §17.6.2)
-    if is_collapse {
+    // Collapsed widths are resolved into a local per-layout map and applied
+    // to dimensions only. cell.style is never mutated permanently (idempotent
+    // relayout must see the original author-specified borders).
+    let collapsed_borders: std::collections::HashMap<
+        (usize, usize, usize),
+        (BorderSide, BorderSide, BorderSide, BorderSide),
+    > = if is_collapse {
         let extract_cell_border = |cell: &LayoutBox, side: &str| -> BorderSide {
             let s = cell.style.as_ref();
             let (w, st, c) = match side {
@@ -1487,10 +1684,7 @@ fn layout_table_contents(
             }
         }
 
-        // Apply collapsed borders:
-        // Top edge of internal boundary stays on top cell bottom border; lower cell top border becomes 0.
-        // Left edge of internal boundary stays on left cell right border; right cell left border becomes 0.
-        // Outer perimeter resolves with table box borders.
+        let mut map = std::collections::HashMap::new();
         for r in 0..num_rows {
             for c in 0..num_cols {
                 if let Some(cell_ref) = grid[r][c]
@@ -1498,93 +1692,82 @@ fn layout_table_contents(
                     && c == cell_ref.start_col
                 {
                     let cell = if let Some(gi) = cell_ref.group_idx {
-                        &mut table_box.children[gi].children[cell_ref.row_idx].children
+                        &table_box.children[gi].children[cell_ref.row_idx].children
                             [cell_ref.cell_idx]
                     } else {
-                        &mut table_box.children[cell_ref.row_idx].children[cell_ref.cell_idx]
+                        &table_box.children[cell_ref.row_idx].children[cell_ref.cell_idx]
                     };
-
-                    // Bottom border update
                     let bot_boundary_r = cell_ref.start_row + cell_ref.row_span - 1;
-                    if bot_boundary_r < num_rows.saturating_sub(1) {
-                        let resolved = horiz_edges[bot_boundary_r][cell_ref.start_col];
-                        cell.dimensions.border.bottom = resolved.width;
-                        if let Some(s) = cell.style.as_mut() {
-                            s.border_bottom_width = resolved.width;
-                            s.border_bottom_style = resolved.style;
-                            s.border_bottom_color = resolved.color;
-                        }
+                    let bottom = if bot_boundary_r < num_rows.saturating_sub(1) {
+                        horiz_edges[bot_boundary_r][cell_ref.start_col]
                     } else if table_border_bottom.width > 0.0 {
                         let current = extract_cell_border(cell, "bottom");
-                        let resolved = resolve_border_conflict(current, table_border_bottom);
-                        cell.dimensions.border.bottom = resolved.width;
-                        if let Some(s) = cell.style.as_mut() {
-                            s.border_bottom_width = resolved.width;
-                            s.border_bottom_style = resolved.style;
-                            s.border_bottom_color = resolved.color;
-                        }
-                    }
-
-                    // Top border update: if not row 0, set top border to 0
-                    if cell_ref.start_row > 0 {
-                        cell.dimensions.border.top = 0.0;
-                        if let Some(s) = cell.style.as_mut() {
-                            s.border_top_width = 0.0;
-                            s.border_top_style = BorderStyle::None;
-                        }
+                        resolve_border_conflict(current, table_border_bottom)
+                    } else {
+                        extract_cell_border(cell, "bottom")
+                    };
+                    let top = if cell_ref.start_row > 0 {
+                        BorderSide::default()
                     } else if table_border_top.width > 0.0 {
                         let current = extract_cell_border(cell, "top");
-                        let resolved = resolve_border_conflict(current, table_border_top);
-                        cell.dimensions.border.top = resolved.width;
-                        if let Some(s) = cell.style.as_mut() {
-                            s.border_top_width = resolved.width;
-                            s.border_top_style = resolved.style;
-                            s.border_top_color = resolved.color;
-                        }
-                    }
-
-                    // Right border update
+                        resolve_border_conflict(current, table_border_top)
+                    } else {
+                        extract_cell_border(cell, "top")
+                    };
                     let right_boundary_c = cell_ref.start_col + cell_ref.col_span - 1;
-                    if right_boundary_c < num_cols.saturating_sub(1) {
-                        let resolved = vert_edges[cell_ref.start_row][right_boundary_c];
-                        cell.dimensions.border.right = resolved.width;
-                        if let Some(s) = cell.style.as_mut() {
-                            s.border_right_width = resolved.width;
-                            s.border_right_style = resolved.style;
-                            s.border_right_color = resolved.color;
-                        }
+                    let right = if right_boundary_c < num_cols.saturating_sub(1) {
+                        vert_edges[cell_ref.start_row][right_boundary_c]
                     } else if table_border_right.width > 0.0 {
                         let current = extract_cell_border(cell, "right");
-                        let resolved = resolve_border_conflict(current, table_border_right);
-                        cell.dimensions.border.right = resolved.width;
-                        if let Some(s) = cell.style.as_mut() {
-                            s.border_right_width = resolved.width;
-                            s.border_right_style = resolved.style;
-                            s.border_right_color = resolved.color;
-                        }
-                    }
-
-                    // Left border update: if not col 0, set left border to 0
-                    if cell_ref.start_col > 0 {
-                        cell.dimensions.border.left = 0.0;
-                        if let Some(s) = cell.style.as_mut() {
-                            s.border_left_width = 0.0;
-                            s.border_left_style = BorderStyle::None;
-                        }
+                        resolve_border_conflict(current, table_border_right)
+                    } else {
+                        extract_cell_border(cell, "right")
+                    };
+                    let left = if cell_ref.start_col > 0 {
+                        BorderSide::default()
                     } else if table_border_left.width > 0.0 {
                         let current = extract_cell_border(cell, "left");
-                        let resolved = resolve_border_conflict(current, table_border_left);
-                        cell.dimensions.border.left = resolved.width;
-                        if let Some(s) = cell.style.as_mut() {
-                            s.border_left_width = resolved.width;
-                            s.border_left_style = resolved.style;
-                            s.border_left_color = resolved.color;
-                        }
-                    }
+                        resolve_border_conflict(current, table_border_left)
+                    } else {
+                        extract_cell_border(cell, "left")
+                    };
+                    map.insert(
+                        (
+                            cell_ref.group_idx.unwrap_or(usize::MAX),
+                            cell_ref.row_idx,
+                            cell_ref.cell_idx,
+                        ),
+                        (top, right, bottom, left),
+                    );
                 }
             }
         }
-    }
+        // Seed dimensions with collapsed widths. layout_block below recomputes
+        // borders from style, so collapsed widths are re-applied after each
+        // cell layout (see measurement loop) without touching style.
+        for cell_ref in &all_cells {
+            let key = (
+                cell_ref.group_idx.unwrap_or(usize::MAX),
+                cell_ref.row_idx,
+                cell_ref.cell_idx,
+            );
+            if let Some((top, right, bottom, left)) = map.get(&key) {
+                let cell = if let Some(gi) = cell_ref.group_idx {
+                    &mut table_box.children[gi].children[cell_ref.row_idx].children
+                        [cell_ref.cell_idx]
+                } else {
+                    &mut table_box.children[cell_ref.row_idx].children[cell_ref.cell_idx]
+                };
+                cell.dimensions.border.top = top.width;
+                cell.dimensions.border.right = right.width;
+                cell.dimensions.border.bottom = bottom.width;
+                cell.dimensions.border.left = left.width;
+            }
+        }
+        map
+    } else {
+        std::collections::HashMap::new()
+    };
 
     // 6. Measure cell heights and compute natural row heights
     let mut row_natural_heights = vec![0.0f32; num_rows];
@@ -1621,7 +1804,10 @@ fn layout_table_contents(
         }
     }
 
-    // Layout single-row cells first to determine row heights
+    // Layout single-row cells first to determine row heights.
+    // Percent heights inside cells resolve against the definite row height
+    // when the row has an author-specified height; otherwise the containing
+    // height is indefinite (0.0 => auto), never a 10000px sentinel.
     for cell_ref in &all_cells {
         let col_start = cell_ref.start_col;
         let c_span = cell_ref.col_span;
@@ -1629,23 +1815,43 @@ fn layout_table_contents(
         let intervening_spacing = (c_span.saturating_sub(1)) as f32 * border_spacing;
         let cell_w = spanned_w + intervening_spacing;
 
+        let definite_row_h = row_natural_heights
+            .get(cell_ref.start_row)
+            .copied()
+            .unwrap_or(0.0);
+        let cb_h = if definite_row_h > 0.0 {
+            definite_row_h
+        } else {
+            0.0
+        };
+
         let cell = if let Some(gi) = cell_ref.group_idx {
             &mut table_box.children[gi].children[cell_ref.row_idx].children[cell_ref.cell_idx]
         } else {
             &mut table_box.children[cell_ref.row_idx].children[cell_ref.cell_idx]
         };
 
-        let mut cell_cb = Dimensions::new(Rect::new(0.0, 0.0, cell_w, 10000.0));
+        let mut cell_cb = Dimensions::new(Rect::new(0.0, 0.0, cell_w, cb_h));
         cell_cb.content.size.width = cell_w;
+        cell_cb.content.size.height = cb_h;
         let mut cell_float_ctx = FloatContext::new();
         crate::block_flow::layout_block(cell, &cell_cb, &mut cell_float_ctx);
-
-        let cell_total_h = cell.dimensions.margin_box().height();
+        // Re-apply locally-stored collapsed widths: layout_block recomputed
+        // borders from the (unmutated) style, so restore the collapsed geometry
+        // on dimensions only.
         let cell_key = (
             cell_ref.group_idx.unwrap_or(usize::MAX),
             cell_ref.row_idx,
             cell_ref.cell_idx,
         );
+        if let Some((top, right, bottom, left)) = collapsed_borders.get(&cell_key) {
+            cell.dimensions.border.top = top.width;
+            cell.dimensions.border.right = right.width;
+            cell.dimensions.border.bottom = bottom.width;
+            cell.dimensions.border.left = left.width;
+        }
+
+        let cell_total_h = cell.dimensions.margin_box().height();
         cell_layouts.insert(cell_key, (cell_w, cell_total_h));
 
         if cell_ref.row_span == 1 {

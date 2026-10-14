@@ -24,6 +24,9 @@ pub struct TabWebContents {
     pub style_snapshot: std::collections::HashMap<u32, mango_css::ComputedStyle>,
     pub focused_control: Option<mango_html::dom::NodeId>,
     pub page_display_list: mango_render::display_list::DisplayList,
+    pub display_list_cache: mango_layout::display_list::DisplayListCache,
+    pub image_rx: Option<std::sync::mpsc::Receiver<String>>,
+    pub has_active_animations: bool,
     pub canvas_bg: mango_core::Color,
 }
 
@@ -151,6 +154,23 @@ impl Tab {
         if let Some(entry) = self.history.get_mut(self.history_idx) {
             entry.title = self.title.clone();
         }
+    }
+
+    /// Estimates the approximate memory footprint of this tab in bytes.
+    pub fn approx_memory_usage(&self) -> usize {
+        let mut bytes = std::mem::size_of::<Self>() + self.url.len() + self.title.len();
+        bytes += self.history.len() * std::mem::size_of::<HistoryEntry>();
+        for h in &self.history {
+            bytes += h.url.len() + h.title.len();
+        }
+        if let Some(contents) = &self.contents {
+            bytes += contents.current_html.len();
+            bytes += contents.page_display_list.len() * 64;
+            bytes += contents.style_snapshot.len() * 128;
+            bytes += contents.cached_stylesheets.len() * 4096;
+        }
+        // Base overhead for tab runtime structures (at least 256KB)
+        bytes.max(256 * 1024)
     }
 }
 

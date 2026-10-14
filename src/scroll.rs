@@ -8,17 +8,28 @@ use mango_core::{Color, Rect};
 use mango_layout::box_tree::LayoutBox;
 use mango_render::display_list::DisplayCommand;
 
-/// Recursively computes the true maximum scrollable bottom boundary of a layout box tree,
+/// Iteratively computes the true maximum scrollable bottom boundary of a layout box tree,
 /// excluding fixed-position overlays so sticky/fixed elements do not inflate scroll boundaries.
-pub fn compute_scrollable_extent(box_node: &LayoutBox) -> f32 {
-    let mut max_y = box_node.dimensions.margin_box().bottom();
-    for child in &box_node.children {
-        let is_fixed = child
+///
+/// Previously recursive — switched to an explicit stack to prevent stack overflows on
+/// deeply-nested DOM trees (pages with 10,000+ nested elements). (B-07)
+pub fn compute_scrollable_extent(root: &LayoutBox) -> f32 {
+    let mut max_y = 0.0f32;
+    // Stack stores borrowed references; capacity pre-allocated for typical page depth.
+    let mut stack: Vec<&LayoutBox> = Vec::with_capacity(256);
+    stack.push(root);
+
+    while let Some(node) = stack.pop() {
+        let is_fixed = node
             .style
             .as_ref()
             .is_some_and(|s| s.position == mango_css::values::Position::Fixed);
         if !is_fixed {
-            max_y = max_y.max(compute_scrollable_extent(child));
+            max_y = max_y.max(node.dimensions.margin_box().bottom());
+            // Push children in reverse so that the first child is processed first.
+            for child in node.children.iter().rev() {
+                stack.push(child);
+            }
         }
     }
     max_y
@@ -110,12 +121,15 @@ impl SmoothScrollAnimation {
     }
 
     /// Retargets an active animation to a new target while maintaining current velocity.
+    ///
+    /// Applies the same minimum 50ms duration clamp as `new()` so a zero-duration
+    /// call cannot cause division by zero in `step()`. (B-05)
     pub fn update_target(&mut self, new_target: f32, duration: std::time::Duration) {
         let clamped = new_target.clamp(0.0, self.max_scroll);
         self.start_y = self.current_y;
         self.target_y = clamped;
         self.start_time = std::time::Instant::now();
-        self.duration = duration;
+        self.duration = duration.max(std::time::Duration::from_millis(50));
         self.active = (self.current_y - clamped).abs() > 0.5;
     }
 }

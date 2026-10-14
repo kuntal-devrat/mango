@@ -20,6 +20,20 @@ pub enum LayerKind {
     Page,
     /// Transient overlays (menus, modal dialogs, autocomplete popup, find bar).
     Overlay,
+    /// Element promoted to an independent compositor layer (e.g. `will-change: transform`).
+    Promoted(LayerPromotionReason),
+}
+
+/// Criteria or trigger that prompted promotion of an element to an isolated compositor layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayerPromotionReason {
+    WillChangeTransform,
+    WillChangeOpacity,
+    WillChangeScrollPosition,
+    ThreeDTransform,
+    CanvasWebGL,
+    VideoElement,
+    FixedPosition,
 }
 
 /// A discrete renderable layer in the browser window.
@@ -35,6 +49,7 @@ pub struct RenderLayer {
     pub is_dirty: bool,
     pub opacity: f32,
     pub version: u64,
+    pub promotion_reason: Option<LayerPromotionReason>,
 }
 
 impl RenderLayer {
@@ -54,6 +69,7 @@ impl RenderLayer {
             is_dirty: true,
             opacity: 1.0,
             version: 0,
+            promotion_reason: None,
         }
     }
 
@@ -75,6 +91,7 @@ impl RenderLayer {
             is_dirty: true,
             opacity: 1.0,
             version: 0,
+            promotion_reason: None,
         }
     }
 
@@ -95,6 +112,28 @@ impl RenderLayer {
             is_dirty: true,
             opacity: 1.0,
             version: 0,
+            promotion_reason: None,
+        }
+    }
+
+    /// Creates a layer promoted for hardware acceleration (e.g. `will-change`).
+    pub fn new_promoted(bounds: Rect, reason: LayerPromotionReason) -> Self {
+        let w = bounds.width().max(1.0) as u32;
+        let h = bounds.height().max(1.0) as u32;
+        let num_pixels = (w * h) as usize;
+
+        Self {
+            kind: LayerKind::Promoted(reason),
+            bounds,
+            scroll_offset: (0.0, 0.0),
+            display_list: DisplayList::new(),
+            damage: DamageRegion::from_rect(bounds),
+            tile_grid: None,
+            pixels: Some(vec![0; num_pixels]),
+            is_dirty: true,
+            opacity: 1.0,
+            version: 0,
+            promotion_reason: Some(reason),
         }
     }
 
@@ -124,10 +163,6 @@ impl RenderLayer {
 
     /// Rasterizes any dirty regions in the layer.
     pub fn rasterize_if_dirty(&mut self, bg_color: Color, current_frame: u64) {
-        if !self.is_dirty && self.damage.is_empty() {
-            return;
-        }
-
         match self.kind {
             LayerKind::Page => {
                 if let Some(grid) = &mut self.tile_grid {
@@ -143,9 +178,15 @@ impl RenderLayer {
                         bg_color,
                         current_frame,
                     );
+                    grid.prune_unused_tiles(current_frame, 120);
                 }
+                self.version = self.version.wrapping_add(1);
+                self.clear_damage();
             }
-            LayerKind::Chrome | LayerKind::Overlay => {
+            LayerKind::Chrome | LayerKind::Overlay | LayerKind::Promoted(_) => {
+                if !self.is_dirty && self.damage.is_empty() {
+                    return;
+                }
                 if let Some(pixels) = &mut self.pixels {
                     let w = self.bounds.width().max(1.0) as u32;
                     let h = self.bounds.height().max(1.0) as u32;
@@ -154,20 +195,36 @@ impl RenderLayer {
                         self.damage = DamageRegion::full(w as f32, h as f32);
                     }
 
+                    let fill_color = match self.kind {
+                        LayerKind::Overlay | LayerKind::Promoted(_) => 0x0000_0000,
+                        _ => bg_color.to_rgb_u32(),
+                    };
+
                     if self.damage.len() > 8 || self.damage.is_empty() {
-                        pixels.fill(bg_color.to_rgb_u32());
+                        pixels.fill(fill_color);
                         paint(&self.display_list, pixels, w, h);
                     } else {
+                        for rect in self.damage.rects() {
+                            let rx0 = (rect.x().max(0.0) as u32).min(w);
+                            let rx1 = (rect.right().max(0.0).ceil() as u32).min(w);
+                            let ry0 = (rect.y().max(0.0) as u32).min(h);
+                            let ry1 = (rect.bottom().max(0.0).ceil() as u32).min(h);
+                            for y in ry0..ry1 {
+                                let row_start = (y * w + rx0) as usize;
+                                let row_end = (y * w + rx1) as usize;
+                                pixels[row_start..row_end].fill(fill_color);
+                            }
+                        }
                         paint_damage(&self.display_list, pixels, w, h, &self.damage);
                     }
                 }
+                self.version = self.version.wrapping_add(1);
+                self.clear_damage();
             }
         }
-
-        self.version = self.version.wrapping_add(1);
-        self.clear_damage();
     }
 }
+
 
 /// The hierarchical compositor layer tree managing all top-level browser layers.
 #[derive(Debug, Clone)]
@@ -175,6 +232,7 @@ pub struct LayerTree {
     pub chrome_layer: RenderLayer,
     pub page_layer: RenderLayer,
     pub overlay_layer: Option<RenderLayer>,
+    pub promoted_layers: Vec<RenderLayer>,
     pub width: u32,
     pub height: u32,
 }
@@ -189,9 +247,30 @@ impl LayerTree {
             chrome_layer,
             page_layer,
             overlay_layer: None,
+            promoted_layers: Vec::new(),
             width,
             height,
         }
+    }
+
+    /// Determines whether a CSS `will-change` value should trigger layer promotion.
+    pub fn should_promote(will_change: &str) -> Option<LayerPromotionReason> {
+        for token in will_change.split(',') {
+            match token.trim().to_ascii_lowercase().as_str() {
+                "transform" => return Some(LayerPromotionReason::WillChangeTransform),
+                "opacity" => return Some(LayerPromotionReason::WillChangeOpacity),
+                "scroll-position" => return Some(LayerPromotionReason::WillChangeScrollPosition),
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// Promotes an element to its own hardware-accelerated layer.
+    pub fn promote_layer(&mut self, bounds: Rect, reason: LayerPromotionReason) -> usize {
+        let layer = RenderLayer::new_promoted(bounds, reason);
+        self.promoted_layers.push(layer);
+        self.promoted_layers.len() - 1
     }
 
     /// Resizes the layer tree and its backing layers.
@@ -204,6 +283,7 @@ impl LayerTree {
         self.chrome_layer = RenderLayer::new_chrome(w, h);
         self.page_layer = RenderLayer::new_page(w, h, crate::tile::DEFAULT_TILE_SIZE);
         self.overlay_layer = None;
+        self.promoted_layers.clear();
     }
 
     /// Marks a rectangle in the page layer as dirty.
@@ -222,6 +302,9 @@ impl LayerTree {
         self.page_layer.invalidate_all();
         if let Some(overlay) = &mut self.overlay_layer {
             overlay.invalidate_all();
+        }
+        for layer in &mut self.promoted_layers {
+            layer.invalidate_all();
         }
     }
 }
@@ -249,4 +332,58 @@ mod tests {
         assert!(layer.damage.is_empty());
         assert_eq!(layer.version, 1);
     }
+
+    #[test]
+    fn test_will_change_layer_promotion() {
+        assert_eq!(
+            LayerTree::should_promote("transform"),
+            Some(LayerPromotionReason::WillChangeTransform)
+        );
+        assert_eq!(
+            LayerTree::should_promote("opacity, filter"),
+            Some(LayerPromotionReason::WillChangeOpacity)
+        );
+        assert_eq!(
+            LayerTree::should_promote("scroll-position"),
+            Some(LayerPromotionReason::WillChangeScrollPosition)
+        );
+        assert_eq!(LayerTree::should_promote("auto"), None);
+
+        let mut tree = LayerTree::new(800, 600);
+        let idx = tree.promote_layer(Rect::new(10.0, 10.0, 100.0, 100.0), LayerPromotionReason::WillChangeTransform);
+        assert_eq!(idx, 0);
+        assert_eq!(tree.promoted_layers.len(), 1);
+        assert_eq!(
+            tree.promoted_layers[0].kind,
+            LayerKind::Promoted(LayerPromotionReason::WillChangeTransform)
+        );
+    }
+
+    #[test]
+    fn test_page_layer_scrolling_rasterizes_tiles() {
+        let mut layer = RenderLayer::new_page(800, 600, 256);
+        layer.clear_damage();
+        assert!(!layer.is_dirty);
+        assert!(layer.damage.is_empty());
+
+        // Initial rasterize
+        layer.rasterize_if_dirty(Color::rgb(255, 255, 255), 1);
+        let grid = layer.tile_grid.as_ref().unwrap();
+        assert!(grid.get_tile(crate::tile::TileCoord::new(0, 0)).is_some());
+        // Tile at row 15 (y = 15 * 256 = 3840) should not be rasterized yet
+        assert!(grid.get_tile(crate::tile::TileCoord::new(0, 15)).is_none());
+
+        // Now scroll to y = 3840 WITHOUT setting is_dirty or damage
+        layer.scroll_offset = (0.0, 3840.0);
+        layer.tile_grid.as_mut().unwrap().update_content_size(800.0, 5000.0);
+        layer.rasterize_if_dirty(Color::rgb(255, 255, 255), 200);
+
+        let grid = layer.tile_grid.as_ref().unwrap();
+        // Tile at row 15 must now be rasterized!
+        assert!(grid.get_tile(crate::tile::TileCoord::new(0, 15)).is_some());
+        // Tile (0, 0) idle for 199 frames (> 120 max_idle) must be pruned to save RAM!
+        assert!(grid.get_tile(crate::tile::TileCoord::new(0, 0)).is_none());
+    }
 }
+
+

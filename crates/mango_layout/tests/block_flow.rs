@@ -15,7 +15,7 @@ fn test_overflow_scroll_container_and_clamping() {
     let mut container = LayoutBox::new(BoxType::BlockNode, None);
     let mut c_style = ComputedStyle::default();
     c_style.overflow_y = Overflow::Scroll;
-    container.style = Some(c_style);
+    container.style = Some(c_style.into());
     container.dimensions.content = Rect::new(0.0, 0.0, 300.0, 100.0);
 
     // Add children summing to 300px height
@@ -58,14 +58,14 @@ fn test_nested_scrolling_dispatch() {
     let mut parent = LayoutBox::new(BoxType::BlockNode, None);
     let mut p_style = ComputedStyle::default();
     p_style.overflow_y = Overflow::Auto;
-    parent.style = Some(p_style);
+    parent.style = Some(p_style.into());
     parent.dimensions.content = Rect::new(0.0, 0.0, 400.0, 200.0);
 
     // Inner scroll container located at (0, 50), height 100, content 250 (max_scroll = 150)
     let mut inner = LayoutBox::new(BoxType::BlockNode, None);
     let mut i_style = ComputedStyle::default();
     i_style.overflow_y = Overflow::Scroll;
-    inner.style = Some(i_style);
+    inner.style = Some(i_style.into());
     inner.dimensions.content = Rect::new(0.0, 50.0, 400.0, 100.0);
 
     // Add children to inner
@@ -112,7 +112,7 @@ fn test_scroll_container_display_list_offset_and_scrollbars() {
     let mut container = LayoutBox::new(BoxType::BlockNode, None);
     let mut style = ComputedStyle::default();
     style.overflow_y = Overflow::Scroll;
-    container.style = Some(style);
+    container.style = Some(style.into());
     container.dimensions.content = Rect::new(0.0, 0.0, 200.0, 100.0);
     container.scroll_offset_y = 40.0;
 
@@ -152,7 +152,7 @@ fn test_position_sticky_4_directions() {
     let mut container = LayoutBox::new(BoxType::BlockNode, None);
     let mut c_style = ComputedStyle::default();
     c_style.overflow_y = Overflow::Scroll;
-    container.style = Some(c_style);
+    container.style = Some(c_style.into());
     container.dimensions.content = Rect::new(0.0, 0.0, 300.0, 200.0);
     container.scroll_offset_y = 80.0;
 
@@ -162,7 +162,7 @@ fn test_position_sticky_4_directions() {
     s_style.position = Position::Sticky;
     s_style.top = Length::Px(10.0);
     s_style.height = Length::Px(30.0);
-    sticky_child.style = Some(s_style);
+    sticky_child.style = Some(s_style.into());
     sticky_child.dimensions.content = Rect::new(0.0, 50.0, 300.0, 300.0);
 
     // Spacer to allow containing block height
@@ -191,27 +191,27 @@ fn test_column_span_all_partitioning() {
     let mut style = ComputedStyle::default();
     style.column_count = Some(2);
     style.width = Length::Px(400.0);
-    container.style = Some(style);
+    container.style = Some(style.into());
     container.dimensions.content = Rect::new(0.0, 0.0, 400.0, 0.0);
 
     // Item 1: normal multi-column item
     let mut item1 = LayoutBox::new(BoxType::BlockNode, None);
     let mut s1 = ComputedStyle::default();
     s1.height = Length::Px(100.0);
-    item1.style = Some(s1);
+    item1.style = Some(s1.into());
 
     // Item 2: spanning element across all columns
     let mut span_all = LayoutBox::new(BoxType::BlockNode, None);
     let mut s2 = ComputedStyle::default();
     s2.column_span = ColumnSpan::All;
     s2.height = Length::Px(40.0);
-    span_all.style = Some(s2);
+    span_all.style = Some(s2.into());
 
     // Item 3: normal multi-column item
     let mut item3 = LayoutBox::new(BoxType::BlockNode, None);
     let mut s3 = ComputedStyle::default();
     s3.height = Length::Px(100.0);
-    item3.style = Some(s3);
+    item3.style = Some(s3.into());
 
     container.children.push(item1);
     container.children.push(span_all);
@@ -246,21 +246,21 @@ fn test_block_fragmentation_with_break_avoid() {
     let mut style = ComputedStyle::default();
     style.column_count = Some(2);
     style.width = Length::Px(400.0);
-    container.style = Some(style);
+    container.style = Some(style.into());
     container.dimensions.content = Rect::new(0.0, 0.0, 400.0, 0.0);
 
     // Item 1: height 40
     let mut item1 = LayoutBox::new(BoxType::BlockNode, None);
     let mut s1 = ComputedStyle::default();
     s1.height = Length::Px(40.0);
-    item1.style = Some(s1);
+    item1.style = Some(s1.into());
 
     // Item 2: height 60, break-inside: avoid
     let mut item2 = LayoutBox::new(BoxType::BlockNode, None);
     let mut s2 = ComputedStyle::default();
     s2.height = Length::Px(60.0);
     s2.break_inside = BreakInside::Avoid;
-    item2.style = Some(s2);
+    item2.style = Some(s2.into());
 
     container.children.push(item1);
     container.children.push(item2);
@@ -291,13 +291,13 @@ fn test_writing_mode_vertical_text_layout() {
     style.font_size = 16.0;
     style.height = Length::Px(200.0);
     style.width = Length::Px(100.0);
-    container.style = Some(style);
+    container.style = Some(style.into());
     container.dimensions.content = Rect::new(10.0, 20.0, 100.0, 200.0);
 
     let mut text_box = LayoutBox::new(BoxType::TextNode("Hello".to_string()), None);
     let mut t_style = ComputedStyle::default();
     t_style.font_size = 16.0;
-    text_box.style = Some(t_style);
+    text_box.style = Some(t_style.into());
     container.children.push(text_box);
 
     let mut float_ctx = FloatContext::new();
@@ -318,13 +318,13 @@ fn test_writing_mode_vertical_text_layout() {
     style_lr.font_size = 16.0;
     style_lr.height = Length::Px(200.0);
     style_lr.width = Length::Px(100.0);
-    container_lr.style = Some(style_lr);
+    container_lr.style = Some(style_lr.into());
     container_lr.dimensions.content = Rect::new(10.0, 20.0, 100.0, 200.0);
 
     let mut text_box_lr = LayoutBox::new(BoxType::TextNode("World".to_string()), None);
     let mut t_style_lr = ComputedStyle::default();
     t_style_lr.font_size = 16.0;
-    text_box_lr.style = Some(t_style_lr);
+    text_box_lr.style = Some(t_style_lr.into());
     container_lr.children.push(text_box_lr);
 
     let mut float_ctx_lr = FloatContext::new();

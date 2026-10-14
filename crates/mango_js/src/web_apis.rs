@@ -283,6 +283,8 @@ pub fn register_web_apis(
     local_storage: SharedLocalStorage,
     session_storage: SharedSessionStorage,
     cookie_jar: SharedCookieStore,
+    worker_manager: crate::worker::WorkerManager,
+    ws_manager: mango_net::WebSocketManager,
 ) {
     register_native_fns(
         context,
@@ -295,6 +297,8 @@ pub fn register_web_apis(
         local_storage,
         session_storage,
         cookie_jar,
+        worker_manager,
+        ws_manager,
     );
     install_js_shim(context, page_url);
 }
@@ -313,6 +317,8 @@ fn register_native_fns(
     local_storage: SharedLocalStorage,
     session_storage: SharedSessionStorage,
     cookie_jar: SharedCookieStore,
+    worker_manager: crate::worker::WorkerManager,
+    ws_manager: mango_net::WebSocketManager,
 ) {
     // ── Timers ────────────────────────────────────────────────────────────────
 
@@ -952,6 +958,150 @@ fn register_native_fns(
         )
         .expect("register innerHeight");
 
+    // ── Web Worker native bridges ─────────────────────────────────────────────
+    let wm = worker_manager.clone();
+    let el_wm = event_loop.clone();
+    let p_url = page_url.to_string();
+    let worker_create_fn = native_fn!(move |_this, args, ctx| {
+        let id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as u64;
+        let script_url = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
+        let tasks = el_wm.borrow().task_queue();
+        wm.create_worker(id, &script_url, &p_url, tasks);
+        Ok(JsValue::undefined())
+    });
+
+    let wm = worker_manager.clone();
+    let worker_post_fn = native_fn!(move |_this, args, ctx| {
+        let id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as u64;
+        let msg_json = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
+        let _ = wm.post_message(id, &msg_json);
+        Ok(JsValue::undefined())
+    });
+
+    let wm = worker_manager.clone();
+    let worker_term_fn = native_fn!(move |_this, args, ctx| {
+        let id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as u64;
+        wm.terminate(id);
+        Ok(JsValue::undefined())
+    });
+
+    let wm = worker_manager.clone();
+    let blob_reg_fn = native_fn!(move |_this, args, ctx| {
+        let url = args
+            .get_or_undefined(0)
+            .to_string(ctx)?
+            .to_std_string_escaped();
+        let content = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
+        wm.register_blob(url, content);
+        Ok(JsValue::undefined())
+    });
+
+    // ── WebSocket native bridges ──────────────────────────────────────────────
+    let ws = ws_manager.clone();
+    let el_ws = event_loop.clone();
+    let ws_connect_fn = native_fn!(move |_this, args, ctx| {
+        let id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as u64;
+        let url = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
+        let protocols = args
+            .get_or_undefined(2)
+            .to_string(ctx)?
+            .to_std_string_escaped();
+        let tasks = el_ws.borrow().task_queue();
+        ws.connect(id, &url, &protocols, move |event| {
+            let cmd = match event {
+                mango_net::WebSocketEvent::Open { protocol } => {
+                    let p = protocol.replace('\\', "\\\\").replace('"', "\\\"");
+                    format!(
+                        "if (typeof _mangoDispatchWsOpen === 'function') _mangoDispatchWsOpen({}, \"{}\");",
+                        id, p
+                    )
+                }
+                mango_net::WebSocketEvent::Message { data } => {
+                    let escaped = data
+                        .replace('\\', "\\\\")
+                        .replace('"', "\\\"")
+                        .replace('\n', "\\n")
+                        .replace('\r', "\\r");
+                    format!(
+                        "if (typeof _mangoDispatchWsMessage === 'function') _mangoDispatchWsMessage({}, \"{}\");",
+                        id, escaped
+                    )
+                }
+                mango_net::WebSocketEvent::BinaryMessage { data: _ } => {
+                    format!(
+                        "if (typeof _mangoDispatchWsMessage === 'function') _mangoDispatchWsMessage({}, \"\");",
+                        id
+                    )
+                }
+                mango_net::WebSocketEvent::Error { message } => {
+                    let escaped = message
+                        .replace('\\', "\\\\")
+                        .replace('"', "\\\"")
+                        .replace('\n', "\\n")
+                        .replace('\r', "\\r");
+                    format!(
+                        "if (typeof _mangoDispatchWsError === 'function') _mangoDispatchWsError({}, \"{}\");",
+                        id, escaped
+                    )
+                }
+                mango_net::WebSocketEvent::Close {
+                    code,
+                    reason,
+                    was_clean,
+                } => {
+                    let escaped = reason
+                        .replace('\\', "\\\\")
+                        .replace('"', "\\\"")
+                        .replace('\n', "\\n")
+                        .replace('\r', "\\r");
+                    format!(
+                        "if (typeof _mangoDispatchWsClose === 'function') _mangoDispatchWsClose({}, {}, \"{}\", {});",
+                        id, code, escaped, was_clean
+                    )
+                }
+            };
+            if let Ok(mut q) = tasks.lock() {
+                q.push(cmd);
+            }
+        });
+        Ok(JsValue::undefined())
+    });
+
+    let ws = ws_manager.clone();
+    let ws_send_fn = native_fn!(move |_this, args, ctx| {
+        let id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as u64;
+        let data = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_escaped();
+        let _ = ws.send_text(id, data);
+        Ok(JsValue::undefined())
+    });
+
+    let ws = ws_manager.clone();
+    let ws_close_fn = native_fn!(move |_this, args, ctx| {
+        let id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as u64;
+        let code = args.get_or_undefined(1).to_u32(ctx).unwrap_or(1000) as u16;
+        let reason = args
+            .get_or_undefined(2)
+            .to_string(ctx)?
+            .to_std_string_escaped();
+        let _ = ws.close(id, code, reason);
+        Ok(JsValue::undefined())
+    });
+
     // ── Register all callables ────────────────────────────────────────────────
 
     let fns: &[(&str, usize, NativeFunction)] = &[
@@ -980,6 +1130,13 @@ fn register_native_fns(
         ("_mangoIdbSave", 2, idb_save_fn),
         ("_mangoIdbDelete", 1, idb_delete_fn),
         ("_mangoIdbList", 0, idb_list_fn),
+        ("_mangoWorkerCreate", 2, worker_create_fn),
+        ("_mangoWorkerPostMessage", 2, worker_post_fn),
+        ("_mangoWorkerTerminate", 1, worker_term_fn),
+        ("_mangoBlobRegister", 2, blob_reg_fn),
+        ("_mangoWsConnect", 3, ws_connect_fn),
+        ("_mangoWsSend", 2, ws_send_fn),
+        ("_mangoWsClose", 3, ws_close_fn),
     ];
 
     for (name, len, func) in fns.iter().cloned() {
@@ -2284,7 +2441,20 @@ fn install_js_shim(context: &mut Context, page_url: &str) {
         }}
     }};
     URL.createObjectURL = function(blob) {{
-        return 'blob:mango-' + Math.random().toString(36).substring(2);
+        var url = 'blob:mango-' + Math.random().toString(36).substring(2);
+        if (blob && typeof blob.text === 'function') {{
+            try {{
+                blob.text().then(function(t) {{
+                    if (typeof _mangoBlobRegister === 'function') _mangoBlobRegister(url, t);
+                }});
+            }} catch(e) {{}}
+        }} else if (blob && blob._bytes && typeof _mangoBlobRegister === 'function') {{
+            try {{
+                var str = (typeof TextDecoder !== 'undefined') ? new TextDecoder().decode(blob._bytes) : String(blob._bytes);
+                _mangoBlobRegister(url, str);
+            }} catch(e) {{}}
+        }}
+        return url;
     }};
     URL.revokeObjectURL = function(url) {{}};
     globalThis.URL = URL;
@@ -3522,6 +3692,53 @@ fn install_js_shim(context: &mut Context, page_url: &str) {
     globalThis.XMLHttpRequest = XMLHttpRequest;
 
     // ── 23. WebSocket ─────────────────────────────────────────────────────────
+    var _nextWsId = 1;
+    var _activeWebSockets = {{}};
+
+    globalThis._mangoDispatchWsOpen = function(id, protocol) {{
+        var ws = _activeWebSockets[id];
+        if (!ws) return;
+        ws.readyState = 1; // OPEN
+        ws.protocol = protocol || '';
+        var evt = (typeof globalThis.Event === 'function')
+            ? new globalThis.Event('open')
+            : {{ type: 'open', target: ws }};
+        if (typeof ws.onopen === 'function') try {{ ws.onopen(evt); }} catch(e) {{}}
+        ws.dispatchEvent(evt);
+    }};
+
+    globalThis._mangoDispatchWsMessage = function(id, data) {{
+        var ws = _activeWebSockets[id];
+        if (!ws) return;
+        var evt = (typeof globalThis.MessageEvent === 'function')
+            ? new globalThis.MessageEvent('message', {{ data: data, origin: ws.url, source: ws }})
+            : {{ type: 'message', data: data, origin: ws.url, target: ws }};
+        if (typeof ws.onmessage === 'function') try {{ ws.onmessage(evt); }} catch(e) {{}}
+        ws.dispatchEvent(evt);
+    }};
+
+    globalThis._mangoDispatchWsError = function(id, msg) {{
+        var ws = _activeWebSockets[id];
+        if (!ws) return;
+        var evt = (typeof globalThis.ErrorEvent === 'function')
+            ? new globalThis.ErrorEvent('error', {{ message: msg }})
+            : {{ type: 'error', message: msg, target: ws }};
+        if (typeof ws.onerror === 'function') try {{ ws.onerror(evt); }} catch(e) {{}}
+        ws.dispatchEvent(evt);
+    }};
+
+    globalThis._mangoDispatchWsClose = function(id, code, reason, wasClean) {{
+        var ws = _activeWebSockets[id];
+        if (!ws) return;
+        ws.readyState = 3; // CLOSED
+        var evt = (typeof globalThis.CloseEvent === 'function')
+            ? new globalThis.CloseEvent('close', {{ code: code, reason: reason, wasClean: wasClean }})
+            : {{ type: 'close', code: code, reason: reason, wasClean: wasClean, target: ws }};
+        if (typeof ws.onclose === 'function') try {{ ws.onclose(evt); }} catch(e) {{}}
+        ws.dispatchEvent(evt);
+        delete _activeWebSockets[id];
+    }};
+
     function WebSocket(url, protocols) {{
         EventTarget.call(this);
         this.url           = String(url || '');
@@ -3534,15 +3751,14 @@ fn install_js_shim(context: &mut Context, page_url: &str) {
         this.onclose       = null;
         this.onmessage     = null;
         this.onerror       = null;
-        
-        var self = this;
-        setTimeout(function() {{
-            self.readyState = 3; // CLOSED
-            var errEvt = {{ type: 'error', target: self, message: 'WebSocket: real-time connections not yet supported in Mango' }};
-            self.dispatchEvent(errEvt);
-            var closeEvt = {{ type: 'close', target: self, code: 1001, reason: 'Mango does not yet support WebSocket', wasClean: false }};
-            self.dispatchEvent(closeEvt);
-        }}, 0);
+
+        var id = _nextWsId++;
+        this._wsId = id;
+        _activeWebSockets[id] = this;
+
+        if (typeof _mangoWsConnect === 'function') {{
+            _mangoWsConnect(id, this.url, String(protocols || ''));
+        }}
     }}
     WebSocket.CONNECTING = 0;
     WebSocket.OPEN       = 1;
@@ -3551,8 +3767,21 @@ fn install_js_shim(context: &mut Context, page_url: &str) {
     WebSocket.prototype = Object.create(EventTarget.prototype);
     Object.assign(WebSocket.prototype, {{
         CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3,
-        send: function(data) {{}},
-        close: function(code, reason) {{ this.readyState = 3; }}
+        send: function(data) {{
+            if (this.readyState !== 1) {{
+                throw new Error("InvalidStateError: The WebSocket connection is not in the OPEN state.");
+            }}
+            if (typeof _mangoWsSend === 'function') {{
+                _mangoWsSend(this._wsId, String(data));
+            }}
+        }},
+        close: function(code, reason) {{
+            if (this.readyState === 2 || this.readyState === 3) return;
+            this.readyState = 2; // CLOSING
+            if (typeof _mangoWsClose === 'function') {{
+                _mangoWsClose(this._wsId, code !== undefined ? code : 1000, String(reason || ''));
+            }}
+        }}
     }});
     globalThis.WebSocket = WebSocket;
 
@@ -3952,6 +4181,57 @@ fn install_js_shim(context: &mut Context, page_url: &str) {
                 }}
             }},
             configurable: true
+        }},
+        contentEditable: {{
+            get: function() {{
+                var v = this.getAttribute ? this.getAttribute('contenteditable') : null;
+                if (v === null) return 'inherit';
+                var lower = v.toLowerCase();
+                if (lower === '' || lower === 'true') return 'true';
+                if (lower === 'false') return 'false';
+                return 'inherit';
+            }},
+            set: function(val) {{
+                var s = String(val).toLowerCase();
+                if (s === 'true') {{
+                    this.setAttribute('contenteditable', 'true');
+                }} else if (s === 'false') {{
+                    this.setAttribute('contenteditable', 'false');
+                }} else if (s === 'inherit') {{
+                    this.setAttribute('contenteditable', 'inherit');
+                }} else {{
+                    throw new Error("SyntaxError: The value provided is not a valid contentEditable state.");
+                }}
+            }},
+            configurable: true
+        }},
+        isContentEditable: {{
+            get: function() {{
+                var cur = this;
+                while (cur) {{
+                    var ce = (cur.getAttribute) ? cur.getAttribute('contenteditable') : null;
+                    if (ce !== null) {{
+                        var lower = ce.toLowerCase();
+                        if (lower === '' || lower === 'true') return true;
+                        if (lower === 'false') return false;
+                    }}
+                    cur = cur.parentElement;
+                }}
+                return false;
+            }},
+            configurable: true
+        }},
+        draggable: {{
+            get: function() {{
+                var v = this.getAttribute ? this.getAttribute('draggable') : null;
+                return v !== null && v.toLowerCase() === 'true';
+            }},
+            set: function(val) {{
+                if (this.setAttribute) {{
+                    this.setAttribute('draggable', val ? 'true' : 'false');
+                }}
+            }},
+            configurable: true
         }}
     }});
 
@@ -3979,12 +4259,20 @@ fn install_js_shim(context: &mut Context, page_url: &str) {
         'HTMLMapElement','HTMLAreaElement','HTMLObjectElement','HTMLEmbedElement',
         'HTMLSourceElement','HTMLPictureElement','HTMLTrackElement',
         'HTMLTimeElement','HTMLDataElement','HTMLRubyElement','HTMLTableSectionElement',
-        'HTMLTableColElement','HTMLTableCaptionElement'
+        'HTMLTableColElement','HTMLTableCaptionElement','HTMLDListElement',
+        'HTMLQuoteElement','HTMLModElement','HTMLUnknownElement','HTMLCanvasElement',
+        'HTMLMediaElement','HTMLVideoElement','HTMLAudioElement'
     ];
     _htmlSubclasses.forEach(function(name) {{
         globalThis[name] = function() {{}};
         globalThis[name].prototype = Object.create(globalThis.HTMLElement.prototype);
     }});
+    if (globalThis.HTMLMediaElement && globalThis.HTMLVideoElement) {{
+        globalThis.HTMLVideoElement.prototype = Object.create(globalThis.HTMLMediaElement.prototype);
+    }}
+    if (globalThis.HTMLMediaElement && globalThis.HTMLAudioElement) {{
+        globalThis.HTMLAudioElement.prototype = Object.create(globalThis.HTMLMediaElement.prototype);
+    }}
 
     // HTMLSelectElement prototype surface
     globalThis.HTMLSelectElement.prototype.checkValidity = function() {{
@@ -4386,6 +4674,72 @@ fn install_js_shim(context: &mut Context, page_url: &str) {
         }}
         return 'maybe';
     }};
+    Object.defineProperties(globalThis.HTMLMediaElement.prototype, {{
+        currentTime: {{
+            get: function() {{
+                var t = (this.getAttribute && this.getAttribute('data-mango-time')) || this._currentTime || 0;
+                var num = parseFloat(t);
+                return isNaN(num) ? 0 : num;
+            }},
+            set: function(val) {{
+                var num = Math.max(0, parseFloat(val) || 0);
+                this._currentTime = num;
+                if (this.setAttribute) this.setAttribute('data-mango-time', String(num));
+                if (this.dispatchEvent) this.dispatchEvent({{ type: 'timeupdate' }});
+            }},
+            configurable: true
+        }},
+        duration: {{
+            get: function() {{
+                var d = (this.getAttribute && this.getAttribute('data-mango-duration')) || this._duration || 100;
+                var num = parseFloat(d);
+                return isNaN(num) ? 100 : num;
+            }},
+            configurable: true
+        }},
+        paused: {{
+            get: function() {{
+                if (this._paused !== undefined) return this._paused;
+                var p = this.getAttribute ? this.getAttribute('data-mango-playing') : null;
+                if (p === 'true') return false;
+                if (p === 'false') return true;
+                return !this.autoplay;
+            }},
+            configurable: true
+        }},
+        volume: {{
+            get: function() {{ return this._volume !== undefined ? this._volume : 1.0; }},
+            set: function(val) {{
+                this._volume = Math.max(0, Math.min(1, parseFloat(val) || 0));
+                if (this.dispatchEvent) this.dispatchEvent({{ type: 'volumechange' }});
+            }},
+            configurable: true
+        }},
+        muted: {{
+            get: function() {{
+                if (this._muted !== undefined) return this._muted;
+                return (this.hasAttribute && this.hasAttribute('muted')) ||
+                    (this.getAttribute && this.getAttribute('data-mango-muted') === 'true');
+            }},
+            set: function(val) {{
+                this._muted = !!val;
+                if (this.setAttribute) {{
+                    if (val) {{ this.setAttribute('muted', ''); this.setAttribute('data-mango-muted', 'true'); }}
+                    else {{ if (this.removeAttribute) this.removeAttribute('muted'); this.setAttribute('data-mango-muted', 'false'); }}
+                }}
+                if (this.dispatchEvent) this.dispatchEvent({{ type: 'volumechange' }});
+            }},
+            configurable: true
+        }},
+        playbackRate: {{
+            get: function() {{ return this._playbackRate !== undefined ? this._playbackRate : 1.0; }},
+            set: function(val) {{
+                this._playbackRate = parseFloat(val) || 1.0;
+                if (this.dispatchEvent) this.dispatchEvent({{ type: 'ratechange' }});
+            }},
+            configurable: true
+        }}
+    }});
     globalThis.HTMLVideoElement = function() {{}};
     globalThis.HTMLVideoElement.prototype = Object.create(globalThis.HTMLMediaElement.prototype);
     globalThis.HTMLAudioElement = function() {{}};
@@ -5330,6 +5684,65 @@ fn install_js_shim(context: &mut Context, page_url: &str) {
     globalThis.WheelEvent.DOM_DELTA_LINE  = 1;
     globalThis.WheelEvent.DOM_DELTA_PAGE  = 2;
 
+    // Drag and Drop API (HTML5 §7.6 / Section 8.3)
+    globalThis.DataTransfer = function() {{
+        this.dropEffect = 'none';
+        this.effectAllowed = 'none';
+        this._data = {{}};
+        this.files = [];
+        var self = this;
+        this.items = {{
+            get length() {{ return Object.keys(self._data).length; }},
+            add: function(data, type) {{
+                var k = (type || 'text/plain').toLowerCase();
+                self._data[k] = String(data);
+                return {{ kind: 'string', type: k }};
+            }},
+            remove: function(idx) {{
+                var keys = Object.keys(self._data);
+                if (idx >= 0 && idx < keys.length) {{
+                    delete self._data[keys[idx]];
+                }}
+            }},
+            clear: function() {{
+                self._data = {{}};
+            }}
+        }};
+    }};
+    Object.defineProperty(globalThis.DataTransfer.prototype, 'types', {{
+        get: function() {{
+            return Object.freeze(Object.keys(this._data || {{}}));
+        }},
+        enumerable: true,
+        configurable: true
+    }});
+    globalThis.DataTransfer.prototype.setData = function(format, data) {{
+        if (!this._data) this._data = {{}};
+        this._data[String(format).toLowerCase()] = String(data);
+    }};
+    globalThis.DataTransfer.prototype.getData = function(format) {{
+        if (!this._data) return '';
+        return this._data[String(format).toLowerCase()] || '';
+    }};
+    globalThis.DataTransfer.prototype.clearData = function(format) {{
+        if (!this._data) return;
+        if (format === undefined) {{
+            this._data = {{}};
+        }} else {{
+            delete this._data[String(format).toLowerCase()];
+        }}
+    }};
+    globalThis.DataTransfer.prototype.setDragImage = function(img, x, y) {{
+        this._dragImage = {{ image: img, x: x || 0, y: y || 0 }};
+    }};
+
+    globalThis.DragEvent = function(type, dict) {{
+        globalThis.MouseEvent.call(this, type, dict);
+        dict = dict || {{}};
+        this.dataTransfer = (dict && dict.dataTransfer !== undefined) ? dict.dataTransfer : new globalThis.DataTransfer();
+    }};
+    globalThis.DragEvent.prototype = Object.create(globalThis.MouseEvent.prototype);
+
     globalThis.TouchEvent = function(type, dict) {{
         globalThis.UIEvent.call(this, type, dict);
         dict = dict || {{}};
@@ -5421,6 +5834,26 @@ fn install_js_shim(context: &mut Context, page_url: &str) {
     }};
     globalThis.PageTransitionEvent.prototype = Object.create(globalThis.Event.prototype);
 
+    globalThis.MessageEvent = function(type, dict) {{
+        globalThis.Event.call(this, type, dict);
+        dict = dict || {{}};
+        this.data = dict.data !== undefined ? dict.data : null;
+        this.origin = dict.origin || '';
+        this.lastEventId = dict.lastEventId || '';
+        this.source = dict.source || null;
+        this.ports = dict.ports || [];
+    }};
+    globalThis.MessageEvent.prototype = Object.create(globalThis.Event.prototype);
+
+    globalThis.CloseEvent = function(type, dict) {{
+        globalThis.Event.call(this, type, dict);
+        dict = dict || {{}};
+        this.code = dict.code !== undefined ? dict.code : 1000;
+        this.reason = dict.reason || '';
+        this.wasClean = !!dict.wasClean;
+    }};
+    globalThis.CloseEvent.prototype = Object.create(globalThis.Event.prototype);
+
     // ── 28. Web Components ────────────────────────────────────────────────────
     globalThis.WebComponents = {{ ready: true }};
     globalThis.CustomElementRegistry = function() {{ this._registry = {{}}; }};
@@ -5486,14 +5919,42 @@ fn install_js_shim(context: &mut Context, page_url: &str) {
     }};
 
     // ── 32. Web Worker & Service Worker (GAP-015) ──────────────────────────
+    var _nextWorkerId = 1;
+    var _activeWorkers = {{}};
+
+    globalThis._mangoDispatchWorkerMessage = function(id, dataStr) {{
+        var w = _activeWorkers[id];
+        if (!w || w._terminated) return;
+        var data;
+        try {{ data = JSON.parse(dataStr); }} catch(e) {{ data = dataStr; }}
+        var evt = (typeof globalThis.MessageEvent === 'function')
+            ? new globalThis.MessageEvent('message', {{ data: data, source: w }})
+            : {{ type: 'message', data: data, source: w, target: w }};
+        w.dispatchEvent(evt);
+    }};
+
+    globalThis._mangoDispatchWorkerError = function(id, errMsg) {{
+        var w = _activeWorkers[id];
+        if (!w || w._terminated) return;
+        var evt = (typeof globalThis.ErrorEvent === 'function')
+            ? new globalThis.ErrorEvent('error', {{ message: errMsg }})
+            : {{ type: 'error', message: errMsg, target: w }};
+        w.dispatchEvent(evt);
+    }};
+
     function Worker(scriptURL, options) {{
-        this.scriptURL = String(scriptURL);
+        EventTarget.call(this);
+        this.scriptURL = String(scriptURL || '');
         this.options = options || {{}};
         this.onmessage = null;
         this.onerror = null;
         this.onmessageerror = null;
         this._listeners = {{}};
         this._terminated = false;
+
+        var id = _nextWorkerId++;
+        this._workerId = id;
+        _activeWorkers[id] = this;
 
         var self = this;
         this.addEventListener = function(type, fn) {{
@@ -5506,8 +5967,12 @@ fn install_js_shim(context: &mut Context, page_url: &str) {
         }};
         this.dispatchEvent = function(evt) {{
             var type = evt.type;
-            if (type === 'message' && typeof self.onmessage === 'function') self.onmessage(evt);
-            if (type === 'error' && typeof self.onerror === 'function') self.onerror(evt);
+            if (type === 'message' && typeof self.onmessage === 'function') {{
+                try {{ self.onmessage(evt); }} catch(e) {{}}
+            }}
+            if (type === 'error' && typeof self.onerror === 'function') {{
+                try {{ self.onerror(evt); }} catch(e) {{}}
+            }}
             var list = self._listeners[type] || [];
             for (var i = 0; i < list.length; i++) {{
                 try {{ list[i].call(self, evt); }} catch(e) {{}}
@@ -5516,15 +5981,24 @@ fn install_js_shim(context: &mut Context, page_url: &str) {
         }};
         this.postMessage = function(message, transfer) {{
             if (self._terminated) return;
-            setTimeout(function() {{
-                if (self._terminated) return;
-                self.dispatchEvent({{ type: 'message', data: message, origin: '', lastEventId: '', source: self }});
-            }}, 0);
+            var json = JSON.stringify(message);
+            if (typeof _mangoWorkerPostMessage === 'function') {{
+                _mangoWorkerPostMessage(self._workerId, json);
+            }}
         }};
         this.terminate = function() {{
             self._terminated = true;
+            if (typeof _mangoWorkerTerminate === 'function') {{
+                _mangoWorkerTerminate(self._workerId);
+            }}
+            delete _activeWorkers[self._workerId];
         }};
+
+        if (typeof _mangoWorkerCreate === 'function') {{
+            _mangoWorkerCreate(id, this.scriptURL, JSON.stringify(this.options));
+        }}
     }}
+    Worker.prototype = Object.create(EventTarget.prototype);
     globalThis.Worker = Worker;
 
     // ServiceWorker interfaces
@@ -6467,6 +6941,601 @@ fn install_js_shim(context: &mut Context, page_url: &str) {
         Intl.Segmenter = Segmenter;
 
         globalThis.Intl = Intl;
+    }})();
+
+    // -------------------------------------------------------------
+    // WebGL & WebGL2 Rendering Contexts (W3C WebGL / WebGL 2 Spec)
+    // -------------------------------------------------------------
+    (function() {{
+        var WEBGL_CONSTANTS = {{
+            COLOR_BUFFER_BIT: 0x00004000,
+            DEPTH_BUFFER_BIT: 0x00000100,
+            STENCIL_BUFFER_BIT: 0x00000400,
+            POINTS: 0x0000,
+            LINES: 0x0001,
+            LINE_LOOP: 0x0002,
+            LINE_STRIP: 0x0003,
+            TRIANGLES: 0x0004,
+            TRIANGLE_STRIP: 0x0005,
+            TRIANGLE_FAN: 0x0006,
+            ARRAY_BUFFER: 0x8892,
+            ELEMENT_ARRAY_BUFFER: 0x8893,
+            STATIC_DRAW: 0x88E4,
+            STREAM_DRAW: 0x88E0,
+            DYNAMIC_DRAW: 0x88E8,
+            FRAGMENT_SHADER: 0x8B30,
+            VERTEX_SHADER: 0x8B31,
+            COMPILE_STATUS: 0x8B81,
+            LINK_STATUS: 0x8B82,
+            VALIDATE_STATUS: 0x8B83,
+            BYTE: 0x1400,
+            UNSIGNED_BYTE: 0x1401,
+            SHORT: 0x1402,
+            UNSIGNED_SHORT: 0x1403,
+            INT: 0x1404,
+            UNSIGNED_INT: 0x1405,
+            FLOAT: 0x1406,
+            DEPTH_TEST: 0x0B71,
+            BLEND: 0x0BE2,
+            CULL_FACE: 0x0B44,
+            TEXTURE_2D: 0x0DE1,
+            TEXTURE_CUBE_MAP: 0x8513,
+            TEXTURE_MAG_FILTER: 0x2800,
+            TEXTURE_MIN_FILTER: 0x2801,
+            TEXTURE_WRAP_S: 0x2802,
+            TEXTURE_WRAP_T: 0x2803,
+            NEAREST: 0x2600,
+            LINEAR: 0x2601,
+            RGBA: 0x1908,
+            RGB: 0x1907,
+            ALPHA: 0x1906,
+            LUMINANCE: 0x1909,
+            FRAMEBUFFER: 0x8D40,
+            RENDERBUFFER: 0x8D41,
+            COLOR_ATTACHMENT0: 0x8CE0,
+            DEPTH_ATTACHMENT: 0x8D00,
+            FRAMEBUFFER_COMPLETE: 0x8CD5,
+            NO_ERROR: 0
+        }};
+
+        function WebGLShader(type) {{
+            this._type = type;
+            this._source = '';
+            this._compiled = false;
+        }}
+        function WebGLProgram() {{
+            this._shaders = [];
+            this._linked = false;
+            this._uniforms = {{}};
+            this._attribs = {{}};
+        }}
+        function WebGLBuffer() {{
+            this._target = 0;
+            this._data = null;
+            this._usage = 0;
+        }}
+        function WebGLTexture() {{
+            this._params = {{}};
+            this._data = null;
+        }}
+        function WebGLFramebuffer() {{}}
+        function WebGLRenderbuffer() {{}}
+        function WebGLUniformLocation(name) {{ this._name = name; }}
+
+        function WebGLRenderingContext(canvas) {{
+            this.canvas = canvas;
+            this.drawingBufferWidth = canvas ? (canvas.width || 300) : 300;
+            this.drawingBufferHeight = canvas ? (canvas.height || 150) : 150;
+            this._clearColor = [0, 0, 0, 0];
+            this._clearDepth = 1.0;
+            this._clearStencil = 0;
+            this._viewport = [0, 0, this.drawingBufferWidth, this.drawingBufferHeight];
+            this._boundBuffers = {{}};
+            this._boundTextures = {{}};
+            this._currentProgram = null;
+        }}
+
+        for (var k in WEBGL_CONSTANTS) {{
+            WebGLRenderingContext[k] = WEBGL_CONSTANTS[k];
+            WebGLRenderingContext.prototype[k] = WEBGL_CONSTANTS[k];
+        }}
+
+        WebGLRenderingContext.prototype.viewport = function(x, y, w, h) {{ this._viewport = [x, y, w, h]; }};
+        WebGLRenderingContext.prototype.clearColor = function(r, g, b, a) {{ this._clearColor = [r, g, b, a]; }};
+        WebGLRenderingContext.prototype.clearDepth = function(d) {{ this._clearDepth = d; }};
+        WebGLRenderingContext.prototype.clearStencil = function(s) {{ this._clearStencil = s; }};
+        WebGLRenderingContext.prototype.clear = function(mask) {{}};
+        WebGLRenderingContext.prototype.enable = function(cap) {{}};
+        WebGLRenderingContext.prototype.disable = function(cap) {{}};
+        WebGLRenderingContext.prototype.blendFunc = function(sfactor, dfactor) {{}};
+        WebGLRenderingContext.prototype.createShader = function(type) {{ return new WebGLShader(type); }};
+        WebGLRenderingContext.prototype.shaderSource = function(shader, source) {{ if (shader) shader._source = source; }};
+        WebGLRenderingContext.prototype.compileShader = function(shader) {{ if (shader) shader._compiled = true; }};
+        WebGLRenderingContext.prototype.getShaderParameter = function(shader, pname) {{
+            if (pname === WEBGL_CONSTANTS.COMPILE_STATUS) return true;
+            if (pname === WEBGL_CONSTANTS.DELETE_STATUS) return false;
+            return true;
+        }};
+        WebGLRenderingContext.prototype.getShaderInfoLog = function(shader) {{ return ''; }};
+        WebGLRenderingContext.prototype.createProgram = function() {{ return new WebGLProgram(); }};
+        WebGLRenderingContext.prototype.attachShader = function(program, shader) {{ if (program && shader) program._shaders.push(shader); }};
+        WebGLRenderingContext.prototype.linkProgram = function(program) {{ if (program) program._linked = true; }};
+        WebGLRenderingContext.prototype.useProgram = function(program) {{ this._currentProgram = program; }};
+        WebGLRenderingContext.prototype.getProgramParameter = function(program, pname) {{
+            if (pname === WEBGL_CONSTANTS.LINK_STATUS) return true;
+            if (pname === WEBGL_CONSTANTS.VALIDATE_STATUS) return true;
+            return true;
+        }};
+        WebGLRenderingContext.prototype.getProgramInfoLog = function(program) {{ return ''; }};
+        WebGLRenderingContext.prototype.createBuffer = function() {{ return new WebGLBuffer(); }};
+        WebGLRenderingContext.prototype.bindBuffer = function(target, buffer) {{ this._boundBuffers[target] = buffer; }};
+        WebGLRenderingContext.prototype.bufferData = function(target, data, usage) {{
+            var buf = this._boundBuffers[target];
+            if (buf) {{ buf._data = data; buf._usage = usage; }}
+        }};
+        WebGLRenderingContext.prototype.bufferSubData = function(target, offset, data) {{}};
+        WebGLRenderingContext.prototype.createTexture = function() {{ return new WebGLTexture(); }};
+        WebGLRenderingContext.prototype.bindTexture = function(target, texture) {{ this._boundTextures[target] = texture; }};
+        WebGLRenderingContext.prototype.texImage2D = function() {{}};
+        WebGLRenderingContext.prototype.texParameteri = function(target, pname, param) {{}};
+        WebGLRenderingContext.prototype.generateMipmap = function(target) {{}};
+        WebGLRenderingContext.prototype.createFramebuffer = function() {{ return new WebGLFramebuffer(); }};
+        WebGLRenderingContext.prototype.bindFramebuffer = function(target, fb) {{}};
+        WebGLRenderingContext.prototype.createRenderbuffer = function() {{ return new WebGLRenderbuffer(); }};
+        WebGLRenderingContext.prototype.bindRenderbuffer = function(target, rb) {{}};
+        WebGLRenderingContext.prototype.getAttribLocation = function(program, name) {{ return 0; }};
+        WebGLRenderingContext.prototype.enableVertexAttribArray = function(index) {{}};
+        WebGLRenderingContext.prototype.disableVertexAttribArray = function(index) {{}};
+        WebGLRenderingContext.prototype.vertexAttribPointer = function() {{}};
+        WebGLRenderingContext.prototype.getUniformLocation = function(program, name) {{ return new WebGLUniformLocation(name); }};
+        WebGLRenderingContext.prototype.uniform1f = function(loc, x) {{}};
+        WebGLRenderingContext.prototype.uniform2f = function(loc, x, y) {{}};
+        WebGLRenderingContext.prototype.uniform3f = function(loc, x, y, z) {{}};
+        WebGLRenderingContext.prototype.uniform4f = function(loc, x, y, z, w) {{}};
+        WebGLRenderingContext.prototype.uniform1i = function(loc, x) {{}};
+        WebGLRenderingContext.prototype.uniformMatrix4fv = function(loc, transpose, val) {{}};
+        WebGLRenderingContext.prototype.drawArrays = function(mode, first, count) {{}};
+        WebGLRenderingContext.prototype.drawElements = function(mode, count, type, offset) {{}};
+        WebGLRenderingContext.prototype.getExtension = function(name) {{ return null; }};
+        WebGLRenderingContext.prototype.getSupportedExtensions = function() {{ return ['OES_element_index_uint', 'EXT_texture_filter_anisotropic']; }};
+        WebGLRenderingContext.prototype.getParameter = function(pname) {{
+            if (pname === 0x1F00) return 'Mango WebGL Renderer';
+            if (pname === 0x1F01) return 'Mango GPU Rasterizer';
+            if (pname === 0x1F02) return 'WebGL 1.0 (Mango Engine)';
+            if (pname === 0x8B8C) return 'WebGL GLSL ES 1.0';
+            return 0;
+        }};
+        WebGLRenderingContext.prototype.getError = function() {{ return 0; }};
+
+        var WEBGL2_CONSTANTS = Object.assign({{}}, WEBGL_CONSTANTS, {{
+            READ_FRAMEBUFFER: 0x8CA8,
+            DRAW_FRAMEBUFFER: 0x8CA9,
+            UNIFORM_BUFFER: 0x8A11,
+            COLOR: 0x1800,
+            DEPTH: 0x1801,
+            STENCIL: 0x1802,
+            RASTERIZER_DISCARD: 0x8C89
+        }});
+
+        function WebGLVertexArrayObject() {{}}
+        function WebGLQuery() {{}}
+        function WebGLSync() {{}}
+
+        function WebGL2RenderingContext(canvas) {{
+            WebGLRenderingContext.call(this, canvas);
+        }}
+        WebGL2RenderingContext.prototype = Object.create(WebGLRenderingContext.prototype);
+        WebGL2RenderingContext.prototype.constructor = WebGL2RenderingContext;
+
+        for (var k2 in WEBGL2_CONSTANTS) {{
+            WebGL2RenderingContext[k2] = WEBGL2_CONSTANTS[k2];
+            WebGL2RenderingContext.prototype[k2] = WEBGL2_CONSTANTS[k2];
+        }}
+
+        WebGL2RenderingContext.prototype.createVertexArray = function() {{ return new WebGLVertexArrayObject(); }};
+        WebGL2RenderingContext.prototype.bindVertexArray = function(vao) {{}};
+        WebGL2RenderingContext.prototype.deleteVertexArray = function(vao) {{}};
+        WebGL2RenderingContext.prototype.createQuery = function() {{ return new WebGLQuery(); }};
+        WebGL2RenderingContext.prototype.beginQuery = function(target, q) {{}};
+        WebGL2RenderingContext.prototype.endQuery = function(target) {{}};
+        WebGL2RenderingContext.prototype.fenceSync = function(condition, flags) {{ return new WebGLSync(); }};
+        WebGL2RenderingContext.prototype.clientWaitSync = function(sync, flags, timeout) {{ return 0x911A; }};
+        WebGL2RenderingContext.prototype.deleteSync = function(sync) {{}};
+
+        globalThis.WebGLRenderingContext = WebGLRenderingContext;
+        globalThis.WebGL2RenderingContext = WebGL2RenderingContext;
+        globalThis.WebGLShader = WebGLShader;
+        globalThis.WebGLProgram = WebGLProgram;
+        globalThis.WebGLBuffer = WebGLBuffer;
+        globalThis.WebGLTexture = WebGLTexture;
+
+        // WebGPU API
+        function GPUBuffer(descriptor) {{
+            this.size = (descriptor && descriptor.size) || 0;
+            this.usage = (descriptor && descriptor.usage) || 0;
+            this.mapState = 'unmapped';
+        }}
+        GPUBuffer.prototype.mapAsync = function(mode, offset, size) {{
+            this.mapState = 'mapped';
+            return Promise.resolve();
+        }};
+        GPUBuffer.prototype.getMappedRange = function(offset, size) {{
+            return new ArrayBuffer(size || this.size || 64);
+        }};
+        GPUBuffer.prototype.unmap = function() {{ this.mapState = 'unmapped'; }};
+        GPUBuffer.prototype.destroy = function() {{ this.mapState = 'destroyed'; }};
+
+        function GPUTexture(descriptor) {{
+            this.width = (descriptor && descriptor.size && descriptor.size.width) || 1;
+            this.height = (descriptor && descriptor.size && descriptor.size.height) || 1;
+            this.format = (descriptor && descriptor.format) || 'rgba8unorm';
+        }}
+        GPUTexture.prototype.createView = function() {{ return {{}}; }};
+        GPUTexture.prototype.destroy = function() {{}};
+
+        function GPUQueue() {{}}
+        GPUQueue.prototype.submit = function(commandBuffers) {{}};
+        GPUQueue.prototype.writeBuffer = function(buffer, bufferOffset, data, dataOffset, size) {{}};
+        GPUQueue.prototype.writeTexture = function(destination, data, dataLayout, size) {{}};
+
+        function GPUCommandBuffer() {{}}
+        function GPURenderPassEncoder() {{}}
+        GPURenderPassEncoder.prototype.setPipeline = function(pipeline) {{}};
+        GPURenderPassEncoder.prototype.setVertexBuffer = function(slot, buffer) {{}};
+        GPURenderPassEncoder.prototype.setBindGroup = function(index, bindGroup) {{}};
+        GPURenderPassEncoder.prototype.draw = function(vertexCount, instanceCount, firstVertex, firstInstance) {{}};
+        GPURenderPassEncoder.prototype.drawIndexed = function(indexCount, instanceCount, firstIndex, baseVertex, firstInstance) {{}};
+        GPURenderPassEncoder.prototype.end = function() {{}};
+
+        function GPUCommandEncoder() {{}}
+        GPUCommandEncoder.prototype.beginRenderPass = function(descriptor) {{ return new GPURenderPassEncoder(); }};
+        GPUCommandEncoder.prototype.finish = function() {{ return new GPUCommandBuffer(); }};
+
+        function GPUDevice(adapter) {{
+            this.adapter = adapter;
+            this.queue = new GPUQueue();
+            this.features = new Set();
+            this.limits = {{
+                maxTextureDimension2D: 8192,
+                maxBufferSize: 268435456,
+                maxStorageBufferBindingSize: 134217728,
+                maxComputeWorkgroupSizeX: 256,
+                maxComputeWorkgroupSizeY: 256,
+                maxComputeWorkgroupSizeZ: 64
+            }};
+        }}
+        GPUDevice.prototype.createBuffer = function(descriptor) {{ return new GPUBuffer(descriptor); }};
+        GPUDevice.prototype.createTexture = function(descriptor) {{ return new GPUTexture(descriptor); }};
+        GPUDevice.prototype.createShaderModule = function(descriptor) {{ return {{ code: descriptor && descriptor.code }}; }};
+        GPUDevice.prototype.createBindGroupLayout = function(descriptor) {{ return {{}}; }};
+        GPUDevice.prototype.createPipelineLayout = function(descriptor) {{ return {{}}; }};
+        GPUDevice.prototype.createRenderPipeline = function(descriptor) {{ return {{}}; }};
+        GPUDevice.prototype.createComputePipeline = function(descriptor) {{ return {{}}; }};
+        GPUDevice.prototype.createCommandEncoder = function(descriptor) {{ return new GPUCommandEncoder(); }};
+        GPUDevice.prototype.destroy = function() {{}};
+
+        function GPUAdapter() {{
+            this.features = new Set();
+            this.limits = {{ maxTextureDimension2D: 8192, maxBufferSize: 268435456 }};
+            this.isFallbackAdapter = false;
+        }}
+        GPUAdapter.prototype.requestDevice = function(descriptor) {{
+            return Promise.resolve(new GPUDevice(this));
+        }};
+
+        function GPU() {{}}
+        GPU.prototype.requestAdapter = function(options) {{
+            return Promise.resolve(new GPUAdapter());
+        }};
+        GPU.prototype.getPreferredCanvasFormat = function() {{
+            return 'bgra8unorm';
+        }};
+
+        function GPUCanvasContext(canvas) {{
+            this.canvas = canvas;
+            this._configured = false;
+        }}
+        GPUCanvasContext.prototype.configure = function(config) {{
+            this._config = config;
+            this._configured = true;
+        }};
+        GPUCanvasContext.prototype.unconfigure = function() {{
+            this._configured = false;
+        }};
+        GPUCanvasContext.prototype.getCurrentTexture = function() {{
+            var w = this.canvas ? (this.canvas.width || 300) : 300;
+            var h = this.canvas ? (this.canvas.height || 150) : 150;
+            return new GPUTexture({{ size: {{ width: w, height: h }}, format: (this._config && this._config.format) || 'bgra8unorm' }});
+        }};
+
+        globalThis.GPU = GPU;
+        globalThis.GPUAdapter = GPUAdapter;
+        globalThis.GPUDevice = GPUDevice;
+        globalThis.GPUQueue = GPUQueue;
+        globalThis.GPUBuffer = GPUBuffer;
+        globalThis.GPUTexture = GPUTexture;
+        globalThis.GPUCommandEncoder = GPUCommandEncoder;
+        globalThis.GPUCanvasContext = GPUCanvasContext;
+
+        if (typeof navigator !== 'undefined') {{
+            navigator.gpu = new GPU();
+        }}
+    }})();
+
+    // ── Web Audio API ──────────────────────────────────────────────────────────
+    (function() {{
+        function AudioNode(context) {{
+            this.context = context;
+            this.numberOfInputs = 1;
+            this.numberOfOutputs = 1;
+            this.channelCount = 2;
+            this._connections = [];
+        }}
+        AudioNode.prototype.connect = function(destination) {{
+            this._connections.push(destination);
+            return destination;
+        }};
+        AudioNode.prototype.disconnect = function() {{
+            this._connections = [];
+        }};
+
+        function AudioParam(defaultValue) {{
+            this.value = defaultValue;
+            this.defaultValue = defaultValue;
+            this.minValue = -3.4028235e38;
+            this.maxValue = 3.4028235e38;
+        }}
+        AudioParam.prototype.setValueAtTime = function(val, startTime) {{
+            this.value = val;
+            return this;
+        }};
+        AudioParam.prototype.linearRampToValueAtTime = function(val, endTime) {{
+            this.value = val;
+            return this;
+        }};
+        AudioParam.prototype.exponentialRampToValueAtTime = function(val, endTime) {{
+            this.value = val;
+            return this;
+        }};
+        AudioParam.prototype.setTargetAtTime = function(target, startTime, timeConstant) {{
+            this.value = target;
+            return this;
+        }};
+
+        function GainNode(context) {{
+            AudioNode.call(this, context);
+            this.gain = new AudioParam(1.0);
+        }}
+        GainNode.prototype = Object.create(AudioNode.prototype);
+
+        function OscillatorNode(context) {{
+            AudioNode.call(this, context);
+            this.type = 'sine';
+            this.frequency = new AudioParam(440);
+            this.detune = new AudioParam(0);
+            this._started = false;
+            this._stopped = false;
+        }}
+        OscillatorNode.prototype = Object.create(AudioNode.prototype);
+        OscillatorNode.prototype.start = function(when) {{
+            this._started = true;
+        }};
+        OscillatorNode.prototype.stop = function(when) {{
+            this._stopped = true;
+        }};
+
+        function AudioBuffer(options) {{
+            this.numberOfChannels = (options && options.numberOfChannels) || 2;
+            this.length = (options && options.length) || 0;
+            this.sampleRate = (options && options.sampleRate) || 44100;
+            this.duration = this.sampleRate > 0 ? (this.length / this.sampleRate) : 0;
+            this._channelData = [];
+            for (var i = 0; i < this.numberOfChannels; i++) {{
+                this._channelData.push(new Float32Array(this.length));
+            }}
+        }}
+        AudioBuffer.prototype.getChannelData = function(channel) {{
+            if (channel < 0 || channel >= this._channelData.length) {{
+                throw new Error("IndexSizeError: channel out of bounds");
+            }}
+            return this._channelData[channel];
+        }};
+        AudioBuffer.prototype.copyFromChannel = function(dest, channelNumber, startInChannel) {{
+            var src = this.getChannelData(channelNumber);
+            var offset = startInChannel || 0;
+            dest.set(src.subarray(offset, offset + dest.length));
+        }};
+        AudioBuffer.prototype.copyToChannel = function(src, channelNumber, startInChannel) {{
+            var dest = this.getChannelData(channelNumber);
+            var offset = startInChannel || 0;
+            dest.set(src, offset);
+        }};
+
+        function AudioBufferSourceNode(context) {{
+            AudioNode.call(this, context);
+            this.buffer = null;
+            this.playbackRate = new AudioParam(1.0);
+            this.detune = new AudioParam(0);
+            this.loop = false;
+            this.loopStart = 0;
+            this.loopEnd = 0;
+            this._started = false;
+            this._stopped = false;
+        }}
+        AudioBufferSourceNode.prototype = Object.create(AudioNode.prototype);
+        AudioBufferSourceNode.prototype.start = function() {{ this._started = true; }};
+        AudioBufferSourceNode.prototype.stop = function() {{ this._stopped = true; }};
+
+        function AnalyserNode(context) {{
+            AudioNode.call(this, context);
+            this.fftSize = 2048;
+            this.frequencyBinCount = 1024;
+            this.minDecibels = -100;
+            this.maxDecibels = -30;
+            this.smoothingTimeConstant = 0.8;
+        }}
+        AnalyserNode.prototype = Object.create(AudioNode.prototype);
+        AnalyserNode.prototype.getByteFrequencyData = function(array) {{
+            array.fill(0);
+        }};
+        AnalyserNode.prototype.getByteTimeDomainData = function(array) {{
+            array.fill(128);
+        }};
+        AnalyserNode.prototype.getFloatFrequencyData = function(array) {{
+            array.fill(-100);
+        }};
+        AnalyserNode.prototype.getFloatTimeDomainData = function(array) {{
+            array.fill(0);
+        }};
+
+        function BiquadFilterNode(context) {{
+            AudioNode.call(this, context);
+            this.type = 'lowpass';
+            this.frequency = new AudioParam(350);
+            this.detune = new AudioParam(0);
+            this.Q = new AudioParam(1);
+            this.gain = new AudioParam(0);
+        }}
+        BiquadFilterNode.prototype = Object.create(AudioNode.prototype);
+
+        function AudioDestinationNode(context) {{
+            AudioNode.call(this, context);
+            this.maxChannelCount = 2;
+        }}
+        AudioDestinationNode.prototype = Object.create(AudioNode.prototype);
+
+        function BaseAudioContext() {{
+            this.state = 'running';
+            this.sampleRate = 44100;
+            this.currentTime = 0;
+            this.destination = new AudioDestinationNode(this);
+            this.listener = {{ positionX: 0, positionY: 0, positionZ: 0 }};
+        }}
+        BaseAudioContext.prototype.createGain = function() {{ return new GainNode(this); }};
+        BaseAudioContext.prototype.createOscillator = function() {{ return new OscillatorNode(this); }};
+        BaseAudioContext.prototype.createBufferSource = function() {{ return new AudioBufferSourceNode(this); }};
+        BaseAudioContext.prototype.createBuffer = function(numChannels, length, sampleRate) {{
+            return new AudioBuffer({{ numberOfChannels: numChannels, length: length, sampleRate: sampleRate }});
+        }};
+        BaseAudioContext.prototype.createAnalyser = function() {{ return new AnalyserNode(this); }};
+        BaseAudioContext.prototype.createBiquadFilter = function() {{ return new BiquadFilterNode(this); }};
+        BaseAudioContext.prototype.decodeAudioData = function(audioData, successCb, errorCb) {{
+            var self = this;
+            return new Promise(function(resolve, reject) {{
+                var buf = new AudioBuffer({{ numberOfChannels: 2, length: 1024, sampleRate: self.sampleRate }});
+                if (typeof successCb === 'function') successCb(buf);
+                resolve(buf);
+            }});
+        }};
+        BaseAudioContext.prototype.resume = function() {{
+            this.state = 'running';
+            return Promise.resolve();
+        }};
+        BaseAudioContext.prototype.suspend = function() {{
+            this.state = 'suspended';
+            return Promise.resolve();
+        }};
+        BaseAudioContext.prototype.close = function() {{
+            this.state = 'closed';
+            return Promise.resolve();
+        }};
+
+        function AudioContext(options) {{
+            BaseAudioContext.call(this);
+            if (options && options.sampleRate) this.sampleRate = options.sampleRate;
+        }}
+        AudioContext.prototype = Object.create(BaseAudioContext.prototype);
+
+        globalThis.AudioNode = AudioNode;
+        globalThis.AudioParam = AudioParam;
+        globalThis.GainNode = GainNode;
+        globalThis.OscillatorNode = OscillatorNode;
+        globalThis.AudioBuffer = AudioBuffer;
+        globalThis.AudioBufferSourceNode = AudioBufferSourceNode;
+        globalThis.AnalyserNode = AnalyserNode;
+        globalThis.BiquadFilterNode = BiquadFilterNode;
+        globalThis.AudioDestinationNode = AudioDestinationNode;
+        globalThis.BaseAudioContext = BaseAudioContext;
+        globalThis.AudioContext = AudioContext;
+        globalThis.webkitAudioContext = AudioContext;
+    }})();
+
+    // ── OffscreenCanvas ────────────────────────────────────────────────────────
+    (function() {{
+        function OffscreenCanvas(width, height) {{
+            this.width = Math.max(0, parseInt(width) || 300);
+            this.height = Math.max(0, parseInt(height) || 150);
+            this._context2d = null;
+        }}
+        OffscreenCanvas.prototype.getContext = function(contextId, options) {{
+            if (contextId === '2d') {{
+                if (!this._context2d) {{
+                    if (typeof _createCanvasRenderingContext2D === 'function') {{
+                        this._context2d = _createCanvasRenderingContext2D(this);
+                    }} else {{
+                        var self = this;
+                        this._context2d = {{
+                            canvas: self,
+                            fillStyle: '#000000',
+                            strokeStyle: '#000000',
+                            lineWidth: 1,
+                            fillRect: function() {{}},
+                            strokeRect: function() {{}},
+                            clearRect: function() {{}},
+                            beginPath: function() {{}},
+                            closePath: function() {{}},
+                            moveTo: function() {{}},
+                            lineTo: function() {{}},
+                            arc: function() {{}},
+                            fill: function() {{}},
+                            stroke: function() {{}},
+                            fillText: function() {{}},
+                            strokeText: function() {{}},
+                            measureText: function(txt) {{ return {{ width: (txt || '').length * 8 }}; }},
+                            drawImage: function() {{}},
+                            getImageData: function(sx, sy, sw, sh) {{
+                                return {{ width: sw, height: sh, data: new Uint8ClampedArray(sw * sh * 4) }};
+                            }},
+                            putImageData: function() {{}},
+                            save: function() {{}},
+                            restore: function() {{}},
+                            scale: function() {{}},
+                            rotate: function() {{}},
+                            translate: function() {{}},
+                            transform: function() {{}},
+                            setTransform: function() {{}},
+                            resetTransform: function() {{}}
+                        }};
+                    }}
+                }}
+                return this._context2d;
+            }} else if (contextId === 'webgpu') {{
+                if (typeof GPUCanvasContext === 'function') {{
+                    return new GPUCanvasContext(this);
+                }}
+            }}
+            return null;
+        }};
+        OffscreenCanvas.prototype.convertToBlob = function(options) {{
+            var type = (options && options.type) || 'image/png';
+            return Promise.resolve(new Blob([], {{ type: type }}));
+        }};
+        OffscreenCanvas.prototype.transferToImageBitmap = function() {{
+            return {{
+                width: this.width,
+                height: this.height,
+                close: function() {{}}
+            }};
+        }};
+        globalThis.OffscreenCanvas = OffscreenCanvas;
+
+        if (typeof HTMLCanvasElement !== 'undefined') {{
+            HTMLCanvasElement.prototype.transferControlToOffscreen = function() {{
+                var off = new OffscreenCanvas(this.width || 300, this.height || 150);
+                this._transferred = true;
+                return off;
+            }};
+        }}
     }})();
 
 }})();

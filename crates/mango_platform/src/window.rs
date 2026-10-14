@@ -94,7 +94,10 @@ impl WindowSurface {
                 Self::Gpu(Box::new(gpu))
             }
             Err(err) => {
-                log::info!("GPU Compositor unavailable ({}), using software compositor", err);
+                log::info!(
+                    "GPU Compositor unavailable ({}), using software compositor",
+                    err
+                );
                 let pixel_buffer = PixelBuffer::new(window);
                 let compositor = mango_render::SoftwareCompositor::new();
                 Self::Software {

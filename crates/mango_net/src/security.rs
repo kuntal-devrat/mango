@@ -116,6 +116,9 @@ impl CspPolicy {
     ///
     /// Supports the `'none'`, `'self'`, `*`, scheme sources (`https:`), host
     /// sources (`https://example.com`), and wildcard subdomains (`*.example.com`).
+    /// `data:`/`blob:`/`about:` URLs require an explicit matching scheme
+    /// source (e.g. `img-src data:`) and are never allowed by `*` or `'self'`.
+    /// Host sources also compare port (when specified) and path prefix.
     pub fn allows(&self, directive: ResourceDirective, url: &str, page_origin: &str) -> bool {
         // A policy with no relevant directive allows everything.
         let sources = self.sources_for(directive);
@@ -123,26 +126,43 @@ impl CspPolicy {
             return true;
         }
 
-        let url_lower = url.trim().to_ascii_lowercase();
-        // Non-network schemes are always permitted (data:, blob:, about:).
-        if url_lower.starts_with("data:")
-            || url_lower.starts_with("blob:")
-            || url_lower.starts_with("about:")
-            || url_lower.starts_with('#')
-        {
+        let url_trimmed = url.trim();
+        let url_lower = url_trimmed.to_ascii_lowercase();
+        // Same-document fragment references are always allowed.
+        if url_lower.starts_with('#') {
             return true;
         }
 
-        let (url_scheme, url_host) = split_url(&url_lower);
-        let (page_scheme, page_host) = split_url(&page_origin.to_ascii_lowercase());
+        // Extract scheme for non-hierarchical URLs (data:, blob:, about:, ...).
+        let url_scheme = extract_scheme(&url_lower).unwrap_or_default();
+        if matches!(url_scheme.as_str(), "data" | "blob" | "about" | "filesystem" | "javascript") {
+            // Require an explicit scheme source; `*` and `'self'` do not match.
+            for source in sources {
+                let s = source.trim();
+                if s.eq_ignore_ascii_case(&format!("{url_scheme}:")) {
+                    return true;
+                }
+                // `'none'` denies everything.
+                if s == "'none'" {
+                    return false;
+                }
+            }
+            return false;
+        }
+
+        let url_parts = parse_csp_url(&url_lower);
+        let page_parts = parse_csp_url(&page_origin.to_ascii_lowercase());
 
         for source in sources {
             let source = source.trim();
             match source {
                 "'none'" => return false,
-                "*" => return true,
+                "*" => {
+                    // `*` matches any network URL (not data:/blob:, handled above).
+                    return true;
+                }
                 "'self'" => {
-                    if url_scheme == page_scheme && url_host == page_host {
+                    if csp_self_matches(&url_parts, &page_parts) {
                         return true;
                     }
                 }
@@ -152,31 +172,72 @@ impl CspPolicy {
                 "'nonce-'" | "'sha256-'" => {}
                 _ => {
                     if let Some(scheme) = source.strip_suffix(':') {
-                        if scheme.eq_ignore_ascii_case(&url_scheme) {
-                            return true;
+                        // Scheme source like `https:` / `data:`.
+                        if !scheme.contains('/') && !scheme.contains('.') && is_csp_scheme(scheme) {
+                            if scheme.eq_ignore_ascii_case(&url_parts.scheme) {
+                                return true;
+                            }
+                            continue;
                         }
-                        continue;
                     }
-                    let (src_scheme, src_host) = split_url(&source.to_ascii_lowercase());
-                    let host_matches = if let Some(suffix) = src_host.strip_prefix("*.") {
-                        url_host == suffix || url_host.ends_with(&format!(".{suffix}"))
-                    } else if src_host.is_empty() {
-                        // Bare host without scheme: match the host only.
-                        let (_, bare_host) =
-                            split_url(&format!("//{}", source.to_ascii_lowercase()));
-                        url_host == bare_host
+                    let src = parse_csp_url(&source.to_ascii_lowercase());
+                    // Wildcard subdomain: `*.example.com` (optionally with scheme/port/path).
+                    let host_to_check = src.host.strip_prefix("*.").map(|s| s.to_string());
+                    let host_matches = if let Some(suffix) = host_to_check {
+                        // `*.example.com` matches `example.com` and `*.example.com`.
+                        url_parts.host == suffix
+                            || (!url_parts.host.is_empty()
+                                && url_parts.host.ends_with(&format!(".{suffix}")))
+                    } else if src.host.is_empty() {
+                        // Bare host without scheme (e.g. `example.com` or `example.com:8080/path`):
+                        // parse by prepending a scheme correctly.
+                        let with_scheme = format!("https://{}", source.to_ascii_lowercase());
+                        let bare = parse_csp_url(&with_scheme);
+                        if bare.host.is_empty() {
+                            continue;
+                        }
+                        if url_parts.host != bare.host {
+                            continue;
+                        }
+                        // Fall through to port/path checks using `bare`.
+                        if let Some(p) = bare.port {
+                            if url_parts.port != Some(p) {
+                                continue;
+                            }
+                        }
+                        if !bare.path.is_empty() && bare.path != "/" {
+                            if !url_parts.path.starts_with(&bare.path) {
+                                continue;
+                            }
+                        }
+                        // Scheme unrestricted for bare hosts.
+                        return true;
                     } else {
-                        url_host == src_host
+                        url_parts.host == src.host
                     };
                     if !host_matches {
                         continue;
                     }
-                    let scheme_ok = src_scheme.is_empty()
-                        || src_scheme == url_scheme
-                        || (src_scheme == "http" && url_scheme == "https");
-                    if scheme_ok {
-                        return true;
+                    let scheme_ok = src.scheme.is_empty()
+                        || src.scheme == url_parts.scheme
+                        || (src.scheme == "http" && url_parts.scheme == "https");
+                    if !scheme_ok {
+                        continue;
                     }
+                    // Port must match when the source pins one.
+                    if let Some(p) = src.port {
+                        let url_port = url_parts.port.or_else(|| default_port_for(&url_parts.scheme));
+                        if url_port != Some(p) {
+                            continue;
+                        }
+                    }
+                    // Path prefix must match when the source includes a path.
+                    if !src.path.is_empty() && src.path != "/" {
+                        if !url_parts.path.starts_with(&src.path) {
+                            continue;
+                        }
+                    }
+                    return true;
                 }
             }
         }
@@ -215,13 +276,175 @@ fn split_url(url: &str) -> (String, String) {
     };
     let (scheme, rest) = after_scheme;
     let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-    (scheme, rest[..end].to_string())
+    // Strip port for legacy callers (use parse_csp_url for port-aware matching).
+    let host_port = &rest[..end];
+    let host = host_port.rsplit_once(':').and_then(|(h, p)| {
+        if p.chars().all(|c| c.is_ascii_digit()) && !h.is_empty() {
+            Some(h)
+        } else {
+            None
+        }
+    }).unwrap_or(host_port);
+    (scheme, host.to_string())
+}
+
+/// Parsed CSP URL parts with port and path.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct CspUrlParts {
+    scheme: String,
+    host: String,
+    port: Option<u16>,
+    path: String,
+}
+
+fn extract_scheme(url_lower: &str) -> Option<String> {
+    let before_colon = url_lower.split([':', '/', '?', '#', ' ']).next()?;
+    let colon_pos = url_lower.find(':')?;
+    let candidate = &url_lower[..colon_pos];
+    if candidate.is_empty()
+        || candidate.contains('/')
+        || candidate.contains('?')
+        || candidate.contains('#')
+        || candidate.contains(' ')
+    {
+        return None;
+    }
+    // Must be valid scheme characters.
+    if !candidate.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) {
+        return None;
+    }
+    if !candidate
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.')
+    {
+        return None;
+    }
+    let _ = before_colon;
+    Some(candidate.to_string())
+}
+
+fn is_csp_scheme(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.')
+}
+
+fn default_port_for(scheme: &str) -> Option<u16> {
+    match scheme {
+        "http" | "ws" => Some(80),
+        "https" | "wss" => Some(443),
+        "ftp" => Some(21),
+        _ => None,
+    }
+}
+
+/// Parses a URL/source into scheme/host/port/path for CSP matching.
+fn parse_csp_url(url: &str) -> CspUrlParts {
+    let mut parts = CspUrlParts::default();
+    let s = url.trim();
+    // Split scheme.
+    let (scheme, rest) = match s.find("://") {
+        Some(idx) => (s[..idx].to_string(), s[idx + 3..].to_string()),
+        None => {
+            // Check for non-hierarchical `scheme:rest`.
+            if let Some(colon) = s.find(':') {
+                let cand = &s[..colon];
+                if !cand.is_empty()
+                    && !cand.contains('/')
+                    && !cand.contains('?')
+                    && !cand.contains('#')
+                    && !cand.contains(' ')
+                    && is_csp_scheme(cand)
+                {
+                    // e.g. `data:image/...` — no host.
+                    parts.scheme = cand.to_string();
+                    parts.path = s[colon + 1..].to_string();
+                    return parts;
+                }
+            }
+            (String::new(), s.to_string())
+        }
+    };
+    parts.scheme = scheme;
+    // Split authority vs path/query/fragment.
+    let auth_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..auth_end];
+    parts.path = if auth_end < rest.len() {
+        let p = &rest[auth_end..];
+        // Strip query/fragment, keep path.
+        let path_end = p.find(['?', '#']).unwrap_or(p.len());
+        let mut path = p[..path_end].to_string();
+        if path.is_empty() {
+            path = "/".to_string();
+        }
+        path
+    } else {
+        String::new()
+    };
+    // Authority: [*.]host[:port] — strip brackets for IPv6 comparison later (keep as-is lowercased).
+    let mut host_port = authority;
+    // Handle wildcard prefix.
+    let mut wildcard = false;
+    if let Some(stripped) = host_port.strip_prefix("*.") {
+        wildcard = true;
+        host_port = stripped;
+    }
+    if host_port.starts_with('[') {
+        if let Some(end) = host_port.find(']') {
+            let host = host_port[..=end].to_ascii_lowercase();
+            parts.host = if wildcard { format!("*.{host}") } else { host };
+            let remainder = &host_port[end + 1..];
+            if let Some(p_str) = remainder.strip_prefix(':') {
+                if let Ok(p) = p_str.parse::<u16>() {
+                    parts.port = Some(p);
+                }
+            }
+        } else {
+            parts.host = host_port.to_ascii_lowercase();
+        }
+    } else if let Some(colon) = host_port.rfind(':') {
+        let (h, p_str) = (&host_port[..colon], &host_port[colon + 1..]);
+        if !p_str.is_empty() && p_str.chars().all(|c| c.is_ascii_digit()) {
+            if let Ok(p) = p_str.parse::<u16>() {
+                parts.host = if wildcard {
+                    format!("*.{}", h.to_ascii_lowercase())
+                } else {
+                    h.to_ascii_lowercase()
+                };
+                parts.port = Some(p);
+            } else {
+                parts.host = host_port.to_ascii_lowercase();
+            }
+        } else {
+            parts.host = host_port.to_ascii_lowercase();
+        }
+    } else {
+        parts.host = if wildcard {
+            // Re-add prefix for caller detection; parse_csp_url callers strip it.
+            format!("*.{}", host_port.to_ascii_lowercase())
+        } else {
+            host_port.to_ascii_lowercase()
+        };
+    }
+    parts
+}
+
+fn csp_self_matches(url: &CspUrlParts, page: &CspUrlParts) -> bool {
+    if url.scheme != page.scheme || url.host != page.host {
+        return false;
+    }
+    let url_port = url.port.or_else(|| default_port_for(&url.scheme));
+    let page_port = page.port.or_else(|| default_port_for(&page.scheme));
+    url_port == page_port
 }
 
 /// Security-relevant response headers, parsed into a single struct.
 #[derive(Debug, Clone, Default)]
 pub struct SecurityHeaders {
     pub content_security_policy: Option<CspPolicy>,
+    /// All enforced CSP policies (multiple `Content-Security-Policy` headers
+    /// must ALL allow a resource — last-wins is a bypass).
+    pub content_security_policies: Vec<CspPolicy>,
     pub hsts: Option<HstsDirective>,
     pub x_frame_options: Option<String>,
     pub x_content_type_options: Option<String>,
@@ -230,6 +453,9 @@ pub struct SecurityHeaders {
 
 impl SecurityHeaders {
     /// Extracts security headers from a header map (case-insensitive).
+    /// When the map contains a single combined CSP value, it is split into
+    /// individual policies; use [`from_headers_multi`] to preserve truly
+    /// separate headers.
     pub fn from_headers(headers: &HashMap<String, String>) -> SecurityHeaders {
         let get = |name: &str| -> Option<&String> {
             headers
@@ -238,16 +464,83 @@ impl SecurityHeaders {
                 .map(|(_, v)| v)
         };
 
-        let csp = get("content-security-policy").and_then(|v| CspPolicy::parse(v, false));
+        // Collect every CSP header value; a HashMap can only hold one, but
+        // callers that join multiples with '\n' are also handled.
+        let mut policies = Vec::new();
+        for (k, v) in headers.iter() {
+            if k.eq_ignore_ascii_case("content-security-policy") {
+                for line in v.split('\n') {
+                    for part in line.split(',') {
+                        let p = part.trim();
+                        if p.is_empty() {
+                            continue;
+                        }
+                        if let Some(policy) = CspPolicy::parse(p, false) {
+                            policies.push(policy);
+                        }
+                    }
+                }
+            }
+        }
+        // Also handle report-only separately (never enforced).
+        let csp = policies.first().cloned();
         let hsts = get("strict-transport-security").and_then(|v| HstsDirective::parse(v));
 
         SecurityHeaders {
             content_security_policy: csp,
+            content_security_policies: policies,
             hsts,
             x_frame_options: get("x-frame-options").cloned(),
             x_content_type_options: get("x-content-type-options").cloned(),
             referrer_policy: get("referrer-policy").cloned(),
         }
+    }
+
+    /// Extracts security headers from a multi-value list, preserving every
+    /// `Content-Security-Policy` header as a separate enforced policy.
+    pub fn from_headers_multi(headers: &[(String, String)]) -> SecurityHeaders {
+        let get = |name: &str| -> Option<String> {
+            headers
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(name))
+                .map(|(_, v)| v.clone())
+        };
+        let mut policies = Vec::new();
+        for (k, v) in headers {
+            if k.eq_ignore_ascii_case("content-security-policy") {
+                for line in v.split('\n') {
+                    for part in line.split(',') {
+                        let p = part.trim();
+                        if p.is_empty() {
+                            continue;
+                        }
+                        if let Some(policy) = CspPolicy::parse(p, false) {
+                            policies.push(policy);
+                        }
+                    }
+                }
+            }
+        }
+        let csp = policies.first().cloned();
+        let hsts = get("strict-transport-security").and_then(|v| HstsDirective::parse(&v));
+        SecurityHeaders {
+            content_security_policy: csp,
+            content_security_policies: policies,
+            hsts,
+            x_frame_options: get("x-frame-options"),
+            x_content_type_options: get("x-content-type-options"),
+            referrer_policy: get("referrer-policy"),
+        }
+    }
+
+    /// True when `url` is allowed by EVERY enforced CSP policy.
+    pub fn allows_all(&self, directive: ResourceDirective, url: &str, page_origin: &str) -> bool {
+        for policy in &self.content_security_policies {
+            if !policy.is_allowed(directive, url, page_origin) {
+                return false;
+            }
+        }
+        true
     }
 
     /// True when responses must not be MIME-sniffed.
@@ -262,6 +555,10 @@ impl SecurityHeaders {
         self.x_frame_options
             .as_deref()
             .is_some_and(|v| v.eq_ignore_ascii_case("deny") || v.eq_ignore_ascii_case("sameorigin"))
+            || self
+                .content_security_policies
+                .iter()
+                .any(|csp| csp.blocks_framing())
             || self
                 .content_security_policy
                 .as_ref()
@@ -283,25 +580,28 @@ pub struct HstsDirective {
 }
 
 impl HstsDirective {
+    /// Parses an HSTS header. Returns `None` when `max-age` is absent —
+    /// a bare `includeSubDomains` must not delete or create a policy.
     pub fn parse(value: &str) -> Option<HstsDirective> {
-        let mut max_age = 0u64;
+        let mut max_age: Option<u64> = None;
         let mut include_subdomains = false;
         let mut preload = false;
         for part in value.split(';') {
             let part = part.trim();
-            if let Some(rest) = part
-                .strip_prefix("max-age=")
-                .or_else(|| part.strip_prefix("Max-Age="))
-            {
-                max_age = rest.trim().trim_matches('"').parse().unwrap_or(0);
+            if part.len() >= 8 && part[..8].eq_ignore_ascii_case("max-age=") {
+                let rest = part[8..].trim().trim_matches('"');
+                // Take up to whitespace/comma.
+                let num_str = rest.split([' ', ',', ';']).next().unwrap_or("").trim();
+                max_age = Some(num_str.parse().unwrap_or(0));
             } else if part.eq_ignore_ascii_case("includeSubDomains") {
                 include_subdomains = true;
             } else if part.eq_ignore_ascii_case("preload") {
                 preload = true;
             }
         }
+        let max_age_secs = max_age?;
         Some(HstsDirective {
-            max_age_secs: max_age,
+            max_age_secs,
             include_subdomains,
             preload,
         })
@@ -693,6 +993,462 @@ pub fn validate_cors_response(
     Ok(exposed)
 }
 
+// ---------------------------------------------------------------------------
+// Pure-Rust Cryptographic Hashes (FIPS 180-4): SHA-256 & SHA-384 / SHA-512
+// ---------------------------------------------------------------------------
+
+pub fn sha256(data: &[u8]) -> [u8; 32] {
+    const K: [u32; 64] = [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+    ];
+
+    let mut h = [
+        0x6a09e667u32, 0xbb67ae85u32, 0x3c6ef372u32, 0xa54ff53au32,
+        0x510e527fu32, 0x9b05688cu32, 0x1f83d9abu32, 0x5be0cd19u32,
+    ];
+
+    let mut msg = data.to_vec();
+    let bit_len = (data.len() as u64) * 8;
+    msg.push(0x80);
+    while (msg.len() % 64) != 56 {
+        msg.push(0x00);
+    }
+    msg.extend_from_slice(&bit_len.to_be_bytes());
+
+    for chunk in msg.chunks_exact(64) {
+        let mut w = [0u32; 64];
+        for i in 0..16 {
+            w[i] = u32::from_be_bytes([
+                chunk[i * 4],
+                chunk[i * 4 + 1],
+                chunk[i * 4 + 2],
+                chunk[i * 4 + 3],
+            ]);
+        }
+        for i in 16..64 {
+            let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+            let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
+        }
+
+        let mut a = h[0];
+        let mut b = h[1];
+        let mut c = h[2];
+        let mut d = h[3];
+        let mut e = h[4];
+        let mut f = h[5];
+        let mut g = h[6];
+        let mut h_var = h[7];
+
+        for i in 0..64 {
+            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+            let ch = (e & f) ^ ((!e) & g);
+            let temp1 = h_var.wrapping_add(s1).wrapping_add(ch).wrapping_add(K[i]).wrapping_add(w[i]);
+            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+            let maj = (a & b) ^ (a & c) ^ (b & c);
+            let temp2 = s0.wrapping_add(maj);
+
+            h_var = g;
+            g = f;
+            f = e;
+            e = d.wrapping_add(temp1);
+            d = c;
+            c = b;
+            b = a;
+            a = temp1.wrapping_add(temp2);
+        }
+
+        h[0] = h[0].wrapping_add(a);
+        h[1] = h[1].wrapping_add(b);
+        h[2] = h[2].wrapping_add(c);
+        h[3] = h[3].wrapping_add(d);
+        h[4] = h[4].wrapping_add(e);
+        h[5] = h[5].wrapping_add(f);
+        h[6] = h[6].wrapping_add(g);
+        h[7] = h[7].wrapping_add(h_var);
+    }
+
+    let mut out = [0u8; 32];
+    for (i, val) in h.iter().enumerate() {
+        out[i * 4..(i + 1) * 4].copy_from_slice(&val.to_be_bytes());
+    }
+    out
+}
+
+pub fn sha384(data: &[u8]) -> [u8; 48] {
+    let full = sha512_internal(data, true);
+    let mut out = [0u8; 48];
+    out.copy_from_slice(&full[..48]);
+    out
+}
+
+pub fn sha512(data: &[u8]) -> [u8; 64] {
+    sha512_internal(data, false)
+}
+
+fn sha512_internal(data: &[u8], is_384: bool) -> [u8; 64] {
+    const K512: [u64; 80] = [
+        0x428a2f98d728ae22, 0x7137449123ef65cd, 0xb5c0fbcfec4d3b2f, 0xe9b5dba58189dbbc,
+        0x3956c25bf348b538, 0x59f111f1b605d019, 0x923f82a4af194f9b, 0xab1c5ed5da6d8118,
+        0xd807aa98a3030242, 0x12835b0145706fbe, 0x243185be4ee4b28c, 0x550c7dc3d5ffb4e2,
+        0x72be5d74f27b896f, 0x80deb1fe3b1696b1, 0x9bdc06a725c71235, 0xc19bf174cf692694,
+        0xe49b69c19ef14ad2, 0xefbe4786384f25e3, 0x0fc19dc68b8cd5b5, 0x240ca1cc77ac9c65,
+        0x2de92c6f592b0275, 0x4a7484aa6ea6e483, 0x5cb0a9dcbd41fbd4, 0x76f988da831153b5,
+        0x983e5152ee66dfab, 0xa831c66d2db43210, 0xb00327c898fb213f, 0xbf597fc7beef0ee4,
+        0xc6e00bf33da88fc2, 0xd5a79147930aa725, 0x06ca6351e003826f, 0x142929670a0e6e70,
+        0x27b70a8546d22ffc, 0x2e1b21385c26c926, 0x4d2c6dfc5ac42aed, 0x53380d139d95b3df,
+        0x650a73548baf63de, 0x766a0abb3c77b2a8, 0x81c2c92e47edaee6, 0x92722c851482353b,
+        0xa2bfe8a14cf10364, 0xa81a664bbc423001, 0xc24b8b70d0f89791, 0xc76c51a30654be30,
+        0xd192e819d6ef5218, 0xd69906245565a910, 0xf40e35855771202a, 0x106aa07032bbd1b8,
+        0x19a4c116b8d2d0c8, 0x1e376c085141ab53, 0x2748774cdf8eeb99, 0x34b0bcb5e19b48a8,
+        0x391c0cb3c5c95a63, 0x4ed8aa4ae3418acb, 0x5b9cca4f7763e373, 0x682e6ff3d6b2b8a3,
+        0x748f82ee5defb2fc, 0x78a5636f43172f60, 0x84c87814a1f0ab72, 0x8cc702081a6439ec,
+        0x90befffa23631e28, 0xa4506cebde82bde9, 0xbef9a3f7b2c67915, 0xc67178f2e372532b,
+        0xca273eceea26619c, 0xd186b8c721c0c207, 0xeada7dd6cde0eb1e, 0xf57d4f7fee6ed178,
+        0x06f067aa72176fba, 0x0a637dc5a2c898a6, 0x113f9804bef90dae, 0x1b710b35131c471b,
+        0x28db77f523047d84, 0x32caab7b40c72493, 0x3c9ebe0a15c9bebc, 0x431d67c49c100d4c,
+        0x4cc5d4becb3e42b6, 0x597f299cfc657e2a, 0x5fcb6fab3ad6faec, 0x6c44198c4a475817,
+    ];
+
+    let mut h: [u64; 8] = if is_384 {
+        [
+            0xcbbb9d5dc1059ed8, 0x629a292a367cd507, 0x9159015a3070dd17, 0x152fecd8f70e5939,
+            0x67332667ffc00b31, 0x8eb44a8768581511, 0xdb0c2e0d64f98fa7, 0x47b5481dbefa4fa4,
+        ]
+    } else {
+        [
+            0x6a09e667f3bcc908, 0xbb67ae8584caa73b, 0x3c6ef372fe94f82b, 0xa54ff53a5f1d36f1,
+            0x510e527fade682d1, 0x9b05688c2b3e6c1f, 0x1f83d9abfb41bd6b, 0x5be0cd19137e2179,
+        ]
+    };
+
+    let mut msg = data.to_vec();
+    let bit_len = (data.len() as u128) * 8;
+    msg.push(0x80);
+    while (msg.len() % 128) != 112 {
+        msg.push(0x00);
+    }
+    msg.extend_from_slice(&bit_len.to_be_bytes());
+
+    for chunk in msg.chunks_exact(128) {
+        let mut w = [0u64; 80];
+        for i in 0..16 {
+            w[i] = u64::from_be_bytes(chunk[i * 8..(i + 1) * 8].try_into().unwrap());
+        }
+        for i in 16..80 {
+            let s0 = w[i - 15].rotate_right(1) ^ w[i - 15].rotate_right(8) ^ (w[i - 15] >> 7);
+            let s1 = w[i - 2].rotate_right(19) ^ w[i - 2].rotate_right(61) ^ (w[i - 2] >> 6);
+            w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
+        }
+
+        let mut a = h[0];
+        let mut b = h[1];
+        let mut c = h[2];
+        let mut d = h[3];
+        let mut e = h[4];
+        let mut f = h[5];
+        let mut g = h[6];
+        let mut h_var = h[7];
+
+        for i in 0..80 {
+            let s1 = e.rotate_right(14) ^ e.rotate_right(18) ^ e.rotate_right(41);
+            let ch = (e & f) ^ ((!e) & g);
+            let temp1 = h_var.wrapping_add(s1).wrapping_add(ch).wrapping_add(K512[i]).wrapping_add(w[i]);
+            let s0 = a.rotate_right(28) ^ a.rotate_right(34) ^ a.rotate_right(39);
+            let maj = (a & b) ^ (a & c) ^ (b & c);
+            let temp2 = s0.wrapping_add(maj);
+
+            h_var = g;
+            g = f;
+            f = e;
+            e = d.wrapping_add(temp1);
+            d = c;
+            c = b;
+            b = a;
+            a = temp1.wrapping_add(temp2);
+        }
+
+        h[0] = h[0].wrapping_add(a);
+        h[1] = h[1].wrapping_add(b);
+        h[2] = h[2].wrapping_add(c);
+        h[3] = h[3].wrapping_add(d);
+        h[4] = h[4].wrapping_add(e);
+        h[5] = h[5].wrapping_add(f);
+        h[6] = h[6].wrapping_add(g);
+        h[7] = h[7].wrapping_add(h_var);
+    }
+
+    let mut out = [0u8; 64];
+    for (i, val) in h.iter().enumerate() {
+        out[i * 8..(i + 1) * 8].copy_from_slice(&val.to_be_bytes());
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Subresource Integrity (SRI) Engine (W3C SRI Specification / GAP-020)
+// ---------------------------------------------------------------------------
+
+/// Supported cryptographic hash algorithms for Subresource Integrity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SriAlgorithm {
+    Sha256 = 1,
+    Sha384 = 2,
+    Sha512 = 3,
+}
+
+impl SriAlgorithm {
+    pub fn from_prefix(prefix: &str) -> Option<Self> {
+        match prefix.to_ascii_lowercase().as_str() {
+            "sha256" => Some(SriAlgorithm::Sha256),
+            "sha384" => Some(SriAlgorithm::Sha384),
+            "sha512" => Some(SriAlgorithm::Sha512),
+            _ => None,
+        }
+    }
+}
+
+/// An individual SRI hash expression consisting of algorithm and expected base64 digest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SriItem {
+    pub algorithm: SriAlgorithm,
+    pub digest_base64: String,
+}
+
+/// Errors occurring during Subresource Integrity validation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SriError {
+    NoValidMetadata,
+    DigestMismatch {
+        algorithm: SriAlgorithm,
+        expected: String,
+        actual: String,
+    },
+}
+
+impl std::fmt::Display for SriError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SriError::NoValidMetadata => write!(f, "No valid cryptographic hash found in SRI metadata"),
+            SriError::DigestMismatch { algorithm, expected, actual } => {
+                write!(f, "SRI {algorithm:?} digest mismatch: expected '{expected}', calculated '{actual}'")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SriError {}
+
+/// Parses the integrity attribute value into a list of recognized SRI items.
+pub fn parse_sri_metadata(integrity_attr: &str) -> Vec<SriItem> {
+    let mut items = Vec::new();
+    for token in integrity_attr.split_whitespace() {
+        if let Some((algo_prefix, digest)) = token.split_once('-') {
+            if let Some(algorithm) = SriAlgorithm::from_prefix(algo_prefix) {
+                // Remove optional options suffix '?options'
+                let clean_digest = digest.split('?').next().unwrap_or(digest).trim();
+                if !clean_digest.is_empty() {
+                    items.push(SriItem {
+                        algorithm,
+                        digest_base64: clean_digest.to_string(),
+                    });
+                }
+            }
+        }
+    }
+    items
+}
+
+/// Verifies resource content against the given SRI `integrity` attribute.
+/// Conforms to W3C Subresource Integrity §3.3.
+pub fn verify_subresource_integrity(bytes: &[u8], integrity_attr: &str) -> Result<bool, SriError> {
+    let items = parse_sri_metadata(integrity_attr);
+    if items.is_empty() {
+        return Ok(true); // Empty or unrecognized integrity expression is ignored by spec
+    }
+
+    // Select the strongest algorithm present
+    let strongest_algo = items.iter().map(|item| item.algorithm).max().unwrap();
+    let candidates: Vec<&SriItem> = items.iter().filter(|i| i.algorithm == strongest_algo).collect();
+
+    let actual_base64 = match strongest_algo {
+        SriAlgorithm::Sha256 => crate::websocket::base64_encode(&sha256(bytes)),
+        SriAlgorithm::Sha384 => crate::websocket::base64_encode(&sha384(bytes)),
+        SriAlgorithm::Sha512 => crate::websocket::base64_encode(&sha512(bytes)),
+    };
+
+    // If any candidate hash matches, the resource is authentic
+    for cand in &candidates {
+        if cand.digest_base64 == actual_base64 {
+            return Ok(true);
+        }
+    }
+
+    Err(SriError::DigestMismatch {
+        algorithm: strongest_algo,
+        expected: candidates[0].digest_base64.clone(),
+        actual: actual_base64,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Certificate Pinning (HPKP / SPKI Pinning / GAP-021)
+// ---------------------------------------------------------------------------
+
+/// Certificate Pinning management and verification.
+#[derive(Debug, Clone, Default)]
+pub struct CertificatePinSet {
+    /// Maps normalized hostname (e.g., "api.example.com") to set of allowed base64-encoded SPKI SHA-256 pin hashes.
+    pub host_pins: HashMap<String, Vec<String>>,
+    /// Include subdomains flags per host.
+    pub include_subdomains: HashMap<String, bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PinError {
+    PinMismatch {
+        host: String,
+        presented: Vec<String>,
+        expected: Vec<String>,
+    },
+}
+
+impl std::fmt::Display for PinError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PinError::PinMismatch { host, presented, expected } => {
+                write!(f, "Certificate pinning mismatch for {host}: presented {presented:?}, expected {expected:?}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for PinError {}
+
+impl CertificatePinSet {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn add_pin(&mut self, host: &str, pin_hash_base64: impl Into<String>, include_subdomains: bool) {
+        let h = host.trim().to_ascii_lowercase();
+        self.host_pins.entry(h.clone()).or_default().push(pin_hash_base64.into());
+        if include_subdomains {
+            self.include_subdomains.insert(h, true);
+        }
+    }
+
+    pub fn verify_pins(&self, host: &str, presented_spki_hashes: &[String]) -> Result<bool, PinError> {
+        let host_lower = host.trim().to_ascii_lowercase();
+        // Check exact match or ancestor subdomain match
+        let mut matching_host = None;
+        if self.host_pins.contains_key(&host_lower) {
+            matching_host = Some(host_lower.clone());
+        } else {
+            let parts: Vec<&str> = host_lower.split('.').collect();
+            for i in 1..parts.len() {
+                let ancestor = parts[i..].join(".");
+                if let Some(true) = self.include_subdomains.get(&ancestor) {
+                    matching_host = Some(ancestor);
+                    break;
+                }
+            }
+        }
+
+        let Some(target_host) = matching_host else {
+            return Ok(true); // No pins configured for this host
+        };
+
+        let expected_pins = self.host_pins.get(&target_host).unwrap();
+        for presented in presented_spki_hashes {
+            if expected_pins.iter().any(|exp| exp == presented) {
+                return Ok(true);
+            }
+        }
+
+        Err(PinError::PinMismatch {
+            host: host.to_string(),
+            presented: presented_spki_hashes.to_vec(),
+            expected: expected_pins.clone(),
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Network Proxy Configuration & Resolution (GAP-022)
+// ---------------------------------------------------------------------------
+
+/// Network proxy configuration supporting HTTP/HTTPS/SOCKS5 proxies and bypass rules.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProxyConfig {
+    pub http_proxy: Option<String>,
+    pub https_proxy: Option<String>,
+    pub all_proxy: Option<String>,
+    pub no_proxy: Vec<String>,
+}
+
+impl ProxyConfig {
+    pub fn from_env() -> Self {
+        let http_proxy = std::env::var("HTTP_PROXY").or_else(|_| std::env::var("http_proxy")).ok();
+        let https_proxy = std::env::var("HTTPS_PROXY").or_else(|_| std::env::var("https_proxy")).ok();
+        let all_proxy = std::env::var("ALL_PROXY").or_else(|_| std::env::var("all_proxy")).ok();
+        let no_proxy_str = std::env::var("NO_PROXY").or_else(|_| std::env::var("no_proxy")).unwrap_or_default();
+        let no_proxy = no_proxy_str
+            .split(',')
+            .map(|s| s.trim().to_ascii_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect();
+        Self {
+            http_proxy,
+            https_proxy,
+            all_proxy,
+            no_proxy,
+        }
+    }
+
+    pub fn should_bypass(&self, host: &str) -> bool {
+        let h = host.trim().to_ascii_lowercase();
+        if h == "localhost" || h == "127.0.0.1" || h == "::1" {
+            return true;
+        }
+        for pattern in &self.no_proxy {
+            if pattern == "*" {
+                return true;
+            }
+            if pattern.starts_with('.') {
+                if h.ends_with(pattern) || h == &pattern[1..] {
+                    return true;
+                }
+            } else if h == *pattern || h.ends_with(&format!(".{pattern}")) {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn resolve_proxy_for_url(&self, url: &crate::url::Url) -> Option<String> {
+        let host = url.host.as_deref()?;
+        if self.should_bypass(host) {
+            return None;
+        }
+        let scheme = url.scheme.as_str().to_ascii_lowercase();
+        if scheme == "https" {
+            self.https_proxy.clone().or_else(|| self.all_proxy.clone())
+        } else if scheme == "http" {
+            self.http_proxy.clone().or_else(|| self.all_proxy.clone())
+        } else {
+            self.all_proxy.clone()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -768,10 +1524,124 @@ mod tests {
 
     #[test]
     fn test_csp_data_urls_allowed() {
+        // data: requires an explicit `data:` source — 'self' alone denies.
         let policy = CspPolicy::parse("img-src 'self'", false).unwrap();
-        assert!(policy.allows(
+        assert!(!policy.allows(
             ResourceDirective::Image,
             "data:image/png;base64,AAAA",
+            "https://example.com"
+        ));
+        // Explicit data: source allows.
+        let explicit = CspPolicy::parse("img-src 'self' data:", false).unwrap();
+        assert!(explicit.allows(
+            ResourceDirective::Image,
+            "data:image/png;base64,AAAA",
+            "https://example.com"
+        ));
+        // `*` does not allow data: (explicit source required).
+        let star = CspPolicy::parse("img-src *", false).unwrap();
+        assert!(!star.allows(
+            ResourceDirective::Image,
+            "data:image/png;base64,AAAA",
+            "https://example.com"
+        ));
+        // blob: similarly requires explicit source.
+        assert!(!policy.allows(
+            ResourceDirective::Image,
+            "blob:https://example.com/uuid",
+            "https://example.com"
+        ));
+        let blob_ok = CspPolicy::parse("img-src 'self' blob:", false).unwrap();
+        assert!(blob_ok.allows(
+            ResourceDirective::Image,
+            "blob:https://example.com/uuid",
+            "https://example.com"
+        ));
+    }
+
+    #[test]
+    fn test_csp_port_and_path_matching() {
+        let policy = CspPolicy::parse("script-src https://example.com:8443/js/", false).unwrap();
+        assert!(policy.allows(
+            ResourceDirective::Script,
+            "https://example.com:8443/js/app.js",
+            "https://example.com"
+        ));
+        assert!(!policy.allows(
+            ResourceDirective::Script,
+            "https://example.com:8443/other/app.js",
+            "https://example.com"
+        ));
+        assert!(!policy.allows(
+            ResourceDirective::Script,
+            "https://example.com:9000/js/app.js",
+            "https://example.com"
+        ));
+        // Bare host matches any scheme but still checks port/path when given.
+        let bare = CspPolicy::parse("script-src example.com", false).unwrap();
+        assert!(bare.allows(
+            ResourceDirective::Script,
+            "https://example.com/app.js",
+            "https://other.test"
+        ));
+        assert!(bare.allows(
+            ResourceDirective::Script,
+            "http://example.com/app.js",
+            "https://other.test"
+        ));
+        // 'self' respects ports.
+        let self_policy = CspPolicy::parse("script-src 'self'", false).unwrap();
+        assert!(self_policy.allows(
+            ResourceDirective::Script,
+            "https://example.com/app.js",
+            "https://example.com"
+        ));
+        assert!(!self_policy.allows(
+            ResourceDirective::Script,
+            "https://example.com:8443/app.js",
+            "https://example.com"
+        ));
+    }
+
+    #[test]
+    fn test_hsts_parse_requires_max_age() {
+        assert!(HstsDirective::parse("includeSubDomains").is_none());
+        assert!(HstsDirective::parse("").is_none());
+        assert!(HstsDirective::parse("preload").is_none());
+        let d = HstsDirective::parse("max-age=100; includeSubDomains").unwrap();
+        assert_eq!(d.max_age_secs, 100);
+    }
+
+    #[test]
+    fn test_multiple_csp_headers_enforce_all() {
+        let headers = vec![
+            ("Content-Security-Policy".to_string(), "script-src 'self'".to_string()),
+            (
+                "Content-Security-Policy".to_string(),
+                "script-src https://cdn.example.com".to_string(),
+            ),
+        ];
+        let parsed = SecurityHeaders::from_headers_multi(&headers);
+        assert_eq!(parsed.content_security_policies.len(), 2);
+        // Must satisfy BOTH policies.
+        assert!(!parsed.allows_all(
+            ResourceDirective::Script,
+            "https://cdn.example.com/app.js",
+            "https://example.com"
+        ));
+        assert!(!parsed.allows_all(
+            ResourceDirective::Script,
+            "https://example.com/app.js",
+            "https://example.com"
+        ));
+        let compatible = vec![
+            ("Content-Security-Policy".to_string(), "script-src 'self' https://cdn.example.com".to_string()),
+            ("Content-Security-Policy".to_string(), "script-src https://cdn.example.com 'self'".to_string()),
+        ];
+        let parsed2 = SecurityHeaders::from_headers_multi(&compatible);
+        assert!(parsed2.allows_all(
+            ResourceDirective::Script,
+            "https://cdn.example.com/app.js",
             "https://example.com"
         ));
     }
@@ -1033,4 +1903,103 @@ mod tests {
             validate_cors_response(&resp_headers, "https://app.mango.dev", true).unwrap_err();
         assert_eq!(cred_err, CorsError::WildcardOriginWithCredentialsNotAllowed);
     }
+
+    #[test]
+    fn test_cryptographic_hashes_and_sri() {
+        let msg = b"hello world";
+        // Standard SHA-256 for "hello world" = b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9
+        let d256 = sha256(msg);
+        let hex256 = d256.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        assert_eq!(
+            hex256,
+            "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+        );
+
+        // Standard SHA-384 for "hello world"
+        let d384 = sha384(msg);
+        let hex384 = d384.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        assert_eq!(
+            hex384,
+            "fdbd8e75a67f29f701a4e040385e2e23986303ea10239211af907fcbb83578b3e417cb71ce646efd0819dd8c088de1bd"
+        );
+
+        // Standard SHA-512 for "hello world"
+        let d512 = sha512(msg);
+        let hex512 = d512.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        assert_eq!(
+            hex512,
+            "309ecc489c12d6eb4cc40f50c902f2b4d0ed77ee511a7c7a9bcd3ca86d4cd86f989dd35bc5ff499670da34255b45b0cfd830e81f605dcf7dc5542e93ae9cd76f"
+        );
+
+        // Test SRI parsing and verification
+        let integrity = format!("sha256-{} sha384-{}", 
+            crate::websocket::base64_encode(&d256),
+            crate::websocket::base64_encode(&d384)
+        );
+        let parsed = parse_sri_metadata(&integrity);
+        assert_eq!(parsed.len(), 2);
+
+        // Valid integrity verification uses strongest algorithm (sha384)
+        assert!(verify_subresource_integrity(msg, &integrity).unwrap());
+
+        // Corrupted content triggers DigestMismatch
+        let tampered = b"hello malicious world";
+        let err = verify_subresource_integrity(tampered, &integrity).unwrap_err();
+        assert!(matches!(err, SriError::DigestMismatch { .. }));
+    }
+
+    #[test]
+    fn test_certificate_pinning() {
+        let mut pin_set = CertificatePinSet::new();
+        let target_pin = "pin-base64-hash-example";
+        pin_set.add_pin("api.mango.dev", target_pin, true);
+
+        // Matching pin succeeds
+        let presented = vec![target_pin.to_string()];
+        assert!(pin_set.verify_pins("api.mango.dev", &presented).unwrap());
+
+        // Subdomain succeeds because include_subdomains was true
+        assert!(pin_set.verify_pins("v1.api.mango.dev", &presented).unwrap());
+
+        // Mismatched pin fails
+        let fake = vec!["attacker-pin-hash".to_string()];
+        let err = pin_set.verify_pins("api.mango.dev", &fake).unwrap_err();
+        assert!(matches!(err, PinError::PinMismatch { .. }));
+
+        // Unpinned host allows any cert
+        assert!(pin_set.verify_pins("unpinned.org", &fake).unwrap());
+    }
+
+    #[test]
+    fn test_proxy_configuration_and_bypass() {
+        let mut proxy = ProxyConfig::default();
+        proxy.http_proxy = Some("http://proxy.corp.com:8080".to_string());
+        proxy.https_proxy = Some("http://secure-proxy.corp.com:8443".to_string());
+        proxy.no_proxy = vec!["localhost".to_string(), ".internal.corp".to_string(), "127.0.0.1".to_string()];
+
+        // Bypass rules
+        assert!(proxy.should_bypass("localhost"));
+        assert!(proxy.should_bypass("service.internal.corp"));
+        assert!(!proxy.should_bypass("external.com"));
+
+        // Proxy resolution
+        let u1 = crate::url::Url::parse("http://external.com/api").unwrap();
+        assert_eq!(
+            proxy.resolve_proxy_for_url(&u1),
+            Some("http://proxy.corp.com:8080".to_string())
+        );
+
+        let u2 = crate::url::Url::parse("https://external.com/secure").unwrap();
+        assert_eq!(
+            proxy.resolve_proxy_for_url(&u2),
+            Some("http://secure-proxy.corp.com:8443".to_string())
+        );
+
+        let u3 = crate::url::Url::parse("https://service.internal.corp/secret").unwrap();
+        assert_eq!(
+            proxy.resolve_proxy_for_url(&u3),
+            None
+        );
+    }
 }
+

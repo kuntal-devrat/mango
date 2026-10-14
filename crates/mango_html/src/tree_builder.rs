@@ -165,6 +165,8 @@ impl<'a> TreeBuilder<'a> {
                 | InsertionMode::InRow
         ) {
             if text.chars().all(|c| c.is_ascii_whitespace()) {
+                // Per WHATWG, whitespace in table modes must be inserted, not dropped.
+                self.insert_text(&text);
                 return;
             }
             // Foster-parent misplaced text before the table
@@ -276,7 +278,7 @@ impl<'a> TreeBuilder<'a> {
         let (parent, before) = self.appropriate_insertion_location();
         let child = self.doc.create_element(name, attributes);
         if let Some(before_id) = before {
-            self.doc.insert_before(parent, child, before_id);
+            let _ = self.doc.insert_before(parent, child, before_id);
         } else {
             self.doc.append_child(parent, child);
         }
@@ -313,7 +315,7 @@ impl<'a> TreeBuilder<'a> {
         let (parent, before) = self.appropriate_insertion_location();
         let child = self.doc.create_text(text);
         if let Some(before_id) = before {
-            self.doc.insert_before(parent, child, before_id);
+            let _ = self.doc.insert_before(parent, child, before_id);
         } else {
             self.doc.append_child(parent, child);
         }
@@ -324,7 +326,7 @@ impl<'a> TreeBuilder<'a> {
         let (parent, before) = self.appropriate_insertion_location();
         let child = self.doc.create_comment(comment);
         if let Some(before_id) = before {
-            self.doc.insert_before(parent, child, before_id);
+            let _ = self.doc.insert_before(parent, child, before_id);
         } else {
             self.doc.append_child(parent, child);
         }
@@ -363,7 +365,6 @@ impl<'a> TreeBuilder<'a> {
                         | "marquee"
                         | "object"
                         | "template"
-                        | "body"
                 ) {
                     return false;
                 }
@@ -648,7 +649,22 @@ impl<'a> TreeBuilder<'a> {
                 ) {
                     return true;
                 }
-                if matches!(el.tag_name.as_str(), "html" | "table" | "template" | "body") {
+                if matches!(
+                    el.tag_name.as_str(),
+                    "html"
+                        | "table"
+                        | "template"
+                        | "body"
+                        | "applet"
+                        | "caption"
+                        | "td"
+                        | "th"
+                        | "marquee"
+                        | "object"
+                        | "button"
+                        | "ol"
+                        | "ul"
+                ) {
                     return false;
                 }
             }
@@ -792,7 +808,7 @@ impl<'a> TreeBuilder<'a> {
         }
 
         // Outer loop: up to 8 iterations per WHATWG HTML5 §13.2.6.4.7
-        if (0..8).next().is_some() {
+        for _ in 0..8 {
             // Step 1: Find formatting_element: the last element in active_formatting_elements
             // between the end and the last marker that has tag name == subject.
             let fmt_pos = self
@@ -849,6 +865,7 @@ impl<'a> TreeBuilder<'a> {
             }
 
             // Step 4: Find furthest block among open elements after fmt_node_id
+            // Per spec this is the LAST special element, not the first.
             let mut furthest_block = None;
             for &id in &self.open_elements[stack_idx + 1..] {
                 if let Some(node) = self.doc.get(id)
@@ -856,7 +873,6 @@ impl<'a> TreeBuilder<'a> {
                     && is_special_element(&el.tag_name)
                 {
                     furthest_block = Some(id);
-                    break;
                 }
             }
 
@@ -936,7 +952,8 @@ impl<'a> TreeBuilder<'a> {
             }
 
             // Insert last_node into common_ancestor after fmt_node_id
-            self.doc
+            let _ = self
+                .doc
                 .insert_after(common_ancestor, last_node, fmt_node_id);
 
             // Create new element for formatting_element
@@ -1389,6 +1406,27 @@ impl<'a> TreeBuilder<'a> {
                 attributes,
                 self_closing,
             } => {
+                if name == "html" {
+                    // Merge attributes onto existing <html> element per WHATWG InBody.
+                    for &id in &self.open_elements {
+                        if let Some(node) = self.doc.get_mut(id)
+                            && let NodeData::Element(el) = &mut node.data
+                            && el.tag_name == "html"
+                        {
+                            for (attr_name, attr_val) in attributes {
+                                if !el
+                                    .attributes
+                                    .iter()
+                                    .any(|(k, _)| k.eq_ignore_ascii_case(&attr_name))
+                                {
+                                    el.attributes.push((attr_name, attr_val));
+                                }
+                            }
+                            break;
+                        }
+                    }
+                    return;
+                }
                 if name == "body" {
                     for &id in &self.open_elements {
                         if let Some(node) = self.doc.get_mut(id)
@@ -1410,7 +1448,11 @@ impl<'a> TreeBuilder<'a> {
                     return;
                 }
 
-                if name == "frameset" && self.frameset_ok {
+                if name == "frameset" {
+                    if !self.frameset_ok {
+                        // Per spec, non-ok frameset token must be ignored, not inserted.
+                        return;
+                    }
                     while let Some(top) = self.open_elements.last() {
                         if let Some(node) = self.doc.get(*top)
                             && let NodeData::Element(el) = &node.data
@@ -1425,6 +1467,13 @@ impl<'a> TreeBuilder<'a> {
                     self.open_elements.push(frameset);
                     self.mode = InsertionMode::InFrameset;
                     return;
+                }
+
+                // Per WHATWG, frameset-ok set to "not ok" on content start tags
+                // (div/p/h1-h6 etc), not just non-whitespace text.
+                // Conservative: any start tag other than html/body/frameset clears it.
+                if name != "html" && name != "body" && name != "frameset" {
+                    self.frameset_ok = false;
                 }
 
                 if name == "svg" || name == "math" {
@@ -1493,14 +1542,20 @@ impl<'a> TreeBuilder<'a> {
                                     tag_name.eq_ignore_ascii_case("a")
                                 }
                             });
-                        if let Some(idx) = has_a {
+                        if let Some(_cached_idx) = has_a {
+                            let old_node_id_opt = match &self.active_formatting_elements[_cached_idx] {
+                                FormattingEntry::Element { node_id, .. } => Some(*node_id),
+                                FormattingEntry::Marker => None,
+                            };
                             self.handle_formatting_end_tag("a");
-                            if idx < self.active_formatting_elements.len()
-                                && let FormattingEntry::Element { node_id, .. } =
-                                    self.active_formatting_elements[idx]
-                            {
-                                self.open_elements.retain(|&id| id != node_id);
-                                self.active_formatting_elements.remove(idx);
+                            // Re-lookup by NodeId after AAA instead of cached idx
+                            // (AAA may have shifted/removed entries; avoid double-remove).
+                            if let Some(old_node_id) = old_node_id_opt
+                                && let Some(new_idx) = self.active_formatting_elements.iter().position(
+                                |e| matches!(e, FormattingEntry::Element { node_id, .. } if *node_id == old_node_id),
+                            ) {
+                                self.open_elements.retain(|&id| id != old_node_id);
+                                self.active_formatting_elements.remove(new_idx);
                             }
                         }
                     }
@@ -1645,6 +1700,12 @@ impl<'a> TreeBuilder<'a> {
             Token::EndTag { name } => {
                 if name == "body" || name == "html" {
                     self.mode = InsertionMode::AfterBody;
+                } else if name == "br" {
+                    // Per WHATWG, </br> acts as <br>: create a br element.
+                    self.reconstruct_active_formatting_elements();
+                    let br = self.insert_element("br", Vec::new());
+                    // br is void: do not push onto open elements.
+                    let _ = br;
                 } else if is_active_formatting_element(&name) {
                     self.handle_formatting_end_tag(&name);
                 } else if name == "table" {

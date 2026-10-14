@@ -44,12 +44,11 @@ pub use font::{
 pub use image_decode::{
     DecodedImage, cache_image, decode_data_uri, decode_image_bytes, get_cached_image,
 };
+pub use layer::{LayerKind, LayerTree, RenderLayer};
 pub use painter::{paint, paint_damage, paint_with_clip};
 pub use pdf::{PageSize, PdfOptions, print_to_pdf, render_to_pdf};
 pub use svg::{
     SvgSymbol, clear_global_svg_symbols, get_global_svg_symbol, get_svg_intrinsic_dimensions,
     register_global_svg_symbol, render_svg,
 };
-pub use layer::{LayerKind, LayerTree, RenderLayer};
 pub use tile::{DEFAULT_TILE_SIZE, Tile, TileCoord, TileGrid};
-

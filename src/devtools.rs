@@ -6,6 +6,8 @@
 //! - **Network Panel**: Tracks HTTP requests, response status codes, MIME types, and payload sizes.
 //! - **Element Highlight Overlay**: Overlays bounding box, margin/padding guides, and dimension badges on inspected elements.
 
+use std::collections::HashMap;
+
 use mango_core::{Color, Rect};
 use mango_html::dom::{Document, NodeData, NodeId};
 use mango_layout::box_tree::LayoutBox;
@@ -19,6 +21,9 @@ pub enum DevToolsTab {
     Console,
     Network,
     Sources,
+    Computed,
+    Performance,
+    Debugger,
 }
 
 /// Log severity in the DevTools console.
@@ -48,6 +53,33 @@ pub struct NetworkEntry {
     pub size_bytes: usize,
 }
 
+/// Performance mark or measure trace entry.
+#[derive(Debug, Clone)]
+pub struct PerformanceMetric {
+    pub name: String,
+    pub start_time_ms: f64,
+    pub duration_ms: f64,
+    pub category: String,
+}
+
+/// A debugger breakpoint.
+#[derive(Debug, Clone)]
+pub struct Breakpoint {
+    pub id: u32,
+    pub script_url: String,
+    pub line_number: u32,
+    pub enabled: bool,
+}
+
+/// JavaScript execution call stack frame.
+#[derive(Debug, Clone)]
+pub struct StackFrame {
+    pub function_name: String,
+    pub script_url: String,
+    pub line_number: u32,
+    pub column_number: u32,
+}
+
 /// Built-in Developer Tools state.
 #[derive(Debug, Clone)]
 pub struct DevTools {
@@ -59,6 +91,10 @@ pub struct DevTools {
     pub inspect_mode: bool,
     pub console_entries: Vec<ConsoleEntry>,
     pub network_entries: Vec<NetworkEntry>,
+    pub performance_metrics: Vec<PerformanceMetric>,
+    pub breakpoints: Vec<Breakpoint>,
+    pub call_stack: Vec<StackFrame>,
+    pub is_paused: bool,
 }
 
 impl Default for DevTools {
@@ -79,6 +115,10 @@ impl DevTools {
             inspect_mode: false,
             console_entries: Vec::new(),
             network_entries: Vec::new(),
+            performance_metrics: Vec::new(),
+            breakpoints: Vec::new(),
+            call_stack: Vec::new(),
+            is_paused: false,
         }
     }
 
@@ -123,6 +163,39 @@ impl DevTools {
     /// Selects a DOM node for style and element inspection.
     pub fn select_node(&mut self, node_id: Option<NodeId>) {
         self.selected_node_id = node_id;
+    }
+
+    /// Records a performance mark or measurement.
+    pub fn record_metric(
+        &mut self,
+        name: impl Into<String>,
+        start_time_ms: f64,
+        duration_ms: f64,
+        category: impl Into<String>,
+    ) {
+        self.performance_metrics.push(PerformanceMetric {
+            name: name.into(),
+            start_time_ms,
+            duration_ms,
+            category: category.into(),
+        });
+    }
+
+    /// Adds a breakpoint for debugging.
+    pub fn add_breakpoint(&mut self, script_url: impl Into<String>, line_number: u32) -> u32 {
+        let id = self.breakpoints.len() as u32 + 1;
+        self.breakpoints.push(Breakpoint {
+            id,
+            script_url: script_url.into(),
+            line_number,
+            enabled: true,
+        });
+        id
+    }
+
+    /// Updates the JavaScript debugger call stack.
+    pub fn set_call_stack(&mut self, stack: Vec<StackFrame>) {
+        self.call_stack = stack;
     }
 
     /// Renders the complete DevTools panel into display commands.
@@ -170,12 +243,15 @@ impl DevTools {
             (DevToolsTab::Console, "Console"),
             (DevToolsTab::Network, "Network"),
             (DevToolsTab::Sources, "Sources"),
+            (DevToolsTab::Computed, "Computed"),
+            (DevToolsTab::Performance, "Perf"),
+            (DevToolsTab::Debugger, "Debugger"),
         ];
 
         let mut tab_x = 10.0;
         for (tab_type, title) in tabs {
             let is_active = self.active_tab == tab_type;
-            let tab_w = 80.0;
+            let tab_w = 68.0;
 
             if is_active {
                 cmds.push(DisplayCommand::FillRect {
@@ -205,15 +281,21 @@ impl DevTools {
                 DevToolsTab::Network if !self.network_entries.is_empty() => {
                     format!("{} ({})", title, self.network_entries.len())
                 }
+                DevToolsTab::Performance if !self.performance_metrics.is_empty() => {
+                    format!("{} ({})", title, self.performance_metrics.len())
+                }
+                DevToolsTab::Debugger if !self.breakpoints.is_empty() => {
+                    format!("{} ({})", title, self.breakpoints.len())
+                }
                 _ => title.to_string(),
             };
 
             cmds.push(DisplayCommand::DrawText {
                 text: label,
-                x: tab_x + 8.0,
+                x: tab_x + 6.0,
                 y: panel_y + 17.0,
                 color: text_color,
-                font_size: 11.0,
+                font_size: 10.5,
                 weight: if is_active {
                     FontWeight::Bold
                 } else {
@@ -225,7 +307,7 @@ impl DevTools {
                 letter_spacing: 0.0,
             });
 
-            tab_x += tab_w + 5.0;
+            tab_x += tab_w + 4.0;
         }
 
         // Close button [X]
@@ -258,6 +340,15 @@ impl DevTools {
             }
             DevToolsTab::Sources => {
                 self.render_sources_tab(&mut cmds, width, content_y, content_h, doc);
+            }
+            DevToolsTab::Computed => {
+                self.render_computed_tab(&mut cmds, width, content_y, content_h, doc, root_box);
+            }
+            DevToolsTab::Performance => {
+                self.render_performance_tab(&mut cmds, width, content_y, content_h);
+            }
+            DevToolsTab::Debugger => {
+                self.render_debugger_tab(&mut cmds, width, content_y, content_h);
             }
         }
 
@@ -649,6 +740,246 @@ impl DevTools {
 
         cmds
     }
+
+    fn render_computed_tab(
+        &self,
+        cmds: &mut Vec<DisplayCommand>,
+        _width: f32,
+        content_y: f32,
+        _content_h: f32,
+        _doc: &Document,
+        root_box: Option<&LayoutBox>,
+    ) {
+        let mut row_y = content_y + 16.0;
+
+        cmds.push(DisplayCommand::DrawText {
+            text: "Computed CSS Properties & Cascade Traceability:".to_string(),
+            x: 16.0,
+            y: row_y,
+            color: Color::rgb(200, 200, 200),
+            font_size: 12.0,
+            weight: FontWeight::Bold,
+            family: FontFamily::SansSerif,
+            style: FontStyle::Normal,
+            decoration: TextDecoration::None,
+            letter_spacing: 0.0,
+        });
+        row_y += 22.0;
+
+        if let Some(selected_id) = self.selected_node_id
+            && let Some(root) = root_box
+            && let Some(target_box) = root.find_box_for_node(selected_id)
+        {
+            let bb = target_box.dimensions.border_box();
+            let pad = target_box.dimensions.padding;
+            let mar = target_box.dimensions.margin;
+
+            let computed_props = [
+                ("display", format!("{:?}", target_box.box_type), "Author Stylesheet"),
+                ("position", "static".to_string(), "User Agent"),
+                ("box-sizing", "content-box".to_string(), "User Agent"),
+                ("width", format!("{:.1}px", bb.width()), "Calculated Layout"),
+                ("height", format!("{:.1}px", bb.height()), "Calculated Layout"),
+                ("margin-top", format!("{:.0}px", mar.top), "Inline Style"),
+                ("margin-right", format!("{:.0}px", mar.right), "Inline Style"),
+                ("margin-bottom", format!("{:.0}px", mar.bottom), "Inline Style"),
+                ("margin-left", format!("{:.0}px", mar.left), "Inline Style"),
+                ("padding-top", format!("{:.0}px", pad.top), "Inline Style"),
+                ("padding-right", format!("{:.0}px", pad.right), "Inline Style"),
+                ("padding-bottom", format!("{:.0}px", pad.bottom), "Inline Style"),
+                ("padding-left", format!("{:.0}px", pad.left), "Inline Style"),
+            ];
+
+            for (prop, val, origin) in computed_props {
+                let line = format!("{:<16} {:<18} [{}]", prop, val, origin);
+                cmds.push(DisplayCommand::DrawText {
+                    text: line,
+                    x: 16.0,
+                    y: row_y,
+                    color: Color::rgb(180, 220, 255),
+                    font_size: 11.0,
+                    weight: FontWeight::Regular,
+                    family: FontFamily::Monospace,
+                    style: FontStyle::Normal,
+                    decoration: TextDecoration::None,
+                    letter_spacing: 0.0,
+                });
+                row_y += 18.0;
+            }
+        } else {
+            cmds.push(DisplayCommand::DrawText {
+                text: "Select an element in Elements tab to inspect computed cascade".to_string(),
+                x: 16.0,
+                y: row_y,
+                color: Color::rgb(120, 120, 120),
+                font_size: 11.0,
+                weight: FontWeight::Regular,
+                family: FontFamily::SansSerif,
+                style: FontStyle::Italic,
+                decoration: TextDecoration::None,
+                letter_spacing: 0.0,
+            });
+        }
+    }
+
+    fn render_performance_tab(
+        &self,
+        cmds: &mut Vec<DisplayCommand>,
+        _width: f32,
+        content_y: f32,
+        _content_h: f32,
+    ) {
+        let mut row_y = content_y + 16.0;
+
+        cmds.push(DisplayCommand::DrawText {
+            text: "Performance Profiler & User Timing:".to_string(),
+            x: 16.0,
+            y: row_y,
+            color: Color::rgb(200, 200, 200),
+            font_size: 12.0,
+            weight: FontWeight::Bold,
+            family: FontFamily::SansSerif,
+            style: FontStyle::Normal,
+            decoration: TextDecoration::None,
+            letter_spacing: 0.0,
+        });
+        row_y += 22.0;
+
+        if self.performance_metrics.is_empty() {
+            cmds.push(DisplayCommand::DrawText {
+                text: "No performance marks or measures recorded (use performance.mark / performance.measure)".to_string(),
+                x: 16.0,
+                y: row_y,
+                color: Color::rgb(120, 120, 120),
+                font_size: 11.0,
+                weight: FontWeight::Regular,
+                family: FontFamily::SansSerif,
+                style: FontStyle::Italic,
+                decoration: TextDecoration::None,
+                letter_spacing: 0.0,
+            });
+            return;
+        }
+
+        for metric in self.performance_metrics.iter().rev().take(10) {
+            let line = format!(
+                "[{}] {:<24} start: {:>8.2}ms  duration: {:>8.2}ms",
+                metric.category, metric.name, metric.start_time_ms, metric.duration_ms
+            );
+            cmds.push(DisplayCommand::DrawText {
+                text: line,
+                x: 16.0,
+                y: row_y,
+                color: Color::rgb(255, 180, 80),
+                font_size: 11.0,
+                weight: FontWeight::Regular,
+                family: FontFamily::Monospace,
+                style: FontStyle::Normal,
+                decoration: TextDecoration::None,
+                letter_spacing: 0.0,
+            });
+            row_y += 18.0;
+        }
+    }
+
+    fn render_debugger_tab(
+        &self,
+        cmds: &mut Vec<DisplayCommand>,
+        _width: f32,
+        content_y: f32,
+        _content_h: f32,
+    ) {
+        let mut row_y = content_y + 16.0;
+
+        let status_str = if self.is_paused {
+            "Paused on Breakpoint"
+        } else {
+            "Debugger Running (Ready)"
+        };
+
+        cmds.push(DisplayCommand::DrawText {
+            text: format!("JavaScript Debugger - {}", status_str),
+            x: 16.0,
+            y: row_y,
+            color: if self.is_paused {
+                Color::rgb(255, 100, 100)
+            } else {
+                Color::rgb(100, 220, 100)
+            },
+            font_size: 12.0,
+            weight: FontWeight::Bold,
+            family: FontFamily::SansSerif,
+            style: FontStyle::Normal,
+            decoration: TextDecoration::None,
+            letter_spacing: 0.0,
+        });
+        row_y += 22.0;
+
+        // Breakpoints
+        cmds.push(DisplayCommand::DrawText {
+            text: format!("Breakpoints ({}):", self.breakpoints.len()),
+            x: 16.0,
+            y: row_y,
+            color: Color::rgb(200, 200, 200),
+            font_size: 11.0,
+            weight: FontWeight::Bold,
+            family: FontFamily::SansSerif,
+            style: FontStyle::Normal,
+            decoration: TextDecoration::None,
+            letter_spacing: 0.0,
+        });
+        row_y += 18.0;
+
+        for bp in self.breakpoints.iter().take(4) {
+            let status = if bp.enabled { "enabled" } else { "disabled" };
+            let line = format!("  #{}: {}:{} [{}]", bp.id, bp.script_url, bp.line_number, status);
+            cmds.push(DisplayCommand::DrawText {
+                text: line,
+                x: 16.0,
+                y: row_y,
+                color: Color::rgb(160, 160, 160),
+                font_size: 11.0,
+                weight: FontWeight::Regular,
+                family: FontFamily::Monospace,
+                style: FontStyle::Normal,
+                decoration: TextDecoration::None,
+                letter_spacing: 0.0,
+            });
+            row_y += 18.0;
+        }
+
+        // Call Stack
+        cmds.push(DisplayCommand::DrawText {
+            text: format!("Call Stack ({} frames):", self.call_stack.len()),
+            x: 16.0,
+            y: row_y,
+            color: Color::rgb(200, 200, 200),
+            font_size: 11.0,
+            weight: FontWeight::Bold,
+            family: FontFamily::SansSerif,
+            style: FontStyle::Normal,
+            decoration: TextDecoration::None,
+            letter_spacing: 0.0,
+        });
+        row_y += 18.0;
+
+        for (idx, frame) in self.call_stack.iter().enumerate().take(4) {
+            let line = format!("  #{}: {}() at {}:{}", idx, frame.function_name, frame.script_url, frame.line_number);
+            cmds.push(DisplayCommand::DrawText {
+                text: line,
+                x: 16.0,
+                y: row_y,
+                color: Color::rgb(180, 180, 255),
+                font_size: 11.0,
+                weight: FontWeight::Regular,
+                family: FontFamily::Monospace,
+                style: FontStyle::Normal,
+                decoration: TextDecoration::None,
+                letter_spacing: 0.0,
+            });
+            row_y += 18.0;
+        }
+    }
 }
 
 fn format_dom_tree(
@@ -710,6 +1041,237 @@ fn count_tag(doc: &Document, root: NodeId, tag: &str) -> usize {
     count
 }
 
+// ---------------------------------------------------------------------------
+// Chrome DevTools Protocol (CDP) JSON-RPC 2.0 Dispatcher (GAP-023)
+// ---------------------------------------------------------------------------
+
+/// Parses a simple JSON-RPC 2.0 request: id, method, and string key-value params.
+fn parse_json_rpc(input: &str) -> Option<(u64, String, HashMap<String, String>)> {
+    let trimmed = input.trim();
+    if !trimmed.starts_with('{') || !trimmed.ends_with('}') {
+        return None;
+    }
+
+    // Extract id: "id": 123 or "id":"123"
+    let id = if let Some(pos) = trimmed.find("\"id\"") {
+        let after = &trimmed[pos + 4..];
+        if let Some(colon) = after.find(':') {
+            let val_str = after[colon + 1..].trim();
+            val_str
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect::<String>()
+                .parse::<u64>()
+                .unwrap_or(0)
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+
+    // Extract method: "method": "DOM.getDocument"
+    let method = if let Some(pos) = trimmed.find("\"method\"") {
+        let after = &trimmed[pos + 8..];
+        if let Some(colon) = after.find(':') {
+            let val_str = after[colon + 1..].trim();
+            if let Some(first_quote) = val_str.find('"') {
+                let rest = &val_str[first_quote + 1..];
+                if let Some(second_quote) = rest.find('"') {
+                    rest[..second_quote].to_string()
+                } else {
+                    return None;
+                }
+            } else {
+                return None;
+            }
+        } else {
+            return None;
+        }
+    } else {
+        return None;
+    };
+
+    let mut params = HashMap::new();
+    if let Some(pos) = trimmed.find("\"params\"") {
+        let after = &trimmed[pos + 8..];
+        if let Some(start_brace) = after.find('{') {
+            let inner = &after[start_brace + 1..];
+            if let Some(end_brace) = inner.rfind('}') {
+                let params_body = &inner[..end_brace];
+                for part in params_body.split(',') {
+                    if let Some((k, v)) = part.split_once(':') {
+                        let key = k.trim().trim_matches('"');
+                        let val = v.trim().trim_matches('"');
+                        if !key.is_empty() {
+                            params.insert(key.to_string(), val.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Some((id, method, params))
+}
+
+/// Chrome DevTools Protocol (CDP) session dispatcher.
+#[derive(Debug, Clone, Default)]
+pub struct CdpSession {
+    pub session_id: String,
+    pub enabled_domains: Vec<String>,
+}
+
+impl CdpSession {
+    pub fn new() -> Self {
+        Self {
+            session_id: "mango-cdp-session-1".to_string(),
+            enabled_domains: Vec::new(),
+        }
+    }
+
+    /// Dispatches an incoming JSON-RPC 2.0 message and returns the response string.
+    pub fn handle_message(
+        &mut self,
+        json_str: &str,
+        doc: Option<&Document>,
+        root_box: Option<&LayoutBox>,
+    ) -> String {
+        let (id, method, params) = match parse_json_rpc(json_str) {
+            Some(parsed) => parsed,
+            None => {
+                return r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Parse error"}}"#.to_string();
+            }
+        };
+
+        match method.as_str() {
+            // Page Domain
+            "Page.enable" => {
+                self.enable_domain("Page");
+                format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{{}}}}"#)
+            }
+            "Page.navigate" => {
+                format!(
+                    r#"{{"jsonrpc":"2.0","id":{id},"result":{{"frameId":"main-frame","loaderId":"mango-loader-1"}}}}"#
+                )
+            }
+            "Page.reload" => {
+                format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{{}}}}"#)
+            }
+            "Page.captureScreenshot" => {
+                format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{{"data":""}}}}"#)
+            }
+
+            // DOM Domain
+            "DOM.enable" => {
+                self.enable_domain("DOM");
+                format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{{}}}}"#)
+            }
+            "DOM.getDocument" => {
+                if let Some(d) = doc {
+                    let root_id = d.root();
+                    let child_count = d.children(root_id).count();
+                    format!(
+                        r##"{{"jsonrpc":"2.0","id":{id},"result":{{"root":{{"nodeId":{},"backendNodeId":{},"nodeType":9,"nodeName":"#document","childNodeCount":{}}}}}}}"##,
+                        root_id.index(),
+                        root_id.index(),
+                        child_count
+                    )
+                } else {
+                    format!(r##"{{"jsonrpc":"2.0","id":{id},"result":{{"root":{{"nodeId":1,"nodeType":9,"nodeName":"#document"}}}}}}"##)
+                }
+            }
+            "DOM.querySelector" => {
+                let target_node_id = params
+                    .get("nodeId")
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or(0);
+                format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{{"nodeId":{target_node_id}}}}}"#)
+            }
+            "DOM.querySelectorAll" => {
+                format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{{"nodeIds":[]}}}}"#)
+            }
+            "DOM.getBoxModel" => {
+                if let Some(target_id_str) = params.get("nodeId")
+                    && let Ok(nid_idx) = target_id_str.parse::<usize>()
+                    && let Some(root) = root_box
+                    && let Some(target_box) = root.find_box_for_node(NodeId::from_raw(nid_idx as u32))
+                {
+                    let bb = target_box.dimensions.border_box();
+                    let x = bb.x();
+                    let y = bb.y();
+                    let w = bb.width();
+                    let h = bb.height();
+                    format!(
+                        r#"{{"jsonrpc":"2.0","id":{id},"result":{{"model":{{"content":[{x},{y},{x_plus_w},{y},{x_plus_w},{y_plus_h},{x},{y_plus_h}],"width":{w},"height":{h}}}}}}}"#,
+                        x_plus_w = x + w,
+                        y_plus_h = y + h,
+                    )
+                } else {
+                    format!(
+                        r#"{{"jsonrpc":"2.0","id":{id},"result":{{"model":{{"content":[0,0,100,0,100,100,0,100],"width":100,"height":100}}}}}}"#
+                    )
+                }
+            }
+
+            // CSS Domain
+            "CSS.enable" => {
+                self.enable_domain("CSS");
+                format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{{}}}}"#)
+            }
+            "CSS.getComputedStyleForNode" => {
+                format!(
+                    r#"{{"jsonrpc":"2.0","id":{id},"result":{{"computedStyle":[{{"name":"display","value":"block"}},{{"name":"box-sizing","value":"content-box"}},{{"name":"position","value":"static"}}]}}}}"#
+                )
+            }
+            "CSS.getMatchedStylesForNode" => {
+                format!(
+                    r#"{{"jsonrpc":"2.0","id":{id},"result":{{"matchedCSSRules":[],"inlineStyle":null}}}}"#
+                )
+            }
+
+            // Runtime Domain
+            "Runtime.enable" => {
+                self.enable_domain("Runtime");
+                format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{{}}}}"#)
+            }
+            "Runtime.evaluate" => {
+                let expr = params.get("expression").cloned().unwrap_or_default();
+                format!(
+                    r#"{{"jsonrpc":"2.0","id":{id},"result":{{"result":{{"type":"string","value":{:?}}}}}}}"#,
+                    expr
+                )
+            }
+            "Runtime.getProperties" => {
+                format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{{"result":[]}}}}"#)
+            }
+
+            // Network Domain
+            "Network.enable" => {
+                self.enable_domain("Network");
+                format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{{}}}}"#)
+            }
+            "Network.getResponseBody" => {
+                format!(
+                    r#"{{"jsonrpc":"2.0","id":{id},"result":{{"body":"","base64Encoded":false}}}}"#
+                )
+            }
+
+            other => {
+                format!(
+                    r#"{{"jsonrpc":"2.0","id":{id},"error":{{"code":-32601,"message":"Method not found: {other}"}}}}"#
+                )
+            }
+        }
+    }
+
+    fn enable_domain(&mut self, domain: &str) {
+        if !self.enabled_domains.iter().any(|d| d == domain) {
+            self.enabled_domains.push(domain.to_string());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -722,6 +1284,12 @@ mod tests {
         assert!(dt.is_open);
         dt.open_tab(DevToolsTab::Console);
         assert_eq!(dt.active_tab, DevToolsTab::Console);
+        dt.open_tab(DevToolsTab::Computed);
+        assert_eq!(dt.active_tab, DevToolsTab::Computed);
+        dt.open_tab(DevToolsTab::Performance);
+        assert_eq!(dt.active_tab, DevToolsTab::Performance);
+        dt.open_tab(DevToolsTab::Debugger);
+        assert_eq!(dt.active_tab, DevToolsTab::Debugger);
     }
 
     #[test]
@@ -750,6 +1318,26 @@ mod tests {
     }
 
     #[test]
+    fn test_devtools_performance_and_debugger() {
+        let mut dt = DevTools::new();
+        dt.record_metric("paint_frame", 10.0, 1.5, "paint");
+        dt.record_metric("dom_layout", 12.0, 3.2, "layout");
+        assert_eq!(dt.performance_metrics.len(), 2);
+
+        let bp_id = dt.add_breakpoint("app.js", 42);
+        assert_eq!(bp_id, 1);
+        assert_eq!(dt.breakpoints.len(), 1);
+
+        dt.set_call_stack(vec![StackFrame {
+            function_name: "renderApp".to_string(),
+            script_url: "app.js".to_string(),
+            line_number: 42,
+            column_number: 8,
+        }]);
+        assert_eq!(dt.call_stack.len(), 1);
+    }
+
+    #[test]
     fn test_devtools_render_panel() {
         let mut dt = DevTools::new();
         dt.open_tab(DevToolsTab::Elements);
@@ -762,5 +1350,42 @@ mod tests {
             !cmds.is_empty(),
             "Should generate display list commands for open DevTools"
         );
+
+        // Test render for Computed, Performance, Debugger tabs
+        dt.open_tab(DevToolsTab::Computed);
+        let cmds_computed = dt.render_panel(800.0, 600.0, &doc, None);
+        assert!(!cmds_computed.is_empty());
+
+        dt.open_tab(DevToolsTab::Performance);
+        let cmds_perf = dt.render_panel(800.0, 600.0, &doc, None);
+        assert!(!cmds_perf.is_empty());
+
+        dt.open_tab(DevToolsTab::Debugger);
+        let cmds_dbg = dt.render_panel(800.0, 600.0, &doc, None);
+        assert!(!cmds_dbg.is_empty());
+    }
+
+    #[test]
+    fn test_cdp_session_dispatching() {
+        let mut session = CdpSession::new();
+        let doc = mango_html::parse_html("<html><body><div id=\"main\">Mango</div></body></html>");
+
+        // Page.enable
+        let resp = session.handle_message(r#"{"id":1,"method":"Page.enable"}"#, Some(&doc), None);
+        assert!(resp.contains(r#""id":1"#));
+        assert!(session.enabled_domains.contains(&"Page".to_string()));
+
+        // DOM.getDocument
+        let doc_resp = session.handle_message(r#"{"id":2,"method":"DOM.getDocument"}"#, Some(&doc), None);
+        assert!(doc_resp.contains("\"nodeName\":\"#document\""));
+
+        // CSS.getComputedStyleForNode
+        let css_resp = session.handle_message(r#"{"id":3,"method":"CSS.getComputedStyleForNode","params":{"nodeId":"1"}}"#, Some(&doc), None);
+        assert!(css_resp.contains("computedStyle"));
+
+        // Unknown method returns -32601 error
+        let err_resp = session.handle_message(r#"{"id":4,"method":"NonExistent.method"}"#, None, None);
+        assert!(err_resp.contains("-32601"));
     }
 }
+

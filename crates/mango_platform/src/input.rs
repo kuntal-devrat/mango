@@ -66,6 +66,7 @@ pub enum MangoKey {
 
     // Function keys
     F1,
+    F3,
     F5,
     F11,
     F12,
@@ -99,6 +100,7 @@ impl MangoKey {
                 NamedKey::PageUp => MangoKey::PageUp,
                 NamedKey::PageDown => MangoKey::PageDown,
                 NamedKey::F1 => MangoKey::F1,
+                NamedKey::F3 => MangoKey::F3,
                 NamedKey::F5 => MangoKey::F5,
                 NamedKey::F11 => MangoKey::F11,
                 NamedKey::F12 => MangoKey::F12,

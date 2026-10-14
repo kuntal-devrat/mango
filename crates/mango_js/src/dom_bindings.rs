@@ -235,7 +235,7 @@ pub fn register_document_api(
     let remove_child = native_fn!(move |_this, args, ctx| {
         let child_idx = args.get_or_undefined(1).to_u32(ctx).unwrap_or(0);
         let mut document = doc_ref.borrow_mut();
-        document.detach(NodeId::from_raw(child_idx));
+        document.remove_child_and_recycle(NodeId::from_raw(child_idx));
         *dirty_ref.borrow_mut() = true;
         Ok(JsValue::undefined())
     });
@@ -634,7 +634,7 @@ pub fn register_document_api(
         if ref_idx == 0 {
             document.append_child(parent, child);
         } else {
-            document.insert_before(parent, child, NodeId::from_raw(ref_idx));
+            let _ = document.insert_before(parent, child, NodeId::from_raw(ref_idx));
         }
         *dirty_ref.borrow_mut() = true;
         Ok(JsValue::undefined())
@@ -721,7 +721,7 @@ pub fn register_document_api(
         let node_id = NodeId::from_raw(node_idx);
         let children: Vec<NodeId> = document.children(node_id).map(|n| n.id).collect();
         for child in children {
-            document.detach(child);
+            document.remove_child_and_recycle(child);
         }
         let fragment = mango_html::parse_html(&format!("<html><body>{html}</body></html>"));
         if let Some(body) = fragment.find_element_by_tag(fragment.root(), "body") {
@@ -749,7 +749,7 @@ pub fn register_document_api(
         if let Some(body) = fragment.find_element_by_tag(fragment.root(), "body") {
             adopt_children_before(&fragment, body, &mut document, parent, node_id);
         }
-        document.detach(node_id);
+        document.remove_child_and_recycle(node_id);
         *dirty_ref.borrow_mut() = true;
         Ok(JsValue::undefined())
     });
@@ -3748,6 +3748,47 @@ pub fn register_document_api(
                 };
             },
             set sandbox(val) { this.setAttribute("sandbox", val); },
+            // contenteditable & draggable surface (Section 8.3)
+            get contentEditable() {
+                var v = this.getAttribute('contenteditable');
+                if (v === null) return 'inherit';
+                var lower = v.toLowerCase();
+                if (lower === '' || lower === 'true') return 'true';
+                if (lower === 'false') return 'false';
+                return 'inherit';
+            },
+            set contentEditable(val) {
+                var s = String(val).toLowerCase();
+                if (s === 'true') {
+                    this.setAttribute('contenteditable', 'true');
+                } else if (s === 'false') {
+                    this.setAttribute('contenteditable', 'false');
+                } else if (s === 'inherit') {
+                    this.setAttribute('contenteditable', 'inherit');
+                } else {
+                    throw new Error("SyntaxError: The value provided is not a valid contentEditable state.");
+                }
+            },
+            get isContentEditable() {
+                var cur = this;
+                while (cur) {
+                    var ce = (cur.getAttribute) ? cur.getAttribute('contenteditable') : null;
+                    if (ce !== null) {
+                        var lower = ce.toLowerCase();
+                        if (lower === '' || lower === 'true') return true;
+                        if (lower === 'false') return false;
+                    }
+                    cur = cur.parentElement;
+                }
+                return false;
+            },
+            get draggable() {
+                var v = this.getAttribute('draggable');
+                return v !== null && v.toLowerCase() === 'true';
+            },
+            set draggable(val) {
+                this.setAttribute('draggable', val ? 'true' : 'false');
+            },
             // <dialog> surface
             get open() { return this.hasAttribute('open'); },
             set open(val) {
@@ -4046,6 +4087,30 @@ pub fn register_document_api(
                         this._context2d = _createCanvasRenderingContext2D(this);
                     }
                     return this._context2d;
+                }
+                if (type === 'webgl' || type === 'experimental-webgl') {
+                    if (!this._webgl) {
+                        if (typeof globalThis !== 'undefined' && globalThis.WebGLRenderingContext) {
+                            this._webgl = new globalThis.WebGLRenderingContext(this);
+                        }
+                    }
+                    return this._webgl || null;
+                }
+                if (type === 'webgl2') {
+                    if (!this._webgl2) {
+                        if (typeof globalThis !== 'undefined' && globalThis.WebGL2RenderingContext) {
+                            this._webgl2 = new globalThis.WebGL2RenderingContext(this);
+                        }
+                    }
+                    return this._webgl2 || null;
+                }
+                if (type === 'webgpu') {
+                    if (!this._webgpu) {
+                        if (typeof globalThis !== 'undefined' && globalThis.GPUCanvasContext) {
+                            this._webgpu = new globalThis.GPUCanvasContext(this);
+                        }
+                    }
+                    return this._webgpu || null;
                 }
                 return null;
             },
@@ -4535,66 +4600,41 @@ pub fn register_document_api(
                 var customCtor = (globalThis.customElements && globalThis.customElements.get) ? globalThis.customElements.get(tag) : null;
                 if (customCtor && customCtor.prototype) {
                     Object.setPrototypeOf(el, customCtor.prototype);
-                } else if (tag === 'template' && globalThis.HTMLTemplateElement) {
-                    Object.setPrototypeOf(el, globalThis.HTMLTemplateElement.prototype);
-                } else if (tag === 'slot' && globalThis.HTMLSlotElement) {
-                    Object.setPrototypeOf(el, globalThis.HTMLSlotElement.prototype);
-                } else if (tag === 'dialog' && globalThis.HTMLDialogElement) {
-                    Object.setPrototypeOf(el, globalThis.HTMLDialogElement.prototype);
-                } else if (tag === 'progress' && globalThis.HTMLProgressElement) {
-                    Object.setPrototypeOf(el, globalThis.HTMLProgressElement.prototype);
-                } else if (tag === 'meter' && globalThis.HTMLMeterElement) {
-                    Object.setPrototypeOf(el, globalThis.HTMLMeterElement.prototype);
-                } else if (tag === 'output' && globalThis.HTMLOutputElement) {
-                    Object.setPrototypeOf(el, globalThis.HTMLOutputElement.prototype);
-                } else if (tag === 'datalist' && globalThis.HTMLDataListElement) {
-                    Object.setPrototypeOf(el, globalThis.HTMLDataListElement.prototype);
-                } else if (tag === 'map' && globalThis.HTMLMapElement) {
-                    Object.setPrototypeOf(el, globalThis.HTMLMapElement.prototype);
-                } else if (tag === 'area' && globalThis.HTMLAreaElement) {
-                    Object.setPrototypeOf(el, globalThis.HTMLAreaElement.prototype);
-                } else if (tag === 'object' && globalThis.HTMLObjectElement) {
-                    Object.setPrototypeOf(el, globalThis.HTMLObjectElement.prototype);
-                } else if (tag === 'embed' && globalThis.HTMLEmbedElement) {
-                    Object.setPrototypeOf(el, globalThis.HTMLEmbedElement.prototype);
-                } else if (tag === 'ruby' && globalThis.HTMLRubyElement) {
-                    Object.setPrototypeOf(el, globalThis.HTMLRubyElement.prototype);
-                } else if (tag === 'img' && globalThis.HTMLImageElement) {
-                    Object.setPrototypeOf(el, globalThis.HTMLImageElement.prototype);
-                } else if (tag === 'iframe' && globalThis.HTMLIFrameElement) {
-                    Object.setPrototypeOf(el, globalThis.HTMLIFrameElement.prototype);
-                } else if (tag === 'canvas' && globalThis.HTMLCanvasElement) {
-                    Object.setPrototypeOf(el, globalThis.HTMLCanvasElement.prototype);
-                } else if (tag === 'video' && globalThis.HTMLVideoElement) {
-                    Object.setPrototypeOf(el, globalThis.HTMLVideoElement.prototype);
-                } else if (tag === 'audio' && globalThis.HTMLAudioElement) {
-                    Object.setPrototypeOf(el, globalThis.HTMLAudioElement.prototype);
-                } else if (tag === 'input' && globalThis.HTMLInputElement) {
-                    Object.setPrototypeOf(el, globalThis.HTMLInputElement.prototype);
-                } else if (tag === 'select' && globalThis.HTMLSelectElement) {
-                    Object.setPrototypeOf(el, globalThis.HTMLSelectElement.prototype);
-                } else if (tag === 'option' && globalThis.HTMLOptionElement) {
-                    Object.setPrototypeOf(el, globalThis.HTMLOptionElement.prototype);
-                } else if (tag === 'optgroup' && globalThis.HTMLOptGroupElement) {
-                    Object.setPrototypeOf(el, globalThis.HTMLOptGroupElement.prototype);
-                } else if (tag === 'form' && globalThis.HTMLFormElement) {
-                    Object.setPrototypeOf(el, globalThis.HTMLFormElement.prototype);
-                } else if (tag === 'fieldset' && globalThis.HTMLFieldSetElement) {
-                    Object.setPrototypeOf(el, globalThis.HTMLFieldSetElement.prototype);
-                } else if (tag === 'legend' && globalThis.HTMLLegendElement) {
-                    Object.setPrototypeOf(el, globalThis.HTMLLegendElement.prototype);
-                } else if (tag === 'textarea' && globalThis.HTMLTextAreaElement) {
-                    Object.setPrototypeOf(el, globalThis.HTMLTextAreaElement.prototype);
-                } else if (tag === 'button' && globalThis.HTMLButtonElement) {
-                    Object.setPrototypeOf(el, globalThis.HTMLButtonElement.prototype);
-                } else if (tag === 'a' && globalThis.HTMLAnchorElement) {
-                    Object.setPrototypeOf(el, globalThis.HTMLAnchorElement.prototype);
-                } else if (tag === 'div' && globalThis.HTMLDivElement) {
-                    Object.setPrototypeOf(el, globalThis.HTMLDivElement.prototype);
-                } else if (tag === 'span' && globalThis.HTMLSpanElement) {
-                    Object.setPrototypeOf(el, globalThis.HTMLSpanElement.prototype);
-                } else if (globalThis.HTMLElement) {
-                    Object.setPrototypeOf(el, globalThis.HTMLElement.prototype);
+                } else {
+                    var _tagToCtorName = {
+                        'template': 'HTMLTemplateElement', 'slot': 'HTMLSlotElement', 'dialog': 'HTMLDialogElement',
+                        'progress': 'HTMLProgressElement', 'meter': 'HTMLMeterElement', 'output': 'HTMLOutputElement',
+                        'datalist': 'HTMLDataListElement', 'map': 'HTMLMapElement', 'area': 'HTMLAreaElement',
+                        'object': 'HTMLObjectElement', 'embed': 'HTMLEmbedElement', 'ruby': 'HTMLRubyElement',
+                        'img': 'HTMLImageElement', 'iframe': 'HTMLIFrameElement', 'canvas': 'HTMLCanvasElement',
+                        'video': 'HTMLVideoElement', 'audio': 'HTMLAudioElement', 'input': 'HTMLInputElement',
+                        'select': 'HTMLSelectElement', 'option': 'HTMLOptionElement', 'optgroup': 'HTMLOptGroupElement',
+                        'form': 'HTMLFormElement', 'fieldset': 'HTMLFieldSetElement', 'legend': 'HTMLLegendElement',
+                        'textarea': 'HTMLTextAreaElement', 'button': 'HTMLButtonElement', 'a': 'HTMLAnchorElement',
+                        'div': 'HTMLDivElement', 'span': 'HTMLSpanElement', 'p': 'HTMLParagraphElement',
+                        'h1': 'HTMLHeadingElement', 'h2': 'HTMLHeadingElement', 'h3': 'HTMLHeadingElement',
+                        'h4': 'HTMLHeadingElement', 'h5': 'HTMLHeadingElement', 'h6': 'HTMLHeadingElement',
+                        'ul': 'HTMLUListElement', 'ol': 'HTMLOListElement', 'li': 'HTMLLIElement',
+                        'dl': 'HTMLDListElement', 'table': 'HTMLTableElement', 'tr': 'HTMLTableRowElement',
+                        'td': 'HTMLTableCellElement', 'th': 'HTMLTableCellElement',
+                        'tbody': 'HTMLTableSectionElement', 'thead': 'HTMLTableSectionElement', 'tfoot': 'HTMLTableSectionElement',
+                        'col': 'HTMLTableColElement', 'colgroup': 'HTMLTableColElement', 'caption': 'HTMLTableCaptionElement',
+                        'body': 'HTMLBodyElement', 'head': 'HTMLHeadElement', 'html': 'HTMLHtmlElement',
+                        'script': 'HTMLScriptElement', 'style': 'HTMLStyleElement', 'link': 'HTMLLinkElement',
+                        'meta': 'HTMLMetaElement', 'title': 'HTMLTitleElement', 'label': 'HTMLLabelElement',
+                        'br': 'HTMLBRElement', 'hr': 'HTMLHRElement', 'pre': 'HTMLPreElement',
+                        'details': 'HTMLDetailsElement', 'summary': 'HTMLSummaryElement', 'time': 'HTMLTimeElement',
+                        'data': 'HTMLDataElement', 'source': 'HTMLSourceElement', 'picture': 'HTMLPictureElement',
+                        'track': 'HTMLTrackElement', 'base': 'HTMLBaseElement', 'blockquote': 'HTMLQuoteElement',
+                        'q': 'HTMLQuoteElement', 'del': 'HTMLModElement', 'ins': 'HTMLModElement'
+                    };
+                    var ctorName = _tagToCtorName[tag];
+                    var ctor = ctorName ? globalThis[ctorName] : null;
+                    if (ctor && ctor.prototype) {
+                        Object.setPrototypeOf(el, ctor.prototype);
+                    } else if (globalThis.HTMLElement) {
+                        Object.setPrototypeOf(el, globalThis.HTMLElement.prototype);
+                    }
                 }
             }
         }
@@ -5607,16 +5647,16 @@ fn adopt_children_before(
         match &child.data {
             NodeData::Element(el) => {
                 let new_id = target.create_element(&el.tag_name, el.attributes.clone());
-                target.insert_before(parent, new_id, before_node);
+                let _ = target.insert_before(parent, new_id, before_node);
                 adopt_children(source, child.id, target, new_id);
             }
             NodeData::Text(t) => {
                 let new_id = target.create_text(t);
-                target.insert_before(parent, new_id, before_node);
+                let _ = target.insert_before(parent, new_id, before_node);
             }
             NodeData::Comment(c) => {
                 let new_id = target.create_comment(c);
-                target.insert_before(parent, new_id, before_node);
+                let _ = target.insert_before(parent, new_id, before_node);
             }
             _ => {}
         }

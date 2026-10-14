@@ -59,6 +59,7 @@ struct GpuTexture {
 }
 
 impl GpuTexture {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -123,32 +124,32 @@ impl GpuTexture {
             return;
         }
 
-        let mut rgba_bytes = Vec::with_capacity(pixels.len() * 4);
+        let mut rgba_bytes = vec![0u8; expected_len * 4];
         if is_opaque {
             // For page tiles: every pixel is 100% opaque.
             // Even when px == 0 (black text or background), alpha MUST be 255.
-            for &px in pixels {
-                let r = ((px >> 16) & 0xFF) as u8;
-                let g = ((px >> 8) & 0xFF) as u8;
-                let b = (px & 0xFF) as u8;
-                rgba_bytes.extend_from_slice(&[r, g, b, 255]);
+            for (chunk, &px) in rgba_bytes.chunks_exact_mut(4).zip(pixels.iter()) {
+                chunk[0] = ((px >> 16) & 0xFF) as u8;
+                chunk[1] = ((px >> 8) & 0xFF) as u8;
+                chunk[2] = (px & 0xFF) as u8;
+                chunk[3] = 255;
             }
         } else {
-            // For chrome UI and overlay: 0x00000000 is transparent (page content shines through).
-            // Any pixel drawn by chrome UI has alpha = 255 (or top-byte alpha if set).
-            for &px in pixels {
-                let r = ((px >> 16) & 0xFF) as u8;
-                let g = ((px >> 8) & 0xFF) as u8;
-                let b = (px & 0xFF) as u8;
+            // For chrome UI, overlay, and promoted layers:
+            // 0x00000000 is transparent (page content shines through).
+            // Any pixel drawn by chrome UI or text has alpha = 255 (or top-byte alpha if set).
+            for (chunk, &px) in rgba_bytes.chunks_exact_mut(4).zip(pixels.iter()) {
+                chunk[0] = ((px >> 16) & 0xFF) as u8;
+                chunk[1] = ((px >> 8) & 0xFF) as u8;
+                chunk[2] = (px & 0xFF) as u8;
                 let a = ((px >> 24) & 0xFF) as u8;
-                let alpha = if a != 0 {
+                chunk[3] = if a != 0 {
                     a
-                } else if px != 0 {
+                } else if px & 0x00FFFFFF != 0 {
                     255
                 } else {
                     0
                 };
-                rgba_bytes.extend_from_slice(&[r, g, b, alpha]);
             }
         }
 
@@ -186,6 +187,7 @@ pub struct GpuCompositor {
     vertex_buffer: wgpu::Buffer,
     texture_format: wgpu::TextureFormat,
     tile_textures: HashMap<TileCoord, GpuTexture>,
+    promoted_textures: HashMap<usize, GpuTexture>,
     chrome_texture: Option<GpuTexture>,
     overlay_texture: Option<GpuTexture>,
     pub width: u32,
@@ -244,9 +246,15 @@ impl GpuCompositor {
         };
 
         // Prefer Opaque window presentation so desktop compositor never renders window as translucent
-        let alpha_mode = if surface_caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::Opaque) {
+        let alpha_mode = if surface_caps
+            .alpha_modes
+            .contains(&wgpu::CompositeAlphaMode::Opaque)
+        {
             wgpu::CompositeAlphaMode::Opaque
-        } else if surface_caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::Auto) {
+        } else if surface_caps
+            .alpha_modes
+            .contains(&wgpu::CompositeAlphaMode::Auto)
+        {
             wgpu::CompositeAlphaMode::Auto
         } else {
             surface_caps.alpha_modes[0]
@@ -270,28 +278,27 @@ impl GpuCompositor {
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/compositor.wgsl").into()),
         });
 
-        let bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Mango Compositor Bind Group Layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Mango Compositor Bind Group Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Mango Compositor Pipeline Layout"),
@@ -363,6 +370,7 @@ impl GpuCompositor {
             vertex_buffer,
             texture_format,
             tile_textures: HashMap::new(),
+            promoted_textures: HashMap::new(),
             chrome_texture: None,
             overlay_texture: None,
             width,
@@ -388,8 +396,11 @@ impl GpuCompositor {
         }
 
         let output = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(tex) | wgpu::CurrentSurfaceTexture::Suboptimal(tex) => tex,
-            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => return Ok(()),
+            wgpu::CurrentSurfaceTexture::Success(tex)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(tex) => tex,
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                return Ok(());
+            }
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 self.surface.configure(&self.device, &self.config);
                 return Ok(());
@@ -416,6 +427,7 @@ impl GpuCompositor {
         };
 
         let mut tile_quads: Vec<([QuadVertex; 6], wgpu::BindGroup)> = Vec::new();
+        let mut promoted_quads: Vec<([QuadVertex; 6], wgpu::BindGroup)> = Vec::new();
         let mut chrome_quads: Vec<([QuadVertex; 6], wgpu::BindGroup)> = Vec::new();
 
         let w_f32 = self.width as f32;
@@ -433,17 +445,14 @@ impl GpuCompositor {
             let scroll_x = page.scroll_offset.0;
             let scroll_y = page.scroll_offset.1;
 
-            let visible_viewport = Rect::new(
-                scroll_x,
-                scroll_y,
-                page_clip.width(),
-                page_clip.height(),
-            );
+            let visible_viewport =
+                Rect::new(scroll_x, scroll_y, page_clip.width(), page_clip.height());
 
             let visible_coords = grid.visible_tile_coords(visible_viewport, 0);
             let visible_set: std::collections::HashSet<TileCoord> =
                 visible_coords.iter().copied().collect();
-            self.tile_textures.retain(|coord, _| visible_set.contains(coord));
+            self.tile_textures
+                .retain(|coord, _| visible_set.contains(coord));
 
             for coord in visible_coords {
                 if let Some(tile) = grid.get_tile(coord) {
@@ -485,15 +494,63 @@ impl GpuCompositor {
                     let dest_w = tile.width as f32;
                     let dest_h = tile.height as f32;
 
-                    let verts = make_quad_vertices(
-                        dest_x, dest_y, dest_w, dest_h, w_f32, h_f32,
-                    );
+                    let verts = make_quad_vertices(dest_x, dest_y, dest_w, dest_h, w_f32, h_f32);
                     tile_quads.push((verts, gpu_tex.bind_group.clone()));
                 }
             }
         }
 
-        // 2. Prepare Chrome Layer (overlay with transparent background)
+        // 2. Prepare Promoted Layers (e.g. will-change: transform / fixed positioning)
+        let tf = self.texture_format;
+        for (idx, layer) in layers.promoted_layers.iter().enumerate() {
+            if let Some(pixels) = &layer.pixels {
+                let lw = layer.bounds.width().max(1.0) as u32;
+                let lh = layer.bounds.height().max(1.0) as u32;
+
+                let gpu_tex = self.promoted_textures.entry(idx).or_insert_with(|| {
+                    GpuTexture::new(
+                        &self.device,
+                        &self.queue,
+                        &self.sampler,
+                        &self.bind_group_layout,
+                        tf,
+                        lw,
+                        lh,
+                        pixels,
+                        false,
+                    )
+                });
+
+                if gpu_tex.width != lw || gpu_tex.height != lh {
+                    *gpu_tex = GpuTexture::new(
+                        &self.device,
+                        &self.queue,
+                        &self.sampler,
+                        &self.bind_group_layout,
+                        tf,
+                        lw,
+                        lh,
+                        pixels,
+                        false,
+                    );
+                } else if gpu_tex.version != layer.version {
+                    gpu_tex.upload_pixels(&self.queue, pixels, false);
+                    gpu_tex.version = layer.version;
+                }
+
+                let verts = make_quad_vertices(
+                    layer.bounds.x().round(),
+                    layer.bounds.y().round(),
+                    layer.bounds.width().round(),
+                    layer.bounds.height().round(),
+                    w_f32,
+                    h_f32,
+                );
+                promoted_quads.push((verts, gpu_tex.bind_group.clone()));
+            }
+        }
+
+        // 3. Prepare Chrome Layer (overlay with transparent background)
         let chrome = &layers.chrome_layer;
         if let Some(chrome_pixels) = &chrome.pixels {
             let cw = chrome.bounds.width() as u32;
@@ -597,7 +654,7 @@ impl GpuCompositor {
         }
 
         // 4. Execute Render Pass
-        let total_quads = tile_quads.len() + chrome_quads.len();
+        let total_quads = tile_quads.len() + promoted_quads.len() + chrome_quads.len();
         if total_quads == 0 {
             self.queue.submit(std::iter::once(encoder.finish()));
             self.queue.present(output);
@@ -606,6 +663,9 @@ impl GpuCompositor {
 
         let mut all_vertices: Vec<QuadVertex> = Vec::with_capacity(total_quads * 6);
         for (verts, _) in &tile_quads {
+            all_vertices.extend_from_slice(verts);
+        }
+        for (verts, _) in &promoted_quads {
             all_vertices.extend_from_slice(verts);
         }
         for (verts, _) in &chrome_quads {
@@ -622,11 +682,8 @@ impl GpuCompositor {
                 mapped_at_creation: false,
             });
         }
-        self.queue.write_buffer(
-            &self.vertex_buffer,
-            0,
-            bytemuck::cast_slice(&all_vertices),
-        );
+        self.queue
+            .write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&all_vertices));
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Mango Render Pass"),
@@ -657,10 +714,18 @@ impl GpuCompositor {
         for (_, bind_group) in &tile_quads {
             let offset = (quad_idx as wgpu::BufferAddress) * quad_stride;
             render_pass.set_bind_group(0, bind_group, &[]);
-            render_pass.set_vertex_buffer(
-                0,
-                self.vertex_buffer.slice(offset..offset + quad_stride),
-            );
+            render_pass
+                .set_vertex_buffer(0, self.vertex_buffer.slice(offset..offset + quad_stride));
+            render_pass.draw(0..6, 0..1);
+            quad_idx += 1;
+        }
+
+        // Draw promoted layers within page scissor rect
+        for (_, bind_group) in &promoted_quads {
+            let offset = (quad_idx as wgpu::BufferAddress) * quad_stride;
+            render_pass.set_bind_group(0, bind_group, &[]);
+            render_pass
+                .set_vertex_buffer(0, self.vertex_buffer.slice(offset..offset + quad_stride));
             render_pass.draw(0..6, 0..1);
             quad_idx += 1;
         }
@@ -670,10 +735,8 @@ impl GpuCompositor {
         for (_, bind_group) in &chrome_quads {
             let offset = (quad_idx as wgpu::BufferAddress) * quad_stride;
             render_pass.set_bind_group(0, bind_group, &[]);
-            render_pass.set_vertex_buffer(
-                0,
-                self.vertex_buffer.slice(offset..offset + quad_stride),
-            );
+            render_pass
+                .set_vertex_buffer(0, self.vertex_buffer.slice(offset..offset + quad_stride));
             render_pass.draw(0..6, 0..1);
             quad_idx += 1;
         }

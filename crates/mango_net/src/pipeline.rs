@@ -10,7 +10,7 @@
 //!
 //! Each stage is a standalone, testable function that can be composed or called independently.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -55,6 +55,24 @@ impl DecodedResource {
     }
 }
 
+/// Maximum concurrent blocking HTTP fetches issued from async pipeline stages.
+const PIPELINE_MAX_CONCURRENT_FETCH: usize = 6;
+/// Per-fetch network timeout for pipeline HTTP stages.
+const PIPELINE_HTTP_TIMEOUT: Duration = Duration::from_secs(20);
+/// DNS lookup timeout used by the async pipeline.
+const PIPELINE_DNS_TIMEOUT: Duration = Duration::from_secs(5);
+
+fn http_fetch_semaphore() -> &'static tokio::sync::Semaphore {
+    static SEM: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
+    SEM.get_or_init(|| tokio::sync::Semaphore::new(PIPELINE_MAX_CONCURRENT_FETCH))
+}
+
+fn pipeline_inflight() -> &'static tokio::sync::Mutex<HashSet<String>> {
+    static INFLIGHT: std::sync::OnceLock<tokio::sync::Mutex<HashSet<String>>> =
+        std::sync::OnceLock::new();
+    INFLIGHT.get_or_init(|| tokio::sync::Mutex::new(HashSet::new()))
+}
+
 /// Metadata describing a validated TLS handshake connection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TlsConnectionInfo {
@@ -71,13 +89,16 @@ pub struct TlsConnectionInfo {
 /// Stage 1: DNS Resolution.
 ///
 /// Resolves a hostname and port into socket addresses using the provided `DnsCache`.
+/// Never blocks the async executor: delegates to [`DnsCache::resolve_async_timeout`]
+/// with a bounded timeout plus singleflight dedup.
 pub async fn resolve_dns_stage(
     host: &str,
     port: u16,
     dns_cache: &DnsCache,
 ) -> Result<Vec<SocketAddr>, NetworkError> {
     dns_cache
-        .resolve(host, port)
+        .resolve_async_timeout(host, port, PIPELINE_DNS_TIMEOUT)
+        .await
         .map_err(NetworkError::DnsResolutionFailed)
 }
 
@@ -109,12 +130,29 @@ pub async fn tls_handshake_stage(
 
 /// Stage 3: HTTP Request Execution.
 ///
-/// Dispatches the HTTP request using the HTTP client and receives raw response.
+/// Dispatches the HTTP request without blocking the async executor: the
+/// blocking `ureq` fetch runs on Tokio's blocking pool via `spawn_blocking`,
+/// gated by a 6-permit semaphore and bounded by [`PIPELINE_HTTP_TIMEOUT`].
 pub async fn http_request_stage(
     request: &HttpRequest,
     client: &HttpClient,
 ) -> Result<HttpResponse, NetworkError> {
-    client.fetch(&request.url)
+    let permit = http_fetch_semaphore()
+        .acquire()
+        .await
+        .map_err(|e| NetworkError::Other(format!("pipeline semaphore closed: {e}")))?;
+    let client = client.clone();
+    let req = request.clone();
+    let fetch_fut = tokio::task::spawn_blocking(move || client.fetch(&req.url));
+    let res = tokio::time::timeout(PIPELINE_HTTP_TIMEOUT, fetch_fut).await;
+    drop(permit);
+    match res {
+        Err(_) => Err(NetworkError::Timeout),
+        Ok(Err(join_err)) => Err(NetworkError::Other(format!(
+            "pipeline fetch task panicked: {join_err}"
+        ))),
+        Ok(Ok(fetch_res)) => fetch_res,
+    }
 }
 
 /// Stage 4: Decompress Body.
@@ -394,6 +432,10 @@ impl ResourcePipeline {
     }
 
     /// Asynchronously executes the full 6-stage pipeline for a URL.
+    ///
+    /// Singleflight: concurrent `load()` calls for the same URL coalesce —
+    /// the first caller performs the fetch while the rest wait (bounded) for
+    /// the cache entry instead of issuing duplicate network requests.
     pub async fn load(&self, url: &Url) -> Result<DecodedResource, NetworkError> {
         let url_str = url.to_string();
 
@@ -402,6 +444,38 @@ impl ResourcePipeline {
             return decode_stage(&cached.body, Some(&cached.content_type), url).await;
         }
 
+        // 0b. Singleflight: wait for an in-flight load of the same URL.
+        let is_duplicate = {
+            let mut set = pipeline_inflight().lock().await;
+            if set.contains(&url_str) {
+                true
+            } else {
+                set.insert(url_str.clone());
+                false
+            }
+        };
+        if is_duplicate {
+            let deadline = tokio::time::Instant::now() + PIPELINE_HTTP_TIMEOUT;
+            loop {
+                if let Some(cached) = self.resource_cache.get(&url_str) {
+                    return decode_stage(&cached.body, Some(&cached.content_type), url).await;
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(NetworkError::Timeout);
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }
+
+        let result = self.load_inner(url, &url_str).await;
+        {
+            let mut set = pipeline_inflight().lock().await;
+            set.remove(&url_str);
+        }
+        result
+    }
+
+    async fn load_inner(&self, url: &Url, url_str: &str) -> Result<DecodedResource, NetworkError> {
         // 1. DNS Resolution Stage
         let is_https = url.scheme == "https";
         let default_port = if is_https { 443 } else { 80 };
@@ -486,21 +560,34 @@ impl ResourcePipeline {
 
     /// Synchronous blocking bridge for callers outside an async runtime.
     pub fn load_blocking(&self, url: &Url) -> Result<DecodedResource, NetworkError> {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| NetworkError::Other(e.to_string()))?;
-        rt.block_on(self.load(url))
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            tokio::task::block_in_place(|| handle.block_on(self.load(url)))
+        } else {
+            let rt = get_blocking_runtime();
+            rt.block_on(self.load(url))
+        }
     }
 
     /// Synchronous blocking bridge to fetch an HTML document.
     pub fn fetch_html_blocking(&self, url_str: &str) -> Result<FetchedDocument, NetworkError> {
-        let rt = tokio::runtime::Builder::new_current_thread()
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            tokio::task::block_in_place(|| handle.block_on(self.fetch_html(url_str)))
+        } else {
+            let rt = get_blocking_runtime();
+            rt.block_on(self.fetch_html(url_str))
+        }
+    }
+}
+
+fn get_blocking_runtime() -> &'static tokio::runtime::Runtime {
+    static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(4)
             .enable_all()
             .build()
-            .map_err(|e| NetworkError::Other(e.to_string()))?;
-        rt.block_on(self.fetch_html(url_str))
-    }
+            .expect("Failed to initialize Tokio blocking runtime")
+    })
 }
 
 #[cfg(test)]

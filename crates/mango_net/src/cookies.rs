@@ -12,6 +12,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::url::Url;
 
+/// Maximum cookies per host (RFC 6265 §6.3 recommendation: at least 50).
+pub const MAX_COOKIES_PER_HOST: usize = 50;
+/// Maximum bytes per cookie value (4KB).
+pub const MAX_COOKIE_BYTES: usize = 4096;
+/// Maximum cookies globally.
+pub const MAX_COOKIES_TOTAL: usize = 3000;
+/// Maximum profile file bytes read from disk (10MB DoS cap).
+pub const MAX_PROFILE_READ_BYTES: usize = 10 * 1024 * 1024;
+
 /// The `SameSite` attribute of a cookie (RFC 6265bis §5.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SameSite {
@@ -545,17 +554,28 @@ impl CookieJar {
     }
 
     /// Stores or deletes a cookie in the jar.
+    ///
+    /// An empty value alone does NOT delete — only expiry (`Max-Age<=0`,
+    /// past `Expires`) removes. Cookie names are case-sensitive per RFC 6265.
+    /// Enforces 4KB per-cookie (value truncated), 50 per-host, 3000 global.
     pub fn store_cookie(&mut self, mut cookie: Cookie) {
-        if cookie.value.is_empty() || cookie.is_expired() {
+        if cookie.is_expired() {
             self.remove_matching(&cookie);
             return;
         }
 
+        // Enforce 4KB per-cookie cap (truncate value on UTF-8 boundary).
+        if cookie.value.len() > MAX_COOKIE_BYTES {
+            let mut end = MAX_COOKIE_BYTES;
+            while end > 0 && !cookie.value.is_char_boundary(end) {
+                end -= 1;
+            }
+            cookie.value.truncate(end);
+        }
+
         let now = now_secs();
         if let Some(existing) = self.cookies.iter_mut().find(|c| {
-            c.name.eq_ignore_ascii_case(&cookie.name)
-                && c.domain.eq_ignore_ascii_case(&cookie.domain)
-                && c.path == cookie.path
+            c.name == cookie.name && c.domain == cookie.domain && c.path == cookie.path
         }) {
             // RFC 6265 §5.3 step 11: preserve creation_time of existing cookie
             cookie.creation_time = existing.creation_time;
@@ -566,30 +586,52 @@ impl CookieJar {
                 cookie.creation_time = now;
             }
             cookie.last_access_time = now;
-            self.cookies.push(cookie);
+            self.cookies.push(cookie.clone());
+            self.enforce_per_host_limit(&cookie.domain);
         }
 
         self.enforce_limits();
     }
 
+    /// Evicts oldest cookies for `domain` when exceeding 50 per-host.
+    fn enforce_per_host_limit(&mut self, domain: &str) {
+        let count = self.cookies.iter().filter(|c| c.domain == domain).count();
+        if count <= MAX_COOKIES_PER_HOST {
+            return;
+        }
+        // Collect indices of this host sorted by oldest access first.
+        let mut idxs: Vec<usize> = self
+            .cookies
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.domain == domain)
+            .map(|(i, _)| i)
+            .collect();
+        idxs.sort_by_key(|&i| self.cookies[i].last_access_time);
+        let drop_count = count - MAX_COOKIES_PER_HOST;
+        // Remove from highest index down to keep indices valid.
+        let mut to_remove: Vec<usize> = idxs.into_iter().take(drop_count).collect();
+        to_remove.sort_unstable_by(|a, b| b.cmp(a));
+        for i in to_remove {
+            self.cookies.remove(i);
+        }
+    }
+
     fn enforce_limits(&mut self) {
-        const MAX_TOTAL: usize = 3000;
-        if self.cookies.len() <= MAX_TOTAL {
+        if self.cookies.len() <= MAX_COOKIES_TOTAL {
             return;
         }
         self.prune_expired();
-        if self.cookies.len() > MAX_TOTAL {
+        if self.cookies.len() > MAX_COOKIES_TOTAL {
             self.cookies.sort_by_key(|c| c.last_access_time);
-            let drop_count = self.cookies.len() - MAX_TOTAL;
+            let drop_count = self.cookies.len() - MAX_COOKIES_TOTAL;
             self.cookies.drain(0..drop_count);
         }
     }
 
     fn remove_matching(&mut self, cookie: &Cookie) {
         self.cookies.retain(|c| {
-            !(c.name.eq_ignore_ascii_case(&cookie.name)
-                && c.domain.eq_ignore_ascii_case(&cookie.domain)
-                && c.path == cookie.path)
+            !(c.name == cookie.name && c.domain == cookie.domain && c.path == cookie.path)
         });
     }
 
@@ -798,9 +840,30 @@ impl CookieJar {
     }
 
     /// Loads cookies from a profile file. Missing files are not an error.
+    /// Enforces a 10MB read cap to prevent DoS via huge profile files.
     pub fn load_from_file(&mut self, path: &Path) -> std::io::Result<usize> {
+        let meta = match std::fs::metadata(path) {
+            Ok(m) => m,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(e) => return Err(e),
+        };
+        if meta.len() > MAX_PROFILE_READ_BYTES as u64 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "Cookie profile exceeds {} byte cap",
+                    MAX_PROFILE_READ_BYTES
+                ),
+            ));
+        }
         match std::fs::read_to_string(path) {
             Ok(body) => {
+                if body.len() > MAX_PROFILE_READ_BYTES {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Cookie profile exceeds read cap",
+                    ));
+                }
                 self.load_profile_string(&body);
                 Ok(self.cookies.len())
             }
@@ -810,20 +873,48 @@ impl CookieJar {
     }
 
     /// Writes the jar to a profile file atomically, creating parent directories as needed.
+    /// Uses a `.tmp` suffix + `fsync` + atomic rename, with `0600` permissions on Unix.
     pub fn save_to_file(&self, path: &Path) -> std::io::Result<()> {
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
         {
             std::fs::create_dir_all(parent)?;
         }
-        let tmp_path = path.with_extension("tmp");
-        if std::fs::write(&tmp_path, self.to_profile_string()).is_ok() {
-            if std::fs::rename(&tmp_path, path).is_ok() {
-                return Ok(());
+        let tmp_path = {
+            let mut s = path.as_os_str().to_owned();
+            s.push(".tmp");
+            PathBuf::from(s)
+        };
+        let body = self.to_profile_string();
+        // Write temp file.
+        {
+            use std::io::Write as _;
+            let mut f = std::fs::File::create(&tmp_path)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                let _ = f.set_permissions(std::fs::Permissions::from_mode(0o600));
             }
-            let _ = std::fs::remove_file(&tmp_path);
+            f.write_all(body.as_bytes())?;
+            f.sync_all()?;
         }
-        std::fs::write(path, self.to_profile_string())
+        // Ensure 0600 even if file already existed (create may not reset mode).
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let _ = std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600));
+        }
+        std::fs::rename(&tmp_path, path)?;
+        // Fsync parent directory for durability.
+        #[cfg(unix)]
+        {
+            if let Some(parent) = path.parent() {
+                if let Ok(dir) = std::fs::File::open(parent) {
+                    let _ = dir.sync_all();
+                }
+            }
+        }
+        Ok(())
     }
 
     /// The default profile cookie file (`<data dir>/cookies.txt`).

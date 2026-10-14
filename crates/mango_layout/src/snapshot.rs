@@ -14,13 +14,13 @@ use mango_html::dom::{Document, NodeId};
 use mango_render::display_list::DisplayList;
 
 use crate::block_flow::layout_block;
-use crate::box_tree::{FormControlHit, LayoutBox, build_box_tree};
+use crate::box_tree::{FormControlHit, LayoutBox};
 use crate::dimensions::Dimensions;
 use crate::display_list::{
     build_display_list, build_display_list_with_scroll, build_display_list_with_scroll_xy,
 };
 use crate::float::FloatContext;
-use crate::style_tree::{StyledNode, build_style_tree_with_size};
+use crate::style_tree::StyledNode;
 
 /// A frozen, read-only layout tree snapshot for a given viewport (ARCH-003).
 ///
@@ -40,7 +40,16 @@ impl LayoutSnapshot {
     /// Consumes `&StyledNode` without mutating it, performs layout within the given viewport,
     /// precomputes the display list and bounding rectangles, and freezes the tree.
     pub fn from_styled_tree(styled_root: &StyledNode, viewport: Size) -> Self {
-        let mut root_box = build_box_tree(styled_root);
+        Self::from_styled_tree_with_maps(styled_root, None, viewport)
+    }
+
+    /// Creates an immutable layout snapshot with explicitly provided image maps.
+    pub fn from_styled_tree_with_maps(
+        styled_root: &StyledNode,
+        maps: Option<&HashMap<String, Vec<crate::box_tree::MapArea>>>,
+        viewport: Size,
+    ) -> Self {
+        let mut root_box = crate::box_tree::build_box_tree_with_maps(styled_root, maps);
         let containing_block =
             Dimensions::new(Rect::new(0.0, 0.0, viewport.width, viewport.height));
         let mut float_ctx = FloatContext::new();
@@ -66,9 +75,22 @@ impl LayoutSnapshot {
         author_styles: &[&mango_css::parser::Stylesheet],
         viewport: Size,
     ) -> Option<Self> {
-        let styled_root =
-            build_style_tree_with_size(doc, author_styles, viewport.width, viewport.height)?;
-        Some(Self::from_styled_tree(&styled_root, viewport))
+        let mut env = mango_css::current_media_environment();
+        env.viewport_width = viewport.width;
+        env.viewport_height = viewport.height;
+        Self::from_document_with_env(doc, author_styles, &env)
+    }
+
+    /// Convenience constructor to lay out a DOM [`Document`] with an explicit [`MediaEnvironment`].
+    pub fn from_document_with_env(
+        doc: &Document,
+        author_styles: &[&mango_css::parser::Stylesheet],
+        env: &mango_css::MediaEnvironment,
+    ) -> Option<Self> {
+        let styled_root = crate::style_tree::build_style_tree_with_env(doc, author_styles, env)?;
+        let maps = crate::style_tree::collect_image_maps(doc);
+        let viewport = Size::new(env.viewport_width, env.viewport_height);
+        Some(Self::from_styled_tree_with_maps(&styled_root, Some(&maps), viewport))
     }
 
     /// Returns an immutable reference to the root layout box.

@@ -390,6 +390,277 @@ impl Http2Session {
     }
 }
 
+// ---------------------------------------------------------------------------
+// HTTP/2 Connection Pool (GAP-014)
+// ---------------------------------------------------------------------------
+
+use std::sync::{Arc, Mutex};
+
+/// Connection pool managing active HTTP/2 sessions keyed by origin ("https://example.com:443").
+#[derive(Debug, Clone, Default)]
+pub struct Http2ConnectionPool {
+    sessions: HashMap<String, Arc<Mutex<Http2Session>>>,
+}
+
+impl Http2ConnectionPool {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Retrieves an existing active session for origin or creates and initializes a new one.
+    pub fn get_or_create(&mut self, origin: &str) -> Arc<Mutex<Http2Session>> {
+        let key = origin.trim().to_ascii_lowercase();
+        self.sessions
+            .entry(key)
+            .or_insert_with(|| Arc::new(Mutex::new(Http2Session::new())))
+            .clone()
+    }
+
+    /// Retrieves an existing active session if one exists.
+    pub fn get_session(&self, origin: &str) -> Option<Arc<Mutex<Http2Session>>> {
+        let key = origin.trim().to_ascii_lowercase();
+        self.sessions.get(&key).cloned()
+    }
+
+    /// Number of active connections in the pool.
+    pub fn active_connections(&self) -> usize {
+        self.sessions.len()
+    }
+
+    /// Removes an origin from the pool (e.g. after GOAWAY or connection failure).
+    pub fn remove(&mut self, origin: &str) {
+        let key = origin.trim().to_ascii_lowercase();
+        self.sessions.remove(&key);
+    }
+
+    /// Closes all sessions in the pool.
+    pub fn clear(&mut self) {
+        self.sessions.clear();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// HTTP/3 & Alt-Svc Support (RFC 7838 / RFC 9114 / GAP-015)
+// ---------------------------------------------------------------------------
+
+/// An Alternative Service record indicating available HTTP protocols (e.g., HTTP/3 over QUIC).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AltSvcRecord {
+    /// ALPN token such as "h3", "h2", "h3-29".
+    pub alpn: String,
+    /// Host serving the alternative service (defaults to origin host if empty).
+    pub host: Option<String>,
+    /// Port serving the alternative service.
+    pub port: u16,
+    /// Maximum age in seconds for which the advertisement is valid.
+    pub max_age: u64,
+    /// Whether persist parameter was set.
+    pub persist: bool,
+}
+
+/// Cache of Alternative Service advertisements (RFC 7838).
+#[derive(Debug, Clone, Default)]
+pub struct AltSvcCache {
+    /// Key: origin (e.g. "https://example.com") -> list of AltSvc records.
+    records: HashMap<String, Vec<AltSvcRecord>>,
+}
+
+impl AltSvcCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Parses an `Alt-Svc` header (e.g. `h3=":443"; ma=86400, h2="alt.example.com:8443"`).
+    pub fn parse_alt_svc_header(header: &str) -> Vec<AltSvcRecord> {
+        let mut results = Vec::new();
+        if header.trim().eq_ignore_ascii_case("clear") {
+            return results;
+        }
+
+        for entry in header.split(',') {
+            let entry = entry.trim();
+            if entry.is_empty() {
+                continue;
+            }
+            let mut parts = entry.split(';');
+            let Some(first) = parts.next() else { continue };
+            let Some((alpn_raw, target_raw)) = first.split_once('=') else { continue };
+
+            let alpn = alpn_raw.trim().to_string();
+            let target = target_raw.trim().trim_matches('"');
+
+            let (host, port) = if let Some((h, p_str)) = target.rsplit_once(':') {
+                let h_opt = if h.is_empty() { None } else { Some(h.to_string()) };
+                let p = p_str.parse::<u16>().unwrap_or(443);
+                (h_opt, p)
+            } else if let Ok(p) = target.parse::<u16>() {
+                (None, p)
+            } else {
+                (None, 443)
+            };
+
+            let mut max_age = 86400; // default 24h
+            let mut persist = false;
+
+            for param in parts {
+                let param = param.trim();
+                if let Some((k, v)) = param.split_once('=') {
+                    let k = k.trim().to_ascii_lowercase();
+                    let v = v.trim().trim_matches('"');
+                    if k == "ma" {
+                        if let Ok(ma) = v.parse::<u64>() {
+                            max_age = ma;
+                        }
+                    } else if k == "persist" && v == "1" {
+                        persist = true;
+                    }
+                }
+            }
+
+            results.push(AltSvcRecord {
+                alpn,
+                host,
+                port,
+                max_age,
+                persist,
+            });
+        }
+        results
+    }
+
+    /// Registers alternative services for a given origin.
+    pub fn add_records(&mut self, origin: &str, records: Vec<AltSvcRecord>) {
+        let key = origin.trim().to_ascii_lowercase();
+        self.records.insert(key, records);
+    }
+
+    /// Checks if HTTP/3 is advertised for this origin and returns `(target_host, port)`.
+    pub fn get_h3_alternative(&self, origin: &str) -> Option<(Option<String>, u16)> {
+        let key = origin.trim().to_ascii_lowercase();
+        let records = self.records.get(&key)?;
+        for record in records {
+            if record.alpn == "h3" || record.alpn.starts_with("h3-") {
+                return Some((record.host.clone(), record.port));
+            }
+        }
+        None
+    }
+
+    /// Returns whether the origin supports HTTP/3.
+    pub fn supports_h3(&self, origin: &str) -> bool {
+        self.get_h3_alternative(origin).is_some()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// HTTP/3 Frame Framing & QUIC Variable-Length Integer (RFC 9000 & RFC 9114)
+// ---------------------------------------------------------------------------
+
+/// QUIC variable-length integer encoding (RFC 9000 §16).
+pub fn encode_quic_varint(val: u64) -> Vec<u8> {
+    if val <= 63 {
+        vec![val as u8]
+    } else if val <= 16383 {
+        let v = (val as u16) | 0x4000;
+        v.to_be_bytes().to_vec()
+    } else if val <= 1073741823 {
+        let v = (val as u32) | 0x8000_0000;
+        v.to_be_bytes().to_vec()
+    } else {
+        let v = val | 0xC000_0000_0000_0000;
+        v.to_be_bytes().to_vec()
+    }
+}
+
+/// QUIC variable-length integer decoding (RFC 9000 §16).
+/// Returns `Some((value, bytes_consumed))`.
+pub fn decode_quic_varint(buf: &[u8]) -> Option<(u64, usize)> {
+    if buf.is_empty() {
+        return None;
+    }
+    let first = buf[0];
+    let prefix = first >> 6;
+    match prefix {
+        0 => Some((first as u64, 1)),
+        1 => {
+            if buf.len() < 2 {
+                return None;
+            }
+            let val = (((first & 0x3F) as u64) << 8) | (buf[1] as u64);
+            Some((val, 2))
+        }
+        2 => {
+            if buf.len() < 4 {
+                return None;
+            }
+            let val = (((first & 0x3F) as u64) << 24)
+                | ((buf[1] as u64) << 16)
+                | ((buf[2] as u64) << 8)
+                | (buf[3] as u64);
+            Some((val, 4))
+        }
+        3 => {
+            if buf.len() < 8 {
+                return None;
+            }
+            let val = (((first & 0x3F) as u64) << 56)
+                | ((buf[1] as u64) << 48)
+                | ((buf[2] as u64) << 40)
+                | ((buf[3] as u64) << 32)
+                | ((buf[4] as u64) << 24)
+                | ((buf[5] as u64) << 16)
+                | ((buf[6] as u64) << 8)
+                | (buf[7] as u64);
+            Some((val, 8))
+        }
+        _ => unreachable!(),
+    }
+}
+
+/// HTTP/3 Binary Frame (RFC 9114 §7.2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Http3Frame {
+    pub frame_type: u64,
+    pub payload: Vec<u8>,
+}
+
+impl Http3Frame {
+    pub const DATA: u64 = 0x00;
+    pub const HEADERS: u64 = 0x01;
+    pub const CANCEL_PUSH: u64 = 0x03;
+    pub const SETTINGS: u64 = 0x04;
+    pub const PUSH_PROMISE: u64 = 0x05;
+    pub const GOAWAY: u64 = 0x07;
+    pub const MAX_PUSH_ID: u64 = 0x0D;
+
+    pub fn new(frame_type: u64, payload: Vec<u8>) -> Self {
+        Self { frame_type, payload }
+    }
+
+    /// Serializes an HTTP/3 frame using QUIC varint for type and length.
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&encode_quic_varint(self.frame_type));
+        out.extend_from_slice(&encode_quic_varint(self.payload.len() as u64));
+        out.extend_from_slice(&self.payload);
+        out
+    }
+
+    /// Parses an HTTP/3 frame from byte slice.
+    pub fn parse(buf: &[u8]) -> Option<(Self, usize)> {
+        let (frame_type, type_len) = decode_quic_varint(buf)?;
+        let remainder = &buf[type_len..];
+        let (length, len_len) = decode_quic_varint(remainder)?;
+        let header_len = type_len + len_len;
+        let payload_len = length as usize;
+        if buf.len() < header_len + payload_len {
+            return None;
+        }
+        let payload = buf[header_len..header_len + payload_len].to_vec();
+        Some((Self { frame_type, payload }, header_len + payload_len))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -441,5 +712,67 @@ mod tests {
         let s1 = session.streams.get(&1).unwrap();
         assert_eq!(s1.response_body, b"Hello HTTP/2!");
         assert_eq!(s1.state, StreamState::HalfClosedRemote);
+    }
+
+    #[test]
+    fn test_http2_connection_pool() {
+        let mut pool = Http2ConnectionPool::new();
+        assert_eq!(pool.active_connections(), 0);
+
+        let origin = "https://mango.dev:443";
+        let session_arc = pool.get_or_create(origin);
+        assert_eq!(pool.active_connections(), 1);
+
+        // Fetching same origin returns identical instance
+        let s2 = pool.get_session(origin).unwrap();
+        assert!(Arc::ptr_eq(&session_arc, &s2));
+
+        pool.remove(origin);
+        assert_eq!(pool.active_connections(), 0);
+    }
+
+    #[test]
+    fn test_alt_svc_parsing_and_cache() {
+        let header = r#"h3=":443"; ma=86400, h2="alt.example.com:8443"; ma=3600; persist=1"#;
+        let records = AltSvcCache::parse_alt_svc_header(header);
+        assert_eq!(records.len(), 2);
+
+        assert_eq!(records[0].alpn, "h3");
+        assert_eq!(records[0].host, None);
+        assert_eq!(records[0].port, 443);
+        assert_eq!(records[0].max_age, 86400);
+        assert!(!records[0].persist);
+
+        assert_eq!(records[1].alpn, "h2");
+        assert_eq!(records[1].host, Some("alt.example.com".to_string()));
+        assert_eq!(records[1].port, 8443);
+        assert_eq!(records[1].max_age, 3600);
+        assert!(records[1].persist);
+
+        let mut cache = AltSvcCache::new();
+        cache.add_records("https://example.com", records);
+        assert!(cache.supports_h3("https://example.com"));
+        assert_eq!(cache.get_h3_alternative("https://example.com"), Some((None, 443)));
+        assert!(!cache.supports_h3("https://other.com"));
+    }
+
+    #[test]
+    fn test_quic_varint_and_http3_framing() {
+        // Test varint 1, 2, 4, 8 byte boundaries
+        let cases = [0u64, 25, 63, 64, 15000, 16383, 16384, 1073741823, 1073741824];
+        for val in cases {
+            let enc = encode_quic_varint(val);
+            let (dec, consumed) = decode_quic_varint(&enc).expect("decode varint");
+            assert_eq!(dec, val);
+            assert_eq!(consumed, enc.len());
+        }
+
+        // Test HTTP/3 frame
+        let frame = Http3Frame::new(Http3Frame::DATA, b"quic and http3 payload".to_vec());
+        let serialized = frame.serialize();
+        let (parsed, read_bytes) = Http3Frame::parse(&serialized).expect("parse frame");
+        assert_eq!(read_bytes, serialized.len());
+        assert_eq!(parsed.frame_type, Http3Frame::DATA);
+        assert_eq!(parsed.payload, b"quic and http3 payload");
     }
 }

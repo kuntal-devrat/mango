@@ -10,3 +10,4 @@ mango_html.workspace = true
 mango_css.workspace = true
 mango_render.workspace = true
 log.workspace = true
+rayon.workspace = true

@@ -25,21 +25,17 @@ pub struct MatchedDeclaration {
     pub specificity: Specificity,
     pub origin: Origin,
     pub source_order: usize,
+    pub layer_order: Option<u32>,
 }
 
 impl MatchedDeclaration {
-    /// Computes a sort key according to CSS Cascade Level 4 precedence:
+    /// Computes a sort key according to CSS Cascade Level 5 precedence:
     ///
-    /// 1. Origin + Importance:
-    ///    - `Author !important` (highest)
-    ///    - `UserAgent !important`
-    ///    - `Inline` (normal)
-    ///    - `Author` (normal)
-    ///    - `PresentationalHint` (normal)
-    ///    - `UserAgent` (normal)
-    /// 2. Specificity (higher wins)
-    /// 3. Source order (later wins)
-    fn cascade_weight(&self) -> (u8, Specificity, usize) {
+    /// 1. Origin + Importance
+    /// 2. Layer order (CSS Cascade 5 §4.4)
+    /// 3. Specificity (higher wins)
+    /// 4. Source order (later wins)
+    fn cascade_weight(&self) -> (u8, u32, Specificity, usize) {
         let precedence = match (self.origin, self.declaration.important) {
             (Origin::UserAgent, true) => 7,
             (Origin::Inline, true) => 6,
@@ -50,7 +46,22 @@ impl MatchedDeclaration {
             (Origin::PresentationalHint, false) => 2,
             (Origin::UserAgent, false) => 1,
         };
-        (precedence, self.specificity, self.source_order)
+
+        let layer_rank = if self.origin == Origin::Author {
+            match (self.declaration.important, self.layer_order) {
+                // Normal author declarations: unlayered styles win over layered styles
+                (false, None) => u32::MAX,
+                // Within layered styles, later declared layers win over earlier layers
+                (false, Some(id)) => id,
+                // Important author declarations: earlier layers win over later, and layered wins over unlayered
+                (true, None) => 0,
+                (true, Some(id)) => u32::MAX.saturating_sub(id),
+            }
+        } else {
+            0
+        };
+
+        (precedence, layer_rank, self.specificity, self.source_order)
     }
 }
 
@@ -418,6 +429,7 @@ pub struct IndexedRule<'a> {
     pub style_rule: &'a StyleRule,
     pub origin: Origin,
     pub source_order: usize,
+    pub layer_order: Option<u32>,
 }
 
 /// An indexed container query rule for accelerated container matching.
@@ -436,12 +448,14 @@ pub struct IndexedContainerRule<'a> {
 pub struct RuleIndex<'a> {
     pub viewport_width: f32,
     pub viewport_height: f32,
+    pub layer_count: u32,
     id_rules: HashMap<String, Vec<IndexedRule<'a>>>,
     class_rules: HashMap<String, Vec<IndexedRule<'a>>>,
     tag_rules: HashMap<String, Vec<IndexedRule<'a>>>,
     universal_rules: Vec<IndexedRule<'a>>,
     pseudo_rules: HashMap<String, Vec<IndexedRule<'a>>>,
     pub container_rules: Vec<IndexedContainerRule<'a>>,
+    pub env: MediaEnvironment,
 }
 
 impl<'a> Default for RuleIndex<'a> {
@@ -456,15 +470,24 @@ impl<'a> RuleIndex<'a> {
     }
 
     pub fn new_with_size(viewport_width: f32, viewport_height: f32) -> Self {
+        let mut env = current_media_environment();
+        env.viewport_width = viewport_width;
+        env.viewport_height = viewport_height;
+        Self::new_with_env(env)
+    }
+
+    pub fn new_with_env(env: MediaEnvironment) -> Self {
         Self {
-            viewport_width,
-            viewport_height,
+            viewport_width: env.viewport_width,
+            viewport_height: env.viewport_height,
+            layer_count: 0,
             id_rules: HashMap::new(),
             class_rules: HashMap::new(),
             tag_rules: HashMap::new(),
             universal_rules: Vec::new(),
             pseudo_rules: HashMap::new(),
             container_rules: Vec::new(),
+            env,
         }
     }
 
@@ -490,6 +513,19 @@ impl<'a> RuleIndex<'a> {
         index
     }
 
+    pub fn from_stylesheets_with_env(
+        stylesheets: &[&'a Stylesheet],
+        origin: Origin,
+        order: &mut usize,
+        env: MediaEnvironment,
+    ) -> Self {
+        let mut index = Self::new_with_env(env);
+        for sheet in stylesheets {
+            index.add_stylesheet(sheet, origin, order);
+        }
+        index
+    }
+
     pub fn add_stylesheet(&mut self, sheet: &'a Stylesheet, origin: Origin, order: &mut usize) {
         for rule in &sheet.rules {
             match rule {
@@ -497,10 +533,11 @@ impl<'a> RuleIndex<'a> {
                     self.add_style_rule(style_rule, origin, order);
                 }
                 Rule::Media(media_rule)
-                    if matches_media_query_size(
+                    if matches_media_query_env(
                         &media_rule.query,
                         self.viewport_width,
                         self.viewport_height,
+                        &self.env,
                     ) =>
                 {
                     for style_rule in &media_rule.rules {
@@ -519,12 +556,29 @@ impl<'a> RuleIndex<'a> {
                         });
                     }
                 }
+                Rule::Layer(layer_rule) => {
+                    self.layer_count += 1;
+                    let layer_id = self.layer_count;
+                    for style_rule in &layer_rule.rules {
+                        self.add_style_rule_with_layer(style_rule, origin, order, Some(layer_id));
+                    }
+                }
                 _ => {}
             }
         }
     }
 
     fn add_style_rule(&mut self, style_rule: &'a StyleRule, origin: Origin, order: &mut usize) {
+        self.add_style_rule_with_layer(style_rule, origin, order, None);
+    }
+
+    fn add_style_rule_with_layer(
+        &mut self,
+        style_rule: &'a StyleRule,
+        origin: Origin,
+        order: &mut usize,
+        layer_order: Option<u32>,
+    ) {
         *order += 1;
         let rule_order = *order;
 
@@ -539,6 +593,7 @@ impl<'a> RuleIndex<'a> {
                 style_rule,
                 origin,
                 source_order: rule_order,
+                layer_order,
             };
 
             // 1. Check if subject targets a pseudo-element
@@ -614,6 +669,7 @@ impl<'a> RuleIndex<'a> {
                     node_id,
                     doc,
                     cand.origin,
+                    cand.layer_order,
                     source_order,
                     out,
                 );
@@ -630,6 +686,7 @@ impl<'a> RuleIndex<'a> {
                         node_id,
                         doc,
                         cand.origin,
+                        cand.layer_order,
                         source_order,
                         out,
                     );
@@ -648,6 +705,7 @@ impl<'a> RuleIndex<'a> {
                         node_id,
                         doc,
                         cand.origin,
+                        cand.layer_order,
                         source_order,
                         out,
                     );
@@ -665,6 +723,7 @@ impl<'a> RuleIndex<'a> {
                             node_id,
                             doc,
                             cand.origin,
+                            cand.layer_order,
                             source_order,
                             out,
                         );
@@ -685,6 +744,7 @@ impl<'a> RuleIndex<'a> {
                     node_id,
                     doc,
                     cand.origin,
+                    None,
                     source_order,
                     out,
                 );
@@ -729,6 +789,7 @@ impl<'a> RuleIndex<'a> {
                                     specificity,
                                     origin: cand.origin,
                                     source_order: *source_order,
+                                    layer_order: cand.layer_order,
                                 });
                             }
                         } else {
@@ -738,6 +799,7 @@ impl<'a> RuleIndex<'a> {
                                 specificity,
                                 origin: cand.origin,
                                 source_order: *source_order,
+                                layer_order: cand.layer_order,
                             });
                         }
                     }
@@ -774,6 +836,7 @@ impl<'a> RuleIndex<'a> {
                                     specificity,
                                     origin: cand.origin,
                                     source_order: *source_order,
+                                    layer_order: None,
                                 });
                             }
                         } else {
@@ -783,6 +846,7 @@ impl<'a> RuleIndex<'a> {
                                 specificity,
                                 origin: cand.origin,
                                 source_order: *source_order,
+                                layer_order: None,
                             });
                         }
                     }
@@ -817,6 +881,13 @@ impl<'a> RuleIndex<'a> {
                         let name = d.name.to_ascii_lowercase();
                         if name == "container-type" {
                             container_type = Some(d.value);
+                        } else if name == "contain" {
+                            let val_str = format!("{:?}", d.value).to_ascii_lowercase();
+                            if val_str.contains("size") || val_str.contains("inline-size") || val_str.contains("strict") {
+                                if container_type.is_none() {
+                                    container_type = Some(Value::Keyword("inline-size".into()));
+                                }
+                            }
                         } else if name == "container-name" {
                             if let Value::String(s) = d.value {
                                 container_name = Some(s);
@@ -882,6 +953,11 @@ impl<'a> RuleIndex<'a> {
                                 let mut check_decl = |dname: &str, dval: &Value| {
                                     if dname == "container-type" && container_type.is_none() {
                                         container_type = Some(dval.clone());
+                                    } else if dname == "contain" && container_type.is_none() {
+                                        let val_str = format!("{:?}", dval).to_ascii_lowercase();
+                                        if val_str.contains("size") || val_str.contains("inline-size") || val_str.contains("strict") {
+                                            container_type = Some(Value::Keyword("inline-size".into()));
+                                        }
                                     } else if dname == "container-name" && container_name.is_none()
                                     {
                                         if let Value::String(s) = dval {
@@ -936,6 +1012,12 @@ impl<'a> RuleIndex<'a> {
                     && let Some(parsed_ct) = crate::values::ContainerType::parse(ct)
                 {
                     container_type = Some(Value::ContainerType(parsed_ct));
+                }
+                if container_type.is_none()
+                    && let Some(c) = elem.get_attribute("contain")
+                    && (c.contains("size") || c.contains("inline-size") || c.contains("strict"))
+                {
+                    container_type = Some(Value::Keyword("inline-size".into()));
                 }
 
                 // Check if this element establishes a container
@@ -1031,6 +1113,7 @@ pub fn resolve_cascade_with_index(
                             specificity: Specificity(1, 0, 0),
                             origin: Origin::Inline,
                             source_order,
+                            layer_order: None,
                         });
                     }
                 } else {
@@ -1040,6 +1123,7 @@ pub fn resolve_cascade_with_index(
                         specificity: Specificity(1, 0, 0),
                         origin: Origin::Inline,
                         source_order,
+                        layer_order: None,
                     });
                 }
             }
@@ -1127,6 +1211,22 @@ fn parse_presentational_dimension(raw: &str) -> Option<Value> {
     None
 }
 
+fn push_hint(
+    matched_decls: &mut Vec<MatchedDeclaration>,
+    source_order: &mut usize,
+    name: impl Into<String>,
+    val: Value,
+) {
+    *source_order += 1;
+    matched_decls.push(MatchedDeclaration {
+        declaration: Declaration::new(name, val, false),
+        specificity: Specificity(0, 0, 0),
+        origin: Origin::PresentationalHint,
+        source_order: *source_order,
+        layer_order: None,
+    });
+}
+
 fn collect_presentational_hints(
     node_id: NodeId,
     doc: &Document,
@@ -1140,30 +1240,14 @@ fn collect_presentational_hints(
     if let Some(bg) = elem.get_attribute("bgcolor")
         && let Some(c) = parse_presentational_color(bg)
     {
-        *source_order += 1;
-        matched_decls.push(MatchedDeclaration {
-            declaration: Declaration::new("background-color", Value::Color(c), false),
-            specificity: Specificity(0, 0, 0),
-            origin: Origin::PresentationalHint,
-            source_order: *source_order,
-        });
+        push_hint(matched_decls, source_order, "background-color", Value::Color(c));
     }
 
     // background -> background-image
     if let Some(bg_img) = elem.get_attribute("background") {
         let trimmed = bg_img.trim();
         if !trimmed.is_empty() {
-            *source_order += 1;
-            matched_decls.push(MatchedDeclaration {
-                declaration: Declaration::new(
-                    "background-image",
-                    Value::Url(trimmed.to_string()),
-                    false,
-                ),
-                specificity: Specificity(0, 0, 0),
-                origin: Origin::PresentationalHint,
-                source_order: *source_order,
-            });
+            push_hint(matched_decls, source_order, "background-image", Value::Url(trimmed.to_string()));
         }
     }
 
@@ -1171,26 +1255,14 @@ fn collect_presentational_hints(
     if let Some(w) = elem.get_attribute("width")
         && let Some(dim) = parse_presentational_dimension(w)
     {
-        *source_order += 1;
-        matched_decls.push(MatchedDeclaration {
-            declaration: Declaration::new("width", dim, false),
-            specificity: Specificity(0, 0, 0),
-            origin: Origin::PresentationalHint,
-            source_order: *source_order,
-        });
+        push_hint(matched_decls, source_order, "width", dim);
     }
 
     // height
     if let Some(h) = elem.get_attribute("height")
         && let Some(dim) = parse_presentational_dimension(h)
     {
-        *source_order += 1;
-        matched_decls.push(MatchedDeclaration {
-            declaration: Declaration::new("height", dim, false),
-            specificity: Specificity(0, 0, 0),
-            origin: Origin::PresentationalHint,
-            source_order: *source_order,
-        });
+        push_hint(matched_decls, source_order, "height", dim);
     }
 
     // align
@@ -1199,76 +1271,16 @@ fn collect_presentational_hints(
         if tag == "table" || tag == "hr" {
             match a.as_str() {
                 "center" => {
-                    *source_order += 1;
-                    matched_decls.push(MatchedDeclaration {
-                        declaration: Declaration::new(
-                            "margin-left",
-                            Value::Keyword("auto".to_string()),
-                            false,
-                        ),
-                        specificity: Specificity(0, 0, 0),
-                        origin: Origin::PresentationalHint,
-                        source_order: *source_order,
-                    });
-                    *source_order += 1;
-                    matched_decls.push(MatchedDeclaration {
-                        declaration: Declaration::new(
-                            "margin-right",
-                            Value::Keyword("auto".to_string()),
-                            false,
-                        ),
-                        specificity: Specificity(0, 0, 0),
-                        origin: Origin::PresentationalHint,
-                        source_order: *source_order,
-                    });
+                    push_hint(matched_decls, source_order, "margin-left", Value::Keyword("auto".to_string()));
+                    push_hint(matched_decls, source_order, "margin-right", Value::Keyword("auto".to_string()));
                 }
                 "right" => {
-                    *source_order += 1;
-                    matched_decls.push(MatchedDeclaration {
-                        declaration: Declaration::new(
-                            "margin-left",
-                            Value::Keyword("auto".to_string()),
-                            false,
-                        ),
-                        specificity: Specificity(0, 0, 0),
-                        origin: Origin::PresentationalHint,
-                        source_order: *source_order,
-                    });
-                    *source_order += 1;
-                    matched_decls.push(MatchedDeclaration {
-                        declaration: Declaration::new(
-                            "margin-right",
-                            Value::Length(Length::Px(0.0)),
-                            false,
-                        ),
-                        specificity: Specificity(0, 0, 0),
-                        origin: Origin::PresentationalHint,
-                        source_order: *source_order,
-                    });
+                    push_hint(matched_decls, source_order, "margin-left", Value::Keyword("auto".to_string()));
+                    push_hint(matched_decls, source_order, "margin-right", Value::Length(Length::Px(0.0)));
                 }
                 "left" => {
-                    *source_order += 1;
-                    matched_decls.push(MatchedDeclaration {
-                        declaration: Declaration::new(
-                            "margin-left",
-                            Value::Length(Length::Px(0.0)),
-                            false,
-                        ),
-                        specificity: Specificity(0, 0, 0),
-                        origin: Origin::PresentationalHint,
-                        source_order: *source_order,
-                    });
-                    *source_order += 1;
-                    matched_decls.push(MatchedDeclaration {
-                        declaration: Declaration::new(
-                            "margin-right",
-                            Value::Keyword("auto".to_string()),
-                            false,
-                        ),
-                        specificity: Specificity(0, 0, 0),
-                        origin: Origin::PresentationalHint,
-                        source_order: *source_order,
-                    });
+                    push_hint(matched_decls, source_order, "margin-left", Value::Length(Length::Px(0.0)));
+                    push_hint(matched_decls, source_order, "margin-right", Value::Keyword("auto".to_string()));
                 }
                 _ => {}
             }
@@ -1281,13 +1293,7 @@ fn collect_presentational_hints(
                 _ => None,
             };
             if let Some(ta_val) = ta {
-                *source_order += 1;
-                matched_decls.push(MatchedDeclaration {
-                    declaration: Declaration::new("text-align", Value::TextAlign(ta_val), false),
-                    specificity: Specificity(0, 0, 0),
-                    origin: Origin::PresentationalHint,
-                    source_order: *source_order,
-                });
+                push_hint(matched_decls, source_order, "text-align", Value::TextAlign(ta_val));
             }
         }
     }
@@ -1302,17 +1308,7 @@ fn collect_presentational_hints(
             _ => None,
         };
         if let Some(va_val) = va {
-            *source_order += 1;
-            matched_decls.push(MatchedDeclaration {
-                declaration: Declaration::new(
-                    "vertical-align",
-                    Value::VerticalAlign(va_val),
-                    false,
-                ),
-                specificity: Specificity(0, 0, 0),
-                origin: Origin::PresentationalHint,
-                source_order: *source_order,
-            });
+            push_hint(matched_decls, source_order, "vertical-align", Value::VerticalAlign(va_val));
         }
     }
 
@@ -1327,17 +1323,7 @@ fn collect_presentational_hints(
                 "border-bottom-style",
                 "border-left-style",
             ] {
-                *source_order += 1;
-                matched_decls.push(MatchedDeclaration {
-                    declaration: Declaration::new(
-                        *side,
-                        Value::BorderStyle(crate::values::BorderStyle::None),
-                        false,
-                    ),
-                    specificity: Specificity(0, 0, 0),
-                    origin: Origin::PresentationalHint,
-                    source_order: *source_order,
-                });
+                push_hint(matched_decls, source_order, *side, Value::BorderStyle(crate::values::BorderStyle::None));
             }
             for side in &[
                 "border-top-width",
@@ -1345,13 +1331,7 @@ fn collect_presentational_hints(
                 "border-bottom-width",
                 "border-left-width",
             ] {
-                *source_order += 1;
-                matched_decls.push(MatchedDeclaration {
-                    declaration: Declaration::new(*side, Value::Length(Length::Px(0.0)), false),
-                    specificity: Specificity(0, 0, 0),
-                    origin: Origin::PresentationalHint,
-                    source_order: *source_order,
-                });
+                push_hint(matched_decls, source_order, *side, Value::Length(Length::Px(0.0)));
             }
         } else {
             for side in &[
@@ -1360,17 +1340,7 @@ fn collect_presentational_hints(
                 "border-bottom-style",
                 "border-left-style",
             ] {
-                *source_order += 1;
-                matched_decls.push(MatchedDeclaration {
-                    declaration: Declaration::new(
-                        *side,
-                        Value::BorderStyle(crate::values::BorderStyle::Solid),
-                        false,
-                    ),
-                    specificity: Specificity(0, 0, 0),
-                    origin: Origin::PresentationalHint,
-                    source_order: *source_order,
-                });
+                push_hint(matched_decls, source_order, *side, Value::BorderStyle(crate::values::BorderStyle::Solid));
             }
             for side in &[
                 "border-top-width",
@@ -1378,13 +1348,7 @@ fn collect_presentational_hints(
                 "border-bottom-width",
                 "border-left-width",
             ] {
-                *source_order += 1;
-                matched_decls.push(MatchedDeclaration {
-                    declaration: Declaration::new(*side, Value::Length(Length::Px(b_val)), false),
-                    specificity: Specificity(0, 0, 0),
-                    origin: Origin::PresentationalHint,
-                    source_order: *source_order,
-                });
+                push_hint(matched_decls, source_order, *side, Value::Length(Length::Px(b_val)));
             }
         }
     }
@@ -1401,17 +1365,7 @@ fn collect_presentational_hints(
                 "border-bottom-style",
                 "border-left-style",
             ] {
-                *source_order += 1;
-                matched_decls.push(MatchedDeclaration {
-                    declaration: Declaration::new(
-                        *side,
-                        Value::BorderStyle(crate::values::BorderStyle::None),
-                        false,
-                    ),
-                    specificity: Specificity(0, 0, 0),
-                    origin: Origin::PresentationalHint,
-                    source_order: *source_order,
-                });
+                push_hint(matched_decls, source_order, *side, Value::BorderStyle(crate::values::BorderStyle::None));
             }
             for side in &[
                 "border-top-width",
@@ -1419,13 +1373,7 @@ fn collect_presentational_hints(
                 "border-bottom-width",
                 "border-left-width",
             ] {
-                *source_order += 1;
-                matched_decls.push(MatchedDeclaration {
-                    declaration: Declaration::new(*side, Value::Length(Length::Px(0.0)), false),
-                    specificity: Specificity(0, 0, 0),
-                    origin: Origin::PresentationalHint,
-                    source_order: *source_order,
-                });
+                push_hint(matched_decls, source_order, *side, Value::Length(Length::Px(0.0)));
             }
         }
     }
@@ -1435,13 +1383,7 @@ fn collect_presentational_hints(
         && let Some(cs_str) = elem.get_attribute("cellspacing")
         && let Ok(cs) = cs_str.trim().parse::<f32>()
     {
-        *source_order += 1;
-        matched_decls.push(MatchedDeclaration {
-            declaration: Declaration::new("border-spacing", Value::Length(Length::Px(cs)), false),
-            specificity: Specificity(0, 0, 0),
-            origin: Origin::PresentationalHint,
-            source_order: *source_order,
-        });
+        push_hint(matched_decls, source_order, "border-spacing", Value::Length(Length::Px(cs)));
     }
 
     // For td or th, inherit cellpadding from ancestor table, and valign/align from parent tr
@@ -1463,17 +1405,7 @@ fn collect_presentational_hints(
                     _ => None,
                 };
                 if let Some(va_val) = va {
-                    *source_order += 1;
-                    matched_decls.push(MatchedDeclaration {
-                        declaration: Declaration::new(
-                            "vertical-align",
-                            Value::VerticalAlign(va_val),
-                            false,
-                        ),
-                        specificity: Specificity(0, 0, 0),
-                        origin: Origin::PresentationalHint,
-                        source_order: *source_order,
-                    });
+                    push_hint(matched_decls, source_order, "vertical-align", Value::VerticalAlign(va_val));
                 }
             }
             if elem.get_attribute("align").is_none()
@@ -1487,17 +1419,7 @@ fn collect_presentational_hints(
                     _ => None,
                 };
                 if let Some(ta_val) = ta {
-                    *source_order += 1;
-                    matched_decls.push(MatchedDeclaration {
-                        declaration: Declaration::new(
-                            "text-align",
-                            Value::TextAlign(ta_val),
-                            false,
-                        ),
-                        specificity: Specificity(0, 0, 0),
-                        origin: Origin::PresentationalHint,
-                        source_order: *source_order,
-                    });
+                    push_hint(matched_decls, source_order, "text-align", Value::TextAlign(ta_val));
                 }
             }
         }
@@ -1518,17 +1440,7 @@ fn collect_presentational_hints(
                         "padding-bottom",
                         "padding-left",
                     ] {
-                        *source_order += 1;
-                        matched_decls.push(MatchedDeclaration {
-                            declaration: Declaration::new(
-                                *side,
-                                Value::Length(Length::Px(cp)),
-                                false,
-                            ),
-                            specificity: Specificity(0, 0, 0),
-                            origin: Origin::PresentationalHint,
-                            source_order: *source_order,
-                        });
+                        push_hint(matched_decls, source_order, *side, Value::Length(Length::Px(cp)));
                     }
                 }
                 break;
@@ -1543,6 +1455,7 @@ fn apply_style_rule(
     node_id: NodeId,
     doc: &Document,
     origin: Origin,
+    layer_order: Option<u32>,
     source_order: &mut usize,
     out: &mut Vec<MatchedDeclaration>,
 ) {
@@ -1567,6 +1480,7 @@ fn apply_style_rule(
                         specificity,
                         origin,
                         source_order: *source_order,
+                        layer_order,
                     });
                 }
             } else {
@@ -1576,6 +1490,7 @@ fn apply_style_rule(
                     specificity,
                     origin,
                     source_order: *source_order,
+                    layer_order,
                 });
             }
         }
@@ -1628,6 +1543,8 @@ pub enum HoverType {
 /// Represents the browser/client media environment for CSS Media Queries evaluation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MediaEnvironment {
+    pub viewport_width: f32,
+    pub viewport_height: f32,
     pub color_scheme: ColorSchemePreference,
     pub reduced_motion: ReducedMotionPreference,
     pub contrast: ContrastPreference,
@@ -1641,6 +1558,8 @@ pub struct MediaEnvironment {
 impl Default for MediaEnvironment {
     fn default() -> Self {
         Self {
+            viewport_width: 1280.0,
+            viewport_height: 900.0,
             color_scheme: ColorSchemePreference::Light,
             reduced_motion: ReducedMotionPreference::NoPreference,
             contrast: ContrastPreference::NoPreference,
@@ -1653,23 +1572,40 @@ impl Default for MediaEnvironment {
     }
 }
 
-static GLOBAL_MEDIA_ENV: std::sync::RwLock<Option<MediaEnvironment>> = std::sync::RwLock::new(None);
-
-/// Returns the current global media environment.
-pub fn current_media_environment() -> MediaEnvironment {
-    if let Ok(guard) = GLOBAL_MEDIA_ENV.read()
-        && let Some(ref env) = *guard
-    {
-        return env.clone();
+impl MediaEnvironment {
+    pub fn new(viewport_width: f32, viewport_height: f32) -> Self {
+        Self {
+            viewport_width,
+            viewport_height,
+            ..Default::default()
+        }
     }
-    MediaEnvironment::default()
+
+    pub fn is_landscape(&self) -> bool {
+        self.viewport_width >= self.viewport_height
+    }
+
+    pub fn is_portrait(&self) -> bool {
+        self.viewport_width < self.viewport_height
+    }
 }
 
-/// Updates the global media environment.
+thread_local! {
+    static CURRENT_MEDIA_ENV: std::cell::RefCell<Option<MediaEnvironment>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Returns the current media environment for the active thread.
+pub fn current_media_environment() -> MediaEnvironment {
+    CURRENT_MEDIA_ENV.with(|cell| {
+        cell.borrow().clone().unwrap_or_default()
+    })
+}
+
+/// Updates the media environment for the active thread.
 pub fn set_media_environment(env: MediaEnvironment) {
-    if let Ok(mut guard) = GLOBAL_MEDIA_ENV.write() {
-        *guard = Some(env);
-    }
+    CURRENT_MEDIA_ENV.with(|cell| {
+        *cell.borrow_mut() = Some(env);
+    });
 }
 
 /// Sets the color scheme preference (`prefers-color-scheme: dark | light`).
@@ -2806,4 +2742,109 @@ mod tests {
             "Multi-selector rule must use max specificity (1, 0, 0) over class (0, 1, 0)"
         );
     }
+
+    #[test]
+    fn test_layer_cascade_priority() {
+        let html = r#"<div id="target" class="item">Test</div>"#;
+        let doc = parse_html(html);
+        let root = doc.root();
+        let div_id = doc.find_element_by_id(root, "target").unwrap();
+
+        // Test 1: Unlayered normal beats layered normal, even if layered has higher specificity
+        let css1 = r#"
+            @layer base {
+                #target { color: blue; }
+            }
+            .item { color: red; }
+        "#;
+        let sheet1 = parse_stylesheet(css1);
+        let cascaded1 = resolve_cascade(div_id, &doc, &[&sheet1]);
+        assert_eq!(
+            cascaded1.get("color"),
+            Some(&Value::Color(Color::RED)),
+            "Unlayered normal rule must override layered normal rule"
+        );
+
+        // Test 2: Later layer beats earlier layer
+        let css2 = r#"
+            @layer first {
+                .item { color: red; }
+            }
+            @layer second {
+                .item { color: green; }
+            }
+        "#;
+        let sheet2 = parse_stylesheet(css2);
+        let cascaded2 = resolve_cascade(div_id, &doc, &[&sheet2]);
+        assert_eq!(
+            cascaded2.get("color"),
+            Some(&Value::Color(Color::GREEN)),
+            "Later declared layer must beat earlier declared layer"
+        );
+
+        // Test 3: In !important, layered beats unlayered, and earlier layer beats later layer!
+        let css3 = r#"
+            @layer first {
+                .item { color: red !important; }
+            }
+            @layer second {
+                .item { color: green !important; }
+            }
+            .item { color: blue !important; }
+        "#;
+        let sheet3 = parse_stylesheet(css3);
+        let cascaded3 = resolve_cascade(div_id, &doc, &[&sheet3]);
+        assert_eq!(
+            cascaded3.get("color"),
+            Some(&Value::Color(Color::RED)),
+            "In !important, earlier layer must beat later layer and unlayered"
+        );
+    }
+
+    #[test]
+    fn test_css_nesting() {
+        let html = r#"<div id="c1" class="card"><span id="t1" class="title">Hello</span><div id="c2" class="card active"><span id="b1" class="badge">Active</span></div></div>"#;
+        let doc = parse_html(html);
+        let root = doc.root();
+
+        let css = r#"
+            .card {
+                background-color: white;
+                & .title {
+                    color: red;
+                }
+                &.active {
+                    background-color: green;
+                }
+                span {
+                    font-size: 14px;
+                }
+            }
+        "#;
+        let sheet = parse_stylesheet(css);
+        assert!(!sheet.rules.is_empty(), "Parsed sheet should contain rules");
+
+        let title_id = doc.find_element_by_id(root, "t1").expect("Should find title element");
+        let active_id = doc.find_element_by_id(root, "c2").expect("Should find active card");
+
+        let cascaded_title = resolve_cascade(title_id, &doc, &[&sheet]);
+        assert_eq!(
+            cascaded_title.get("color"),
+            Some(&Value::Color(Color::RED)),
+            "Nested selector & .title must resolve color: red"
+        );
+        assert_eq!(
+            cascaded_title.get("font-size"),
+            Some(&Value::Length(Length::Px(14.0))),
+            "Nested selector span without & must resolve font-size: 14px"
+        );
+
+        let cascaded_active = resolve_cascade(active_id, &doc, &[&sheet]);
+        assert_eq!(
+            cascaded_active.get("background-color"),
+            Some(&Value::Color(Color::GREEN)),
+            "Nested selector &.active must resolve background-color: green"
+        );
+    }
 }
+

@@ -3,6 +3,7 @@
 
 use mango_core::{Color, Size};
 use mango_html::parse_html;
+use mango_layout::box_tree::LayoutBox;
 use mango_layout::layout_document;
 use mango_render::display_list::DisplayCommand;
 use mango_render::paint;
@@ -32,6 +33,7 @@ fn test_full_pipeline_layout_and_paint() {
                 .content {
                     padding: 8px;
                     border-top-width: 2px;
+                    border-top-style: solid;
                     border-top-color: #000000;
                 }
                 p {
@@ -1132,5 +1134,50 @@ fn test_transition_shorthand_retarget() {
     assert!(
         engine.is_animating(),
         "engine should be animating background transition"
+    );
+}
+
+#[test]
+fn test_flex_column_cross_axis_auto_margins_and_max_width() {
+    let html = r#"
+        <!DOCTYPE html>
+        <html>
+        <body style="margin: 0;">
+            <main style="display: flex; flex-direction: column; width: 1000px;">
+                <header style="width: 100%; max-width: 600px; margin-left: auto; margin-right: auto; height: 100px;">
+                    <h1>Title</h1>
+                </header>
+            </main>
+        </body>
+        </html>
+    "#;
+
+    let doc = parse_html(html);
+    let viewport = Size::new(1000.0, 800.0);
+    let (root_box, _) = layout_document(&doc, &[], viewport);
+
+    // Find the header element
+    fn find_header(b: &LayoutBox) -> Option<&LayoutBox> {
+        if b.tag_name.as_deref() == Some("header") {
+            return Some(b);
+        }
+        for child in &b.children {
+            if let Some(found) = find_header(child) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    let header = find_header(&root_box).expect("header box should exist");
+    let header_box = header.dimensions.border_box();
+    assert_eq!(
+        header_box.width(),
+        600.0,
+        "header width should be clamped to max-width (600px)"
+    );
+    assert_eq!(
+        header_box.origin.x, 200.0,
+        "header should be horizontally centered at x = (1000 - 600) / 2 = 200px"
     );
 }

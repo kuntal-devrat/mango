@@ -16,6 +16,9 @@ use crate::inline_flow::layout_inline_children;
 /// Determines if a layout box establishes an independent Block Formatting Context (BFC)
 /// according to CSS 2.1 §9.4.1 and CSS Display 3.
 pub fn establishes_bfc(box_node: &LayoutBox) -> bool {
+    if box_node.is_independent_formatting_context {
+        return true;
+    }
     if matches!(box_node.box_type, crate::box_model::BoxType::InlineBlock) {
         return true;
     }
@@ -62,6 +65,30 @@ pub fn layout_block(
     }
     if display == Some(Display::Grid) || display == Some(Display::InlineGrid) {
         crate::grid_flow::layout_grid(box_node, containing_block, float_ctx);
+        return;
+    }
+
+    // Table formatting contexts: route any table-internal display to the table
+    // path so table-row / cell / row-group roots don't fall through to plain
+    // block layout silently (CSS 2.1 §17).
+    if matches!(
+        display,
+        Some(
+            Display::Table
+                | Display::TableRow
+                | Display::TableCell
+                | Display::TableRowGroup
+                | Display::TableHeaderGroup
+                | Display::TableFooterGroup
+                | Display::TableColumn
+                | Display::TableColumnGroup
+                | Display::TableCaption
+        )
+    ) || matches!(
+        box_node.tag_name.as_deref(),
+        Some("table" | "tr" | "td" | "th" | "tbody" | "thead" | "tfoot" | "caption" | "colgroup" | "col")
+    ) {
+        crate::table_flow::layout_table(box_node, containing_block, float_ctx);
         return;
     }
 
@@ -130,6 +157,11 @@ pub fn layout_block(
                 let new_x = containing_block.content.right() - margin_box_w;
                 let dx = new_x - box_node.dimensions.margin_box().x();
                 box_node.dimensions.content.origin.x += dx;
+                // Shift the whole subtree so descendants follow the float
+                // (mirrors layout_single_float's final-position adjustment).
+                if dx.abs() > 0.001 {
+                    shift_descendants(box_node, dx, 0.0);
+                }
                 float_ctx.add_right_float(box_node.dimensions.margin_box());
             }
             Float::None => {}
@@ -386,6 +418,59 @@ fn calculate_block_width(box_node: &mut LayoutBox, containing_block: &Dimensions
 }
 
 pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f32 {
+    let (max_w_bound, min_w_bound) = if let Some(s) = box_node.style.as_ref() {
+        let fs = s.font_size;
+        let rfs = s.root_font_size;
+        let max_w = if !matches!(
+            s.max_width,
+            mango_css::values::Length::Auto | mango_css::values::Length::Percent(_)
+        ) {
+            let px = s.max_width.to_px_with_viewport(fs, rfs, max_width, max_width);
+            let non_content = if s.box_sizing == BoxSizing::BorderBox {
+                let pl = s.padding_left.to_px_with_viewport(fs, rfs, max_width, max_width);
+                let pr = s.padding_right.to_px_with_viewport(fs, rfs, max_width, max_width);
+                pl + pr + s.border_left_width + s.border_right_width
+            } else {
+                0.0
+            };
+            Some((px - non_content).max(0.0))
+        } else {
+            None
+        };
+        let min_w = if !matches!(
+            s.min_width,
+            mango_css::values::Length::Auto | mango_css::values::Length::Percent(_)
+        ) {
+            let px = s.min_width.to_px_with_viewport(fs, rfs, max_width, max_width);
+            let non_content = if s.box_sizing == BoxSizing::BorderBox {
+                let pl = s.padding_left.to_px_with_viewport(fs, rfs, max_width, max_width);
+                let pr = s.padding_right.to_px_with_viewport(fs, rfs, max_width, max_width);
+                pl + pr + s.border_left_width + s.border_right_width
+            } else {
+                0.0
+            };
+            Some((px - non_content).max(0.0))
+        } else {
+            None
+        };
+        (max_w, min_w)
+    } else {
+        (None, None)
+    };
+
+    let effective_max_width = max_w_bound.map_or(max_width, |mw| max_width.min(mw));
+    let measured = calculate_raw_shrink_to_fit_width(box_node, effective_max_width);
+    let mut final_w = measured;
+    if let Some(mw) = max_w_bound {
+        final_w = final_w.min(mw);
+    }
+    if let Some(mw) = min_w_bound {
+        final_w = final_w.max(mw);
+    }
+    final_w.min(max_width)
+}
+
+fn calculate_raw_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f32 {
     if let crate::box_model::BoxType::TextNode(text) = &box_node.box_type {
         let style = box_node.style.as_ref();
         let (font_size, is_bold, family_name) = if let Some(s) = style {
@@ -424,8 +509,12 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
     } = &box_node.box_type
     {
         let w = if let Some(s) = box_node.style.as_ref() {
-            if !matches!(s.width, mango_css::values::Length::Auto | mango_css::values::Length::Percent(_)) {
-                s.width.to_px_with_viewport(s.font_size, s.root_font_size, max_width, max_width)
+            if !matches!(
+                s.width,
+                mango_css::values::Length::Auto | mango_css::values::Length::Percent(_)
+            ) {
+                s.width
+                    .to_px_with_viewport(s.font_size, s.root_font_size, max_width, max_width)
             } else {
                 *intrinsic_width
             }
@@ -752,28 +841,45 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                     *curr_line += w + p_left + p_right + b_left + b_right + m_left + m_right;
                 }
                 crate::box_model::BoxType::TextNode(raw_text) => {
-                    let style = node.style.as_ref().or(parent_style);
-                    let (font_size, is_bold, family_name, transformed_text, letter_spacing, word_spacing) =
-                        if let Some(s) = style {
-                            let bold = match s.font_weight {
-                                mango_css::values::FontWeight::Bold
-                                | mango_css::values::FontWeight::Bolder => true,
-                                mango_css::values::FontWeight::Numeric(w) => w >= 600,
-                                _ => false,
-                            };
-                            let ls = s.letter_spacing.to_px(s.font_size, s.root_font_size, max_width);
-                            let ws = s.word_spacing.to_px(s.font_size, s.root_font_size, max_width);
-                            (
-                                s.font_size,
-                                bold,
-                                s.font_family.clone(),
-                                s.text_transform.apply(raw_text),
-                                ls,
-                                ws,
-                            )
-                        } else {
-                            (16.0, false, "sans-serif".to_string(), raw_text.clone(), 0.0, 0.0)
+                    let style = node.style.as_deref().or(parent_style);
+                    let (
+                        font_size,
+                        is_bold,
+                        family_name,
+                        transformed_text,
+                        letter_spacing,
+                        word_spacing,
+                    ) = if let Some(s) = style {
+                        let bold = match s.font_weight {
+                            mango_css::values::FontWeight::Bold
+                            | mango_css::values::FontWeight::Bolder => true,
+                            mango_css::values::FontWeight::Numeric(w) => w >= 600,
+                            _ => false,
                         };
+                        let ls = s
+                            .letter_spacing
+                            .to_px(s.font_size, s.root_font_size, max_width);
+                        let ws = s
+                            .word_spacing
+                            .to_px(s.font_size, s.root_font_size, max_width);
+                        (
+                            s.font_size,
+                            bold,
+                            s.font_family.clone(),
+                            s.text_transform.apply(raw_text),
+                            ls,
+                            ws,
+                        )
+                    } else {
+                        (
+                            16.0,
+                            false,
+                            "sans-serif".to_string(),
+                            raw_text.clone(),
+                            0.0,
+                            0.0,
+                        )
+                    };
                     let weight = if is_bold {
                         mango_render::FontWeight::Bold
                     } else {
@@ -787,22 +893,25 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                     for ch in transformed_text.chars() {
                         if ch.is_ascii_whitespace() {
                             if !current_word.is_empty() {
-                                text_w += crate::inline_flow::measure_text_width_with_style_and_spacing(
-                                    &current_word,
+                                text_w +=
+                                    crate::inline_flow::measure_text_width_with_style_and_spacing(
+                                        &current_word,
+                                        font_size,
+                                        weight,
+                                        family,
+                                        letter_spacing,
+                                    );
+                                current_word.clear();
+                            }
+                            text_w +=
+                                (crate::inline_flow::measure_text_width_with_style_and_spacing(
+                                    " ",
                                     font_size,
                                     weight,
                                     family,
                                     letter_spacing,
-                                );
-                                current_word.clear();
-                            }
-                            text_w += (crate::inline_flow::measure_text_width_with_style_and_spacing(
-                                " ",
-                                font_size,
-                                weight,
-                                family,
-                                letter_spacing,
-                            ) + word_spacing).max(0.0);
+                                ) + word_spacing)
+                                    .max(0.0);
                         } else {
                             current_word.push(ch);
                         }
@@ -816,7 +925,7 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                             letter_spacing,
                         );
                     }
-                    *curr_line += text_w.ceil() + 2.0;
+                    *curr_line += text_w;
                 }
                 crate::box_model::BoxType::ReplacedElement {
                     intrinsic_width, ..
@@ -834,32 +943,45 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                     intrinsic_width, ..
                 } => {
                     let w = if let Some(s) = node.style.as_ref() {
-                        if !matches!(s.width, mango_css::values::Length::Auto | mango_css::values::Length::Percent(_)) {
-                            s.width.to_px_with_viewport(s.font_size, s.root_font_size, max_width, max_width)
+                        if !matches!(
+                            s.width,
+                            mango_css::values::Length::Auto | mango_css::values::Length::Percent(_)
+                        ) {
+                            s.width.to_px_with_viewport(
+                                s.font_size,
+                                s.root_font_size,
+                                max_width,
+                                max_width,
+                            )
                         } else {
                             *intrinsic_width
                         }
                     } else {
                         *intrinsic_width
                     };
-                    let (p_left, p_right, b_left, b_right, m_left, m_right) = if let Some(cs) = node.style.as_ref() {
-                        let c_fs = cs.font_size;
-                        let c_root_fs = cs.root_font_size;
-                        (
-                            cs.padding_left.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
-                            cs.padding_right.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
-                            cs.border_left_width,
-                            cs.border_right_width,
-                            cs.margin_left.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
-                            cs.margin_right.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
-                        )
-                    } else {
-                        (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-                    };
+                    let (p_left, p_right, b_left, b_right, m_left, m_right) =
+                        if let Some(cs) = node.style.as_ref() {
+                            let c_fs = cs.font_size;
+                            let c_root_fs = cs.root_font_size;
+                            (
+                                cs.padding_left
+                                    .to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                                cs.padding_right
+                                    .to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                                cs.border_left_width,
+                                cs.border_right_width,
+                                cs.margin_left
+                                    .to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                                cs.margin_right
+                                    .to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                            )
+                        } else {
+                            (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+                        };
                     *curr_line += w + p_left + p_right + b_left + b_right + m_left + m_right;
                 }
                 _ => {
-                    let next_parent_style = node.style.as_ref().or(parent_style);
+                    let next_parent_style = node.style.as_deref().or(parent_style);
                     for c in &node.children {
                         accumulate_inline_width(
                             c,
@@ -873,7 +995,7 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
             }
         }
 
-        let p_style = box_node.style.as_ref();
+        let p_style = box_node.style.as_deref();
         for child in &box_node.children {
             accumulate_inline_width(child, p_style, &mut curr_line_w, &mut max_line_w, max_width);
         }
@@ -904,7 +1026,9 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                         mango_css::values::FontWeight::Numeric(w) => w >= 600,
                         _ => false,
                     };
-                    let ls = s.letter_spacing.to_px(s.font_size, s.root_font_size, max_width);
+                    let ls = s
+                        .letter_spacing
+                        .to_px(s.font_size, s.root_font_size, max_width);
                     (s.font_size, bold, s.font_family.clone(), ls)
                 } else {
                     (16.0, false, "sans-serif".to_string(), 0.0)
@@ -916,7 +1040,11 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                 };
                 let family = mango_render::FontFamily::from_css_name(&family_name);
                 let w = crate::inline_flow::measure_text_width_with_style_and_spacing(
-                    text, font_size, weight, family, letter_spacing,
+                    text,
+                    font_size,
+                    weight,
+                    family,
+                    letter_spacing,
                 );
                 measured = measured.max(w);
             }
@@ -936,28 +1064,41 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                 intrinsic_width, ..
             } => {
                 let w = if let Some(s) = child.style.as_ref() {
-                    if !matches!(s.width, mango_css::values::Length::Auto | mango_css::values::Length::Percent(_)) {
-                        s.width.to_px_with_viewport(s.font_size, s.root_font_size, max_width, max_width)
+                    if !matches!(
+                        s.width,
+                        mango_css::values::Length::Auto | mango_css::values::Length::Percent(_)
+                    ) {
+                        s.width.to_px_with_viewport(
+                            s.font_size,
+                            s.root_font_size,
+                            max_width,
+                            max_width,
+                        )
                     } else {
                         *intrinsic_width
                     }
                 } else {
                     *intrinsic_width
                 };
-                let (p_left, p_right, b_left, b_right, m_left, m_right) = if let Some(cs) = child.style.as_ref() {
-                    let c_fs = cs.font_size;
-                    let c_root_fs = cs.root_font_size;
-                    (
-                        cs.padding_left.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
-                        cs.padding_right.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
-                        cs.border_left_width,
-                        cs.border_right_width,
-                        cs.margin_left.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
-                        cs.margin_right.to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
-                    )
-                } else {
-                    (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-                };
+                let (p_left, p_right, b_left, b_right, m_left, m_right) =
+                    if let Some(cs) = child.style.as_ref() {
+                        let c_fs = cs.font_size;
+                        let c_root_fs = cs.root_font_size;
+                        (
+                            cs.padding_left
+                                .to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                            cs.padding_right
+                                .to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                            cs.border_left_width,
+                            cs.border_right_width,
+                            cs.margin_left
+                                .to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                            cs.margin_right
+                                .to_px_with_viewport(c_fs, c_root_fs, max_width, max_width),
+                        )
+                    } else {
+                        (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+                    };
                 measured = measured.max(w + p_left + p_right + b_left + b_right + m_left + m_right);
             }
             _ => {
@@ -1031,6 +1172,43 @@ pub fn collapse_margins(m1: f32, m2: f32) -> f32 {
     } else {
         m1 + m2
     }
+}
+
+/// Returns true if an element's top and bottom margins are adjoining according to CSS 2.1 §8.3.1,
+/// meaning the element has no border, padding, in-flow content, or height separating its margins.
+pub fn is_empty_block_collapsing_through(box_node: &LayoutBox) -> bool {
+    if box_node.is_inline() {
+        return false;
+    }
+    let pos = box_node
+        .style
+        .as_ref()
+        .map(|s| s.position)
+        .unwrap_or(Position::Static);
+    if matches!(pos, Position::Absolute | Position::Fixed) {
+        return false;
+    }
+    if box_node.dimensions.border.vertical() > 0.0
+        || box_node.dimensions.padding.vertical() > 0.0
+        || box_node.dimensions.content.size.height > 0.0
+    {
+        return false;
+    }
+    if let Some(style) = &box_node.style {
+        if style.height != Length::Auto && style.height != Length::Px(0.0) {
+            return false;
+        }
+        if style.min_height != Length::Auto && style.min_height != Length::Px(0.0) {
+            return false;
+        }
+        if establishes_bfc(box_node) {
+            return false;
+        }
+    }
+    box_node.children.iter().all(|c| {
+        let c_pos = c.style.as_ref().map(|s| s.position).unwrap_or(Position::Static);
+        matches!(c_pos, Position::Absolute | Position::Fixed) || is_empty_block_collapsing_through(c)
+    })
 }
 
 /// Bottom edge (in page coordinates) of the lowest in-flow block child, if any.
@@ -1182,10 +1360,11 @@ fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut FloatContext)
 
             if resolved_cols > 1 {
                 if box_node.children.len() == 1 {
-                    if let Some(child_style) = box_node.children[0].style.as_mut()
-                        && child_style.column_count.is_none()
-                        && child_style.column_width.is_none()
+                    if let Some(child_style_arc) = box_node.children[0].style.as_mut()
+                        && child_style_arc.column_count.is_none()
+                        && child_style_arc.column_width.is_none()
                     {
+                        let child_style = std::sync::Arc::make_mut(child_style_arc);
                         child_style.column_count = Some(resolved_cols);
                         child_style.column_gap = mango_css::values::Length::Px(gap);
                     }
@@ -1332,8 +1511,16 @@ fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut FloatContext)
             }
 
             // Advance cursor
-            cursor_y = child.dimensions.border_box().bottom();
-            prev_margin_bottom = child.dimensions.margin.bottom;
+            if is_empty_block_collapsing_through(child) {
+                let collapsed = collapse_margins(child.dimensions.margin.top, child.dimensions.margin.bottom);
+                child.dimensions.margin.top = collapsed;
+                child.dimensions.margin.bottom = 0.0;
+                prev_margin_bottom = collapsed;
+                cursor_y = child.dimensions.border_box().bottom();
+            } else {
+                cursor_y = child.dimensions.border_box().bottom();
+                prev_margin_bottom = child.dimensions.margin.bottom;
+            }
         }
 
         let parent_has_bottom_strut = container_dims.border.bottom > 0.0
@@ -2385,7 +2572,7 @@ mod tests {
         style.margin_right = Length::Px(20.0);
         style.padding_left = Length::Px(5.0);
         style.padding_right = Length::Px(15.0);
-        child.style = Some(style);
+        child.style = Some(style.into());
         root.children.push(child);
 
         let mut float_ctx = FloatContext::new();
@@ -2407,7 +2594,7 @@ mod tests {
         style.width = Length::Px(200.0);
         style.margin_left = Length::Auto;
         style.margin_right = Length::Auto;
-        child.style = Some(style);
+        child.style = Some(style.into());
         root.children.push(child);
 
         let mut float_ctx = FloatContext::new();
@@ -2433,7 +2620,7 @@ mod tests {
         style.max_width = Length::Px(600.0);
         style.margin_left = Length::Auto;
         style.margin_right = Length::Auto;
-        child.style = Some(style);
+        child.style = Some(style.into());
         root.children.push(child);
 
         let mut float_ctx = FloatContext::new();
@@ -2457,14 +2644,14 @@ mod tests {
         let mut child1 = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
         let mut s1 = ComputedStyle::default();
         s1.min_height = Length::Px(150.0);
-        child1.style = Some(s1);
+        child1.style = Some(s1.into());
 
         // Child 2: explicit height is 500px, but max-height is 200px
         let mut child2 = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
         let mut s2 = ComputedStyle::default();
         s2.height = Length::Px(500.0);
         s2.max_height = Length::Px(200.0);
-        child2.style = Some(s2);
+        child2.style = Some(s2.into());
 
         root.children.push(child1);
         root.children.push(child2);
@@ -2486,13 +2673,13 @@ mod tests {
         let mut s1 = ComputedStyle::default();
         s1.height = Length::Px(50.0);
         s1.margin_bottom = Length::Px(30.0);
-        b1.style = Some(s1);
+        b1.style = Some(s1.into());
 
         let mut b2 = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
         let mut s2 = ComputedStyle::default();
         s2.height = Length::Px(50.0);
         s2.margin_top = Length::Px(20.0); // 30.max(20) = 30 collapsed gap
-        b2.style = Some(s2);
+        b2.style = Some(s2.into());
 
         root.children.push(b1);
         root.children.push(b2);
@@ -2520,7 +2707,7 @@ mod tests {
         let mut s1 = ComputedStyle::default();
         s1.height = Length::Px(50.0);
         s1.margin_bottom = Length::Px(-20.0);
-        b1.style = Some(s1);
+        b1.style = Some(s1.into());
 
         // Child 2: height 50, margin-top: 30
         // Mixed: 30 + (-20) = 10 collapsed margin
@@ -2529,7 +2716,7 @@ mod tests {
         s2.height = Length::Px(50.0);
         s2.margin_top = Length::Px(30.0);
         s2.margin_bottom = Length::Px(-15.0);
-        b2.style = Some(s2);
+        b2.style = Some(s2.into());
 
         // Child 3: height 50, margin-top: -25
         // Both negative: min(-15, -25) = -25 collapsed margin
@@ -2537,7 +2724,7 @@ mod tests {
         let mut s3 = ComputedStyle::default();
         s3.height = Length::Px(50.0);
         s3.margin_top = Length::Px(-25.0);
-        b3.style = Some(s3);
+        b3.style = Some(s3.into());
 
         root.children.push(b1);
         root.children.push(b2);
@@ -2571,7 +2758,7 @@ mod tests {
         p_style.height = Length::Auto;
         p_style.margin_top = Length::Px(10.0);
         p_style.margin_bottom = Length::Px(10.0);
-        parent.style = Some(p_style);
+        parent.style = Some(p_style.into());
 
         // Child has height 100, margin-top: 40, margin-bottom: 50
         let mut child = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
@@ -2579,7 +2766,7 @@ mod tests {
         c_style.height = Length::Px(100.0);
         c_style.margin_top = Length::Px(40.0);
         c_style.margin_bottom = Length::Px(50.0);
-        child.style = Some(c_style);
+        child.style = Some(c_style.into());
 
         parent.children.push(child);
         root.children.push(parent);
@@ -2608,19 +2795,19 @@ mod tests {
         float_style.float = mango_css::values::Float::Right;
         float_style.width = Length::Px(200.0);
         float_style.height = Length::Px(80.0);
-        float_box.style = Some(float_style);
+        float_box.style = Some(float_style.into());
 
         // Paragraph containing text
         let mut p_box = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
         let p_style = ComputedStyle::default();
-        p_box.style = Some(p_style);
+        p_box.style = Some(p_style.into());
 
         let text_child = LayoutBox::new(
             crate::box_model::BoxType::TextNode(
                 "Wikipedia is a free online encyclopedia written and maintained by a community of volunteers."
                     .to_string(),
             ),
-            Some(ComputedStyle::default()),
+            Some(ComputedStyle::default().into()),
         );
         p_box.children.push(text_child);
 
@@ -2661,14 +2848,14 @@ mod tests {
         let mut multi_style = ComputedStyle::default();
         multi_style.column_count = Some(2);
         multi_style.column_gap = Length::Px(20.0);
-        root.style = Some(multi_style);
+        root.style = Some(multi_style.into());
 
         // 4 child items of height 40px each
         for i in 0..4 {
             let mut child = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
             let mut child_style = ComputedStyle::default();
             child_style.height = Length::Px(40.0);
-            child.style = Some(child_style);
+            child.style = Some(child_style.into());
             child.tag_name = Some(format!("item-{}", i));
             root.children.push(child);
         }
@@ -2707,7 +2894,7 @@ mod tests {
         let mut style = ComputedStyle::default();
         style.width = Length::Px(200.0);
         style.height = Length::Auto;
-        img_box.style = Some(style);
+        img_box.style = Some(style.into());
 
         let mut float_ctx = FloatContext::new();
         layout_block(&mut img_box, &containing_block, &mut float_ctx);
@@ -2732,7 +2919,7 @@ mod tests {
         let mut style2 = ComputedStyle::default();
         style2.width = Length::Auto;
         style2.height = Length::Px(50.0);
-        img_box2.style = Some(style2);
+        img_box2.style = Some(style2.into());
 
         let mut float_ctx2 = FloatContext::new();
         layout_block(&mut img_box2, &containing_block, &mut float_ctx2);
@@ -2758,7 +2945,7 @@ mod tests {
         style3.width = Length::Px(320.0);
         style3.height = Length::Auto;
         style3.aspect_ratio = Some(16.0 / 9.0);
-        img_box3.style = Some(style3);
+        img_box3.style = Some(style3.into());
 
         let mut float_ctx3 = FloatContext::new();
         layout_block(&mut img_box3, &containing_block, &mut float_ctx3);
@@ -2783,7 +2970,7 @@ mod tests {
         style4.width = Length::Auto;
         style4.height = Length::Px(180.0);
         style4.aspect_ratio = Some(16.0 / 9.0);
-        img_box4.style = Some(style4);
+        img_box4.style = Some(style4.into());
 
         let mut float_ctx4 = FloatContext::new();
         layout_block(&mut img_box4, &containing_block, &mut float_ctx4);
@@ -2844,14 +3031,14 @@ mod tests {
         abs_style.display = Display::Block;
         abs_style.width = Length::Auto;
         abs_style.height = Length::Px(50.0);
-        abs_box.style = Some(abs_style);
+        abs_box.style = Some(abs_style.into());
 
         let mut child = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
         let mut c_style = ComputedStyle::default();
         c_style.display = Display::Block;
         c_style.width = Length::Px(120.0);
         c_style.height = Length::Px(30.0);
-        child.style = Some(c_style);
+        child.style = Some(c_style.into());
         abs_box.children.push(child);
 
         root.children.push(abs_box);
@@ -2882,7 +3069,7 @@ mod tests {
         abs_style.margin_bottom = Length::Percent(10.0);
         abs_style.margin_left = Length::Percent(10.0);
         abs_style.margin_right = Length::Percent(10.0);
-        abs_box.style = Some(abs_style);
+        abs_box.style = Some(abs_style.into());
 
         root.children.push(abs_box);
 
@@ -2908,7 +3095,7 @@ mod tests {
         s_style.display = Display::Block;
         s_style.width = Length::Px(500.0);
         s_style.height = Length::Px(150.0);
-        sibling.style = Some(s_style);
+        sibling.style = Some(s_style.into());
 
         let mut abs_box = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
         let mut abs_style = ComputedStyle::default();
@@ -2918,7 +3105,7 @@ mod tests {
         abs_style.left = Length::Auto;
         abs_style.width = Length::Px(100.0);
         abs_style.height = Length::Px(80.0);
-        abs_box.style = Some(abs_style);
+        abs_box.style = Some(abs_style.into());
 
         root.children.push(sibling);
         root.children.push(abs_box);
@@ -2942,14 +3129,14 @@ mod tests {
         f1_style.float = Float::Right;
         f1_style.width = Length::Px(300.0);
         f1_style.height = Length::Px(100.0);
-        float1.style = Some(f1_style);
+        float1.style = Some(f1_style.into());
 
         let mut float2 = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
         let mut f2_style = ComputedStyle::default();
         f2_style.float = Float::Right;
         f2_style.width = Length::Px(300.0);
         f2_style.height = Length::Px(100.0);
-        float2.style = Some(f2_style);
+        float2.style = Some(f2_style.into());
 
         root.children.push(float1);
         root.children.push(float2);
@@ -2980,7 +3167,7 @@ mod tests {
         p_style.padding_bottom = Length::Px(20.0);
         p_style.border_top_width = 10.0;
         p_style.border_bottom_width = 10.0;
-        parent.style = Some(p_style);
+        parent.style = Some(p_style.into());
 
         root.children.push(parent);
 
@@ -3007,7 +3194,7 @@ mod tests {
         r_style.top = Length::Percent(50.0);
         r_style.width = Length::Px(200.0);
         r_style.height = Length::Px(100.0);
-        rel_box.style = Some(r_style);
+        rel_box.style = Some(r_style.into());
 
         root.children.push(rel_box);
 
@@ -3032,7 +3219,7 @@ mod tests {
         bfc_style.overflow_y = Overflow::Hidden;
         bfc_style.height = Length::Auto;
         bfc_style.margin_top = Length::Px(10.0);
-        bfc_box.style = Some(bfc_style);
+        bfc_box.style = Some(bfc_style.into());
 
         let mut child = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
         let mut c_style = ComputedStyle::default();
@@ -3040,7 +3227,7 @@ mod tests {
         c_style.height = Length::Px(80.0);
         c_style.margin_top = Length::Px(30.0);
         c_style.margin_bottom = Length::Px(20.0);
-        child.style = Some(c_style);
+        child.style = Some(c_style.into());
 
         bfc_box.children.push(child);
         root.children.push(bfc_box);
@@ -3074,14 +3261,14 @@ mod tests {
         bfc_style.overflow_x = Overflow::Hidden;
         bfc_style.overflow_y = Overflow::Hidden;
         bfc_style.height = Length::Auto;
-        bfc_box.style = Some(bfc_style);
+        bfc_box.style = Some(bfc_style.into());
 
         let mut float_child = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
         let mut f_style = ComputedStyle::default();
         f_style.float = Float::Left;
         f_style.width = Length::Px(150.0);
         f_style.height = Length::Px(120.0);
-        float_child.style = Some(f_style);
+        float_child.style = Some(f_style.into());
 
         bfc_box.children.push(float_child);
         root.children.push(bfc_box);
@@ -3107,7 +3294,7 @@ mod tests {
         style.width = Length::Px(200.0);
         style.margin_left = Length::Px(10.0);
         style.margin_right = Length::Px(10.0);
-        block.style = Some(style);
+        block.style = Some(style.into());
 
         root.children.push(block);
 
@@ -3132,7 +3319,7 @@ mod tests {
         f_style.float = Float::Left;
         f_style.width = Length::Px(150.0);
         f_style.height = Length::Px(100.0);
-        float_left.style = Some(f_style);
+        float_left.style = Some(f_style.into());
 
         let mut bfc_child = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
         let mut bfc_style = ComputedStyle::default();
@@ -3141,7 +3328,7 @@ mod tests {
         bfc_style.overflow_y = Overflow::Hidden;
         bfc_style.width = Length::Px(200.0);
         bfc_style.height = Length::Px(80.0);
-        bfc_child.style = Some(bfc_style);
+        bfc_child.style = Some(bfc_style.into());
 
         root.children.push(float_left);
         root.children.push(bfc_child);
@@ -3164,7 +3351,7 @@ mod tests {
         let mut child = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
         let mut style = ComputedStyle::default();
         style.width = Length::parse("clamp(200px, 50%, 600px)").expect("clamp should parse");
-        child.style = Some(style);
+        child.style = Some(style.into());
         root.children.push(child);
 
         let mut float_ctx = FloatContext::new();
@@ -3179,7 +3366,7 @@ mod tests {
         let mut child_large = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
         let mut style_large = ComputedStyle::default();
         style_large.width = Length::parse("clamp(200px, 50%, 600px)").unwrap();
-        child_large.style = Some(style_large);
+        child_large.style = Some(style_large.into());
         root_large.children.push(child_large);
 
         let mut float_ctx2 = FloatContext::new();
@@ -3192,7 +3379,7 @@ mod tests {
         let mut child_small = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
         let mut style_small = ComputedStyle::default();
         style_small.width = Length::parse("clamp(200px, 50%, 600px)").unwrap();
-        child_small.style = Some(style_small);
+        child_small.style = Some(style_small.into());
         root_small.children.push(child_small);
 
         let mut float_ctx3 = FloatContext::new();
@@ -3210,7 +3397,7 @@ mod tests {
         let mut style = ComputedStyle::default();
         // min(50%, 300px) -> for 1000px, min(500, 300) = 300px
         style.width = Length::parse("min(50%, 300px)").expect("min should parse");
-        child.style = Some(style);
+        child.style = Some(style.into());
         root.children.push(child);
 
         let mut float_ctx = FloatContext::new();

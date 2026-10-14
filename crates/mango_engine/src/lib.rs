@@ -66,6 +66,7 @@ impl Default for EngineConfig {
 pub struct Engine {
     document: Document,
     shared_document: Option<std::rc::Rc<std::cell::RefCell<Document>>>,
+    last_synced_version: u64,
     author_stylesheets: Vec<Stylesheet>,
     style_tree: Option<StyledNode>,
     layout_snapshot: Option<LayoutSnapshot>,
@@ -102,6 +103,7 @@ impl Engine {
         Self {
             document: Document::new(),
             shared_document: None,
+            last_synced_version: 0,
             author_stylesheets: Vec::new(),
             style_tree: None,
             layout_snapshot: None,
@@ -141,6 +143,7 @@ impl Engine {
         doc: Document,
         author_stylesheets: Vec<Stylesheet>,
     ) -> DisplayList {
+        self.last_synced_version = doc.version;
         self.document = doc;
         self.shared_document = None;
         self.author_stylesheets = author_stylesheets;
@@ -157,7 +160,9 @@ impl Engine {
         &mut self,
         doc: std::rc::Rc<std::cell::RefCell<Document>>,
     ) -> DisplayList {
+        let ver = doc.borrow().version;
         self.document = doc.borrow().clone();
+        self.last_synced_version = ver;
         self.shared_document = Some(doc);
         self.style_invalidator.clear();
         self.display_list_cache.invalidate(None);
@@ -170,11 +175,18 @@ impl Engine {
         self.shared_document.clone()
     }
 
-    /// Synchronizes the engine's internal document from the shared document if configured.
+    /// Synchronizes the engine's internal document from the shared document if changed.
+    /// Returns true only if the document was mutated and freshly synchronized.
     pub fn sync_from_shared_document(&mut self) -> bool {
         if let Some(ref shared) = self.shared_document {
-            self.document = shared.borrow().clone();
-            true
+            let borrowed = shared.borrow();
+            if borrowed.version != self.last_synced_version {
+                self.document = borrowed.clone();
+                self.last_synced_version = borrowed.version;
+                true
+            } else {
+                false
+            }
         } else {
             false
         }
@@ -219,7 +231,9 @@ impl Engine {
 
         // 2. Build Immutable Layout Snapshot
         if let Some(ref root) = styled_root {
-            let snapshot = LayoutSnapshot::from_styled_tree(root, self.viewport);
+            let maps = mango_layout::collect_image_maps(&self.document);
+            let snapshot =
+                LayoutSnapshot::from_styled_tree_with_maps(root, Some(&maps), self.viewport);
             let raw_dl = snapshot.display_list().clone();
             self.layout_snapshot = Some(snapshot);
 
@@ -237,7 +251,9 @@ impl Engine {
     /// Re-executes layout for the current viewport and updates the display list.
     pub fn relayout(&mut self) -> DisplayList {
         if let Some(ref styled_root) = self.style_tree {
-            let snapshot = LayoutSnapshot::from_styled_tree(styled_root, self.viewport);
+            let maps = mango_layout::collect_image_maps(&self.document);
+            let snapshot =
+                LayoutSnapshot::from_styled_tree_with_maps(styled_root, Some(&maps), self.viewport);
             let raw_dl = if self.scroll_y == 0.0 {
                 snapshot.display_list().clone()
             } else {
@@ -381,6 +397,11 @@ impl Engine {
         F: FnOnce(&mut Document) -> R,
     {
         let res = f(&mut self.document);
+        self.document.version = self.document.version.wrapping_add(1);
+        self.last_synced_version = self.document.version;
+        if let Some(ref shared) = self.shared_document {
+            *shared.borrow_mut() = self.document.clone();
+        }
 
         let dirty = self.document.take_dirty_nodes();
         if !dirty.is_empty()

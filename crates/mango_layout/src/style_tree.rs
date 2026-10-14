@@ -3,6 +3,8 @@
 //! Elements with `display: none` and non-rendered nodes (`<head>`, `<style>`, `<script>`)
 //! are filtered out, producing a clean tree of rendered styled nodes.
 
+use std::sync::Arc;
+
 use mango_css::computed::{
     ComputedStyle, compute_pseudo_style_with_index, compute_style_with_index,
 };
@@ -15,7 +17,7 @@ use mango_html::dom::{Document, NodeData, NodeId};
 #[derive(Debug, Clone, PartialEq)]
 pub struct StyledNode {
     pub node_id: Option<NodeId>,
-    pub style: ComputedStyle,
+    pub style: Arc<ComputedStyle>,
     pub text: Option<String>,
     /// The element's tag name (e.g. "div", "img"), or None for text/document nodes.
     pub tag_name: Option<String>,
@@ -25,10 +27,10 @@ pub struct StyledNode {
 }
 
 impl StyledNode {
-    pub fn new(node_id: Option<NodeId>, style: ComputedStyle) -> Self {
+    pub fn new(node_id: Option<NodeId>, style: impl Into<Arc<ComputedStyle>>) -> Self {
         Self {
             node_id,
-            style,
+            style: style.into(),
             text: None,
             tag_name: None,
             attributes: Vec::new(),
@@ -36,10 +38,10 @@ impl StyledNode {
         }
     }
 
-    pub fn with_text(node_id: Option<NodeId>, style: ComputedStyle, text: String) -> Self {
+    pub fn with_text(node_id: Option<NodeId>, style: impl Into<Arc<ComputedStyle>>, text: String) -> Self {
         Self {
             node_id,
-            style,
+            style: style.into(),
             text: Some(text),
             tag_name: None,
             attributes: Vec::new(),
@@ -150,8 +152,11 @@ fn serialize_svg_dom_recursive(doc: &Document, node_id: NodeId, out: &mut String
     }
 }
 
-/// Scans the entire DOM for all `<map>` and `<area>` elements and registers them.
-fn scan_and_register_image_maps(doc: &Document) {
+/// Scans the entire DOM for all `<map>` and `<area>` elements and collects them into a map.
+pub fn collect_image_maps(
+    doc: &Document,
+) -> std::collections::HashMap<String, Vec<crate::box_tree::MapArea>> {
+    let mut map_registry = std::collections::HashMap::new();
     let mut stack = vec![doc.root()];
     while let Some(nid) = stack.pop() {
         if let Some(node) = doc.get(nid) {
@@ -183,13 +188,23 @@ fn scan_and_register_image_maps(doc: &Document) {
                             });
                         }
                     }
-                    crate::box_tree::register_image_map(map_name, areas);
+                    map_registry.insert(map_name.to_ascii_lowercase(), areas);
                 }
             }
             for child in doc.children(nid) {
                 stack.push(child.id);
             }
         }
+    }
+    map_registry
+}
+
+/// Scans the entire DOM for all `<map>` and `<area>` elements and registers them in the global fallback registry.
+fn scan_and_register_image_maps(doc: &Document) {
+    crate::box_tree::clear_image_maps();
+    let maps = collect_image_maps(doc);
+    for (name, areas) in maps {
+        crate::box_tree::register_image_map(&name, areas);
     }
 }
 
@@ -333,7 +348,19 @@ pub fn build_style_tree_with_size(
     viewport_width: f32,
     viewport_height: f32,
 ) -> Option<StyledNode> {
-    mango_css::set_current_viewport(viewport_width, viewport_height);
+    let mut env = mango_css::current_media_environment();
+    env.viewport_width = viewport_width;
+    env.viewport_height = viewport_height;
+    build_style_tree_with_env(doc, author_styles, &env)
+}
+
+/// Builds the styled tree from a DOM [`Document`] with an explicit [`MediaEnvironment`].
+pub fn build_style_tree_with_env(
+    doc: &Document,
+    author_styles: &[&Stylesheet],
+    env: &mango_css::MediaEnvironment,
+) -> Option<StyledNode> {
+    mango_css::set_current_viewport(env.viewport_width, env.viewport_height);
     // 0. Pre-register all global SVG symbols and HTML image maps
     scan_and_register_global_svg_symbols(doc);
     scan_and_register_image_maps(doc);
@@ -348,12 +375,11 @@ pub fn build_style_tree_with_size(
 
     // 2. Build RuleIndex ONCE for all author stylesheets
     let mut order = 1000;
-    let author_index = RuleIndex::from_stylesheets_with_size(
+    let author_index = RuleIndex::from_stylesheets_with_env(
         &all_author_sheets,
         Origin::Author,
         &mut order,
-        viewport_width,
-        viewport_height,
+        env.clone(),
     );
 
     // 3. Recursively build style tree from root
@@ -517,11 +543,28 @@ fn build_styled_node(
                 doc.children(node_id).map(|c| c.id).collect()
             };
 
-            for child_id in effective_children {
-                if let Some(styled_child) =
-                    build_styled_node(doc, child_id, author_index, Some(&style), counter_ctx)
-                {
-                    styled_children.push(styled_child);
+            if effective_children.len() >= 4
+                && created_counters.is_empty()
+                && style.counter_increment.is_empty()
+            {
+                use rayon::prelude::*;
+                let results: Vec<Option<StyledNode>> = effective_children
+                    .par_iter()
+                    .map(|&child_id| {
+                        let mut local_counter = counter_ctx.clone();
+                        build_styled_node(doc, child_id, author_index, Some(&style), &mut local_counter)
+                    })
+                    .collect();
+                for sc in results.into_iter().flatten() {
+                    styled_children.push(sc);
+                }
+            } else {
+                for child_id in effective_children {
+                    if let Some(styled_child) =
+                        build_styled_node(doc, child_id, author_index, Some(&style), counter_ctx)
+                    {
+                        styled_children.push(styled_child);
+                    }
                 }
             }
 
@@ -1423,7 +1466,7 @@ fn update_styled_subtree(
         match &dom_node.data {
             NodeData::Element(elem) => {
                 let old_style = node.style.clone();
-                node.style = compute_style_with_index(nid, doc, author_index, parent_style);
+                node.style = Arc::new(compute_style_with_index(nid, doc, author_index, parent_style));
                 node.attributes = elem
                     .attributes
                     .iter()
@@ -1447,7 +1490,7 @@ fn update_styled_subtree(
                     style.border_right_width = 0.0;
                     style.border_bottom_width = 0.0;
                     style.border_left_width = 0.0;
-                    node.style = style;
+                    node.style = Arc::new(style);
                     recalculated_count += 1;
                 }
             }

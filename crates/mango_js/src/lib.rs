@@ -15,5 +15,8 @@ pub mod dom_bindings;
 pub mod event_loop;
 pub mod runtime;
 pub mod web_apis;
+pub mod worker;
 
 pub use runtime::JsRuntime;
+pub use worker::WorkerManager;
+

@@ -166,8 +166,8 @@ impl TileGrid {
         let start_row = (damage.y().max(0.0) / self.tile_size as f32).floor() as u32;
         let end_row = (damage.bottom().max(0.0) / self.tile_size as f32).ceil() as u32;
 
-        for col in start_col..=end_col {
-            for row in start_row..=end_row {
+        for col in start_col..end_col {
+            for row in start_row..end_row {
                 let coord = TileCoord::new(col, row);
                 if let Some(tile) = self.tiles.get_mut(&coord) {
                     tile.dirty = true;
@@ -215,8 +215,8 @@ impl TileGrid {
         };
 
         let mut coords = Vec::new();
-        for col in start_col..=end_col.min(max_col) {
-            for row in start_row..=end_row.min(max_row) {
+        for col in start_col..end_col.min(max_col) {
+            for row in start_row..end_row.min(max_row) {
                 coords.push(TileCoord::new(col, row));
             }
         }
@@ -233,18 +233,36 @@ impl TileGrid {
         bg_color: Color,
         current_frame: u64,
     ) {
+        use rayon::prelude::*;
+
         let visible_coords = self.visible_tile_coords(viewport, 1);
         let tile_size = self.tile_size;
 
-        for coord in visible_coords {
+        for &coord in &visible_coords {
             let tile = self
                 .tiles
                 .entry(coord)
                 .or_insert_with(|| Tile::new(coord, tile_size));
 
             tile.last_used_frame = current_frame;
+        }
 
-            if tile.dirty {
+        let visible_set: std::collections::HashSet<TileCoord> =
+            visible_coords.into_iter().collect();
+
+        let mut dirty_tiles: Vec<&mut Tile> = self
+            .tiles
+            .iter_mut()
+            .filter(|(coord, tile)| visible_set.contains(coord) && tile.dirty)
+            .map(|(_, tile)| tile)
+            .collect();
+
+        if dirty_tiles.len() >= 2 {
+            dirty_tiles.par_iter_mut().for_each(|tile| {
+                tile.rasterize(display_list, bg_color);
+            });
+        } else {
+            for tile in dirty_tiles {
                 tile.rasterize(display_list, bg_color);
             }
         }
@@ -294,7 +312,10 @@ mod tests {
         // Check background pixel at (0, 0)
         assert_eq!(tile.pixels[0], Color::rgb(255, 255, 255).to_rgb_u32());
         // Check filled red pixel at (15, 15) -> 15 * 64 + 15 = 975
-        assert_eq!(tile.pixels[15 * 64 + 15], Color::rgb(255, 0, 0).to_rgb_u32());
+        assert_eq!(
+            tile.pixels[15 * 64 + 15],
+            Color::rgb(255, 0, 0).to_rgb_u32()
+        );
     }
 
     #[test]
@@ -312,7 +333,7 @@ mod tests {
 
         let dl = DisplayList::new();
         grid.ensure_tiles_rasterized(viewport, &dl, Color::rgb(255, 255, 255), 1);
-        assert!(grid.len() > 0);
+        assert!(!grid.is_empty());
         assert!(!grid.get_tile(TileCoord::new(0, 0)).unwrap().dirty);
 
         // Invalidate region overlapping tile (0, 0)

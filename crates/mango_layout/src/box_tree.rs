@@ -3,6 +3,8 @@
 //! Implements CSS 2.1 §9.2.1.1: If a block container has mixed inline and block children,
 //! contiguous sequences of inline boxes are enclosed in an anonymous block box.
 
+use std::sync::Arc;
+
 use mango_css::computed::ComputedStyle;
 use mango_css::values::Display;
 use mango_html::dom::NodeId;
@@ -19,7 +21,7 @@ pub struct LayoutBox {
     /// Box geometry (content, padding, border, margin).
     pub dimensions: Dimensions,
     /// Computed CSS style for this box, if backed by an element or anonymous block.
-    pub style: Option<ComputedStyle>,
+    pub style: Option<Arc<ComputedStyle>>,
     /// Child boxes.
     pub children: Vec<LayoutBox>,
     /// Hyperlink URL target if this box or an ancestor is an `<a>` element.
@@ -40,6 +42,8 @@ pub struct LayoutBox {
     pub scroll_offset_x: f32,
     /// Vertical scroll offset for scrollable containers (PRD 8.1).
     pub scroll_offset_y: f32,
+    /// Whether this box establishes an independent formatting context (e.g. flex or grid item).
+    pub is_independent_formatting_context: bool,
 }
 
 /// Supported geometric shapes for `<area>` elements in HTML image maps.
@@ -165,34 +169,28 @@ pub struct MapArea {
     pub target: Option<String>,
 }
 
-static IMAGE_MAP_REGISTRY: std::sync::OnceLock<
-    std::sync::RwLock<std::collections::HashMap<String, Vec<MapArea>>>,
-> = std::sync::OnceLock::new();
-
-fn image_map_registry()
--> &'static std::sync::RwLock<std::collections::HashMap<String, Vec<MapArea>>> {
-    IMAGE_MAP_REGISTRY.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()))
+thread_local! {
+    static IMAGE_MAP_REGISTRY: std::cell::RefCell<std::collections::HashMap<String, Vec<MapArea>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
 pub fn register_image_map(name: &str, areas: Vec<MapArea>) {
-    if let Ok(mut reg) = image_map_registry().write() {
-        reg.insert(name.to_ascii_lowercase(), areas);
-    }
+    IMAGE_MAP_REGISTRY.with(|reg| {
+        reg.borrow_mut().insert(name.to_ascii_lowercase(), areas);
+    });
 }
 
 pub fn get_image_map(name: &str) -> Option<Vec<MapArea>> {
     let clean_name = name.trim().trim_start_matches('#').to_ascii_lowercase();
-    if let Ok(reg) = image_map_registry().read() {
-        reg.get(&clean_name).cloned()
-    } else {
-        None
-    }
+    IMAGE_MAP_REGISTRY.with(|reg| {
+        reg.borrow().get(&clean_name).cloned()
+    })
 }
 
 pub fn clear_image_maps() {
-    if let Ok(mut reg) = image_map_registry().write() {
-        reg.clear();
-    }
+    IMAGE_MAP_REGISTRY.with(|reg| {
+        reg.borrow_mut().clear();
+    });
 }
 
 /// Result of hit-testing an interactive form control in the box tree.
@@ -231,7 +229,7 @@ pub enum MediaClickAction {
 }
 
 impl LayoutBox {
-    pub fn new(box_type: BoxType, style: Option<ComputedStyle>) -> Self {
+    pub fn new(box_type: BoxType, style: Option<Arc<ComputedStyle>>) -> Self {
         Self {
             box_type,
             dimensions: Dimensions::default(),
@@ -246,7 +244,16 @@ impl LayoutBox {
             raw_children: None,
             scroll_offset_x: 0.0,
             scroll_offset_y: 0.0,
+            is_independent_formatting_context: false,
         }
+    }
+
+    pub fn new_with_style(box_type: BoxType, style: ComputedStyle) -> Self {
+        Self::new(box_type, Some(Arc::new(style)))
+    }
+
+    pub fn set_style(&mut self, style: impl Into<Arc<ComputedStyle>>) {
+        self.style = Some(style.into());
     }
 
     /// Marks this box and all descendants as dirty for display list invalidation (OPT-005).
@@ -467,8 +474,11 @@ impl LayoutBox {
         (delta_x, delta_y)
     }
 
-    pub fn new_anonymous_block(style: Option<ComputedStyle>) -> Self {
-        let style = style.map(|mut s| {
+    pub fn new_anonymous_block(style: Option<Arc<ComputedStyle>>) -> Self {
+        let style = style.map(|s| {
+            let mut s = (*s).clone();
+            // Anonymous blocks only inherit inheritable properties (CSS 2.1 §9.2.1.1).
+            // Reset all non-inheritable box/positioning/visual props to initial.
             s.display = Display::Block;
             s.clear = mango_css::values::Clear::None;
             s.float = mango_css::values::Float::None;
@@ -490,6 +500,18 @@ impl LayoutBox {
             s.border_right_width = 0.0;
             s.border_bottom_width = 0.0;
             s.border_left_width = 0.0;
+            s.border_top_style = mango_css::values::BorderStyle::None;
+            s.border_right_style = mango_css::values::BorderStyle::None;
+            s.border_bottom_style = mango_css::values::BorderStyle::None;
+            s.border_left_style = mango_css::values::BorderStyle::None;
+            s.border_top_color = mango_core::Color::BLACK;
+            s.border_right_color = mango_core::Color::BLACK;
+            s.border_bottom_color = mango_core::Color::BLACK;
+            s.border_left_color = mango_core::Color::BLACK;
+            s.border_top_left_radius = 0.0;
+            s.border_top_right_radius = 0.0;
+            s.border_bottom_right_radius = 0.0;
+            s.border_bottom_left_radius = 0.0;
             s.width = mango_css::values::Length::Auto;
             s.height = mango_css::values::Length::Auto;
             s.min_width = mango_css::values::Length::Auto;
@@ -498,9 +520,29 @@ impl LayoutBox {
             s.max_height = mango_css::values::Length::Auto;
             s.background_color = mango_core::Color::TRANSPARENT;
             s.background_image = None;
+            s.background_layers = Vec::new();
+            s.background_gradient = None;
             s.box_shadow = None;
             s.outline_width = 0.0;
-            s
+            s.outline_style = mango_css::values::BorderStyle::None;
+            s.outline_color = mango_core::Color::TRANSPARENT;
+            s.outline_offset = 0.0;
+            s.top = mango_css::values::Length::Auto;
+            s.right = mango_css::values::Length::Auto;
+            s.bottom = mango_css::values::Length::Auto;
+            s.left = mango_css::values::Length::Auto;
+            s.filter = Vec::new();
+            s.backdrop_filter = Vec::new();
+            s.mix_blend_mode = mango_css::values::BlendMode::Normal;
+            s.background_blend_mode = mango_css::values::BlendMode::Normal;
+            s.clip_path = mango_css::values::ClipPath::None;
+            s.mask_image = None;
+            s.isolation = mango_css::values::Isolation::Auto;
+            s.contain = mango_css::values::Contain::None;
+            s.content_visibility = mango_css::values::ContentVisibility::Visible;
+            s.will_change = false;
+            s.will_change_properties = Vec::new();
+            Arc::new(s)
         });
         Self {
             box_type: BoxType::AnonymousBlock,
@@ -516,6 +558,7 @@ impl LayoutBox {
             raw_children: None,
             scroll_offset_x: 0.0,
             scroll_offset_y: 0.0,
+            is_independent_formatting_context: false,
         }
     }
 
@@ -883,21 +926,49 @@ impl LayoutBox {
     }
 }
 
+fn resolve_map_areas(
+    usemap: &str,
+    maps: Option<&std::collections::HashMap<String, Vec<MapArea>>>,
+) -> Option<Vec<MapArea>> {
+    let clean_name = usemap.trim().trim_start_matches('#').to_ascii_lowercase();
+    if let Some(m) = maps && let Some(areas) = m.get(&clean_name) {
+        return Some(areas.clone());
+    }
+    get_image_map(usemap)
+}
+
+#[allow(dead_code)]
 fn collect_child_boxes(node: &StyledNode, out: &mut Vec<LayoutBox>) {
+    collect_child_boxes_with_maps(node, out, None);
+}
+
+fn collect_child_boxes_with_maps(
+    node: &StyledNode,
+    out: &mut Vec<LayoutBox>,
+    maps: Option<&std::collections::HashMap<String, Vec<MapArea>>>,
+) {
     if node.style.display == Display::Contents {
         for child in &node.children {
-            collect_child_boxes(child, out);
+            collect_child_boxes_with_maps(child, out, maps);
         }
     } else {
-        out.push(build_box_tree(node));
+        out.push(build_box_tree_with_maps(node, maps));
     }
 }
 
 /// Builds the complete layout box tree from a styled node.
 pub fn build_box_tree(styled_node: &StyledNode) -> LayoutBox {
+    build_box_tree_with_maps(styled_node, None)
+}
+
+/// Builds the complete layout box tree from a styled node with an optional explicit image map registry.
+pub fn build_box_tree_with_maps(
+    styled_node: &StyledNode,
+    maps: Option<&std::collections::HashMap<String, Vec<MapArea>>>,
+) -> LayoutBox {
     // Detect <img> elements — generate a ReplacedElement box
     if styled_node.tag_name.as_deref() == Some("img") {
-        return build_replaced_element(styled_node);
+        return build_replaced_element_with_maps(styled_node, maps);
     }
 
     // Detect <embed> elements — generate a ReplacedElement box or fallback container
@@ -907,7 +978,7 @@ pub fn build_box_tree(styled_node: &StyledNode) -> LayoutBox {
 
     // Detect <object> elements — decode media or gracefully fall back to child nodes
     if styled_node.tag_name.as_deref() == Some("object")
-        && let Some(obj_box) = try_build_object_element(styled_node)
+        && let Some(obj_box) = try_build_object_element_with_maps(styled_node, maps)
     {
         return obj_box;
     }
@@ -919,17 +990,17 @@ pub fn build_box_tree(styled_node: &StyledNode) -> LayoutBox {
 
     // Detect <iframe> elements — generate a nested browsing context box
     if styled_node.tag_name.as_deref() == Some("iframe") {
-        return build_iframe_element(styled_node);
+        return build_iframe_element_with_maps(styled_node, maps);
     }
 
     // Detect <video> elements — generate a Video replaced box
     if styled_node.tag_name.as_deref() == Some("video") {
-        return build_video_element(styled_node);
+        return build_video_element_with_maps(styled_node, maps);
     }
 
     // Detect <audio> elements — generate an Audio replaced box
     if styled_node.tag_name.as_deref() == Some("audio") {
-        return build_audio_element(styled_node);
+        return build_audio_element_with_maps(styled_node, maps);
     }
 
     // Detect <canvas> elements — generate a Canvas replaced box
@@ -1049,7 +1120,7 @@ pub fn build_box_tree(styled_node: &StyledNode) -> LayoutBox {
     // Recursively build children, hoisting Display::Contents children directly into parent
     let mut raw_children: Vec<LayoutBox> = Vec::new();
     for child in &styled_node.children {
-        collect_child_boxes(child, &mut raw_children);
+        collect_child_boxes_with_maps(child, &mut raw_children, maps);
     }
 
     let is_flex = styled_node.style.display == Display::Flex
@@ -1076,8 +1147,32 @@ pub fn build_box_tree(styled_node: &StyledNode) -> LayoutBox {
     );
 
     if is_flex || is_grid {
-        // In CSS Flexbox and Grid, children become items directly without anonymous block wrapping
-        root_box.children = raw_children;
+        // In CSS Flexbox and Grid, children become items directly without anonymous block wrapping.
+        // Stray text runs must be wrapped in anonymous flex/grid items (CSS Flexbox §4).
+        let mut items = Vec::with_capacity(raw_children.len());
+        for mut child in raw_children {
+            let is_stray_text = matches!(child.box_type, crate::box_model::BoxType::TextNode(_));
+            if is_stray_text {
+                // Drop purely collapsible whitespace; wrap significant text.
+                let is_ws = child
+                    .text()
+                    .map(|t| t.chars().all(|ch| ch.is_ascii_whitespace()))
+                    .unwrap_or(true);
+                if is_ws {
+                    continue;
+                }
+                let mut anon =
+                    LayoutBox::new_anonymous_block(Some(styled_node.style.clone()));
+                anon.is_independent_formatting_context = true;
+                child.is_independent_formatting_context = false;
+                anon.children.push(child);
+                items.push(anon);
+            } else {
+                child.is_independent_formatting_context = true;
+                items.push(child);
+            }
+        }
+        root_box.children = items;
     } else if is_table_context {
         // Filter out whitespace-only text nodes between table rows, cells, and colgroups
         root_box.children = raw_children
@@ -1217,12 +1312,20 @@ pub(crate) fn parse_dimension_attr(val: &str) -> Option<f32> {
 /// Builds a [`ReplacedElement`](BoxType::ReplacedElement) for `<img>` elements.
 ///
 /// Reads `src`, `width`, and `height` attributes. Supports `data:` URIs for inline images.
+#[allow(dead_code)]
 fn build_replaced_element(styled_node: &StyledNode) -> LayoutBox {
+    build_replaced_element_with_maps(styled_node, None)
+}
+
+fn build_replaced_element_with_maps(
+    styled_node: &StyledNode,
+    maps: Option<&std::collections::HashMap<String, Vec<MapArea>>>,
+) -> LayoutBox {
     let get_attr = |name: &str| -> Option<&str> {
         styled_node
             .attributes
             .iter()
-            .find(|(k, _)| k == name)
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
             .map(|(_, v)| v.as_str())
     };
 
@@ -1383,7 +1486,7 @@ fn build_replaced_element(styled_node: &StyledNode) -> LayoutBox {
     b.attributes = styled_node.attributes.clone();
 
     if let Some(usemap) = get_attr("usemap")
-        && let Some(areas) = get_image_map(usemap)
+        && let Some(areas) = resolve_map_areas(usemap, maps)
     {
         b.map_areas = areas;
     }
@@ -1446,7 +1549,15 @@ fn build_embed_element(styled_node: &StyledNode) -> LayoutBox {
 /// Attempts to build a [`BoxType::ReplacedElement`] for `<object>` elements if media data is valid.
 /// If media decoding fails or data is missing, returns `None` so `build_box_tree` gracefully
 /// falls back to rendering the child fallback nodes.
+#[allow(dead_code)]
 fn try_build_object_element(styled_node: &StyledNode) -> Option<LayoutBox> {
+    try_build_object_element_with_maps(styled_node, None)
+}
+
+fn try_build_object_element_with_maps(
+    styled_node: &StyledNode,
+    maps: Option<&std::collections::HashMap<String, Vec<MapArea>>>,
+) -> Option<LayoutBox> {
     let get_attr = |name: &str| -> Option<&str> {
         styled_node
             .attributes
@@ -1508,7 +1619,7 @@ fn try_build_object_element(styled_node: &StyledNode) -> Option<LayoutBox> {
     b.attributes = styled_node.attributes.clone();
 
     if let Some(usemap) = get_attr("usemap")
-        && let Some(areas) = get_image_map(usemap)
+        && let Some(areas) = resolve_map_areas(usemap, maps)
     {
         b.map_areas = areas;
     }
@@ -1669,6 +1780,13 @@ fn serialize_svg_recursive(node: &StyledNode, out: &mut String) {
 /// - Parses and lays out inner document from `srcdoc` or `data:text/html` into child boxes
 /// - Sets navigation target for interactive click-through
 pub fn build_iframe_element(styled_node: &StyledNode) -> LayoutBox {
+    build_iframe_element_with_maps(styled_node, None)
+}
+
+fn build_iframe_element_with_maps(
+    styled_node: &StyledNode,
+    maps: Option<&std::collections::HashMap<String, Vec<MapArea>>>,
+) -> LayoutBox {
     let get_attr = |name: &str| -> Option<&str> {
         styled_node
             .attributes
@@ -1740,13 +1858,13 @@ pub fn build_iframe_element(styled_node: &StyledNode) -> LayoutBox {
     if let Some(html) = inner_html {
         let inner_doc = mango_html::parse_html(&html);
         if let Some(inner_styled_root) = crate::style_tree::build_style_tree(&inner_doc, &[]) {
-            let inner_box = build_box_tree(&inner_styled_root);
+            let inner_box = build_box_tree_with_maps(&inner_styled_root, maps);
             b.children.push(inner_box);
         }
     } else {
         // Fallback content inside <iframe>...</iframe> for older/unsupported frame markup
         for child in &styled_node.children {
-            b.children.push(build_box_tree(child));
+            b.children.push(build_box_tree_with_maps(child, maps));
         }
     }
 
@@ -1833,6 +1951,13 @@ fn base64_decode_bytes(input: &[u8]) -> Option<Vec<u8>> {
 /// - Extracts playback controls (`controls`, `autoplay`, `loop`, `muted`) and runtime state
 /// - Resolves intrinsic dimensions (defaults to 300×150 per HTML5 spec, or poster dimensions, overridden by CSS/attributes)
 pub fn build_video_element(styled_node: &StyledNode) -> LayoutBox {
+    build_video_element_with_maps(styled_node, None)
+}
+
+fn build_video_element_with_maps(
+    styled_node: &StyledNode,
+    maps: Option<&std::collections::HashMap<String, Vec<MapArea>>>,
+) -> LayoutBox {
     let get_attr = |name: &str| -> Option<&str> {
         styled_node
             .attributes
@@ -1970,7 +2095,7 @@ pub fn build_video_element(styled_node: &StyledNode) -> LayoutBox {
 
     // Preserve child nodes (e.g. <track>, fallback text)
     for child in &styled_node.children {
-        b.children.push(build_box_tree(child));
+        b.children.push(build_box_tree_with_maps(child, maps));
     }
     b
 }
@@ -1982,6 +2107,13 @@ pub fn build_video_element(styled_node: &StyledNode) -> LayoutBox {
 /// - Extracts controls and playback state
 /// - Sized to standard 300×36 bar when controls are enabled, or 0×0 / hidden when without controls
 pub fn build_audio_element(styled_node: &StyledNode) -> LayoutBox {
+    build_audio_element_with_maps(styled_node, None)
+}
+
+fn build_audio_element_with_maps(
+    styled_node: &StyledNode,
+    maps: Option<&std::collections::HashMap<String, Vec<MapArea>>>,
+) -> LayoutBox {
     let get_attr = |name: &str| -> Option<&str> {
         styled_node
             .attributes
@@ -2070,7 +2202,7 @@ pub fn build_audio_element(styled_node: &StyledNode) -> LayoutBox {
     b.attributes = styled_node.attributes.clone();
 
     for child in &styled_node.children {
-        b.children.push(build_box_tree(child));
+        b.children.push(build_box_tree_with_maps(child, maps));
     }
     b
 }
@@ -2524,7 +2656,7 @@ mod tests {
         let mut css_style = ComputedStyle::default();
         css_style.width = mango_css::Length::Px(600.0);
         css_style.height = mango_css::Length::Auto;
-        box_tree4.style = Some(css_style);
+        box_tree4.style = Some(css_style.into());
 
         let cb = Dimensions::new(mango_core::Rect::new(0.0, 0.0, 1000.0, 800.0));
         let mut float_ctx = crate::FloatContext::new();
@@ -2547,7 +2679,7 @@ mod tests {
         parent_style.z_index = Some(999);
         parent_style.opacity = 0.5;
 
-        let anon = LayoutBox::new_anonymous_block(Some(parent_style));
+        let anon = LayoutBox::new_anonymous_block(Some(parent_style.into()));
         assert_eq!(anon.box_type, BoxType::AnonymousBlock);
         assert!(
             !anon.is_scroll_container(),
@@ -2566,7 +2698,7 @@ mod tests {
         let mut container_style = ComputedStyle::default();
         container_style.display = Display::Block;
         container_style.overflow_y = mango_css::values::Overflow::Scroll;
-        let mut container = LayoutBox::new(BoxType::BlockNode, Some(container_style));
+        let mut container = LayoutBox::new(BoxType::BlockNode, Some(container_style.into()));
         container.dimensions.content = mango_core::Rect::new(0.0, 0.0, 300.0, 200.0);
         container.dimensions.padding.top = 0.0;
         container.dimensions.padding.bottom = 0.0;
@@ -2575,7 +2707,7 @@ mod tests {
 
         let mut child_style = ComputedStyle::default();
         child_style.display = Display::Block;
-        let mut child = LayoutBox::new(BoxType::BlockNode, Some(child_style));
+        let mut child = LayoutBox::new(BoxType::BlockNode, Some(child_style.into()));
         child.node_id = Some(NodeId::from_raw(42));
         // Child is at y = 100..150
         child.dimensions.content = mango_core::Rect::new(10.0, 100.0, 200.0, 50.0);
@@ -2624,7 +2756,7 @@ mod tests {
         style.display = Display::Block;
         style.visibility = mango_css::values::Visibility::Hidden;
 
-        let mut hidden_box = LayoutBox::new(BoxType::BlockNode, Some(style));
+        let mut hidden_box = LayoutBox::new(BoxType::BlockNode, Some(style.into()));
         hidden_box.node_id = Some(NodeId::from_raw(10));
         hidden_box.dimensions.content = mango_core::Rect::new(0.0, 0.0, 100.0, 100.0);
         hidden_box.link_target = Some("https://example.com/hidden".to_string());
@@ -2643,7 +2775,7 @@ mod tests {
         let mut child_style = ComputedStyle::default();
         child_style.display = Display::Block;
         child_style.visibility = mango_css::values::Visibility::Visible;
-        let mut visible_child = LayoutBox::new(BoxType::BlockNode, Some(child_style));
+        let mut visible_child = LayoutBox::new(BoxType::BlockNode, Some(child_style.into()));
         visible_child.node_id = Some(NodeId::from_raw(20));
         visible_child.dimensions.content = mango_core::Rect::new(10.0, 10.0, 50.0, 50.0);
         visible_child.link_target = Some("https://example.com/visible-child".to_string());
@@ -2702,14 +2834,14 @@ mod tests {
         rel_parent_style.display = Display::Block;
         rel_parent_style.position = mango_css::values::Position::Relative;
 
-        let mut rel_parent = LayoutBox::new(BoxType::BlockNode, Some(rel_parent_style));
+        let mut rel_parent = LayoutBox::new(BoxType::BlockNode, Some(rel_parent_style.into()));
         rel_parent.dimensions.content = mango_core::Rect::new(0.0, 0.0, 200.0, 200.0);
 
         // Absolute child whose containing block is rel_parent
         let mut abs_style = ComputedStyle::default();
         abs_style.display = Display::Block;
         abs_style.position = mango_css::values::Position::Absolute;
-        let mut abs_child = LayoutBox::new(BoxType::BlockNode, Some(abs_style));
+        let mut abs_child = LayoutBox::new(BoxType::BlockNode, Some(abs_style.into()));
         // Positioned out at (250, 300) with size 100x100
         abs_child.dimensions.content = mango_core::Rect::new(250.0, 300.0, 100.0, 100.0);
         rel_parent.children.push(abs_child);
@@ -2725,7 +2857,7 @@ mod tests {
         let mut static_parent_style = ComputedStyle::default();
         static_parent_style.display = Display::Block;
         static_parent_style.position = mango_css::values::Position::Static;
-        let mut static_parent = LayoutBox::new(BoxType::BlockNode, Some(static_parent_style));
+        let mut static_parent = LayoutBox::new(BoxType::BlockNode, Some(static_parent_style.into()));
         static_parent.dimensions.content = mango_core::Rect::new(0.0, 0.0, 200.0, 200.0);
         static_parent.children = rel_parent.children.clone();
 
@@ -2771,7 +2903,7 @@ mod tests {
         let mut style = ComputedStyle::default();
         style.display = Display::InlineBlock;
 
-        let mut input_box = LayoutBox::new(BoxType::InlineBlock, Some(style));
+        let mut input_box = LayoutBox::new(BoxType::InlineBlock, Some(style.into()));
         input_box.node_id = Some(NodeId::from_raw(99));
         input_box.tag_name = Some("input".to_string());
         input_box.dimensions.content = mango_core::Rect::new(20.0, 30.0, 100.0, 25.0);

@@ -33,13 +33,14 @@ pub use computed::{
     compute_style_with_index,
 };
 pub use parser::{
-    ContainerRule, CssParser, FontFaceRule, KeyframeRule, KeyframesRule, MediaRule, Rule,
+    ContainerRule, CssParser, FontFaceRule, KeyframeRule, KeyframesRule, LayerRule, MediaRule, Rule,
     StyleRule, Stylesheet, parse_declaration_list, parse_selectors, parse_stylesheet,
 };
 pub use properties::Declaration;
 pub use property_id::{CSS_PROPERTY_COUNT, CssPropertyId, PropertyMap};
 pub use selectors::{
     AttributeOperator, Combinator, ComplexSelector, CompoundSelector, SelectorList, SimpleSelector,
+    expand_nested_selectors,
 };
 pub use specificity::Specificity;
 pub use tokenizer::{CssTokenizer, Token};

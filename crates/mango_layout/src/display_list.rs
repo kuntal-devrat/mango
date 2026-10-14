@@ -323,7 +323,6 @@ fn render_layout_box(
             filters: s_ref.unwrap().backdrop_filter.clone(),
             rect: elem_rect,
         });
-        list.push(DisplayCommand::PopBackdropFilter);
     }
 
     render_layout_box_inner(
@@ -337,6 +336,9 @@ fn render_layout_box(
         containing_block_rect,
     );
 
+    if push_backdrop {
+        list.push(DisplayCommand::PopBackdropFilter);
+    }
     if push_filter {
         list.push(DisplayCommand::PopFilter);
     }
@@ -361,7 +363,7 @@ fn render_layout_box_inner(
     scroll_y: f32,
     _containing_block_rect: Option<Rect>,
 ) {
-    let style = box_node.style.as_ref();
+    let style = box_node.style.as_deref();
     let is_visible = style.is_none_or(|s| s.is_visible());
     let opacity = style.map_or(1.0, |s| s.opacity) * parent_opacity;
 
@@ -401,27 +403,35 @@ fn render_layout_box_inner(
         let is_text_node = matches!(box_node.box_type, BoxType::TextNode(_));
         if !is_text_node {
             // 0. Paint Box Shadow (before background)
-            if let Some(s) = style
-                && let Some(bs) = &s.box_shadow
-            {
-                let shadow_base_rect = Rect::new(
-                    border_box.x(),
-                    border_box.y(),
-                    border_box.width(),
-                    border_box.height(),
-                );
-                if shadow_base_rect.width() > 0.0 && shadow_base_rect.height() > 0.0 {
-                    let shadow_color = apply_opacity(bs.color, opacity);
-                    list.push(DisplayCommand::DrawBoxShadow {
-                        rect: shadow_base_rect,
-                        color: shadow_color,
-                        offset_x: bs.offset_x,
-                        offset_y: bs.offset_y,
-                        blur_radius: bs.blur_radius,
-                        spread_radius: bs.spread_radius,
-                        radii: s.border_radius(),
-                        inset: bs.inset,
-                    });
+            // Multiple shadows paint back-to-front (first shadow painted on top per CSS specs).
+            if let Some(s) = style {
+                let shadows = s.all_box_shadows();
+                if !shadows.is_empty() {
+                    let shadow_base_rect = Rect::new(
+                        border_box.x(),
+                        border_box.y(),
+                        border_box.width(),
+                        border_box.height(),
+                    );
+                    if shadow_base_rect.width() > 0.0 && shadow_base_rect.height() > 0.0 {
+                        let radii = s.border_radius_with_size(
+                            shadow_base_rect.width(),
+                            shadow_base_rect.height(),
+                        );
+                        for bs in shadows.iter().rev() {
+                            let shadow_color = apply_opacity(bs.color, opacity);
+                            list.push(DisplayCommand::DrawBoxShadow {
+                                rect: shadow_base_rect,
+                                color: shadow_color,
+                                offset_x: bs.offset_x,
+                                offset_y: bs.offset_y,
+                                blur_radius: bs.blur_radius,
+                                spread_radius: bs.spread_radius,
+                                radii,
+                                inset: bs.inset,
+                            });
+                        }
+                    }
                 }
             }
 
@@ -472,7 +482,7 @@ fn render_layout_box_inner(
                         list.push(DisplayCommand::FillRoundedRect {
                             rect: base_rect,
                             color: bg_color,
-                            radii: s.border_radius(),
+                            radii: s.border_radius_with_size(base_rect.width(), base_rect.height()),
                         });
                     } else {
                         list.push(DisplayCommand::FillRect {
@@ -509,7 +519,7 @@ fn render_layout_box_inner(
                                 radii: if s.has_border_radius()
                                     && layer.clip == mango_css::values::BackgroundClip::BorderBox
                                 {
-                                    s.border_radius()
+                                    s.border_radius_with_size(target_rect.width(), target_rect.height())
                                 } else {
                                     [0.0; 4]
                                 },
@@ -553,7 +563,7 @@ fn render_layout_box_inner(
                                 rect: target_rect,
                                 gradient: Box::new(resolved_grad),
                                 radii: if s.has_border_radius() {
-                                    s.border_radius()
+                                    s.border_radius_with_size(target_rect.width(), target_rect.height())
                                 } else {
                                     [0.0; 4]
                                 },
@@ -713,7 +723,7 @@ fn render_layout_box_inner(
                         y: origin_y,
                         width: target_w,
                         height: target_h,
-                        pixels: tinted_pixels,
+                        pixels: tinted_pixels.into(),
                     });
                 }
             }
@@ -763,7 +773,7 @@ fn render_layout_box_inner(
 
                         list.push(DisplayCommand::DrawBorderImage {
                             rect: border_box,
-                            pixels: img.pixels,
+                            pixels: img.pixels.clone().into(),
                             img_width: img.width,
                             img_height: img.height,
                             slice: [slice_top, slice_right, slice_bottom, slice_left],
@@ -797,7 +807,7 @@ fn render_layout_box_inner(
                                 s_right_color
                             };
                             let border_radii = if has_radii {
-                                s.border_radius()
+                                s.border_radius_with_size(border_box.width(), border_box.height())
                             } else {
                                 [0.0; 4]
                             };
@@ -896,7 +906,7 @@ fn render_layout_box_inner(
                     );
                     let outline_color = apply_opacity(s.outline_color, opacity);
                     let outline_radii = if s.has_border_radius() {
-                        let r = s.border_radius();
+                        let r = s.border_radius_with_size(border_box.width(), border_box.height());
                         [
                             r[0] + off + ow,
                             r[1] + off + ow,
@@ -1014,30 +1024,32 @@ fn render_layout_box_inner(
             }
 
             // Paint any text-shadow runs first so the glyphs sit on top.
-            if let Some(shadow) = s.text_shadow
-                && shadow.color.a > 0
-                && (shadow.offset_x != 0.0 || shadow.offset_y != 0.0 || shadow.blur_radius > 0.0)
-            {
-                list.push(DisplayCommand::DrawTextShadow {
-                    text: text.clone(),
-                    x: content_x + shadow.offset_x,
-                    y: content_y + shadow.offset_y,
-                    color: apply_opacity(shadow.color, opacity),
-                    font_size: s.font_size,
-                    weight: if is_bold {
-                        mango_render::FontWeight::Bold
-                    } else {
-                        mango_render::FontWeight::Regular
-                    },
-                    family,
-                    style: style_font,
-                    blur_radius: shadow.blur_radius,
-                    letter_spacing: s.letter_spacing.to_px(
-                        s.font_size,
-                        16.0,
-                        box_node.dimensions.content.width(),
-                    ),
-                });
+            // Multiple shadows paint back-to-front (first shadow painted on top per CSS specs).
+            for shadow in s.all_text_shadows().iter().rev() {
+                if shadow.color.a > 0
+                    && (shadow.offset_x != 0.0 || shadow.offset_y != 0.0 || shadow.blur_radius > 0.0)
+                {
+                    list.push(DisplayCommand::DrawTextShadow {
+                        text: text.clone(),
+                        x: content_x + shadow.offset_x,
+                        y: content_y + shadow.offset_y,
+                        color: apply_opacity(shadow.color, opacity),
+                        font_size: s.font_size,
+                        weight: if is_bold {
+                            mango_render::FontWeight::Bold
+                        } else {
+                            mango_render::FontWeight::Regular
+                        },
+                        family,
+                        style: style_font,
+                        blur_radius: shadow.blur_radius,
+                        letter_spacing: s.letter_spacing.to_px(
+                            s.font_size,
+                            16.0,
+                            box_node.dimensions.content.width(),
+                        ),
+                    });
+                }
             }
             let is_clip_text = s.background_clip == mango_css::values::BackgroundClip::Text;
             let text_gradient = if is_clip_text {
@@ -1283,7 +1295,7 @@ fn render_layout_box_inner(
                 y: img_y,
                 width: render_w,
                 height: render_h,
-                pixels: final_pixels,
+                pixels: final_pixels.into(),
             });
 
             if needs_clip {
@@ -1439,7 +1451,7 @@ fn render_layout_box_inner(
                         y: content_y,
                         width: draw_w,
                         height: draw_h,
-                        pixels: px,
+                        pixels: px.into(),
                     });
                 }
             }
@@ -2007,7 +2019,7 @@ fn render_form_control(
                                 y,
                                 width: icon_size as f32,
                                 height: icon_size as f32,
-                                pixels,
+                                pixels: pixels.into(),
                             });
                         }
                     }
@@ -2670,10 +2682,12 @@ fn render_number_spinners(content: Rect, opacity: f32, list: &mut DisplayList) {
 enum PaintLayer {
     /// Positioned children with negative z-index (CSS 2.1 App E layer 2)
     NegativeZ(i32),
-    /// Normal flow children (blocks, inlines with position: static) (CSS 2.1 App E layer 3)
-    NormalFlow,
+    /// Block-level normal flow backgrounds (CSS 2.1 App E layer 3)
+    BlockBackgrounds,
     /// Non-positioned floats (CSS 2.1 App E layer 4)
     Float,
+    /// In-flow inline content (CSS 2.1 App E layer 5)
+    Inline,
     /// Positioned children with z-index: auto or z-index: 0 (CSS 2.1 App E layer 6)
     ZeroOrAutoZ,
     /// Positioned children with positive z-index (CSS 2.1 App E layer 7)
@@ -2705,11 +2719,15 @@ fn paint_layer_of(box_node: &LayoutBox) -> PaintLayer {
             }
         } else if s.float != mango_css::values::Float::None {
             PaintLayer::Float
+        } else if box_node.is_inline() {
+            PaintLayer::Inline
         } else {
-            PaintLayer::NormalFlow
+            PaintLayer::BlockBackgrounds
         }
+    } else if box_node.is_inline() {
+        PaintLayer::Inline
     } else {
-        PaintLayer::NormalFlow
+        PaintLayer::BlockBackgrounds
     }
 }
 
@@ -2818,7 +2836,7 @@ fn render_video_element(
             y: rect.y(),
             width: rect.width(),
             height: rect.height(),
-            pixels: pixels.to_vec(),
+            pixels: pixels.to_vec().into(),
         });
         painted_poster = true;
     }
@@ -3246,7 +3264,7 @@ fn paint_background_image_layer(
                     y: origin_y,
                     width: target_w,
                     height: target_h,
-                    pixels: resized.pixels,
+                    pixels: resized.pixels.clone().into(),
                 });
             }
             mango_css::values::BackgroundRepeat::RepeatX => {
@@ -3264,7 +3282,7 @@ fn paint_background_image_layer(
                         y: origin_y,
                         width: target_w,
                         height: target_h,
-                        pixels: resized.pixels.clone(),
+                        pixels: resized.pixels.clone().into(),
                     });
                     cur_x += target_w;
                     count += 1;
@@ -3286,7 +3304,7 @@ fn paint_background_image_layer(
                         y: cur_y,
                         width: target_w,
                         height: target_h,
-                        pixels: resized.pixels.clone(),
+                        pixels: resized.pixels.clone().into(),
                     });
                     cur_y += target_h;
                     count += 1;
@@ -3315,7 +3333,7 @@ fn paint_background_image_layer(
                             y: cur_y,
                             width: target_w,
                             height: target_h,
-                            pixels: resized.pixels.clone(),
+                            pixels: resized.pixels.clone().into(),
                         });
                         cur_x += target_w;
                         total_tiles += 1;
@@ -3350,7 +3368,7 @@ mod tests {
         rotated.transform_origin_x = mango_css::values::Length::Percent(50.0);
         rotated.transform_origin_y = mango_css::values::Length::Percent(50.0);
 
-        let mut child = LayoutBox::new(BoxType::BlockNode, Some(rotated));
+        let mut child = LayoutBox::new(BoxType::BlockNode, Some(rotated.into()));
         child.dimensions.content = Rect::new(10.0, 10.0, 50.0, 50.0);
         parent.children.push(child);
 
@@ -3377,7 +3395,7 @@ mod tests {
         }
 
         // Identity transforms must not emit any transform commands.
-        let plain = LayoutBox::new(BoxType::BlockNode, Some(ComputedStyle::default()));
+        let plain = LayoutBox::new(BoxType::BlockNode, Some(ComputedStyle::default().into()));
         let dl_plain = build_display_list(&plain);
         assert!(
             !dl_plain
@@ -3398,7 +3416,7 @@ mod tests {
             repeating: false,
         });
 
-        let mut root = LayoutBox::new(BoxType::BlockNode, Some(style));
+        let mut root = LayoutBox::new(BoxType::BlockNode, Some(style.into()));
         root.dimensions.content = Rect::new(0.0, 0.0, 120.0, 60.0);
 
         let dl = build_display_list(&root);
@@ -3432,7 +3450,7 @@ mod tests {
             repeating: false,
         });
 
-        let mut root = LayoutBox::new(BoxType::BlockNode, Some(style));
+        let mut root = LayoutBox::new(BoxType::BlockNode, Some(style.into()));
         root.dimensions.content = Rect::new(10.0, 20.0, 200.0, 100.0);
 
         let dl = build_display_list(&root);
@@ -3460,7 +3478,7 @@ mod tests {
             color: Color::rgba(0, 0, 0, 128),
         });
 
-        let mut text_box = LayoutBox::new(BoxType::TextNode("Shadowed".to_string()), Some(style));
+        let mut text_box = LayoutBox::new(BoxType::TextNode("Shadowed".to_string()), Some(style.into()));
         text_box.dimensions.content = Rect::new(5.0, 5.0, 80.0, 20.0);
 
         let dl = build_display_list(&text_box);
@@ -3493,7 +3511,7 @@ mod tests {
         style.font_size = 16.0;
         style.border_top_width = 2.0;
 
-        root.style = Some(style);
+        root.style = Some(style.into());
         root.dimensions.content = Rect::new(10.0, 10.0, 100.0, 50.0);
         root.dimensions.border.top = 2.0;
 
@@ -3518,7 +3536,7 @@ mod tests {
         style_pos.position = Position::Relative;
         style_pos.z_index = Some(10);
         style_pos.background_color = Color::BLUE;
-        let mut child_pos = LayoutBox::new(BoxType::BlockNode, Some(style_pos));
+        let mut child_pos = LayoutBox::new(BoxType::BlockNode, Some(style_pos.into()));
         child_pos.dimensions.content = Rect::new(0.0, 0.0, 100.0, 100.0);
 
         // Child 2: negative z-index (-5)
@@ -3526,13 +3544,13 @@ mod tests {
         style_neg.position = Position::Relative;
         style_neg.z_index = Some(-5);
         style_neg.background_color = Color::RED;
-        let mut child_neg = LayoutBox::new(BoxType::BlockNode, Some(style_neg));
+        let mut child_neg = LayoutBox::new(BoxType::BlockNode, Some(style_neg.into()));
         child_neg.dimensions.content = Rect::new(10.0, 10.0, 100.0, 100.0);
 
         // Child 3: normal flow (static)
         let mut style_norm = ComputedStyle::default();
         style_norm.background_color = Color::GREEN;
-        let mut child_norm = LayoutBox::new(BoxType::BlockNode, Some(style_norm));
+        let mut child_norm = LayoutBox::new(BoxType::BlockNode, Some(style_norm.into()));
         child_norm.dimensions.content = Rect::new(20.0, 20.0, 100.0, 100.0);
 
         // Appended in order: pos (+10), neg (-5), norm (0)
@@ -3567,7 +3585,7 @@ mod tests {
         style.border_bottom_right_radius = 8.0;
         style.border_bottom_left_radius = 8.0;
 
-        root.style = Some(style);
+        root.style = Some(style.into());
         root.dimensions.content = Rect::new(0.0, 0.0, 100.0, 50.0);
 
         let dl = build_display_list(&root);
@@ -3588,7 +3606,7 @@ mod tests {
         style.background_color = Color::RED;
         style.visibility = mango_css::values::Visibility::Hidden;
 
-        root.style = Some(style);
+        root.style = Some(style.into());
         root.dimensions.content = Rect::new(0.0, 0.0, 100.0, 50.0);
 
         let dl = build_display_list(&root);
@@ -3602,7 +3620,7 @@ mod tests {
         style.background_color = Color::rgba(255, 0, 0, 200);
         style.opacity = 0.5;
 
-        root.style = Some(style);
+        root.style = Some(style.into());
         root.dimensions.content = Rect::new(0.0, 0.0, 100.0, 50.0);
 
         let dl = build_display_list(&root);
@@ -3623,13 +3641,13 @@ mod tests {
         let mut p_style = ComputedStyle::default();
         p_style.overflow_x = mango_css::values::Overflow::Hidden;
         p_style.overflow_y = mango_css::values::Overflow::Hidden;
-        parent.style = Some(p_style);
+        parent.style = Some(p_style.into());
         parent.dimensions.content = Rect::new(10.0, 10.0, 100.0, 100.0);
 
         let mut child = LayoutBox::new(BoxType::BlockNode, None);
         let mut c_style = ComputedStyle::default();
         c_style.background_color = Color::RED;
-        child.style = Some(c_style);
+        child.style = Some(c_style.into());
         child.dimensions.content = Rect::new(10.0, 10.0, 200.0, 200.0);
         parent.children.push(child);
 
@@ -3675,7 +3693,7 @@ mod tests {
         input_box
             .attributes
             .push(("checked".to_string(), "true".to_string()));
-        input_box.style = Some(ComputedStyle::default());
+        input_box.style = Some(ComputedStyle::default().into());
         input_box.dimensions.content = Rect::new(10.0, 10.0, 14.0, 14.0);
 
         let dl = build_display_list(&input_box);
@@ -3750,7 +3768,7 @@ mod tests {
 
     #[test]
     fn test_input_caret_fill_rect() {
-        let mut input_box = LayoutBox::new(BoxType::BlockNode, Some(ComputedStyle::default()));
+        let mut input_box = LayoutBox::new(BoxType::BlockNode, Some(ComputedStyle::default().into()));
         input_box.tag_name = Some("input".to_string());
         input_box
             .attributes
@@ -3797,7 +3815,7 @@ mod tests {
         let mut fixed_style = ComputedStyle::default();
         fixed_style.position = Position::Fixed;
         fixed_style.background_color = Color::BLUE;
-        let mut fixed_child = LayoutBox::new(BoxType::BlockNode, Some(fixed_style));
+        let mut fixed_child = LayoutBox::new(BoxType::BlockNode, Some(fixed_style.into()));
         fixed_child.dimensions.content = Rect::new(0.0, 10.0, 200.0, 40.0);
         parent.children.push(fixed_child);
 
@@ -3829,7 +3847,7 @@ mod tests {
         sticky_style.position = Position::Sticky;
         sticky_style.top = mango_css::values::Length::Px(10.0);
         sticky_style.background_color = Color::GREEN;
-        let mut sticky_child = LayoutBox::new(BoxType::BlockNode, Some(sticky_style));
+        let mut sticky_child = LayoutBox::new(BoxType::BlockNode, Some(sticky_style.into()));
         sticky_child.dimensions.content = Rect::new(0.0, 200.0, 200.0, 50.0);
         parent.children.push(sticky_child);
 
@@ -3876,7 +3894,7 @@ mod tests {
             mango_css::values::Length::Px(40.0),
         );
 
-        let mut box_node = LayoutBox::new(BoxType::BlockNode, Some(style));
+        let mut box_node = LayoutBox::new(BoxType::BlockNode, Some(style.into()));
         box_node.dimensions.content = Rect::new(10.0, 20.0, 100.0, 100.0);
 
         let dl = build_display_list(&box_node);
@@ -3915,7 +3933,7 @@ mod tests {
             inset: false,
         });
 
-        let mut box_node = LayoutBox::new(BoxType::BlockNode, Some(style));
+        let mut box_node = LayoutBox::new(BoxType::BlockNode, Some(style.into()));
         box_node.dimensions.content = Rect::new(50.0, 50.0, 200.0, 100.0);
 
         let dl = build_display_list(&box_node);
@@ -3952,7 +3970,7 @@ mod tests {
         style.outline_color = Color::RED;
         style.outline_offset = 3.0;
 
-        let mut box_node = LayoutBox::new(BoxType::BlockNode, Some(style));
+        let mut box_node = LayoutBox::new(BoxType::BlockNode, Some(style.into()));
         box_node.dimensions.content = Rect::new(50.0, 50.0, 200.0, 100.0);
 
         let dl = build_display_list(&box_node);
@@ -4039,7 +4057,7 @@ mod tests {
         style.overflow_y = mango_css::values::Overflow::Visible;
 
         // 1. Root element (html) with overflow-x: hidden should NOT emit PushClip
-        let mut html_box = LayoutBox::new(BoxType::BlockNode, Some(style.clone()));
+        let mut html_box = LayoutBox::new(BoxType::BlockNode, Some(style.clone().into()));
         html_box.tag_name = Some("html".to_string());
         html_box.dimensions.content = Rect::new(0.0, 0.0, 1280.0, 800.0);
 
@@ -4053,7 +4071,7 @@ mod tests {
         );
 
         // 2. Body element with overflow-x: hidden should NOT emit PushClip
-        let mut body_box = LayoutBox::new(BoxType::BlockNode, Some(style.clone()));
+        let mut body_box = LayoutBox::new(BoxType::BlockNode, Some(style.clone().into()));
         body_box.tag_name = Some("body".to_string());
         body_box.dimensions.content = Rect::new(0.0, 0.0, 1280.0, 800.0);
 
@@ -4067,7 +4085,7 @@ mod tests {
         );
 
         // 3. Normal container with overflow-x: hidden and overflow-y: visible should have unconstrained vertical clip
-        let mut div_box = LayoutBox::new(BoxType::BlockNode, Some(style));
+        let mut div_box = LayoutBox::new(BoxType::BlockNode, Some(style.into()));
         div_box.tag_name = Some("div".to_string());
         div_box.dimensions.content = Rect::new(10.0, 10.0, 500.0, 300.0);
 
@@ -4281,7 +4299,7 @@ mod tests {
 
     #[test]
     fn test_modal_dialog_backdrop() {
-        let mut dialog_box = LayoutBox::new(BoxType::BlockNode, Some(ComputedStyle::default()));
+        let mut dialog_box = LayoutBox::new(BoxType::BlockNode, Some(ComputedStyle::default().into()));
         dialog_box.tag_name = Some("dialog".to_string());
         dialog_box
             .attributes
@@ -4309,7 +4327,7 @@ mod tests {
     #[test]
     fn test_progress_and_meter_rendering() {
         // 1. Determinate progress
-        let mut progress_box = LayoutBox::new(BoxType::InlineBlock, Some(ComputedStyle::default()));
+        let mut progress_box = LayoutBox::new(BoxType::InlineBlock, Some(ComputedStyle::default().into()));
         progress_box.tag_name = Some("progress".to_string());
         progress_box
             .attributes
@@ -4332,7 +4350,7 @@ mod tests {
         );
 
         // 2. Meter (optimal zone -> green)
-        let mut meter_box = LayoutBox::new(BoxType::InlineBlock, Some(ComputedStyle::default()));
+        let mut meter_box = LayoutBox::new(BoxType::InlineBlock, Some(ComputedStyle::default().into()));
         meter_box.tag_name = Some("meter".to_string());
         meter_box
             .attributes
@@ -4370,7 +4388,7 @@ mod tests {
     #[test]
     fn test_select_optgroup_and_multiple() {
         // Multi-select rendering
-        let mut select_box = LayoutBox::new(BoxType::InlineBlock, Some(ComputedStyle::default()));
+        let mut select_box = LayoutBox::new(BoxType::InlineBlock, Some(ComputedStyle::default().into()));
         select_box.tag_name = Some("select".to_string());
         select_box
             .attributes
@@ -4418,7 +4436,7 @@ mod tests {
         style.filter = vec![FilterFunction::Blur(4.0)];
         style.backdrop_filter = vec![FilterFunction::Blur(8.0)];
 
-        let mut b = LayoutBox::new(BoxType::BlockNode, Some(style));
+        let mut b = LayoutBox::new(BoxType::BlockNode, Some(style.into()));
         b.dimensions.content = Rect::new(0.0, 0.0, 100.0, 100.0);
 
         let dl = build_display_list(&b);
@@ -4475,7 +4493,7 @@ mod tests {
 
         let mut text_box1 = LayoutBox::new(
             BoxType::TextNode("Underlined Text".to_string()),
-            Some(style1),
+            Some(style1.into()),
         );
         text_box1.dimensions.content = Rect::new(10.0, 20.0, 150.0, 24.0);
 
@@ -4510,7 +4528,7 @@ mod tests {
         style2.text_emphasis_style = TextEmphasisStyle::FilledCircle;
         style2.text_emphasis_color = Some(Color::rgb(255, 0, 0));
 
-        let mut text_box2 = LayoutBox::new(BoxType::TextNode("ABC".to_string()), Some(style2));
+        let mut text_box2 = LayoutBox::new(BoxType::TextNode("ABC".to_string()), Some(style2.into()));
         text_box2.dimensions.content = Rect::new(10.0, 50.0, 60.0, 24.0);
 
         let dl2 = build_display_list(&text_box2);
@@ -4542,7 +4560,7 @@ mod tests {
         // 1. Checkbox
         let mut cb_style = ComputedStyle::default();
         cb_style.accent_color = Some(accent);
-        let mut cb_box = LayoutBox::new(BoxType::InlineBlock, Some(cb_style));
+        let mut cb_box = LayoutBox::new(BoxType::InlineBlock, Some(cb_style.into()));
         cb_box.tag_name = Some("input".to_string());
         cb_box
             .attributes
@@ -4560,7 +4578,7 @@ mod tests {
         // 2. Radio
         let mut r_style = ComputedStyle::default();
         r_style.accent_color = Some(accent);
-        let mut r_box = LayoutBox::new(BoxType::InlineBlock, Some(r_style));
+        let mut r_box = LayoutBox::new(BoxType::InlineBlock, Some(r_style.into()));
         r_box.tag_name = Some("input".to_string());
         r_box
             .attributes
@@ -4578,7 +4596,7 @@ mod tests {
         // 3. Range
         let mut rng_style = ComputedStyle::default();
         rng_style.accent_color = Some(accent);
-        let mut rng_box = LayoutBox::new(BoxType::InlineBlock, Some(rng_style));
+        let mut rng_box = LayoutBox::new(BoxType::InlineBlock, Some(rng_style.into()));
         rng_box.tag_name = Some("input".to_string());
         rng_box
             .attributes
@@ -4596,7 +4614,7 @@ mod tests {
         // 4. Progress
         let mut prog_style = ComputedStyle::default();
         prog_style.accent_color = Some(accent);
-        let mut prog_box = LayoutBox::new(BoxType::InlineBlock, Some(prog_style));
+        let mut prog_box = LayoutBox::new(BoxType::InlineBlock, Some(prog_style.into()));
         prog_box.tag_name = Some("progress".to_string());
         prog_box
             .attributes
@@ -4627,7 +4645,7 @@ mod tests {
                     intrinsic_height: ih,
                     pixels: vec![0xFFFFFF; (iw as u32 * ih as u32) as usize],
                 },
-                Some(style),
+                Some(style.into()),
             );
             b.dimensions.content = Rect::new(10.0, 20.0, box_w, box_h);
             b
@@ -4781,7 +4799,7 @@ mod tests {
         style.border_top_style = mango_css::values::BorderStyle::Solid;
         style.border_bottom_style = mango_css::values::BorderStyle::Solid;
 
-        let mut b = LayoutBox::new(BoxType::BlockNode, Some(style));
+        let mut b = LayoutBox::new(BoxType::BlockNode, Some(style.into()));
         b.dimensions.content = Rect::new(0.0, 0.0, 100.0, 50.0);
         b.dimensions.border.top = 2.0;
         b.dimensions.border.bottom = 4.0;
@@ -4818,7 +4836,7 @@ mod tests {
                 style.overflow_y = Overflow::Scroll;
                 style.scrollbar_width = sb_width;
                 style.scrollbar_color = sb_color;
-                let mut b = LayoutBox::new(BoxType::BlockNode, Some(style));
+                let mut b = LayoutBox::new(BoxType::BlockNode, Some(style.into()));
                 b.dimensions.content = Rect::new(0.0, 0.0, 100.0, 100.0);
                 b.dimensions.padding.bottom = 0.0;
                 // Add a child taller than the container to ensure scrollable extent
@@ -4887,12 +4905,12 @@ mod tests {
         parent_style.overflow_x = Overflow::Hidden;
         parent_style.overflow_y = Overflow::Hidden;
         parent_style.contain = Contain::Paint;
-        let mut parent = LayoutBox::new(BoxType::BlockNode, Some(parent_style));
+        let mut parent = LayoutBox::new(BoxType::BlockNode, Some(parent_style.into()));
         parent.dimensions.content = Rect::new(0.0, 0.0, 200.0, 200.0);
 
         let mut fixed_style = ComputedStyle::default();
         fixed_style.position = Position::Fixed;
-        let mut fixed_child = LayoutBox::new(BoxType::BlockNode, Some(fixed_style));
+        let mut fixed_child = LayoutBox::new(BoxType::BlockNode, Some(fixed_style.into()));
         fixed_child.dimensions.content = Rect::new(10.0, 10.0, 50.0, 50.0);
         parent.children.push(fixed_child);
 
@@ -4925,7 +4943,7 @@ mod tests {
         let mut pos_style = ComputedStyle::default();
         pos_style.position = Position::Relative;
         pos_style.background_color = Color::RED;
-        let mut pos_child = LayoutBox::new(BoxType::BlockNode, Some(pos_style));
+        let mut pos_child = LayoutBox::new(BoxType::BlockNode, Some(pos_style.into()));
         pos_child.dimensions.content = Rect::new(0.0, 0.0, 50.0, 50.0);
 
         // Child 2: Static Float (Float layer)
@@ -4933,13 +4951,13 @@ mod tests {
         float_style.position = Position::Static;
         float_style.float = Float::Left;
         float_style.background_color = Color::BLUE;
-        let mut float_child = LayoutBox::new(BoxType::BlockNode, Some(float_style));
+        let mut float_child = LayoutBox::new(BoxType::BlockNode, Some(float_style.into()));
         float_child.dimensions.content = Rect::new(50.0, 0.0, 50.0, 50.0);
 
         // Child 3: In-flow normal box (NormalFlow layer)
         let mut normal_style = ComputedStyle::default();
         normal_style.background_color = Color::GREEN;
-        let mut normal_child = LayoutBox::new(BoxType::BlockNode, Some(normal_style));
+        let mut normal_child = LayoutBox::new(BoxType::BlockNode, Some(normal_style.into()));
         normal_child.dimensions.content = Rect::new(100.0, 0.0, 50.0, 50.0);
 
         // Add in reverse order: Pos, Float, Normal
@@ -4997,7 +5015,7 @@ mod tests {
         });
 
         let mut text_box =
-            LayoutBox::new(BoxType::TextNode("Hello Gradient".to_string()), Some(style));
+            LayoutBox::new(BoxType::TextNode("Hello Gradient".to_string()), Some(style.into()));
         text_box.dimensions.content = Rect::new(10.0, 10.0, 100.0, 20.0);
 
         let dl = build_display_list(&text_box);
@@ -5041,7 +5059,7 @@ mod tests {
             repeat_v: BorderImageRepeat::Stretch,
             fill: false,
         });
-        let mut b = LayoutBox::new(BoxType::BlockNode, Some(style));
+        let mut b = LayoutBox::new(BoxType::BlockNode, Some(style.into()));
         b.dimensions.content = Rect::new(0.0, 0.0, 100.0, 100.0);
         b.dimensions.border.top = 5.0;
         b.dimensions.border.right = 5.0;
@@ -5073,14 +5091,14 @@ mod tests {
         let mut fixed_style = ComputedStyle::default();
         fixed_style.position = Position::Fixed;
         fixed_style.background_color = Color::RED;
-        let mut fixed_child = LayoutBox::new(BoxType::BlockNode, Some(fixed_style));
+        let mut fixed_child = LayoutBox::new(BoxType::BlockNode, Some(fixed_style.into()));
         fixed_child.dimensions.content = Rect::new(20.0, 30.0, 50.0, 50.0);
         root.children.push(fixed_child);
 
         // In-flow child
         let mut inflow_style = ComputedStyle::default();
         inflow_style.background_color = Color::BLUE;
-        let mut inflow_child = LayoutBox::new(BoxType::BlockNode, Some(inflow_style));
+        let mut inflow_child = LayoutBox::new(BoxType::BlockNode, Some(inflow_style.into()));
         inflow_child.dimensions.content = Rect::new(20.0, 30.0, 50.0, 50.0);
         root.children.push(inflow_child);
 

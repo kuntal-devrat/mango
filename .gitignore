@@ -24,3 +24,7 @@ cookies.txt
 test_output/
 *.diff.png
 diffs/
+
+# Python cache
+__pycache__/
+*.pyc

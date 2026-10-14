@@ -9,5 +9,6 @@ pub mod devtools;
 pub mod extensions;
 pub mod form_handler;
 pub mod navigation;
+pub mod navigation_actor;
 pub mod scroll;
 pub mod tab;

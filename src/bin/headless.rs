@@ -37,6 +37,7 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     let mut positional: Vec<&str> = Vec::new();
     let mut page_only = false;
+    let mut full_page = false;
     let mut blur = false;
     let mut probe_selector = None;
     let mut hover_pos = None;
@@ -45,6 +46,11 @@ fn main() {
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
+            "--full-page" | "--full" => {
+                full_page = true;
+                page_only = true;
+                i += 1;
+            }
             "--page" => {
                 page_only = true;
                 i += 1;
@@ -146,6 +152,7 @@ fn main() {
         browser.navigate(url);
         browser.wait_for_navigation();
     }
+    println!("Browser status: {}", browser.status_text());
 
     // Virtual time budget: drive animations and JS timers
     let tick_interval_ms = 16.0;
@@ -184,7 +191,24 @@ fn main() {
         return;
     }
 
-    let dl = browser.build_display_list((width, window_height));
+    let (paint_width, paint_height, dl) = if full_page {
+        let doc_height = (browser.scrollable_height().ceil() as u32).max(height);
+        println!("Full document height: {}px", doc_height);
+        let mut full_dl = mango_render::display_list::DisplayList::new();
+        full_dl.push(mango_render::DisplayCommand::FillRect {
+            rect: mango_core::Rect::new(0.0, 0.0, width as f32, doc_height as f32),
+            color: browser.canvas_bg(),
+        });
+        if let Some(root) = browser.root_box() {
+            let page_dl = mango_layout::display_list::build_display_list(root);
+            for cmd in page_dl {
+                full_dl.push(cmd);
+            }
+        }
+        (width, doc_height, full_dl)
+    } else {
+        (width, window_height, browser.build_display_list((width, window_height)))
+    };
     println!("Generated {} display list commands", dl.len());
     let mut bold_count = 0;
     let mut reg_count = 0;
@@ -219,35 +243,22 @@ fn main() {
     }
     println!("DrawText stats: bold={}, regular={}", bold_count, reg_count);
 
-    for cmd in dl.as_slice() {
-        match cmd {
-            mango_render::DisplayCommand::DrawText { text, x, y, font_size, .. } if *x >= 1000.0 && *y <= 150.0 => {
-                println!("CMD TEXT: {:?} at ({}, {}) size={}", text, x, y, font_size);
-            }
-            mango_render::DisplayCommand::FillRect { rect, color } if rect.x() >= 1000.0 && rect.y() <= 150.0 => {
-                println!("CMD RECT: {:?} {:?}", rect, color);
-            }
-            mango_render::DisplayCommand::DrawBorder { rect, color, widths, .. } if rect.x() >= 1000.0 && rect.y() <= 150.0 => {
-                println!("CMD BORDER: {:?} {:?} {:?}", rect, color, widths);
-            }
-            _ => {}
-        }
-    }
-
-    let mut buffer = vec![0u32; (width * window_height) as usize];
+    let mut buffer = vec![0u32; (paint_width * paint_height) as usize];
     buffer.fill(mango_core::Color::rgb(255, 255, 255).to_rgb_u32());
-    paint(&dl, &mut buffer, width, window_height);
+    paint(&dl, &mut buffer, paint_width, paint_height);
 
-    let (crop_top, crop_height) = if page_only {
+    let (crop_top, crop_height) = if full_page {
+        (0, paint_height)
+    } else if page_only {
         (CONTENT_TOP, height)
     } else {
         (0, window_height)
     };
 
-    let mut img = image::RgbImage::new(width, crop_height);
+    let mut img = image::RgbImage::new(paint_width, crop_height);
     for y in 0..crop_height {
-        for x in 0..width {
-            let px = buffer[((y + crop_top) * width + x) as usize];
+        for x in 0..paint_width {
+            let px = buffer[((y + crop_top) * paint_width + x) as usize];
             img.put_pixel(
                 x,
                 y,
@@ -335,6 +346,12 @@ fn probe(browser: &BrowserChrome, selector: &str) {
             style.map(|s| s.appearance),
             b.attributes
         );
+        if let Some(s) = style {
+            println!(
+                "      bg: img={:?} pos={:?} size={:?} layers={:?}",
+                s.background_image, s.background_position, s.background_size, s.background_layers
+            );
+        }
         for child in &b.children {
             if let BoxType::TextNode(text) = &child.box_type
                 && !text.trim().is_empty()
@@ -351,8 +368,12 @@ fn probe(browser: &BrowserChrome, selector: &str) {
                     mango_render::FontWeight::Regular,
                     font_size,
                 );
+                let ls = child.style.as_ref().map(|s| s.letter_spacing.clone());
+                let ws = child.style.as_ref().map(|s| s.word_spacing.clone());
+                let fw = child.style.as_ref().map(|s| s.font_weight);
+                let ff = child.style.as_ref().map(|s| s.font_family.clone());
                 println!(
-                    "      text {:?} baseline_y={:.1} x={:.1} w={:.1} ascent={:.1} descent={:.1} gap={:.1}",
+                    "      text {:?} baseline_y={:.1} x={:.1} w={:.1} ascent={:.1} descent={:.1} gap={:.1} size={:.1} fam={:?} fw={:?} ls={:?} ws={:?} raw_fam={:?}",
                     truncate(text, 40),
                     run.y(),
                     run.x(),
@@ -360,6 +381,12 @@ fn probe(browser: &BrowserChrome, selector: &str) {
                     ascent,
                     descent,
                     gap,
+                    font_size,
+                    family,
+                    fw,
+                    ls,
+                    ws,
+                    ff,
                 );
             }
         }

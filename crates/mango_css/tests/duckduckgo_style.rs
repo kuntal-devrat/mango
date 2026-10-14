@@ -70,3 +70,55 @@ fn test_ddg_button_style() {
     assert_eq!(style.border_bottom_right_radius, 4.0);
     assert_eq!(style.border_bottom_left_radius, 0.0);
 }
+
+#[test]
+fn test_ddg_actual_header_logo_style() {
+    let html = r#"<div class="header header--html"><a class="header__logo-wrap"></a></div>"#;
+    let doc = parse_html(html);
+    let root = doc.root();
+    let a_id = doc.find_element_by_tag(root, "a").unwrap();
+
+    let css = r#"
+        .logo--dax, .header__logo-wrap, .logo_homepage {
+            background-position: 50% 50%;
+            background-repeat: no-repeat;
+            background-size: 100%;
+        }
+        .header__logo-wrap {
+            position: absolute;
+            left: 0;
+            margin-top: -8px;
+            width: 101px;
+            height: 60px;
+            background-size: 36px 36px;
+            background-image: url("/assets/logo_header.v109.svg");
+        }
+        .header--html .header__logo-wrap {
+            display: block;
+            background: no-repeat center url("/assets/logo_header.v109.png");
+            background: no-repeat center/auto 36px url("/assets/logo_header.v109.svg"), linear-gradient(transparent, transparent);
+        }
+    "#;
+    let sheet = CssParser::parse_stylesheet(css);
+    let style = compute_style(a_id, &doc, &[&sheet], None);
+
+    assert_eq!(
+        style.background_position,
+        (
+            mango_css::values::Length::Percent(50.0),
+            mango_css::values::Length::Percent(50.0)
+        )
+    );
+    assert_eq!(
+        style.background_size,
+        mango_css::values::BackgroundSize::Explicit(
+            mango_css::values::Length::Auto,
+            mango_css::values::Length::Px(36.0)
+        )
+    );
+    assert_eq!(
+        style.background_image.as_deref(),
+        Some("/assets/logo_header.v109.svg")
+    );
+}
+

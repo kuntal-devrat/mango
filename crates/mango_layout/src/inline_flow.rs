@@ -2,6 +2,8 @@
 //!
 //! Implements CSS 2.1 §9.4.2: Inline formatting contexts.
 
+use std::sync::Arc;
+
 use mango_core::{EdgeSizes, Point, Rect};
 use mango_css::computed::ComputedStyle;
 use mango_css::values::{Display, Overflow, Position, TextAlign};
@@ -26,7 +28,7 @@ enum InlineAtomKind {
 #[derive(Debug, Clone)]
 struct InlineAtom {
     kind: InlineAtomKind,
-    style: ComputedStyle,
+    style: Arc<ComputedStyle>,
     width: f32,
     height: f32,
     link_target: Option<String>,
@@ -310,7 +312,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
         || container.tag_name.as_deref() == Some("li");
 
     if is_list_item {
-        let mut style = container.style.clone().unwrap_or_default();
+        let mut style = container.style.as_deref().cloned().unwrap_or_default();
         if let Some(c) = container
             .get_attribute("_mango_marker_color")
             .and_then(mango_css::values::Value::parse_color)
@@ -396,7 +398,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
                             text: m_text,
                             is_space: false,
                         },
-                        style,
+                        style: Arc::new(style),
                         width: m_w,
                         height: m_h,
                         link_target: None,
@@ -971,7 +973,10 @@ fn collect_inline_atoms(
     container_width: f32,
     container_height: f32,
 ) {
-    let style = box_node.style.clone().unwrap_or_default();
+    let style = box_node
+        .style
+        .clone()
+        .unwrap_or_else(|| Arc::new(ComputedStyle::default()));
     if style.float != mango_css::values::Float::None {
         return;
     }
@@ -1378,12 +1383,15 @@ fn collect_ruby_atoms(
     _container_width: f32,
     _container_height: f32,
 ) {
-    let ruby_style = ruby_node.style.clone().unwrap_or_default();
+    let ruby_style = ruby_node
+        .style
+        .clone()
+        .unwrap_or_else(|| Arc::new(ComputedStyle::default()));
     let font_size = ruby_style.font_size;
 
     // Collect base elements and rt elements
-    let mut bases: Vec<(String, ComputedStyle)> = Vec::new();
-    let mut rts: Vec<(String, ComputedStyle)> = Vec::new();
+    let mut bases: Vec<(String, Arc<ComputedStyle>)> = Vec::new();
+    let mut rts: Vec<(String, Arc<ComputedStyle>)> = Vec::new();
 
     for child in &ruby_node.children {
         // Skip rp or display: none
@@ -1401,10 +1409,19 @@ fn collect_ruby_atoms(
         if tag == "rt" {
             let mut t = String::new();
             extract_text_content(child, &mut t);
-            let mut s = child.style.clone().unwrap_or_else(|| ruby_style.clone());
-            if s.font_size >= font_size {
+            let s = if let Some(child_style) = &child.style {
+                if child_style.font_size >= font_size {
+                    let mut s = (**child_style).clone();
+                    s.font_size = (font_size * 0.5).max(8.0);
+                    Arc::new(s)
+                } else {
+                    child_style.clone()
+                }
+            } else {
+                let mut s = (*ruby_style).clone();
                 s.font_size = (font_size * 0.5).max(8.0);
-            }
+                Arc::new(s)
+            };
             rts.push((t, s));
         } else if tag == "rb" {
             let mut t = String::new();
@@ -1427,7 +1444,7 @@ fn collect_ruby_atoms(
     }
 
     // Pair bases and annotations
-    let pairs: Vec<(String, ComputedStyle, String, ComputedStyle)> = if bases.len() == rts.len() {
+    let pairs: Vec<(String, Arc<ComputedStyle>, String, Arc<ComputedStyle>)> = if bases.len() == rts.len() {
         bases
             .into_iter()
             .zip(rts)
@@ -1539,8 +1556,8 @@ fn find_inline_block_last_baseline_from_top(box_: &LayoutBox) -> Option<f32> {
 
     if matches!(box_.box_type, BoxType::TextNode(_)) {
         let fs = box_.style.as_ref().map(|s| s.font_size).unwrap_or(16.0);
-        let family = font_family_for(box_.style.as_ref().unwrap_or(&ComputedStyle::default()));
-        let weight = font_weight_for(box_.style.as_ref().unwrap_or(&ComputedStyle::default()));
+        let family = font_family_for(box_.style.as_deref().unwrap_or(&ComputedStyle::default()));
+        let weight = font_weight_for(box_.style.as_deref().unwrap_or(&ComputedStyle::default()));
         let (ascent, _, _) = mango_render::font::font_manager().font_metrics(family, weight, fs);
         return Some(ascent);
     }
@@ -1709,7 +1726,7 @@ fn finalize_line(
     // Merge contiguous text atoms on this line that share identical style and link target.
     struct MergedRun {
         text: String,
-        style: ComputedStyle,
+        style: Arc<ComputedStyle>,
         start_x: f32,
         width: f32,
         link_target: Option<String>,
@@ -1947,7 +1964,7 @@ fn finalize_line(
 
 fn split_overflow_text(
     text: &str,
-    style: &ComputedStyle,
+    style: &Arc<ComputedStyle>,
     available_width: f32,
     height: f32,
     link_target: Option<&str>,
@@ -2089,7 +2106,7 @@ mod tests {
 
         container.children.push(LayoutBox::new(
             BoxType::TextNode("H1".to_string()),
-            Some(style),
+            Some(style.into()),
         ));
 
         let mut float_ctx = FloatContext::new();
@@ -2115,7 +2132,7 @@ mod tests {
 
         container.children.push(LayoutBox::new(
             BoxType::TextNode("H1".to_string()),
-            Some(style),
+            Some(style.into()),
         ));
 
         let mut float_ctx = FloatContext::new();
@@ -2143,7 +2160,7 @@ mod tests {
 
         container.children.push(LayoutBox::new(
             BoxType::TextNode("one line".to_string()),
-            Some(style),
+            Some(style.into()),
         ));
 
         let mut float_ctx = FloatContext::new();
@@ -2176,7 +2193,7 @@ mod tests {
         // "Hello World Mango" -> "Hello World" > 100px => wrapping must occur
         let text_child = LayoutBox::new(
             BoxType::TextNode("Hello World Mango".to_string()),
-            Some(style),
+            Some(style.into()),
         );
         container.children.push(text_child);
 
@@ -2202,7 +2219,7 @@ mod tests {
 
         let text_child = LayoutBox::new(
             BoxType::TextNode("Herman Melville - Moby-Dick".to_string()),
-            Some(style),
+            Some(style.into()),
         );
         container.children.push(text_child);
 
@@ -2251,7 +2268,7 @@ mod tests {
 
         let mut container_style = ComputedStyle::default();
         container_style.text_indent = mango_css::values::Length::Px(25.0);
-        container.style = Some(container_style);
+        container.style = Some(container_style.into());
 
         let mut child_style = ComputedStyle::default();
         child_style.font_size = 16.0;
@@ -2259,7 +2276,7 @@ mod tests {
         // "First line wrapping into second line"
         let text_child = LayoutBox::new(
             BoxType::TextNode("First long line that wraps".to_string()),
-            Some(child_style),
+            Some(child_style.into()),
         );
         container.children.push(text_child);
 
@@ -2285,13 +2302,13 @@ mod tests {
         normal_style.font_size = 16.0;
         let normal_child = LayoutBox::new(
             BoxType::TextNode("Normal text".to_string()),
-            Some(normal_style),
+            Some(normal_style.into()),
         );
 
         let mut super_style = ComputedStyle::default();
         super_style.font_size = 12.0;
         super_style.vertical_align = mango_css::values::VerticalAlign::Super;
-        let super_child = LayoutBox::new(BoxType::TextNode("[1]".to_string()), Some(super_style));
+        let super_child = LayoutBox::new(BoxType::TextNode("[1]".to_string()), Some(super_style.into()));
 
         container.children.push(normal_child);
         container.children.push(super_child);
@@ -2324,13 +2341,13 @@ mod tests {
         // Long unbroken word with <wbr> in the middle
         let text1 = LayoutBox::new(
             BoxType::TextNode("Super".to_string()),
-            Some(child_style.clone()),
+            Some(child_style.clone().into()),
         );
-        let mut wbr_box = LayoutBox::new(BoxType::InlineNode, Some(child_style.clone()));
+        let mut wbr_box = LayoutBox::new(BoxType::InlineNode, Some(child_style.clone().into()));
         wbr_box.tag_name = Some("wbr".to_string());
         let text2 = LayoutBox::new(
             BoxType::TextNode("califragilistic".to_string()),
-            Some(child_style.clone()),
+            Some(child_style.clone().into()),
         );
 
         container.children.push(text1);
@@ -2352,7 +2369,7 @@ mod tests {
         container2.dimensions.content = Rect::new(0.0, 0.0, 60.0, 0.0);
         let text_zwsp = LayoutBox::new(
             BoxType::TextNode("Zero\u{200B}Width".to_string()),
-            Some(child_style),
+            Some(child_style.into()),
         );
         container2.children.push(text_zwsp);
         layout_inline_children(&mut container2, &mut float_ctx);
@@ -2373,7 +2390,7 @@ mod tests {
         bdo_style.direction = mango_css::values::Direction::Rtl;
         bdo_style.unicode_bidi = mango_css::values::UnicodeBidi::BidiOverride;
 
-        let bdo_text = LayoutBox::new(BoxType::TextNode("Hello".to_string()), Some(bdo_style));
+        let bdo_text = LayoutBox::new(BoxType::TextNode("Hello".to_string()), Some(bdo_style.into()));
         container.children.push(bdo_text);
 
         let mut float_ctx = FloatContext::new();
@@ -2395,7 +2412,7 @@ mod tests {
 
         let text = LayoutBox::new(
             BoxType::TextNode("Supercalifragilistic".to_string()),
-            Some(child_style),
+            Some(child_style.into()),
         );
         container.children.push(text);
 
@@ -2419,7 +2436,7 @@ mod tests {
 
         let text = LayoutBox::new(
             BoxType::TextNode("UnbreakableLongWordThatMustWrap".to_string()),
-            Some(child_style),
+            Some(child_style.into()),
         );
         container.children.push(text);
 
@@ -2443,7 +2460,7 @@ mod tests {
 
         let text = LayoutBox::new(
             BoxType::TextNode("Internationalization".to_string()),
-            Some(child_style),
+            Some(child_style.into()),
         );
         container.children.push(text);
 
@@ -2473,7 +2490,7 @@ mod tests {
 
         let text = LayoutBox::new(
             BoxType::TextNode("hy\u{00AD}phen\u{00AD}ation".to_string()),
-            Some(child_style),
+            Some(child_style.into()),
         );
         container.children.push(text);
 
@@ -2496,7 +2513,7 @@ mod tests {
     fn test_line_clamp() {
         let mut container_style = ComputedStyle::default();
         container_style.line_clamp = mango_css::values::LineClamp::Lines(2);
-        let mut container = LayoutBox::new(BoxType::BlockNode, Some(container_style));
+        let mut container = LayoutBox::new(BoxType::BlockNode, Some(container_style.into()));
         container.dimensions.content = Rect::new(0.0, 0.0, 100.0, 0.0);
 
         let mut child_style = ComputedStyle::default();
@@ -2505,7 +2522,7 @@ mod tests {
 
         let text = LayoutBox::new(
             BoxType::TextNode("Line one text that wraps easily. Line two text that continues. Line three text that should be clamped.".to_string()),
-            Some(child_style),
+            Some(child_style.into()),
         );
         container.children.push(text);
 
@@ -2528,7 +2545,7 @@ mod tests {
 
         let raw = "Rust’s rich type system and ownership model guarantee memory-safety\nand thread-safety — enabling you to eliminate many classes of\nbugs at compile-time.";
         let collapsed = crate::style_tree::collapse_whitespace(raw);
-        let text = LayoutBox::new(BoxType::TextNode(collapsed), Some(child_style));
+        let text = LayoutBox::new(BoxType::TextNode(collapsed), Some(child_style.into()));
         container.children.push(text);
 
         let mut float_ctx = FloatContext::new();
@@ -2592,7 +2609,7 @@ mod tests {
         let raw = "这是一个测试，包含中文。";
         let text = LayoutBox::new(
             BoxType::TextNode(raw.to_string()),
-            Some(child_style.clone()),
+            Some(child_style.clone().into()),
         );
         container.children.push(text);
 
@@ -2628,7 +2645,7 @@ mod tests {
         let raw_unbroken = "这是一个测试包含中文";
         let text_keep = LayoutBox::new(
             BoxType::TextNode(raw_unbroken.to_string()),
-            Some(keep_style),
+            Some(keep_style.into()),
         );
         container_keep.children.push(text_keep);
 
@@ -2644,7 +2661,7 @@ mod tests {
         let mut container_thai = LayoutBox::new(BoxType::BlockNode, None);
         container_thai.dimensions.content = Rect::new(0.0, 0.0, 30.0, 0.0);
         let thai_raw = "ที่นี่"; // "thi-ni" (at this place): Consonant 'ท' + Sara I + Mai Ek, Consonant 'น' + Sara I + Mai Ek
-        let text_thai = LayoutBox::new(BoxType::TextNode(thai_raw.to_string()), Some(child_style));
+        let text_thai = LayoutBox::new(BoxType::TextNode(thai_raw.to_string()), Some(child_style.into()));
         container_thai.children.push(text_thai);
         let mut float_ctx3 = FloatContext::new();
         layout_inline_children(&mut container_thai, &mut float_ctx3);
@@ -2717,12 +2734,12 @@ mod tests {
         let mut style = ComputedStyle::default();
         style.font_size = 16.0;
         style.text_align = TextAlign::Justify;
-        container.style = Some(style.clone());
+        container.style = Some(style.clone().into());
 
         // "Hello world from mango browser engine" - long enough to wrap across 2 lines
         let text = LayoutBox::new(
             BoxType::TextNode("Hello world from mango browser engine".to_string()),
-            Some(style),
+            Some(style.into()),
         );
         container.children.push(text);
 
@@ -2751,7 +2768,7 @@ mod tests {
         container.dimensions.content = Rect::new(0.0, 0.0, 400.0, 0.0);
         let mut cont_style = ComputedStyle::default();
         cont_style.font_size = 16.0;
-        container.style = Some(cont_style.clone());
+        container.style = Some(cont_style.clone().into());
 
         // Inline span with margin-left: 20px, padding-left: 10px
         let mut span_style = ComputedStyle::default();
@@ -2759,10 +2776,10 @@ mod tests {
         span_style.margin_left = mango_css::values::Length::Px(20.0);
         span_style.padding_left = mango_css::values::Length::Px(10.0);
 
-        let mut span = LayoutBox::new(BoxType::InlineNode, Some(span_style));
+        let mut span = LayoutBox::new(BoxType::InlineNode, Some(span_style.into()));
         let text = LayoutBox::new(
             BoxType::TextNode("Inside Span".to_string()),
-            Some(cont_style.clone()),
+            Some(cont_style.clone().into()),
         );
         span.children.push(text);
         container.children.push(span);
@@ -2786,10 +2803,10 @@ mod tests {
         let mut style = ComputedStyle::default();
         style.font_size = 20.0;
         style.white_space = mango_css::values::WhiteSpace::Pre;
-        container.style = Some(style.clone());
+        container.style = Some(style.clone().into());
 
         // TextNode containing only a space
-        let text = LayoutBox::new(BoxType::TextNode("   ".to_string()), Some(style));
+        let text = LayoutBox::new(BoxType::TextNode("   ".to_string()), Some(style.into()));
         container.children.push(text);
 
         let mut float_ctx = FloatContext::new();
@@ -2811,9 +2828,9 @@ mod tests {
         style.font_size = 16.0;
         style.direction = mango_css::values::Direction::Rtl;
         style.text_indent = mango_css::values::Length::Px(40.0);
-        container.style = Some(style.clone());
+        container.style = Some(style.clone().into());
 
-        let text = LayoutBox::new(BoxType::TextNode("مرحبا".to_string()), Some(style));
+        let text = LayoutBox::new(BoxType::TextNode("مرحبا".to_string()), Some(style.into()));
         container.children.push(text);
 
         let mut float_ctx = FloatContext::new();
@@ -2836,10 +2853,10 @@ mod tests {
         container.dimensions.content = Rect::new(0.0, 0.0, 400.0, 0.0);
         let mut style = ComputedStyle::default();
         style.font_size = 16.0;
-        container.style = Some(style.clone());
+        container.style = Some(style.clone().into());
 
         // Text 1
-        let text1 = LayoutBox::new(BoxType::TextNode("Hello ".to_string()), Some(style.clone()));
+        let text1 = LayoutBox::new(BoxType::TextNode("Hello ".to_string()), Some(style.clone().into()));
 
         // Inline-block containing Text 2 with top padding 10px
         let mut ib_box = LayoutBox::new(BoxType::InlineBlock, None);
@@ -2848,9 +2865,9 @@ mod tests {
         ib_style.font_size = 16.0;
         ib_style.padding_top = mango_css::values::Length::Px(10.0);
         ib_style.padding_bottom = mango_css::values::Length::Px(10.0);
-        ib_box.style = Some(ib_style.clone());
+        ib_box.style = Some(ib_style.clone().into());
 
-        let text2 = LayoutBox::new(BoxType::TextNode("Button".to_string()), Some(ib_style));
+        let text2 = LayoutBox::new(BoxType::TextNode("Button".to_string()), Some(ib_style.into()));
         ib_box.children.push(text2);
 
         container.children.push(text1);
@@ -2889,13 +2906,13 @@ mod tests {
         style.font_size = 16.0;
         style.white_space = mango_css::values::WhiteSpace::Nowrap;
         style.text_overflow = mango_css::values::TextOverflow::Ellipsis;
-        container.style = Some(style.clone());
+        container.style = Some(style.clone().into());
 
         let long_text = LayoutBox::new(
             BoxType::TextNode(
                 "This is a very long sentence that must be truncated with ellipsis".to_string(),
             ),
-            Some(style),
+            Some(style.into()),
         );
         container.children.push(long_text);
 

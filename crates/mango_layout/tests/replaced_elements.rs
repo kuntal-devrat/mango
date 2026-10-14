@@ -26,7 +26,7 @@ fn test_image_with_only_width_maintains_aspect_ratio() {
     let mut style = mango_css::ComputedStyle::default();
     style.width = Length::Px(300.0);
     style.height = Length::Auto;
-    img_box.style = Some(style);
+    img_box.style = Some(style.into());
 
     let cb = Dimensions::new(Rect::new(0.0, 0.0, 1000.0, 800.0));
     let mut float_ctx = FloatContext::new();
@@ -53,7 +53,7 @@ fn test_image_with_only_height_maintains_aspect_ratio() {
     let mut style = mango_css::ComputedStyle::default();
     style.width = Length::Auto;
     style.height = Length::Px(100.0);
-    img_box.style = Some(style);
+    img_box.style = Some(style.into());
 
     let cb = Dimensions::new(Rect::new(0.0, 0.0, 1000.0, 800.0));
     let mut float_ctx = FloatContext::new();
@@ -77,7 +77,7 @@ fn test_css_aspect_ratio_overrides_intrinsic() {
     style.aspect_ratio = Some(16.0 / 9.0); // 16:9 CSS override
     style.width = Length::Px(320.0);
     style.height = Length::Auto;
-    img_box.style = Some(style);
+    img_box.style = Some(style.into());
 
     let cb = Dimensions::new(Rect::new(0.0, 0.0, 1000.0, 800.0));
     let mut float_ctx = FloatContext::new();
@@ -144,7 +144,7 @@ fn test_object_fit_and_object_position_display_commands() {
     // 1. object-fit: contain (with 50% 50% center)
     let mut style_contain = mango_css::ComputedStyle::default();
     style_contain.object_fit = ObjectFit::Contain;
-    img_box.style = Some(style_contain);
+    img_box.style = Some(style_contain.into());
 
     let dl_contain = build_display_list(&img_box);
     let cmd = dl_contain
@@ -166,7 +166,7 @@ fn test_object_fit_and_object_position_display_commands() {
     // 2. object-fit: cover (emits PushClip)
     let mut style_cover = mango_css::ComputedStyle::default();
     style_cover.object_fit = ObjectFit::Cover;
-    img_box.style = Some(style_cover);
+    img_box.style = Some(style_cover.into());
 
     let dl_cover = build_display_list(&img_box);
     let has_clip = dl_cover
@@ -192,7 +192,7 @@ fn test_object_fit_and_object_position_display_commands() {
     let mut style_pos = mango_css::ComputedStyle::default();
     style_pos.object_fit = ObjectFit::Contain;
     style_pos.object_position = (Length::Percent(0.0), Length::Percent(0.0));
-    img_box.style = Some(style_pos);
+    img_box.style = Some(style_pos.into());
 
     let dl_pos = build_display_list(&img_box);
     let cmd_pos = dl_pos

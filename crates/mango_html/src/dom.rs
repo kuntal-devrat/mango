@@ -6,6 +6,24 @@
 use mango_core::{Arena, Id, InternedString, StringInterner};
 use std::collections::HashSet;
 
+/// DOM errors per WHATWG DOM spec (NotFoundError / HierarchyRequestError).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DomError {
+    NotFoundError,
+    HierarchyRequestError,
+}
+
+impl std::fmt::Display for DomError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DomError::NotFoundError => write!(f, "NotFoundError"),
+            DomError::HierarchyRequestError => write!(f, "HierarchyRequestError"),
+        }
+    }
+}
+
+impl std::error::Error for DomError {}
+
 /// Handle to a DOM node inside a [`Document`]'s arena.
 pub type NodeId = Id<Node>;
 
@@ -48,6 +66,8 @@ pub struct ElementData {
     pub attributes: Vec<(String, String)>,
     pub shadow_root: Option<NodeId>,
     pub template_contents: Option<NodeId>,
+    pub is_hovered: bool,
+    pub is_active: bool,
 }
 
 impl ElementData {
@@ -58,6 +78,8 @@ impl ElementData {
             attributes,
             shadow_root: None,
             template_contents: None,
+            is_hovered: false,
+            is_active: false,
         }
     }
 
@@ -73,7 +95,19 @@ impl ElementData {
             attributes,
             shadow_root: None,
             template_contents: None,
+            is_hovered: false,
+            is_active: false,
         }
+    }
+
+    /// Returns whether the element is hovered.
+    pub fn is_hovered(&self) -> bool {
+        self.is_hovered || self.get_attribute("data-mango-hover") == Some("true")
+    }
+
+    /// Returns whether the element is active.
+    pub fn is_active(&self) -> bool {
+        self.is_active || self.get_attribute("data-mango-active") == Some("true")
     }
 
     /// Looks up an attribute value by name (case-insensitive for HTML attributes).
@@ -175,6 +209,8 @@ pub struct Document {
     pub content_type: String,
     /// The document's active target fragment identifier for the :target selector (PRD 6.1).
     pub target_id: Option<String>,
+    /// Monotonically increasing mutation version counter (OPT-005).
+    pub version: u64,
 }
 
 impl Document {
@@ -201,6 +237,7 @@ impl Document {
             character_set: "UTF-8".to_string(),
             content_type: "text/html".to_string(),
             target_id: None,
+            version: 0,
         }
     }
 
@@ -212,6 +249,7 @@ impl Document {
     /// Marks a DOM node as dirty for incremental style recalculation (ARCH-002).
     pub fn mark_dirty(&mut self, node_id: NodeId) {
         self.dirty_nodes.insert(node_id);
+        self.version = self.version.wrapping_add(1);
     }
 
     /// Returns a reference to the set of dirty nodes.
@@ -250,6 +288,7 @@ impl Document {
                     .push((name.to_ascii_lowercase(), value.to_string()));
             }
             self.dirty_nodes.insert(node_id);
+            self.version = self.version.wrapping_add(1);
         }
     }
 
@@ -261,6 +300,7 @@ impl Document {
             elem.attributes
                 .retain(|(k, _)| !k.eq_ignore_ascii_case(name));
             self.dirty_nodes.insert(node_id);
+            self.version = self.version.wrapping_add(1);
         }
     }
 
@@ -287,6 +327,7 @@ impl Document {
                     elem.attributes.push(("class".to_string(), new_class));
                 }
                 self.dirty_nodes.insert(node_id);
+                self.version = self.version.wrapping_add(1);
             }
         }
     }
@@ -310,6 +351,7 @@ impl Document {
                 elem.attributes[pos].1 = new_class;
             }
             self.dirty_nodes.insert(node_id);
+            self.version = self.version.wrapping_add(1);
         }
     }
 
@@ -361,17 +403,123 @@ impl Document {
 
     /// Creates an Element node in the document arena, automatically interning
     /// its tag name and attribute keys into the document's interner (OPT-002).
+    ///
+    /// Tag names and attribute keys are stored lowercased per HTML spec
+    /// (foreign SVG/MathML case adjustments are re-applied so `viewBox`,
+    /// `linearGradient`, etc. keep their canonical casing).
     pub fn create_element(&mut self, tag_name: &str, attributes: Vec<(String, String)>) -> NodeId {
-        let lower_tag = if tag_name.bytes().all(|b| !b.is_ascii_uppercase()) {
-            tag_name.to_string()
-        } else {
-            tag_name.to_ascii_lowercase()
+        let lower_tag = tag_name.to_ascii_lowercase();
+        // Re-apply SVG tag-name adjustment so foreign elements keep canonical case.
+        let stored_tag = match lower_tag.as_str() {
+            "altglyph" => "altGlyph".to_string(),
+            "altglyphdef" => "altGlyphDef".to_string(),
+            "altglyphitem" => "altGlyphItem".to_string(),
+            "animatecolor" => "animateColor".to_string(),
+            "animatemotion" => "animateMotion".to_string(),
+            "animatetransform" => "animateTransform".to_string(),
+            "clippath" => "clipPath".to_string(),
+            "feblend" => "feBlend".to_string(),
+            "fecolormatrix" => "feColorMatrix".to_string(),
+            "fecomponenttransfer" => "feComponentTransfer".to_string(),
+            "fecomposite" => "feComposite".to_string(),
+            "feconvolvematrix" => "feConvolveMatrix".to_string(),
+            "fediffuselighting" => "feDiffuseLighting".to_string(),
+            "fedisplacementmap" => "feDisplacementMap".to_string(),
+            "fedistantlight" => "feDistantLight".to_string(),
+            "fedropshadow" => "feDropShadow".to_string(),
+            "feflood" => "feFlood".to_string(),
+            "fefunca" => "feFuncA".to_string(),
+            "fefuncb" => "feFuncB".to_string(),
+            "fefuncg" => "feFuncG".to_string(),
+            "fefuncr" => "feFuncR".to_string(),
+            "fegaussianblur" => "feGaussianBlur".to_string(),
+            "feimage" => "feImage".to_string(),
+            "femerge" => "feMerge".to_string(),
+            "femergenode" => "feMergeNode".to_string(),
+            "femorphology" => "feMorphology".to_string(),
+            "feoffset" => "feOffset".to_string(),
+            "fepointlight" => "fePointLight".to_string(),
+            "fespecularlighting" => "feSpecularLighting".to_string(),
+            "fespotlight" => "feSpotLight".to_string(),
+            "fetile" => "feTile".to_string(),
+            "feturbulence" => "feTurbulence".to_string(),
+            "foreignobject" => "foreignObject".to_string(),
+            "glyphref" => "glyphRef".to_string(),
+            "lineargradient" => "linearGradient".to_string(),
+            "radialgradient" => "radialGradient".to_string(),
+            "textpath" => "textPath".to_string(),
+            _ => lower_tag.clone(),
         };
-        let tag_atom = self.interner.intern(&lower_tag);
-        for (k, _) in &attributes {
-            self.interner.intern(k);
+        let tag_atom = self.interner.intern(&stored_tag.to_ascii_lowercase());
+        // Lowercase attribute keys, re-applying SVG attribute adjustments.
+        let mut lowered_attrs: Vec<(String, String)> = Vec::with_capacity(attributes.len());
+        for (k, v) in attributes {
+            let lk = k.to_ascii_lowercase();
+            let stored_k = match lk.as_str() {
+                "attributename" => "attributeName".to_string(),
+                "attributetype" => "attributeType".to_string(),
+                "basefrequency" => "baseFrequency".to_string(),
+                "baseprofile" => "baseProfile".to_string(),
+                "calcmode" => "calcMode".to_string(),
+                "clippathunits" => "clipPathUnits".to_string(),
+                "diffuseconstant" => "diffuseConstant".to_string(),
+                "edgemode" => "edgeMode".to_string(),
+                "filterunits" => "filterUnits".to_string(),
+                "glyphref" => "glyphRef".to_string(),
+                "gradienttransform" => "gradientTransform".to_string(),
+                "gradientunits" => "gradientUnits".to_string(),
+                "kernelmatrix" => "kernelMatrix".to_string(),
+                "kernelunitlength" => "kernelUnitLength".to_string(),
+                "keypoints" => "keyPoints".to_string(),
+                "keysplines" => "keySplines".to_string(),
+                "keytimes" => "keyTimes".to_string(),
+                "lengthadjust" => "lengthAdjust".to_string(),
+                "limitingconeangle" => "limitingConeAngle".to_string(),
+                "markerheight" => "markerHeight".to_string(),
+                "markerunits" => "markerUnits".to_string(),
+                "markerwidth" => "markerWidth".to_string(),
+                "maskcontentunits" => "maskContentUnits".to_string(),
+                "maskunits" => "maskUnits".to_string(),
+                "numoctaves" => "numOctaves".to_string(),
+                "pathlength" => "pathLength".to_string(),
+                "patterncontentunits" => "patternContentUnits".to_string(),
+                "patterntransform" => "patternTransform".to_string(),
+                "patternunits" => "patternUnits".to_string(),
+                "pointsatx" => "pointsAtX".to_string(),
+                "pointsaty" => "pointsAtY".to_string(),
+                "pointsatz" => "pointsAtZ".to_string(),
+                "preservealpha" => "preserveAlpha".to_string(),
+                "preserveaspectratio" => "preserveAspectRatio".to_string(),
+                "primitiveunits" => "primitiveUnits".to_string(),
+                "refx" => "refX".to_string(),
+                "refy" => "refY".to_string(),
+                "repeatcount" => "repeatCount".to_string(),
+                "repeatdur" => "repeatDur".to_string(),
+                "requiredextensions" => "requiredExtensions".to_string(),
+                "requiredfeatures" => "requiredFeatures".to_string(),
+                "specularconstant" => "specularConstant".to_string(),
+                "specularexponent" => "specularExponent".to_string(),
+                "spreadmethod" => "spreadMethod".to_string(),
+                "startoffset" => "startOffset".to_string(),
+                "stddeviation" => "stdDeviation".to_string(),
+                "stitchtiles" => "stitchTiles".to_string(),
+                "surfacescale" => "surfaceScale".to_string(),
+                "systemlanguage" => "systemLanguage".to_string(),
+                "tablevalues" => "tableValues".to_string(),
+                "targetx" => "targetX".to_string(),
+                "targety" => "targetY".to_string(),
+                "textlength" => "textLength".to_string(),
+                "viewbox" => "viewBox".to_string(),
+                "viewtarget" => "viewTarget".to_string(),
+                "xchannelselector" => "xChannelSelector".to_string(),
+                "ychannelselector" => "yChannelSelector".to_string(),
+                "zoomandpan" => "zoomAndPan".to_string(),
+                _ => lk.clone(),
+            };
+            self.interner.intern(&lk);
+            lowered_attrs.push((stored_k, v));
         }
-        let template_contents = if lower_tag == "template" {
+        let template_contents = if stored_tag.to_ascii_lowercase() == "template" {
             Some(self.create_fragment())
         } else {
             None
@@ -384,11 +532,13 @@ impl Document {
             prev_sibling: None,
             next_sibling: None,
             data: NodeData::Element(ElementData {
-                tag_name: tag_name.to_string(),
+                tag_name: stored_tag,
                 tag_atom: Some(tag_atom),
-                attributes,
+                attributes: lowered_attrs,
                 shadow_root: None,
                 template_contents,
+                is_hovered: false,
+                is_active: false,
             }),
         })
     }
@@ -448,15 +598,52 @@ impl Document {
     }
 
     /// Attaches a shadow root (as a DocumentFragment) to an element node.
+    ///
+    /// Returns `None` (error) if the host already has a shadow root,
+    /// is not an element, or is unknown — it never overwrites an existing root.
     pub fn attach_shadow(&mut self, host_id: NodeId) -> Option<NodeId> {
+        // Check host exists and is an element without an existing shadow root.
+        match self.get(host_id) {
+            None => return None,
+            Some(n) => match &n.data {
+                NodeData::Element(el) => {
+                    if el.shadow_root.is_some() {
+                        return None;
+                    }
+                }
+                _ => return None,
+            },
+        }
         let shadow_fragment = self.create_fragment();
         if let Some(host_node) = self.get_mut(host_id)
             && let NodeData::Element(el) = &mut host_node.data
         {
+            // Re-check under mutable borrow (no overwrite on race).
+            if el.shadow_root.is_some() {
+                return None;
+            }
             el.shadow_root = Some(shadow_fragment);
+            self.dirty_nodes.insert(host_id);
+            self.version = self.version.wrapping_add(1);
             return Some(shadow_fragment);
         }
         None
+    }
+
+    /// Result-based variant returning [`DomError`] on failure.
+    pub fn try_attach_shadow(&mut self, host_id: NodeId) -> Result<NodeId, DomError> {
+        match self.get(host_id) {
+            None => Err(DomError::NotFoundError),
+            Some(n) => match &n.data {
+                NodeData::Element(el) if el.shadow_root.is_some() => {
+                    Err(DomError::HierarchyRequestError)
+                }
+                NodeData::Element(_) => Ok(self.attach_shadow(host_id).ok_or(
+                    DomError::HierarchyRequestError,
+                )?),
+                _ => Err(DomError::HierarchyRequestError),
+            },
+        }
     }
 
     /// Returns the shadow root attached to an element node, if any.
@@ -595,54 +782,65 @@ impl Document {
         }
 
         self.dirty_nodes.insert(parent);
+        self.version = self.version.wrapping_add(1);
     }
 
     /// Inserts a child node immediately before an existing reference child.
     ///
     /// Per the DOM spec, inserting a `DocumentFragment` moves all of its children
     /// rather than inserting the fragment itself.
-    pub fn insert_before(&mut self, parent: NodeId, child: NodeId, before: NodeId) {
+    ///
+    /// Returns `Err(NotFoundError)` when `before` is unknown or not a child of
+    /// `parent`; `Err(HierarchyRequestError)` for ancestor cycles or invalid
+    /// parent/child node types. Never falls back to append.
+    pub fn insert_before(
+        &mut self,
+        parent: NodeId,
+        child: NodeId,
+        before: NodeId,
+    ) -> Result<(), DomError> {
         if child == before || parent == child || self.is_ancestor(child, parent) {
-            return;
+            return Err(DomError::HierarchyRequestError);
         }
 
-        if let Some(p_node) = self.arena.get(parent) {
-            if matches!(
-                p_node.data,
-                NodeData::Text(_) | NodeData::Comment(_) | NodeData::DocumentType { .. }
-            ) {
-                return;
+        match self.arena.get(parent) {
+            None => return Err(DomError::NotFoundError),
+            Some(p_node) => {
+                if matches!(
+                    p_node.data,
+                    NodeData::Text(_) | NodeData::Comment(_) | NodeData::DocumentType { .. }
+                ) {
+                    return Err(DomError::HierarchyRequestError);
+                }
             }
-        } else {
-            return;
         }
 
-        if let Some(c_node) = self.arena.get(child) {
-            if matches!(
-                c_node.data,
-                NodeData::Document | NodeData::DocumentType { .. }
-            ) {
-                return;
+        match self.arena.get(child) {
+            None => return Err(DomError::NotFoundError),
+            Some(c_node) => {
+                if matches!(
+                    c_node.data,
+                    NodeData::Document | NodeData::DocumentType { .. }
+                ) {
+                    return Err(DomError::HierarchyRequestError);
+                }
             }
-        } else {
-            return;
         }
 
         if self.is_document_fragment(child) {
             let children: Vec<NodeId> = self.children(child).map(|n| n.id).collect();
             for grandchild in children {
-                self.insert_before(parent, grandchild, before);
+                self.insert_before(parent, grandchild, before)?;
             }
-            return;
+            return Ok(());
         }
 
-        let Some(b_node) = self.arena.get(before) else {
-            self.append_child(parent, child);
-            return;
+        let b_parent = match self.arena.get(before) {
+            None => return Err(DomError::NotFoundError),
+            Some(b_node) => b_node.parent,
         };
-        if b_node.parent != Some(parent) {
-            self.append_child(parent, child);
-            return;
+        if b_parent != Some(parent) {
+            return Err(DomError::NotFoundError);
         }
 
         self.detach(child);
@@ -671,6 +869,8 @@ impl Document {
         }
 
         self.dirty_nodes.insert(parent);
+        self.version = self.version.wrapping_add(1);
+        Ok(())
     }
 
     /// Replaces an existing child node with a new child node in `parent`.
@@ -694,21 +894,63 @@ impl Document {
             return old_child;
         }
 
-        self.insert_before(parent, new_child, old_child);
+        let _ = self.insert_before(parent, new_child, old_child);
         self.detach(old_child);
         old_child
     }
 
     /// Inserts a child node immediately after an existing reference child.
-    pub fn insert_after(&mut self, parent: NodeId, child: NodeId, after: NodeId) {
+    ///
+    /// Returns `Err(NotFoundError)` when `after` is unknown or not a child of
+    /// `parent`; `Err(HierarchyRequestError)` for ancestor cycles or invalid
+    /// node types. Never falls back to append on error.
+    pub fn insert_after(
+        &mut self,
+        parent: NodeId,
+        child: NodeId,
+        after: NodeId,
+    ) -> Result<(), DomError> {
         if child == after {
-            return;
+            return Ok(());
         }
-        let next_sibling = self.arena.get(after).and_then(|a| a.next_sibling);
+        // Validate parent/child.
+        if parent == child || self.is_ancestor(child, parent) {
+            return Err(DomError::HierarchyRequestError);
+        }
+        match self.arena.get(parent) {
+            None => return Err(DomError::NotFoundError),
+            Some(p) => {
+                if matches!(
+                    p.data,
+                    NodeData::Text(_) | NodeData::Comment(_) | NodeData::DocumentType { .. }
+                ) {
+                    return Err(DomError::HierarchyRequestError);
+                }
+            }
+        }
+        match self.arena.get(child) {
+            None => return Err(DomError::NotFoundError),
+            Some(c) => {
+                if matches!(
+                    c.data,
+                    NodeData::Document | NodeData::DocumentType { .. }
+                ) {
+                    return Err(DomError::HierarchyRequestError);
+                }
+            }
+        }
+        let (after_parent, next_sibling) = match self.arena.get(after) {
+            None => return Err(DomError::NotFoundError),
+            Some(a) => (a.parent, a.next_sibling),
+        };
+        if after_parent != Some(parent) {
+            return Err(DomError::NotFoundError);
+        }
         if let Some(next) = next_sibling {
-            self.insert_before(parent, child, next);
+            self.insert_before(parent, child, next)
         } else {
             self.append_child(parent, child);
+            Ok(())
         }
     }
 
@@ -750,6 +992,32 @@ impl Document {
 
         if let Some(p) = parent {
             self.dirty_nodes.insert(p);
+            self.version = self.version.wrapping_add(1);
+        }
+    }
+
+    /// Detaches a node from its parent and recycles the arena slots for this node
+    /// and all its descendants back into the arena free-list (Phase 3).
+    pub fn remove_child_and_recycle(&mut self, node: NodeId) {
+        self.detach(node);
+        self.recycle_subtree(node);
+    }
+
+    /// Recursively frees a node and all of its descendants, recycling their arena slots.
+    pub fn recycle_subtree(&mut self, root: NodeId) {
+        let mut to_free = Vec::new();
+        let mut stack = vec![root];
+        while let Some(curr) = stack.pop() {
+            to_free.push(curr);
+            let mut next_child = self.arena.get(curr).and_then(|n| n.first_child);
+            while let Some(c) = next_child {
+                stack.push(c);
+                next_child = self.arena.get(c).and_then(|n| n.next_sibling);
+            }
+        }
+        for nid in to_free {
+            self.dirty_nodes.remove(&nid);
+            self.arena.free_raw(nid.raw());
         }
     }
 
@@ -1001,7 +1269,10 @@ impl<'a> Iterator for ChildrenIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let current_id = self.current?;
         let node = self.doc.get(current_id)?;
-        self.current = node.next_sibling;
+        // Snapshot next_sibling before yielding so mutation of the current
+        // node (e.g. detach clearing its links) cannot corrupt iteration.
+        let next = node.next_sibling;
+        self.current = next;
         Some(node)
     }
 }
@@ -1049,7 +1320,7 @@ mod tests {
         doc.append_child(root, c);
 
         let b = doc.create_text("B");
-        doc.insert_before(root, b, c);
+        let _ = doc.insert_before(root, b, c);
 
         let texts: Vec<String> = doc
             .children(root)
@@ -1118,7 +1389,7 @@ mod tests {
         doc.append_child(frag, c);
 
         // Inserting fragment before D moves B and C in front of D
-        doc.insert_before(root, frag, d);
+        let _ = doc.insert_before(root, frag, d);
 
         let texts: Vec<String> = doc
             .children(root)
@@ -1204,5 +1475,35 @@ mod tests {
             html,
             "<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01//EN\" \"http://www.w3.org/TR/html4/strict.dtd\">"
         );
+    }
+
+    #[test]
+    fn test_remove_child_and_recycle_subtree() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        let div = doc.create_element("div", Vec::new());
+        let p = doc.create_element("p", Vec::new());
+        let text = doc.create_text("child text");
+        doc.append_child(p, text);
+        doc.append_child(div, p);
+        doc.append_child(root, div);
+
+        let initial_total = doc.arena.total_slots();
+        assert_eq!(doc.arena.free_slots(), 0);
+
+        // Remove div and its subtree (div, p, text = 3 nodes)
+        doc.remove_child_and_recycle(div);
+        assert_eq!(doc.arena.free_slots(), 3);
+
+        // Next 3 allocations must reuse the 3 recycled slots without expanding arena total_slots
+        let n1 = doc.create_element("span", Vec::new());
+        let n2 = doc.create_element("span", Vec::new());
+        let n3 = doc.create_element("span", Vec::new());
+        doc.append_child(root, n1);
+        doc.append_child(root, n2);
+        doc.append_child(root, n3);
+
+        assert_eq!(doc.arena.free_slots(), 0);
+        assert_eq!(doc.arena.total_slots(), initial_total);
     }
 }

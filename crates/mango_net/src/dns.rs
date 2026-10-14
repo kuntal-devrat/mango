@@ -11,10 +11,15 @@ const DEFAULT_DNS_TTL: Duration = Duration::from_secs(300);
 /// Maximum number of DNS cache entries.
 const MAX_DNS_CACHE_ENTRIES: usize = 512;
 
+/// Default timeout for a single DNS lookup (prevents UI hangs on dead DNS).
+pub const DNS_LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// A thread-safe in-memory cache for DNS lookups.
 pub struct DnsCache {
     entries: RwLock<HashMap<String, (Vec<SocketAddr>, Instant)>>,
     ttl: Duration,
+    /// Hosts with a lookup currently in flight (singleflight dedup).
+    inflight: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 impl Default for DnsCache {
@@ -29,6 +34,7 @@ impl DnsCache {
         Self {
             entries: RwLock::new(HashMap::new()),
             ttl: DEFAULT_DNS_TTL,
+            inflight: std::sync::Mutex::new(std::collections::HashSet::new()),
         }
     }
 
@@ -166,6 +172,105 @@ impl DnsCache {
         if let Ok(mut guard) = self.entries.write() {
             guard.clear();
         }
+    }
+
+    /// Synchronous singleflight resolve: concurrent callers for the same
+    /// `host:port` wait for the in-flight lookup instead of issuing duplicate
+    /// system DNS queries. Bounded by `timeout`.
+    pub fn resolve_singleflight(
+        &self,
+        host: &str,
+        port: u16,
+        timeout: Duration,
+    ) -> Result<Vec<SocketAddr>, String> {
+        let cache_key = format!("{host}:{port}");
+        if let Some(addrs) = self.get_cached(&cache_key) {
+            return Ok(addrs);
+        }
+        // If another thread is already resolving this host, wait for its
+        // cache entry instead of issuing a duplicate lookup.
+        let is_duplicate = self
+            .inflight
+            .lock()
+            .map(|mut s| !s.insert(cache_key.clone()))
+            .unwrap_or(false);
+        if is_duplicate {
+            let deadline = Instant::now() + timeout;
+            loop {
+                if let Some(addrs) = self.get_cached(&cache_key) {
+                    return Ok(addrs);
+                }
+                if Instant::now() >= deadline {
+                    return Err(format!(
+                        "DNS singleflight wait timed out after {:?} for '{host}'",
+                        timeout
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+        let res = self.resolve_timeout(host, port, timeout);
+        if let Ok(mut s) = self.inflight.lock() {
+            s.remove(&cache_key);
+        }
+        res
+    }
+
+    /// Async singleflight resolve with timeout. Never blocks the executor:
+    /// the blocking lookup runs via [`Self::resolve_async`] and concurrent
+    /// callers for the same host coalesce onto the cached result.
+    pub async fn resolve_async_timeout(
+        &self,
+        host: &str,
+        port: u16,
+        timeout: Duration,
+    ) -> Result<Vec<SocketAddr>, String> {
+        let cache_key = format!("{host}:{port}");
+        if let Some(addrs) = self.get_cached(&cache_key) {
+            return Ok(addrs);
+        }
+        let is_duplicate = self
+            .inflight
+            .lock()
+            .map(|mut s| !s.insert(cache_key.clone()))
+            .unwrap_or(false);
+        if is_duplicate {
+            let deadline = Instant::now() + timeout;
+            loop {
+                if let Some(addrs) = self.get_cached(&cache_key) {
+                    return Ok(addrs);
+                }
+                if Instant::now() >= deadline {
+                    return Err(format!(
+                        "DNS singleflight wait timed out after {:?} for '{host}'",
+                        timeout
+                    ));
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }
+        let host_owned = host.to_string();
+        let fut = self.resolve_async(&host_owned, port);
+        let res = tokio::time::timeout(timeout, fut)
+            .await
+            .map_err(|_| {
+                format!("DNS resolution timed out after {:?} for '{host}'", timeout)
+            })?
+            .map_err(|e| e.to_string());
+        if let Ok(mut s) = self.inflight.lock() {
+            s.remove(&cache_key);
+        }
+        res
+    }
+
+    /// Async resolve with the default lookup timeout plus singleflight.
+    pub async fn resolve_async_singleflight(
+        &self,
+        host: &str,
+        port: u16,
+    ) -> Result<Vec<SocketAddr>, String> {
+        self.resolve_async_timeout(host, port, DNS_LOOKUP_TIMEOUT)
+            .await
     }
 }
 

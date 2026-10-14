@@ -10,19 +10,83 @@ use std::sync::RwLock;
 use image::codecs::gif::GifDecoder;
 use image::{AnimationDecoder, GenericImageView};
 
-static DECODED_IMAGE_CACHE: std::sync::OnceLock<RwLock<HashMap<String, DecodedImage>>> =
+/// Thread-safe bounded memory cache for decoded image buffers.
+struct BoundedImageStore<K: std::hash::Hash + Eq + Clone> {
+    entries: HashMap<K, DecodedImage>,
+    total_bytes: usize,
+    max_bytes: usize,
+}
+
+impl<K: std::hash::Hash + Eq + Clone> BoundedImageStore<K> {
+    fn new(max_bytes: usize) -> Self {
+        Self {
+            entries: HashMap::new(),
+            total_bytes: 0,
+            max_bytes,
+        }
+    }
+
+    fn insert(&mut self, key: K, img: DecodedImage) {
+        let entry_bytes = img.pixels.len() * 4;
+        if entry_bytes > self.max_bytes {
+            return;
+        }
+
+        if let Some(old) = self.entries.remove(&key) {
+            self.total_bytes = self.total_bytes.saturating_sub(old.pixels.len() * 4);
+        }
+
+        while (self.total_bytes + entry_bytes > self.max_bytes || self.entries.len() >= 1024)
+            && !self.entries.is_empty()
+        {
+            let Some(k) = self.entries.keys().next().cloned() else { break; };
+            if let Some(removed) = self.entries.remove(&k) {
+                self.total_bytes = self.total_bytes.saturating_sub(removed.pixels.len() * 4);
+            }
+        }
+
+        self.total_bytes += entry_bytes;
+        self.entries.insert(key, img);
+    }
+
+    fn get<Q>(&self, key: &Q) -> Option<&DecodedImage>
+    where
+        K: std::borrow::Borrow<Q>,
+        Q: std::hash::Hash + Eq + ?Sized,
+    {
+        self.entries.get(key)
+    }
+
+    fn iter(&self) -> std::collections::hash_map::Iter<'_, K, DecodedImage> {
+        self.entries.iter()
+    }
+
+    #[allow(dead_code)]
+    fn remove(&mut self, key: &K) -> Option<DecodedImage> {
+        if let Some(removed) = self.entries.remove(key) {
+            self.total_bytes = self.total_bytes.saturating_sub(removed.pixels.len() * 4);
+            Some(removed)
+        } else {
+            None
+        }
+    }
+}
+
+// 64MB budget for decoded images
+static DECODED_IMAGE_CACHE: std::sync::OnceLock<RwLock<BoundedImageStore<String>>> =
     std::sync::OnceLock::new();
 static DECODE_IN_FLIGHT: std::sync::OnceLock<RwLock<HashSet<String>>> = std::sync::OnceLock::new();
 
-static SCALED_IMAGE_CACHE: std::sync::OnceLock<RwLock<HashMap<(String, u32, u32), DecodedImage>>> =
+// 32MB budget for scaled image variants
+static SCALED_IMAGE_CACHE: std::sync::OnceLock<RwLock<BoundedImageStore<(String, u32, u32)>>> =
     std::sync::OnceLock::new();
 
-fn global_image_cache() -> &'static RwLock<HashMap<String, DecodedImage>> {
-    DECODED_IMAGE_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
+fn global_image_cache() -> &'static RwLock<BoundedImageStore<String>> {
+    DECODED_IMAGE_CACHE.get_or_init(|| RwLock::new(BoundedImageStore::new(64 * 1024 * 1024)))
 }
 
-fn global_scaled_cache() -> &'static RwLock<HashMap<(String, u32, u32), DecodedImage>> {
-    SCALED_IMAGE_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
+fn global_scaled_cache() -> &'static RwLock<BoundedImageStore<(String, u32, u32)>> {
+    SCALED_IMAGE_CACHE.get_or_init(|| RwLock::new(BoundedImageStore::new(32 * 1024 * 1024)))
 }
 
 fn in_flight_set() -> &'static RwLock<HashSet<String>> {
@@ -45,12 +109,6 @@ pub fn get_scaled_image(key: &str, target_w: u32, target_h: u32) -> Option<Decod
 /// Stores a scaled image in the scaled image cache.
 pub fn cache_scaled_image(key: &str, target_w: u32, target_h: u32, img: DecodedImage) {
     if let Ok(mut cache) = global_scaled_cache().write() {
-        if cache.len() > 512 {
-            let keys_to_remove: Vec<_> = cache.keys().take(256).cloned().collect();
-            for k in keys_to_remove {
-                cache.remove(&k);
-            }
-        }
         cache.insert((key.to_string(), target_w, target_h), img);
     }
 }
@@ -232,6 +290,12 @@ fn global_animated_cache() -> &'static RwLock<HashMap<String, AnimatedImage>> {
 /// Stores an animated image in the cache.
 pub fn cache_animated_image(key: &str, anim: AnimatedImage) {
     if let Ok(mut cache) = global_animated_cache().write() {
+        if cache.len() > 128 {
+            let keys_to_remove: Vec<_> = cache.keys().take(64).cloned().collect();
+            for k in keys_to_remove {
+                cache.remove(&k);
+            }
+        }
         cache.insert(key.to_string(), anim);
     }
 }

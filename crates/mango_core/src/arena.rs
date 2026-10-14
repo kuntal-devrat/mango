@@ -257,6 +257,18 @@ impl<T> Arena<T> {
         }
     }
 
+    /// Frees an active slot in the arena directly by index, bypassing generation matching.
+    pub fn free_raw(&mut self, index: u32) -> Option<T> {
+        let slot = self.items.get_mut(index as usize)?;
+        if let Some(val) = slot.value.take() {
+            self.free_list.push(index);
+            self.active_count = self.active_count.saturating_sub(1);
+            Some(val)
+        } else {
+            None
+        }
+    }
+
     /// Returns `true` if the item at the given id is currently active (not freed or superseded).
     #[inline]
     pub fn is_alive(&self, id: Id<T>) -> bool {

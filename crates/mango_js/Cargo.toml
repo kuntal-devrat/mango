@@ -13,3 +13,4 @@ mango_net.workspace = true
 log.workspace = true
 boa_engine.workspace = true
 boa_gc.workspace = true
+serde_json.workspace = true

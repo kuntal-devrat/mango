@@ -73,7 +73,7 @@ fn test_bidi_uax9_algorithm_mixed_scripts_and_mirroring() {
     bdo_style.direction = Direction::Rtl;
     bdo_style.unicode_bidi = UnicodeBidi::BidiOverride;
 
-    let bdo_child = LayoutBox::new(BoxType::TextNode("MANGO".to_string()), Some(bdo_style));
+    let bdo_child = LayoutBox::new(BoxType::TextNode("MANGO".to_string()), Some(bdo_style.into()));
     container.children.push(bdo_child);
 
     let mut float_ctx = FloatContext::new();
@@ -170,7 +170,7 @@ fn test_soft_hyphens_and_hyphenation_manual_and_auto() {
     let text_with_shy = "super\u{00AD}cali\u{00AD}fragil\u{00AD}istic";
     container.children.push(LayoutBox::new(
         BoxType::TextNode(text_with_shy.to_string()),
-        Some(style.clone()),
+        Some(style.clone().into()),
     ));
 
     let mut float_ctx = FloatContext::new();
@@ -190,7 +190,7 @@ fn test_soft_hyphens_and_hyphenation_manual_and_auto() {
     let word_with_shy = "hy\u{00AD}phen\u{00AD}ation";
     narrow_container.children.push(LayoutBox::new(
         BoxType::TextNode(word_with_shy.to_string()),
-        Some(style.clone()),
+        Some(style.clone().into()),
     ));
 
     let mut float_ctx = FloatContext::new();
@@ -216,7 +216,7 @@ fn test_soft_hyphens_and_hyphenation_manual_and_auto() {
     no_hyphen_style.hyphens = Hyphens::None;
     no_hyphen_container.children.push(LayoutBox::new(
         BoxType::TextNode("hy\u{00AD}phen\u{00AD}ation".to_string()),
-        Some(no_hyphen_style),
+        Some(no_hyphen_style.into()),
     ));
 
     let mut float_ctx = FloatContext::new();
@@ -235,7 +235,7 @@ fn test_soft_hyphens_and_hyphenation_manual_and_auto() {
     // "internationalization" is 20 chars; overflows 80px container
     auto_container.children.push(LayoutBox::new(
         BoxType::TextNode("internationalization".to_string()),
-        Some(auto_style),
+        Some(auto_style.into()),
     ));
 
     let mut float_ctx = FloatContext::new();
@@ -266,40 +266,40 @@ fn test_ruby_annotation_layout() {
     ruby_style.display = Display::Ruby;
 
     // Build <ruby> box: base text "漢字", annotation <rt> "かんじ", parentheses <rp> "(" and ")"
-    let mut ruby_box = LayoutBox::new(BoxType::InlineNode, Some(ruby_style.clone()));
+    let mut ruby_box = LayoutBox::new(BoxType::InlineNode, Some(ruby_style.clone().into()));
     ruby_box.tag_name = Some("ruby".to_string());
 
     // <rb> 漢字 </rb>
-    let mut rb_box = LayoutBox::new(BoxType::InlineNode, Some(ruby_style.clone()));
+    let mut rb_box = LayoutBox::new(BoxType::InlineNode, Some(ruby_style.clone().into()));
     rb_box.tag_name = Some("rb".to_string());
     rb_box.children.push(LayoutBox::new(
         BoxType::TextNode("漢字".to_string()),
-        Some(ruby_style.clone()),
+        Some(ruby_style.clone().into()),
     ));
     ruby_box.children.push(rb_box);
 
     // <rp> ( </rp> (should be hidden in layout)
-    let mut rp1_box = LayoutBox::new(BoxType::InlineNode, Some(ruby_style.clone()));
+    let mut rp1_box = LayoutBox::new(BoxType::InlineNode, Some(ruby_style.clone().into()));
     rp1_box.tag_name = Some("rp".to_string());
     rp1_box.children.push(LayoutBox::new(
         BoxType::TextNode("(".to_string()),
-        Some(ruby_style.clone()),
+        Some(ruby_style.clone().into()),
     ));
     ruby_box.children.push(rp1_box);
 
     // <rt> かんじ </rt>
     let mut rt_style = ruby_style.clone();
     rt_style.font_size = 10.0;
-    let mut rt_box = LayoutBox::new(BoxType::InlineNode, Some(rt_style.clone()));
+    let mut rt_box = LayoutBox::new(BoxType::InlineNode, Some(rt_style.clone().into()));
     rt_box.tag_name = Some("rt".to_string());
     rt_box.children.push(LayoutBox::new(
         BoxType::TextNode("かんじ".to_string()),
-        Some(rt_style),
+        Some(rt_style.into()),
     ));
     ruby_box.children.push(rt_box);
 
     // <rp> ) </rp> (should be hidden in layout)
-    let mut rp2_box = LayoutBox::new(BoxType::InlineNode, Some(ruby_style));
+    let mut rp2_box = LayoutBox::new(BoxType::InlineNode, Some(ruby_style.into()));
     rp2_box.tag_name = Some("rp".to_string());
     rp2_box
         .children
@@ -367,7 +367,7 @@ fn test_white_space_break_spaces_and_pre_wrap() {
     let bs_text = "Alpha        Beta";
     bs_container.children.push(LayoutBox::new(
         BoxType::TextNode(bs_text.to_string()),
-        Some(bs_style),
+        Some(bs_style.into()),
     ));
 
     let mut float_ctx = FloatContext::new();
@@ -391,7 +391,7 @@ fn test_white_space_break_spaces_and_pre_wrap() {
 
     wide_container.children.push(LayoutBox::new(
         BoxType::TextNode("Hello   ".to_string()),
-        Some(wide_bs_style),
+        Some(wide_bs_style.into()),
     ));
 
     let mut float_ctx = FloatContext::new();
@@ -415,7 +415,7 @@ fn test_white_space_break_spaces_and_pre_wrap() {
     let pw_text = "Line 1\nLine 2\nLine 3";
     pw_container.children.push(LayoutBox::new(
         BoxType::TextNode(pw_text.to_string()),
-        Some(pw_style),
+        Some(pw_style.into()),
     ));
 
     let mut float_ctx = FloatContext::new();
@@ -441,7 +441,7 @@ fn test_white_space_break_spaces_and_pre_wrap() {
     let pl_text = "Word1     Word2\nWord3     Word4";
     pl_container.children.push(LayoutBox::new(
         BoxType::TextNode(pl_text.to_string()),
-        Some(pl_style),
+        Some(pl_style.into()),
     ));
 
     let mut float_ctx = FloatContext::new();
@@ -478,4 +478,24 @@ fn test_wikipedia_ongoing_spacing() {
     assert!(box_tree.dimensions.content.size.width > 0.0);
 }
 
+#[test]
+fn test_ddg_snippet_spacing() {
+    let snippet_html = r##"<div>
+<a class="result__snippet"><b>Rust</b> is a blazing fast and memory-efficient static compiled language with a rich type system and ownership model. It can be used to power performance-critical services while guaranteeing memory-safety and thread-safety, empowering developers to debug at compile-time. In addition to that <b>Rust</b> has great documentation and a user-friendly compiler with top-end tools like integrated package ...</a>
+</div>"##;
+    let doc = mango_html::parse_html(snippet_html);
+    let sheets = mango_layout::extract_style_elements(&doc);
+    let sheet_refs: Vec<&mango_css::parser::Stylesheet> = sheets.iter().collect();
+    let styled = mango_layout::build_style_tree(&doc, &sheet_refs).unwrap();
+    let mut box_tree = mango_layout::build_box_tree(&styled);
+    let cb = mango_layout::Dimensions::new(mango_core::Rect::new(0.0, 0.0, 590.0, 600.0));
+    let mut float_ctx = mango_layout::FloatContext::new();
+    mango_layout::layout_block(&mut box_tree, &cb, &mut float_ctx);
 
+    let dl = mango_layout::display_list::build_display_list(&box_tree);
+    for cmd in dl {
+        if let mango_render::DisplayCommand::DrawText { text, x, y, .. } = cmd {
+            println!("CMD DRAW TEXT at x={:.1}, y={:.1}: {:?}", x, y, text);
+        }
+    }
+}

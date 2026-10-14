@@ -1,6 +1,7 @@
 //! CSS value types, units, lengths, colors, and layout keywords.
 
 use mango_core::Color;
+use std::collections::{HashMap, VecDeque};
 
 /// A linear combination of dimensional units in a CSS `calc(...)` expression.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -11,6 +12,19 @@ pub struct CalcLength {
     pub rem: f32,
     pub vw: f32,
     pub vh: f32,
+}
+
+impl Eq for CalcLength {}
+
+impl std::hash::Hash for CalcLength {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.px.to_bits().hash(state);
+        self.percent.to_bits().hash(state);
+        self.em.to_bits().hash(state);
+        self.rem.to_bits().hash(state);
+        self.vw.to_bits().hash(state);
+        self.vh.to_bits().hash(state);
+    }
 }
 
 impl CalcLength {
@@ -34,6 +48,10 @@ impl CalcLength {
 }
 
 /// An identifier for an interned mathematical expression in CSS math functions (`calc()`, `min()`, `max()`, `clamp()`).
+///
+/// Ids are monotonically allocated and never reused: when the store is full the
+/// least-recently-used entry is evicted and stale ids simply resolve to `0.0`
+/// (or `None` for lookups) instead of aliasing a different expression.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct MathId(pub u32);
 
@@ -62,6 +80,63 @@ pub enum MathExpr {
         val: Box<MathExpr>,
         max: Box<MathExpr>,
     },
+}
+
+impl Eq for MathExpr {}
+
+impl std::hash::Hash for MathExpr {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            MathExpr::Length(len) => {
+                0u8.hash(state);
+                len.hash(state);
+            }
+            MathExpr::Number(n) => {
+                1u8.hash(state);
+                n.to_bits().hash(state);
+            }
+            MathExpr::Add(a, b) => {
+                2u8.hash(state);
+                a.hash(state);
+                b.hash(state);
+            }
+            MathExpr::Sub(a, b) => {
+                3u8.hash(state);
+                a.hash(state);
+                b.hash(state);
+            }
+            MathExpr::Mul(a, b) => {
+                4u8.hash(state);
+                a.hash(state);
+                b.hash(state);
+            }
+            MathExpr::Div(a, b) => {
+                5u8.hash(state);
+                a.hash(state);
+                b.hash(state);
+            }
+            MathExpr::Min(list) => {
+                6u8.hash(state);
+                list.len().hash(state);
+                for e in list {
+                    e.hash(state);
+                }
+            }
+            MathExpr::Max(list) => {
+                7u8.hash(state);
+                list.len().hash(state);
+                for e in list {
+                    e.hash(state);
+                }
+            }
+            MathExpr::Clamp { min, val, max } => {
+                8u8.hash(state);
+                min.hash(state);
+                val.hash(state);
+                max.hash(state);
+            }
+        }
+    }
 }
 
 impl MathExpr {
@@ -303,27 +378,73 @@ impl MathExpr {
     }
 }
 
-static MATH_STORE: std::sync::OnceLock<std::sync::RwLock<Vec<MathExpr>>> =
+static MATH_STORE: std::sync::OnceLock<std::sync::RwLock<MathStoreInner>> =
     std::sync::OnceLock::new();
 
-fn get_math_store() -> &'static std::sync::RwLock<Vec<MathExpr>> {
-    MATH_STORE.get_or_init(|| std::sync::RwLock::new(Vec::new()))
+/// Thread-safe interned-math-expression store with O(1) dedup and LRU eviction.
+///
+/// Ids are allocated monotonically from `next_id` and never reused, so evicting
+/// an entry can never cause a stale [`MathId`] to alias a different expression:
+/// lookups of evicted ids simply miss.
+struct MathStoreInner {
+    by_id: HashMap<u32, MathExpr>,
+    by_expr: HashMap<MathExpr, u32>,
+    /// LRU order: front is least-recently-used, back is most-recently-used.
+    lru: VecDeque<u32>,
+    next_id: u32,
+}
+
+impl MathStoreInner {
+    fn new() -> Self {
+        Self {
+            by_id: HashMap::new(),
+            by_expr: HashMap::new(),
+            lru: VecDeque::new(),
+            next_id: 0,
+        }
+    }
+
+    /// Marks `id` as most-recently-used.
+    fn touch(&mut self, id: u32) {
+        if let Some(pos) = self.lru.iter().position(|&x| x == id) {
+            self.lru.remove(pos);
+        }
+        self.lru.push_back(id);
+    }
+}
+
+fn get_math_store() -> &'static std::sync::RwLock<MathStoreInner> {
+    MATH_STORE.get_or_init(|| std::sync::RwLock::new(MathStoreInner::new()))
 }
 
 /// Interns a MathExpr into the thread-safe global store and returns its MathId,
-/// deduplicating existing identical expressions and enforcing an upper bound.
+/// deduplicating existing identical expressions in O(1) via a reverse map.
+///
+/// When the store reaches its upper bound the least-recently-used entry is
+/// evicted (and the eviction is logged) instead of aliasing `MathId(0)`.
+/// Because ids are never reused, previously handed-out ids that referred to the
+/// evicted expression simply stop resolving rather than returning wrong values.
 pub fn intern_math(expr: MathExpr) -> MathId {
+    const MAX_MATH_STORE_SIZE: usize = 16_384;
     let store = get_math_store();
     let mut guard = store.write().unwrap_or_else(|e| e.into_inner());
-    if let Some(pos) = guard.iter().rposition(|e| *e == expr) {
-        return MathId(pos as u32);
+    if let Some(&id) = guard.by_expr.get(&expr) {
+        guard.touch(id);
+        return MathId(id);
     }
-    const MAX_MATH_STORE_SIZE: usize = 16_384;
-    if guard.len() >= MAX_MATH_STORE_SIZE {
-        return MathId(0);
+    if guard.by_id.len() >= MAX_MATH_STORE_SIZE
+        && let Some(evicted) = guard.lru.pop_front()
+    {
+        if let Some(old_expr) = guard.by_id.remove(&evicted) {
+            guard.by_expr.remove(&old_expr);
+        }
+        eprintln!("mango_css: math expression store full; evicted least-recently-used entry");
     }
-    let id = guard.len() as u32;
-    guard.push(expr);
+    let id = guard.next_id;
+    guard.next_id = guard.next_id.wrapping_add(1);
+    guard.by_id.insert(id, expr.clone());
+    guard.by_expr.insert(expr, id);
+    guard.lru.push_back(id);
     MathId(id)
 }
 
@@ -331,7 +452,10 @@ pub fn intern_math(expr: MathExpr) -> MathId {
 pub fn clear_math_store() {
     let store = get_math_store();
     let mut guard = store.write().unwrap_or_else(|e| e.into_inner());
-    guard.clear();
+    guard.by_id.clear();
+    guard.by_expr.clear();
+    guard.lru.clear();
+    guard.next_id = 0;
 }
 
 /// Resolves an interned MathId to concrete pixels.
@@ -345,7 +469,7 @@ pub fn eval_math(
 ) -> f32 {
     let store = get_math_store();
     let guard = store.read().unwrap_or_else(|e| e.into_inner());
-    if let Some(expr) = guard.get(id.0 as usize) {
+    if let Some(expr) = guard.by_id.get(&id.0) {
         expr.to_px_with_viewports(
             font_size,
             root_font_size,
@@ -362,7 +486,7 @@ pub fn eval_math(
 pub fn get_math(id: MathId) -> Option<MathExpr> {
     let store = get_math_store();
     let guard = store.read().unwrap_or_else(|e| e.into_inner());
-    guard.get(id.0 as usize).cloned()
+    guard.by_id.get(&id.0).cloned()
 }
 
 /// Creates a Length from a MathExpr, performing constant folding to Length::Px or CalcLength if possible.
@@ -410,6 +534,60 @@ pub enum Length {
     /// Automatic sizing by the layout engine.
     #[default]
     Auto,
+}
+
+impl Eq for Length {}
+
+impl std::hash::Hash for Length {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match *self {
+            Length::Px(v) => {
+                0u8.hash(state);
+                v.to_bits().hash(state);
+            }
+            Length::Em(v) => {
+                1u8.hash(state);
+                v.to_bits().hash(state);
+            }
+            Length::Rem(v) => {
+                2u8.hash(state);
+                v.to_bits().hash(state);
+            }
+            Length::Percent(v) => {
+                3u8.hash(state);
+                v.to_bits().hash(state);
+            }
+            Length::Vw(v) => {
+                4u8.hash(state);
+                v.to_bits().hash(state);
+            }
+            Length::Vh(v) => {
+                5u8.hash(state);
+                v.to_bits().hash(state);
+            }
+            Length::Vmin(v) => {
+                6u8.hash(state);
+                v.to_bits().hash(state);
+            }
+            Length::Vmax(v) => {
+                7u8.hash(state);
+                v.to_bits().hash(state);
+            }
+            Length::Calc(c) => {
+                8u8.hash(state);
+                c.hash(state);
+            }
+            Length::Math(id) => {
+                9u8.hash(state);
+                id.hash(state);
+            }
+            Length::Content => 10u8.hash(state),
+            Length::MinContent => 11u8.hash(state),
+            Length::MaxContent => 12u8.hash(state),
+            Length::FitContent => 13u8.hash(state),
+            Length::Auto => 14u8.hash(state),
+        }
+    }
 }
 thread_local! {
     static CURRENT_VIEWPORT: std::cell::Cell<(f32, f32)> = const { std::cell::Cell::new((800.0, 600.0)) };
@@ -2022,6 +2200,7 @@ pub enum Contain {
     Layout,
     Size,
     Style,
+    InlineSize,
 }
 
 /// CSS `content-visibility` property values.
@@ -2660,6 +2839,59 @@ pub fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (u8, u8, u8) {
     )
 }
 
+/// Converts HWB values to RGB (0..255).
+///
+/// `h` is a hue angle in degrees, `w`/`b` are whiteness/blackness in `0.0..=1.0`.
+/// Follows CSS Color 4: the pure hue is mixed toward white by `w`, with `w + b`
+/// renormalized when their sum exceeds 1.
+pub fn hwb_to_rgb(h: f32, w: f32, b: f32) -> (u8, u8, u8) {
+    let (w, b) = if w + b > 1.0 {
+        (w / (w + b), b / (w + b))
+    } else {
+        (w.clamp(0.0, 1.0), b.clamp(0.0, 1.0))
+    };
+    let (pr, pg, pb) = hsl_to_rgb(h, 1.0, 0.5);
+    let mix = |c: u8| {
+        ((c as f32 / 255.0) * (1.0 - w - b) + w)
+            .clamp(0.0, 1.0)
+            .mul_add(255.0, 0.0)
+            .round() as u8
+    };
+    (mix(pr), mix(pg), mix(pb))
+}
+
+/// Converts CIE Lab (`L` in `0.0..=100.0`, D50 white point) to sRGB bytes.
+pub fn lab_to_srgb(l: f32, a: f32, b: f32) -> (u8, u8, u8) {
+    let l = l.clamp(0.0, 100.0);
+    let fy = (l + 16.0) / 116.0;
+    let fx = fy + a / 500.0;
+    let fz = fy - b / 200.0;
+    // Inverse CIE companding.
+    let inv = |t: f32| {
+        if t.powi(3) > 0.008856 {
+            t.powi(3)
+        } else {
+            (t - 16.0 / 116.0) / 7.787
+        }
+    };
+    // D50 tristimulus (0..100).
+    let x = 96.422 * inv(fx);
+    let y = 100.0 * inv(fy);
+    let z = 82.521 * inv(fz);
+    // Bradford-adapted D50 -> D65 linear sRGB matrix (combined).
+    let x = x / 100.0;
+    let y = y / 100.0;
+    let z = z / 100.0;
+    let r_lin = 3.134_186_9 * x - 1.617_209_0 * y - 0.490_694_2 * z;
+    let g_lin = -0.978_748_4 * x + 1.916_130_1 * y + 0.033_433_0 * z;
+    let b_lin = 0.071_963_9 * x - 0.228_993_9 * y + 1.405_242_7 * z;
+    (
+        (linear_to_srgb(r_lin).clamp(0.0, 1.0) * 255.0).round() as u8,
+        (linear_to_srgb(g_lin).clamp(0.0, 1.0) * 255.0).round() as u8,
+        (linear_to_srgb(b_lin).clamp(0.0, 1.0) * 255.0).round() as u8,
+    )
+}
+
 /// Converts an sRGB channel value in `0.0..=1.0` to linear light.
 #[inline]
 pub fn srgb_to_linear(c: f32) -> f32 {
@@ -2778,6 +3010,23 @@ fn split_commas_depth0(s: &str) -> Vec<String> {
     parts
 }
 
+fn split_slash_depth0(s: &str) -> Option<(&str, &str)> {
+    let mut depth = 0i32;
+    for (i, ch) in s.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            '/' if depth == 0 => {
+                let left = &s[..i];
+                let right = &s[i + 1..];
+                return Some((left, right));
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn parse_color_mix_inner(inner: &str) -> Option<Color> {
     let parts = split_commas_depth0(inner);
     if parts.len() < 3 {
@@ -2870,7 +3119,13 @@ fn parse_color_mix_inner(inner: &str) -> Option<Color> {
 }
 
 impl Value {
-    /// Attempts to parse a color from a hex string, named color, rgb()/rgba(), or hsl()/hsla() string.
+    /// Attempts to parse a color from a hex string, named color, `rgb()`/`rgba()`,
+    /// `hsl()`/`hsla()`, `hwb()`, `lab()`, `lch()`, `light-dark()`, `color()`,
+    /// `oklab()`/`oklch()`, or `color-mix()` string.
+    ///
+    /// Function names are matched case-insensitively. Unsupported or malformed
+    /// inputs return `None` so the declaration is dropped per spec, instead of
+    /// silently defaulting to black.
     pub fn parse_color(s: &str) -> Option<Color> {
         let trimmed = s.trim();
 
@@ -2907,10 +3162,12 @@ impl Value {
             };
         }
 
-        // rgb(r, g, b), rgba(r, g, b, a), or modern space-separated rgb(r g b / a)
-        if let Some(inner) = trimmed
+        // rgb(r, g, b), rgba(r, g, b, a), or modern space-separated rgb(r g b / a).
+        // Function names are matched case-insensitively per CSS syntax rules.
+        let lower = trimmed.to_ascii_lowercase();
+        if let Some(inner) = lower
             .strip_prefix("rgb(")
-            .or_else(|| trimmed.strip_prefix("rgba("))
+            .or_else(|| lower.strip_prefix("rgba("))
             .and_then(|s| s.strip_suffix(')'))
         {
             let (rgb_part, alpha_part) = if let Some((rgb_s, a_s)) = inner.split_once('/') {
@@ -2966,9 +3223,9 @@ impl Value {
         }
 
         // hsl(h, s, l), hsla(h, s, l, a), or space-separated hsl(h s l / a)
-        if let Some(inner) = trimmed
+        if let Some(inner) = lower
             .strip_prefix("hsl(")
-            .or_else(|| trimmed.strip_prefix("hsla("))
+            .or_else(|| lower.strip_prefix("hsla("))
             .and_then(|s| s.strip_suffix(')'))
         {
             let (hsl_part, alpha_part) = if let Some((hsl_s, a_s)) = inner.split_once('/') {
@@ -3014,8 +3271,261 @@ impl Value {
             }
         }
 
+        // hwb(h w b [/ a]) — CSS Color 4 hue-whiteness-blackness.
+        if let Some(inner) = lower
+            .strip_prefix("hwb(")
+            .and_then(|s| s.strip_suffix(')'))
+        {
+            let (hwb_part, alpha_part) = if let Some((hwb_s, a_s)) = split_slash_depth0(inner) {
+                (hwb_s.trim(), Some(a_s.trim()))
+            } else {
+                (inner.trim(), None)
+            };
+
+            let parts: Vec<&str> = if hwb_part.contains(',') {
+                hwb_part.split(',').map(|p| p.trim()).collect()
+            } else {
+                hwb_part.split_whitespace().collect()
+            };
+
+            let parse_hue = |s: &str| -> Option<f32> {
+                let s = s.trim();
+                if let Some(deg) = s.strip_suffix("deg") {
+                    return deg.trim().parse::<f32>().ok();
+                }
+                if let Some(rad) = s.strip_suffix("rad") {
+                    return rad.trim().parse::<f32>().ok().map(|r| r.to_degrees());
+                }
+                if let Some(turn) = s.strip_suffix("turn") {
+                    return turn.trim().parse::<f32>().ok().map(|t| t * 360.0);
+                }
+                if let Some(grad) = s.strip_suffix("grad") {
+                    return grad.trim().parse::<f32>().ok().map(|g| g * 0.9);
+                }
+                s.parse::<f32>().ok()
+            };
+            let parse_wb = |s: &str| -> Option<f32> {
+                let s = s.trim();
+                if let Some(pct) = s.strip_suffix('%') {
+                    pct.parse::<f32>().ok().map(|p| p / 100.0)
+                } else {
+                    s.parse::<f32>().ok()
+                }
+            };
+            let parse_alpha = |s: &str| -> Option<u8> {
+                let s = s.trim().trim_start_matches('/').trim();
+                let f = if let Some(pct) = s.strip_suffix('%') {
+                    pct.parse::<f32>().ok()? / 100.0
+                } else {
+                    s.parse::<f32>().ok()?
+                };
+                Some((f.clamp(0.0, 1.0) * 255.0).round() as u8)
+            };
+
+            if parts.len() == 3 {
+                if let (Some(h), Some(w), Some(b)) =
+                    (parse_hue(parts[0]), parse_wb(parts[1]), parse_wb(parts[2]))
+                {
+                    let a = if let Some(a_s) = alpha_part {
+                        parse_alpha(a_s).unwrap_or(255)
+                    } else {
+                        255
+                    };
+                    let (r, g, bl) = hwb_to_rgb(h, w, b);
+                    return Some(Color::rgba(r, g, bl, a));
+                }
+            } else if parts.len() == 4 && alpha_part.is_none() {
+                if let (Some(h), Some(w), Some(b), Some(a)) = (
+                    parse_hue(parts[0]),
+                    parse_wb(parts[1]),
+                    parse_wb(parts[2]),
+                    parse_alpha(parts[3]),
+                ) {
+                    let (r, g, bl) = hwb_to_rgb(h, w, b);
+                    return Some(Color::rgba(r, g, bl, a));
+                }
+            }
+        }
+
+        // lab(l a b [/ alpha]) — CIE Lab with D50 white point.
+        if let Some(inner) = lower
+            .strip_prefix("lab(")
+            .and_then(|s| s.strip_suffix(')'))
+        {
+            let (lab_part, alpha_part) = if let Some((lab_s, a_s)) = split_slash_depth0(inner) {
+                (lab_s.trim(), Some(a_s.trim()))
+            } else {
+                (inner.trim(), None)
+            };
+
+            let parts: Vec<&str> = if lab_part.contains(',') {
+                lab_part.split(',').map(|p| p.trim()).collect()
+            } else {
+                lab_part.split_whitespace().collect()
+            };
+
+            let parse_l = |s: &str| -> Option<f32> {
+                let s = s.trim();
+                if let Some(pct) = s.strip_suffix('%') {
+                    pct.parse::<f32>().ok()
+                } else {
+                    s.parse::<f32>().ok()
+                }
+            };
+            // a/b axes span roughly ±125; percentages are relative to ±125.
+            let parse_ab = |s: &str| -> Option<f32> {
+                let s = s.trim();
+                if let Some(pct) = s.strip_suffix('%') {
+                    pct.parse::<f32>().ok().map(|p| p * 1.25)
+                } else {
+                    s.parse::<f32>().ok()
+                }
+            };
+            let parse_alpha = |s: &str| -> Option<u8> {
+                let s = s.trim().trim_start_matches('/').trim();
+                let f = if let Some(pct) = s.strip_suffix('%') {
+                    pct.parse::<f32>().ok()? / 100.0
+                } else {
+                    s.parse::<f32>().ok()?
+                };
+                Some((f.clamp(0.0, 1.0) * 255.0).round() as u8)
+            };
+
+            if parts.len() == 3 {
+                if let (Some(l), Some(a_val), Some(b_val)) =
+                    (parse_l(parts[0]), parse_ab(parts[1]), parse_ab(parts[2]))
+                {
+                    let a = if let Some(a_s) = alpha_part {
+                        parse_alpha(a_s).unwrap_or(255)
+                    } else {
+                        255
+                    };
+                    let (r, g, b) = lab_to_srgb(l, a_val, b_val);
+                    return Some(Color::rgba(r, g, b, a));
+                }
+            } else if parts.len() == 4 && alpha_part.is_none() {
+                if let (Some(l), Some(a_val), Some(b_val), Some(a)) = (
+                    parse_l(parts[0]),
+                    parse_ab(parts[1]),
+                    parse_ab(parts[2]),
+                    parse_alpha(parts[3]),
+                ) {
+                    let (r, g, b) = lab_to_srgb(l, a_val, b_val);
+                    return Some(Color::rgba(r, g, b, a));
+                }
+            }
+        }
+
+        // lch(l c h [/ alpha]) — CIE LCh with D50 white point.
+        if let Some(inner) = lower
+            .strip_prefix("lch(")
+            .and_then(|s| s.strip_suffix(')'))
+        {
+            let (lch_part, alpha_part) = if let Some((lch_s, a_s)) = split_slash_depth0(inner) {
+                (lch_s.trim(), Some(a_s.trim()))
+            } else {
+                (inner.trim(), None)
+            };
+
+            let parts: Vec<&str> = if lch_part.contains(',') {
+                lch_part.split(',').map(|p| p.trim()).collect()
+            } else {
+                lch_part.split_whitespace().collect()
+            };
+
+            let parse_l = |s: &str| -> Option<f32> {
+                let s = s.trim();
+                if let Some(pct) = s.strip_suffix('%') {
+                    pct.parse::<f32>().ok()
+                } else {
+                    s.parse::<f32>().ok()
+                }
+            };
+            // Chroma spans roughly 0..150; percentages are relative to 150.
+            let parse_c = |s: &str| -> Option<f32> {
+                let s = s.trim();
+                if let Some(pct) = s.strip_suffix('%') {
+                    pct.parse::<f32>().ok().map(|p| p * 1.5)
+                } else {
+                    s.parse::<f32>().ok()
+                }
+            };
+            let parse_hue = |s: &str| -> Option<f32> {
+                let s = s.trim();
+                if s.eq_ignore_ascii_case("none") {
+                    return Some(0.0);
+                }
+                if let Some(deg) = s.strip_suffix("deg") {
+                    return deg.trim().parse::<f32>().ok();
+                }
+                if let Some(rad) = s.strip_suffix("rad") {
+                    return rad.trim().parse::<f32>().ok().map(|r| r.to_degrees());
+                }
+                if let Some(turn) = s.strip_suffix("turn") {
+                    return turn.trim().parse::<f32>().ok().map(|t| t * 360.0);
+                }
+                if let Some(grad) = s.strip_suffix("grad") {
+                    return grad.trim().parse::<f32>().ok().map(|g| g * 0.9);
+                }
+                s.parse::<f32>().ok()
+            };
+            let parse_alpha = |s: &str| -> Option<u8> {
+                let s = s.trim().trim_start_matches('/').trim();
+                let f = if let Some(pct) = s.strip_suffix('%') {
+                    pct.parse::<f32>().ok()? / 100.0
+                } else {
+                    s.parse::<f32>().ok()?
+                };
+                Some((f.clamp(0.0, 1.0) * 255.0).round() as u8)
+            };
+
+            let to_srgb = |l: f32, c: f32, h: f32, a: u8| -> Color {
+                let rad = h.to_radians();
+                let (r, g, b) =
+                    lab_to_srgb(l, c * rad.cos(), c * rad.sin());
+                Color::rgba(r, g, b, a)
+            };
+            if parts.len() == 3 {
+                if let (Some(l), Some(c), Some(h)) =
+                    (parse_l(parts[0]), parse_c(parts[1]), parse_hue(parts[2]))
+                {
+                    let a = if let Some(a_s) = alpha_part {
+                        parse_alpha(a_s).unwrap_or(255)
+                    } else {
+                        255
+                    };
+                    return Some(to_srgb(l, c, h, a));
+                }
+            } else if parts.len() == 4 && alpha_part.is_none() {
+                if let (Some(l), Some(c), Some(h), Some(a)) = (
+                    parse_l(parts[0]),
+                    parse_c(parts[1]),
+                    parse_hue(parts[2]),
+                    parse_alpha(parts[3]),
+                ) {
+                    return Some(to_srgb(l, c, h, a));
+                }
+            }
+        }
+
+        // light-dark(light, dark) — resolves against the used color scheme.
+        // Without author color-scheme tracking the used scheme defaults to light,
+        // so the first color wins. Unknown/invalid sides invalidate the whole
+        // declaration (returns None) instead of defaulting to black.
+        if let Some(inner) = lower
+            .strip_prefix("light-dark(")
+            .and_then(|s| s.strip_suffix(')'))
+        {
+            let parts = split_commas_depth0(inner);
+            if parts.len() == 2
+                && let Some(col) = Value::parse_color(parts[0].trim())
+            {
+                return Some(col);
+            }
+        }
+
         // color(display-p3 r g b [/ a]) or color(srgb r g b [/ a])
-        if let Some(inner) = trimmed
+        if let Some(inner) = lower
             .strip_prefix("color(")
             .and_then(|s| s.strip_suffix(')'))
         {
@@ -3073,7 +3583,7 @@ impl Value {
         }
 
         // oklab(L a b [/ alpha])
-        if let Some(inner) = trimmed
+        if let Some(inner) = lower
             .strip_prefix("oklab(")
             .and_then(|s| s.strip_suffix(')'))
         {
@@ -3142,7 +3652,7 @@ impl Value {
         }
 
         // oklch(L C h [/ alpha])
-        if let Some(inner) = trimmed
+        if let Some(inner) = lower
             .strip_prefix("oklch(")
             .and_then(|s| s.strip_suffix(')'))
         {
@@ -3232,7 +3742,7 @@ impl Value {
         }
 
         // color-mix(in <color-space>, <color1> [p1], <color2> [p2])
-        if let Some(inner) = trimmed
+        if let Some(inner) = lower
             .strip_prefix("color-mix(")
             .and_then(|s| s.strip_suffix(')'))
             && let Some(col) = parse_color_mix_inner(inner)
@@ -3262,7 +3772,6 @@ impl Value {
             "cornflowerblue" => Some(Color::rgb(100, 149, 237)),
             "cornsilk" => Some(Color::rgb(255, 248, 220)),
             "crimson" => Some(Color::rgb(220, 20, 60)),
-            "dark" => Some(Color::MANGO_DARK),
             "darkblue" => Some(Color::rgb(0, 0, 139)),
             "darkcyan" => Some(Color::rgb(0, 139, 139)),
             "darkgoldenrod" => Some(Color::rgb(184, 134, 11)),
@@ -3305,7 +3814,6 @@ impl Value {
             "lavenderblush" => Some(Color::rgb(255, 240, 245)),
             "lawngreen" => Some(Color::rgb(124, 252, 0)),
             "lemonchiffon" => Some(Color::rgb(255, 250, 205)),
-            "light" => Some(Color::MANGO_LIGHT),
             "lightblue" => Some(Color::rgb(173, 216, 230)),
             "lightcoral" => Some(Color::rgb(240, 128, 128)),
             "lightcyan" => Some(Color::rgb(224, 255, 255)),
@@ -3322,7 +3830,7 @@ impl Value {
             "lime" => Some(Color::rgb(0, 255, 0)),
             "limegreen" => Some(Color::rgb(50, 205, 50)),
             "linen" => Some(Color::rgb(250, 240, 230)),
-            "mango" | "orange" => Some(Color::MANGO_ORANGE),
+            "orange" => Some(Color::rgb(255, 165, 0)),
             "maroon" => Some(Color::rgb(128, 0, 0)),
             "mediumaquamarine" => Some(Color::rgb(102, 205, 170)),
             "mediumblue" => Some(Color::rgb(0, 0, 205)),
@@ -3461,7 +3969,7 @@ mod tests {
     #[test]
     fn test_named_colors() {
         assert_eq!(Value::parse_color("blue"), Some(Color::BLUE));
-        assert_eq!(Value::parse_color("orange"), Some(Color::MANGO_ORANGE));
+        assert_eq!(Value::parse_color("orange"), Some(Color::rgb(255, 165, 0)));
         assert_eq!(Value::parse_color("transparent"), Some(Color::TRANSPARENT));
         assert_eq!(
             Value::parse_color("cornflowerblue"),

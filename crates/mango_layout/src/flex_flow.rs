@@ -46,6 +46,7 @@ fn layout_flex_item(
     } else if child.box_type.is_replaced() {
         // Replaced element dimensions already set by flex_flow
     } else if child.box_type.is_inline_block() || child.is_block() {
+        child.is_independent_formatting_context = true;
         crate::block_flow::layout_block_contents(child, item_cb, float_ctx);
     } else if child.is_inline() {
         if child.dimensions.content.size.width <= 0.0 {
@@ -238,8 +239,13 @@ pub fn layout_flex(
     };
 
     let is_pre_resolved_width = container.dimensions.content.size.width > 0.0
-        && ((containing_block.content.width() - total_non_content_h - container.dimensions.content.size.width).abs() < 1.0
-            || (containing_block.content.width() - container.dimensions.content.size.width).abs() < 1.0);
+        && ((containing_block.content.width()
+            - total_non_content_h
+            - container.dimensions.content.size.width)
+            .abs()
+            < 1.0
+            || (containing_block.content.width() - container.dimensions.content.size.width).abs()
+                < 1.0);
 
     let mut content_width = if is_pre_resolved_width {
         container.dimensions.content.size.width
@@ -289,10 +295,13 @@ pub fn layout_flex(
         if style.max_width != Length::Auto {
             let max_content_w = match style.max_width {
                 Length::MinContent => (intrinsic_min - total_non_content_h).max(0.0),
-                Length::MaxContent | Length::Content => (intrinsic_max - total_non_content_h).max(0.0),
+                Length::MaxContent | Length::Content => {
+                    (intrinsic_max - total_non_content_h).max(0.0)
+                }
                 Length::FitContent => {
                     let avail =
-                        (container_width - total_non_content_h - margin_left - margin_right).max(0.0);
+                        (container_width - total_non_content_h - margin_left - margin_right)
+                            .max(0.0);
                     let max_c = (intrinsic_max - total_non_content_h).max(0.0);
                     let min_c = (intrinsic_min - total_non_content_h).max(0.0);
                     avail.min(max_c).max(min_c)
@@ -316,10 +325,13 @@ pub fn layout_flex(
         if style.min_width != Length::Auto {
             let min_content_w = match style.min_width {
                 Length::MinContent => (intrinsic_min - total_non_content_h).max(0.0),
-                Length::MaxContent | Length::Content => (intrinsic_max - total_non_content_h).max(0.0),
+                Length::MaxContent | Length::Content => {
+                    (intrinsic_max - total_non_content_h).max(0.0)
+                }
                 Length::FitContent => {
                     let avail =
-                        (container_width - total_non_content_h - margin_left - margin_right).max(0.0);
+                        (container_width - total_non_content_h - margin_left - margin_right)
+                            .max(0.0);
                     let max_c = (intrinsic_max - total_non_content_h).max(0.0);
                     let min_c = (intrinsic_min - total_non_content_h).max(0.0);
                     avail.min(max_c).max(min_c)
@@ -1734,20 +1746,83 @@ pub fn layout_flex(
                             .map(|s| s.height == Length::Auto)
                             .unwrap_or(true))
             } else {
-                child_style.width == Length::Auto || matches!(child_style.width, Length::Percent(p) if p >= 99.9)
+                child_style.width == Length::Auto
+                    || matches!(child_style.width, Length::Percent(p) if p >= 99.9)
             };
-
-            let mut item_cross = m.cross;
-            if item_align == AlignItems::Stretch && is_child_cross_auto {
-                item_cross =
-                    (line_cross_size - m.pad_cross - m.border_cross - m.margin_cross).max(0.0);
-            }
 
             let has_cross_auto_margin = if is_row {
                 child_style.margin_top == Length::Auto || child_style.margin_bottom == Length::Auto
             } else {
                 child_style.margin_left == Length::Auto || child_style.margin_right == Length::Auto
             };
+
+            let c_fs = child_style.font_size;
+            let c_root_fs = child_style.root_font_size;
+
+            let mut item_cross = m.cross;
+            if item_align == AlignItems::Stretch && is_child_cross_auto && !has_cross_auto_margin {
+                item_cross =
+                    (line_cross_size - m.pad_cross - m.border_cross - m.margin_cross).max(0.0);
+                if is_row {
+                    if child_style.max_height != Length::Auto {
+                        let max_h = child_style.max_height.to_px_with_viewport(
+                            c_fs,
+                            c_root_fs,
+                            container_height,
+                            container_height,
+                        );
+                        let max_content_h = if child_style.box_sizing == BoxSizing::BorderBox {
+                            (max_h - m.pad_cross - m.border_cross).max(0.0)
+                        } else {
+                            max_h
+                        };
+                        item_cross = item_cross.min(max_content_h);
+                    }
+                    if child_style.min_height != Length::Auto {
+                        let min_h = child_style.min_height.to_px_with_viewport(
+                            c_fs,
+                            c_root_fs,
+                            container_height,
+                            container_height,
+                        );
+                        let min_content_h = if child_style.box_sizing == BoxSizing::BorderBox {
+                            (min_h - m.pad_cross - m.border_cross).max(0.0)
+                        } else {
+                            min_h
+                        };
+                        item_cross = item_cross.max(min_content_h);
+                    }
+                } else {
+                    if child_style.max_width != Length::Auto {
+                        let max_w = child_style.max_width.to_px_with_viewport(
+                            c_fs,
+                            c_root_fs,
+                            content_width,
+                            container_height,
+                        );
+                        let max_content_w = if child_style.box_sizing == BoxSizing::BorderBox {
+                            (max_w - m.pad_cross - m.border_cross).max(0.0)
+                        } else {
+                            max_w
+                        };
+                        item_cross = item_cross.min(max_content_w);
+                    }
+                    if child_style.min_width != Length::Auto {
+                        let min_w = child_style.min_width.to_px_with_viewport(
+                            c_fs,
+                            c_root_fs,
+                            content_width,
+                            container_height,
+                        );
+                        let min_content_w = if child_style.box_sizing == BoxSizing::BorderBox {
+                            (min_w - m.pad_cross - m.border_cross).max(0.0)
+                        } else {
+                            min_w
+                        };
+                        item_cross = item_cross.max(min_content_w);
+                    }
+                }
+            }
 
             let mut cross_offset = 0.0;
             if has_cross_auto_margin {

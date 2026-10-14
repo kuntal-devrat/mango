@@ -176,6 +176,15 @@ impl ResourceCache {
             }
         }
 
+        let has_explicit_max_age = headers.get("cache-control").map_or(false, |cc| {
+            cc.to_ascii_lowercase().contains("max-age=")
+        });
+
+        // RFC 9111: Do not cache 4xx/5xx responses unless explicit Cache-Control max-age is present
+        if status >= 400 && !has_explicit_max_age && custom_ttl.is_none() {
+            return;
+        }
+
         let ttl = if let Some(custom) = custom_ttl {
             custom
         } else if let Some(cc) = headers.get("cache-control") {
@@ -413,5 +422,44 @@ mod tests {
             .revalidate_304(url, &new_headers)
             .expect("Should revalidate 304");
         assert_eq!(refreshed.ttl, Duration::from_secs(3600));
+    }
+
+    #[test]
+    fn test_no_cache_4xx_5xx_without_explicit_max_age() {
+        let cache = ResourceCache::new();
+        let url_404 = "https://example.com/notfound.html";
+        cache.insert(
+            url_404,
+            "text/html",
+            404,
+            HashMap::new(),
+            b"404 Not Found".to_vec(),
+            None,
+        );
+        assert!(cache.get(url_404).is_none(), "404 without max-age must not be cached");
+
+        let url_500 = "https://example.com/error.html";
+        cache.insert(
+            url_500,
+            "text/html",
+            500,
+            HashMap::new(),
+            b"500 Internal Error".to_vec(),
+            None,
+        );
+        assert!(cache.get(url_500).is_none(), "500 without max-age must not be cached");
+
+        // With explicit max-age, error can be cached per RFC 9111
+        let mut cc_headers = HashMap::new();
+        cc_headers.insert("cache-control".to_string(), "max-age=60".to_string());
+        cache.insert(
+            url_404,
+            "text/html",
+            404,
+            cc_headers,
+            b"404 Not Found".to_vec(),
+            None,
+        );
+        assert!(cache.get(url_404).is_some(), "404 with explicit max-age may be cached");
     }
 }

@@ -26,7 +26,7 @@ pub struct ResourceLoader {
     /// Active `Content-Security-Policy` policies, keyed by page origin.
     /// Populated as documents load; consulted before every subresource fetch.
     csp_by_origin:
-        Arc<std::sync::Mutex<std::collections::HashMap<String, crate::security::CspPolicy>>>,
+        Arc<std::sync::Mutex<std::collections::HashMap<String, Vec<crate::security::CspPolicy>>>>,
 }
 
 impl Default for ResourceLoader {
@@ -72,34 +72,43 @@ impl ResourceLoader {
         crate::encoding::decode_with(body, encoding)
     }
 
-    /// Records the `Content-Security-Policy` of a just-loaded document.
+    /// Records all `Content-Security-Policy` headers of a just-loaded document.
     fn remember_csp(
         &self,
         page_url: &crate::url::Url,
         headers: &std::collections::HashMap<String, String>,
     ) {
         let security = crate::security::SecurityHeaders::from_headers(headers);
-        let Some(policy) = security.content_security_policy else {
+        if security.content_security_policies.is_empty() {
             return;
-        };
+        }
         if let Some(origin) = origin_of(page_url)
             && let Ok(mut map) = self.csp_by_origin.lock()
         {
-            map.insert(origin, policy);
+            map.insert(origin, security.content_security_policies);
         }
     }
 
-    /// Returns the effective CSP for the page a subresource belongs to.
+    /// Returns the primary effective CSP for the page a subresource belongs to.
     pub fn csp_for(&self, page_url: &crate::url::Url) -> Option<crate::security::CspPolicy> {
-        let origin = origin_of(page_url)?;
+        self.csp_policies_for(page_url).into_iter().next()
+    }
+
+    /// Returns all effective CSP policies for the page a subresource belongs to.
+    pub fn csp_policies_for(&self, page_url: &crate::url::Url) -> Vec<crate::security::CspPolicy> {
+        let Some(origin) = origin_of(page_url) else {
+            return Vec::new();
+        };
         self.csp_by_origin
             .lock()
             .ok()
             .and_then(|map| map.get(&origin).cloned())
+            .unwrap_or_default()
     }
 
     /// Blocks a subresource when CSP or mixed-content rules forbid it.
     ///
+    /// When multiple CSP policies exist, all enforced policies must allow the resource.
     /// `active` is `true` for scripts, styles, and fonts (always blocked on an
     /// HTTPS page when served over HTTP) and `false` for images/media.
     fn guard_subresource(
@@ -109,13 +118,16 @@ impl ResourceLoader {
         resource_url: &str,
         active: bool,
     ) -> Result<(), NetworkError> {
-        if let Some(policy) = self.csp_for(page_url) {
+        let policies = self.csp_policies_for(page_url);
+        if !policies.is_empty() {
             let origin = origin_of(page_url).unwrap_or_default();
-            if !policy.is_allowed(directive, resource_url, &origin) {
-                log::warn!("CSP blocked {:?} resource {}", directive, resource_url);
-                return Err(NetworkError::Other(format!(
-                    "Blocked by Content-Security-Policy: {resource_url}"
-                )));
+            for policy in &policies {
+                if !policy.is_allowed(directive, resource_url, &origin) {
+                    log::warn!("CSP blocked {:?} resource {}", directive, resource_url);
+                    return Err(NetworkError::Other(format!(
+                        "Blocked by Content-Security-Policy: {resource_url}"
+                    )));
+                }
             }
         }
         if crate::security::blocks_mixed_content(&page_url.as_str(), resource_url, active) {
@@ -221,6 +233,83 @@ impl ResourceLoader {
         })
     }
 
+    /// Fetches an HTML document while streaming incoming chunks to `on_chunk`.
+    ///
+    /// This enables progressive speculative preload scanning and incremental
+    /// HTML parsing during network transfer.
+    pub fn fetch_document_streaming<F: FnMut(&[u8]) -> bool>(
+        &self,
+        url: &Url,
+        on_chunk: F,
+    ) -> Result<FetchedDocument, NetworkError> {
+        if url.scheme.eq_ignore_ascii_case("data") {
+            let bytes = decode_data_uri_bytes(&url.as_str())?;
+            let (html, encoding) =
+                crate::encoding::decode_html_bytes_with_encoding(&bytes, Some("text/html"));
+            return Ok(FetchedDocument {
+                url: url.clone(),
+                html,
+                status: 200,
+                content_type: "text/html".to_string(),
+                encoding,
+            });
+        }
+
+        let url_key = url.as_str();
+        if let Some(cached) = self.cache.get(&url_key) {
+            let (html, encoding) = crate::encoding::decode_html_bytes_with_encoding(
+                &cached.body,
+                Some(cached.content_type.as_str()),
+            );
+            return Ok(FetchedDocument {
+                url: url.clone(),
+                html,
+                status: cached.status,
+                content_type: cached.content_type.clone(),
+                encoding,
+            });
+        }
+
+        let resp = self.client.fetch_streaming(url, on_chunk)?;
+
+        let content_type = resp.content_type().unwrap_or("text/html").to_string();
+
+        if resp.final_url.scheme.eq_ignore_ascii_case("https")
+            && let Some(hsts_header) = resp
+                .headers
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("strict-transport-security"))
+                .map(|(_, v)| v.clone())
+            && let Some(host) = resp.final_url.host.as_deref()
+        {
+            self.record_hsts(host, &hsts_header);
+        }
+        let (html, encoding) = crate::encoding::decode_html_bytes_with_encoding(
+            &resp.body,
+            Some(content_type.as_str()),
+        );
+
+        self.cache.insert(
+            &url_key,
+            &content_type,
+            resp.status,
+            resp.headers.clone(),
+            resp.body.clone(),
+            None,
+        );
+
+        let final_url = resp.final_url.clone();
+        self.remember_csp(&final_url, &resp.headers);
+
+        Ok(FetchedDocument {
+            url: final_url,
+            html,
+            status: resp.status,
+            content_type,
+            encoding,
+        })
+    }
+
     /// Submits a form or data via HTTP POST and returns the fetched document.
     pub fn post_document(
         &self,
@@ -266,6 +355,12 @@ impl ResourceLoader {
     pub fn fetch_stylesheet(&self, base_url: &Url, href: &str) -> Result<String, NetworkError> {
         let trimmed = href.trim();
         if trimmed.starts_with("data:") {
+            self.guard_subresource(
+                crate::security::ResourceDirective::Style,
+                base_url,
+                trimmed,
+                true,
+            )?;
             let bytes = decode_data_uri_bytes(trimmed)?;
             return Ok(Self::decode_text(&bytes, Some("text/css")));
         }
@@ -289,8 +384,8 @@ impl ResourceLoader {
             ));
         }
 
-        // 2. Fetch over network
-        let resp = self.client.fetch(&resolved_url)?;
+        // 2. Fetch over network as subresource (is_top_level=false with initiator)
+        let resp = self.client.fetch_with_context(&resolved_url, Some(base_url), false, true)?;
         if !resp.is_success() {
             return Err(NetworkError::HttpError(resp.status, resp.status_text));
         }
@@ -314,6 +409,12 @@ impl ResourceLoader {
     pub fn fetch_script(&self, base_url: &Url, src: &str) -> Result<String, NetworkError> {
         let trimmed = src.trim();
         if trimmed.starts_with("data:") {
+            self.guard_subresource(
+                crate::security::ResourceDirective::Script,
+                base_url,
+                trimmed,
+                true,
+            )?;
             let bytes = decode_data_uri_bytes(trimmed)?;
             return Ok(Self::decode_text(&bytes, Some("application/javascript")));
         }
@@ -337,8 +438,8 @@ impl ResourceLoader {
             ));
         }
 
-        // 2. Fetch over network
-        let resp = self.client.fetch(&resolved_url)?;
+        // 2. Fetch over network as subresource (is_top_level=false with initiator)
+        let resp = self.client.fetch_with_context(&resolved_url, Some(base_url), false, true)?;
         if !resp.is_success() {
             return Err(NetworkError::HttpError(resp.status, resp.status_text));
         }
@@ -372,8 +473,14 @@ impl ResourceLoader {
     pub fn fetch_image_bytes(&self, base_url: &Url, src: &str) -> Result<Vec<u8>, NetworkError> {
         let trimmed = src.trim();
 
-        // Data URIs are self-contained
+        // Data URIs are self-contained but must satisfy CSP
         if trimmed.starts_with("data:") {
+            self.guard_subresource(
+                crate::security::ResourceDirective::Image,
+                base_url,
+                trimmed,
+                false,
+            )?;
             return decode_data_uri_bytes(trimmed);
         }
 
@@ -393,8 +500,8 @@ impl ResourceLoader {
             return Ok(cached.body);
         }
 
-        // 2. Fetch over network
-        let resp: HttpResponse = self.client.fetch(&resolved_url)?;
+        // 2. Fetch over network as subresource (is_top_level=false with initiator)
+        let resp: HttpResponse = self.client.fetch_with_context(&resolved_url, Some(base_url), false, true)?;
         if !resp.is_success() {
             return Err(NetworkError::HttpError(resp.status, resp.status_text));
         }
@@ -418,8 +525,14 @@ impl ResourceLoader {
     pub fn fetch_font_bytes(&self, base_url: &Url, src: &str) -> Result<Vec<u8>, NetworkError> {
         let trimmed = src.trim();
 
-        // Data URIs are self-contained
+        // Data URIs are self-contained but must satisfy CSP
         if trimmed.starts_with("data:") {
+            self.guard_subresource(
+                crate::security::ResourceDirective::Font,
+                base_url,
+                trimmed,
+                true,
+            )?;
             return decode_data_uri_bytes(trimmed);
         }
 
@@ -439,8 +552,8 @@ impl ResourceLoader {
             return Ok(cached.body);
         }
 
-        // 2. Fetch over network
-        let resp: HttpResponse = self.client.fetch(&resolved_url)?;
+        // 2. Fetch over network as subresource (is_top_level=false with initiator)
+        let resp: HttpResponse = self.client.fetch_with_context(&resolved_url, Some(base_url), false, true)?;
         if !resp.is_success() {
             return Err(NetworkError::HttpError(resp.status, resp.status_text));
         }
@@ -483,17 +596,19 @@ impl ResourceLoader {
     ) -> PreloadScanResult {
         let scan = scan_html_for_preloads(html, base_url);
 
-        // Pre-resolve DNS for preconnect and dns-prefetch hosts
+        // Pre-resolve DNS for preconnect and dns-prefetch hosts.
+        // Bounded 2s timeout + singleflight: never stall page load on dead DNS.
         if let Some(dns) = dns_cache {
+            let dns_timeout = std::time::Duration::from_secs(2);
             for host in &scan.dns_prefetch_hosts {
-                let _ = dns.resolve(host, 443);
+                let _ = dns.resolve_singleflight(host, 443, dns_timeout);
             }
             for preconnect in &scan.preconnect_urls {
                 if let Ok(u) = Url::parse(preconnect)
                     && let Some(h) = &u.host
                 {
                     let port = u.port.unwrap_or(if u.scheme == "https" { 443 } else { 80 });
-                    let _ = dns.resolve(h, port);
+                    let _ = dns.resolve_singleflight(h, port, dns_timeout);
                 }
             }
         }
@@ -776,9 +891,17 @@ fn origin_of(url: &crate::url::Url) -> Option<String> {
 }
 
 /// Decode a `data:` URI into raw bytes.
+/// Maximum allowed data: URI byte size (10MB) to prevent OOM denial of service.
+pub const MAX_DATA_URI_BYTES: usize = 10 * 1024 * 1024;
+
 /// Supports both base64-encoded and plain text / percent-encoded data URIs.
 /// Format: `data:[<mediatype>][;base64],<data>`
 pub fn decode_data_uri_bytes(data_uri: &str) -> Result<Vec<u8>, NetworkError> {
+    if data_uri.len() > MAX_DATA_URI_BYTES {
+        return Err(NetworkError::Other(
+            "data: URI exceeds 10MB size limit".to_string(),
+        ));
+    }
     let rest = data_uri
         .strip_prefix("data:")
         .ok_or_else(|| NetworkError::InvalidUrl("Not a data: URI".to_string()))?;
@@ -975,6 +1098,62 @@ mod tests {
     }
 
     #[test]
+    fn test_csp_multi_policy_intersection() {
+        let loader = ResourceLoader::new();
+        let page = Url::parse("https://example.com/page").unwrap();
+        let mut headers = std::collections::HashMap::new();
+        // Two comma-separated CSP policies (or multiple headers merged with comma):
+        // Policy 1 allows example.com and cdn1.example.com.
+        // Policy 2 allows example.com and cdn2.example.com.
+        // Therefore cdn1 is blocked by policy 2, and cdn2 is blocked by policy 1.
+        headers.insert(
+            "content-security-policy".to_string(),
+            "script-src 'self' https://cdn1.example.com, script-src 'self' https://cdn2.example.com".to_string(),
+        );
+        loader.remember_csp(&page, &headers);
+        assert_eq!(loader.csp_policies_for(&page).len(), 2);
+
+        // Same origin is allowed by both policies
+        assert!(
+            loader
+                .guard_subresource(
+                    crate::security::ResourceDirective::Script,
+                    &page,
+                    "https://example.com/main.js",
+                    true
+                )
+                .is_ok(),
+            "same-origin script allowed by both policies"
+        );
+
+        // cdn1 is rejected by policy 2
+        assert!(
+            loader
+                .guard_subresource(
+                    crate::security::ResourceDirective::Script,
+                    &page,
+                    "https://cdn1.example.com/app.js",
+                    true
+                )
+                .is_err(),
+            "cdn1 blocked by second policy"
+        );
+
+        // cdn2 is rejected by policy 1
+        assert!(
+            loader
+                .guard_subresource(
+                    crate::security::ResourceDirective::Script,
+                    &page,
+                    "https://cdn2.example.com/app.js",
+                    true
+                )
+                .is_err(),
+            "cdn2 blocked by first policy"
+        );
+    }
+
+    #[test]
     fn test_mixed_content_is_blocked_on_https_pages() {
         let loader = ResourceLoader::new();
         let page = Url::parse("https://secure.example.com/").unwrap();
@@ -1117,5 +1296,30 @@ mod tests {
         // Low third
         assert_eq!(result.preloads[3].priority, FetchPriority::Low);
         assert_eq!(result.preloads[3].url, "https://example.com/img/hero.webp");
+    }
+
+    #[test]
+    fn test_data_uri_size_cap_and_csp_enforcement() {
+        let loader = ResourceLoader::new();
+        let page_url = Url::parse("https://example.com/page.html").unwrap();
+
+        // 1. Data URI exceeding 10MB cap is rejected
+        let huge_data_uri = format!("data:text/css,{}", "a".repeat(MAX_DATA_URI_BYTES + 1));
+        assert!(decode_data_uri_bytes(&huge_data_uri).is_err());
+
+        // 2. Data URI within limit is allowed
+        let valid_data_uri = "data:text/css,body{color:red}";
+        assert!(decode_data_uri_bytes(valid_data_uri).is_ok());
+
+        // 3. CSP blocking data: URI for script
+        let mut headers = std::collections::HashMap::new();
+        headers.insert(
+            "content-security-policy".to_string(),
+            "script-src 'self'".to_string(),
+        );
+        loader.remember_csp(&page_url, &headers);
+
+        let script_res = loader.fetch_script(&page_url, "data:text/javascript,console.log('hi')");
+        assert!(script_res.is_err(), "CSP should block data: script when script-src is 'self'");
     }
 }

@@ -9,4 +9,7 @@ mango_core.workspace = true
 tokio.workspace = true
 log.workspace = true
 ureq.workspace = true
-
+base64.workspace = true
+zstd.workspace = true
+rustls = { version = "0.23", features = ["std"] }
+webpki-roots = "1.0"

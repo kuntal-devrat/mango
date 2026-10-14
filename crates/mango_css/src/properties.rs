@@ -614,6 +614,31 @@ fn expand_background_shorthand(value: &Value, important: bool) -> Vec<Declaratio
                             layer_pos.push(item.clone());
                         }
                     }
+                    Value::TextAlign(crate::values::TextAlign::Center) => {
+                        if !in_size {
+                            layer_pos.push(Value::Keyword("center".to_string()));
+                        }
+                    }
+                    Value::Float(crate::values::Float::Left) => {
+                        if !in_size {
+                            layer_pos.push(Value::Keyword("left".to_string()));
+                        }
+                    }
+                    Value::Float(crate::values::Float::Right) => {
+                        if !in_size {
+                            layer_pos.push(Value::Keyword("right".to_string()));
+                        }
+                    }
+                    Value::VerticalAlign(crate::values::VerticalAlign::Top) => {
+                        if !in_size {
+                            layer_pos.push(Value::Keyword("top".to_string()));
+                        }
+                    }
+                    Value::VerticalAlign(crate::values::VerticalAlign::Bottom) => {
+                        if !in_size {
+                            layer_pos.push(Value::Keyword("bottom".to_string()));
+                        }
+                    }
                     Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
                         "none" => {
                             layer_img = Some(Value::Keyword("none".to_string()));
@@ -767,6 +792,31 @@ fn expand_background_shorthand(value: &Value, important: bool) -> Vec<Declaratio
                     sizes.push(item.clone());
                 } else {
                     positions.push(item.clone());
+                }
+            }
+            Value::TextAlign(crate::values::TextAlign::Center) => {
+                if !in_size {
+                    positions.push(Value::Keyword("center".to_string()));
+                }
+            }
+            Value::Float(crate::values::Float::Left) => {
+                if !in_size {
+                    positions.push(Value::Keyword("left".to_string()));
+                }
+            }
+            Value::Float(crate::values::Float::Right) => {
+                if !in_size {
+                    positions.push(Value::Keyword("right".to_string()));
+                }
+            }
+            Value::VerticalAlign(crate::values::VerticalAlign::Top) => {
+                if !in_size {
+                    positions.push(Value::Keyword("top".to_string()));
+                }
+            }
+            Value::VerticalAlign(crate::values::VerticalAlign::Bottom) => {
+                if !in_size {
+                    positions.push(Value::Keyword("bottom".to_string()));
                 }
             }
             Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {

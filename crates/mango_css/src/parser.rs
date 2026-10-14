@@ -34,6 +34,7 @@ pub enum Rule {
     Style(StyleRule),
     Media(MediaRule),
     Container(ContainerRule),
+    Layer(LayerRule),
     Import(String),
     FontFace(FontFaceRule),
     /// `@keyframes name { ... }` animation rule.
@@ -84,6 +85,13 @@ pub struct MediaRule {
 pub struct ContainerRule {
     pub name: Option<String>,
     pub query: String,
+    pub rules: Vec<StyleRule>,
+}
+
+/// An `@layer` at-rule wrapping nested style rules.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LayerRule {
+    pub name: Option<String>,
     pub rules: Vec<StyleRule>,
 }
 
@@ -384,6 +392,13 @@ impl CssParser {
                 }
 
                 if kw.eq_ignore_ascii_case("layer") {
+                    self.skip_whitespace_and_comments();
+                    let mut layer_name = None;
+                    if let Token::Ident(name) = self.peek().clone() {
+                        layer_name = Some(name);
+                        self.advance();
+                        self.skip_whitespace_and_comments();
+                    }
                     let mut has_block = false;
                     while *self.peek() != Token::Eof {
                         match self.peek() {
@@ -407,8 +422,8 @@ impl CssParser {
                         if *self.peek() == Token::CloseCurly {
                             self.advance();
                         }
-                        rules.push(Rule::Media(MediaRule {
-                            query: "all".to_string(),
+                        rules.push(Rule::Layer(LayerRule {
+                            name: layer_name,
                             rules: layer_rules,
                         }));
                     }
@@ -420,8 +435,9 @@ impl CssParser {
                 continue;
             }
 
-            if let Some(rule) = self.parse_style_rule() {
-                rules.push(Rule::Style(rule));
+            let mut style_rules = Vec::new();
+            if self.parse_style_rule_and_nested_into(&mut style_rules) {
+                rules.extend(style_rules);
             } else {
                 // Skip erroneous rule or block
                 self.skip_unknown_rule_or_block();
@@ -638,28 +654,58 @@ impl CssParser {
                 }
                 continue;
             }
-            if let Some(rule) = self.parse_style_rule() {
-                out_rules.push(rule);
+            let mut style_rules = Vec::new();
+            if self.parse_style_rule_and_nested_into(&mut style_rules) {
+                for r in style_rules {
+                    if let Rule::Style(sr) = r {
+                        out_rules.push(sr);
+                    }
+                }
             } else {
                 self.skip_unknown_rule_or_block();
             }
         }
     }
 
-    fn parse_style_rule(&mut self) -> Option<StyleRule> {
-        let selectors = self.parse_selector_list()?;
+    fn parse_style_rule_and_nested_into(&mut self, out_rules: &mut Vec<Rule>) -> bool {
+        let selectors = match self.parse_selector_list() {
+            Some(s) => s,
+            None => return false,
+        };
         self.skip_whitespace_and_comments();
 
         if self.advance() != Token::OpenCurly {
-            return None;
+            return false;
         }
 
-        let declarations = self.parse_declarations_until(Token::CloseCurly);
+        let mut nested_rules = Vec::new();
+        let declarations = self.parse_declarations_with_nesting_until(
+            Token::CloseCurly,
+            Some(&selectors),
+            Some(&mut nested_rules),
+        );
 
-        Some(StyleRule {
-            selectors,
-            declarations,
-        })
+        if !declarations.is_empty() || nested_rules.is_empty() {
+            out_rules.push(Rule::Style(StyleRule {
+                selectors,
+                declarations,
+            }));
+        }
+        out_rules.extend(nested_rules);
+        true
+    }
+
+    #[allow(dead_code)]
+    fn parse_style_rule(&mut self) -> Option<StyleRule> {
+        let mut rules = Vec::new();
+        if self.parse_style_rule_and_nested_into(&mut rules) {
+            for r in rules {
+                if let Rule::Style(sr) = r {
+                    return Some(sr);
+                }
+            }
+        }
+        None
     }
 
     fn parse_font_face_rule(&mut self) -> Option<FontFaceRule> {
@@ -1019,6 +1065,7 @@ impl CssParser {
                             | Token::Hash(_)
                             | Token::Delim('.')
                             | Token::Delim('*')
+                            | Token::Delim('&')
                             | Token::OpenBracket
                             | Token::Colon
                     ) {
@@ -1063,6 +1110,10 @@ impl CssParser {
 
     fn parse_simple_selector(&mut self) -> Option<SimpleSelector> {
         match self.peek() {
+            Token::Delim('&') => {
+                self.advance();
+                Some(SimpleSelector::Nesting)
+            }
             Token::Delim('*') => {
                 self.advance();
                 Some(SimpleSelector::Universal)
@@ -1233,6 +1284,48 @@ impl CssParser {
     }
 
     fn parse_declarations_until(&mut self, stop_token: Token) -> Vec<Declaration> {
+        self.parse_declarations_with_nesting_until(stop_token, None, None)
+    }
+
+    fn is_nested_style_rule_ahead(&self) -> bool {
+        let mut idx = self.cursor;
+        let mut paren_depth = 0;
+        let mut bracket_depth = 0;
+
+        while idx < self.tokens.len() {
+            match &self.tokens[idx] {
+                Token::OpenParen => paren_depth += 1,
+                Token::CloseParen => {
+                    if paren_depth > 0 {
+                        paren_depth -= 1;
+                    }
+                }
+                Token::OpenBracket => bracket_depth += 1,
+                Token::CloseBracket => {
+                    if bracket_depth > 0 {
+                        bracket_depth -= 1;
+                    }
+                }
+                Token::OpenCurly if paren_depth == 0 && bracket_depth == 0 => {
+                    return true;
+                }
+                Token::Semicolon | Token::CloseCurly if paren_depth == 0 && bracket_depth == 0 => {
+                    return false;
+                }
+                Token::Eof => return false,
+                _ => {}
+            }
+            idx += 1;
+        }
+        false
+    }
+
+    fn parse_declarations_with_nesting_until(
+        &mut self,
+        stop_token: Token,
+        current_selectors: Option<&SelectorList>,
+        mut out_rules: Option<&mut Vec<Rule>>,
+    ) -> Vec<Declaration> {
         let mut declarations = Vec::new();
 
         loop {
@@ -1242,6 +1335,106 @@ impl CssParser {
                     self.advance();
                 }
                 break;
+            }
+
+            if let Some(parent_sel) = current_selectors {
+                if let Token::AtKeyword(kw) = self.peek().clone() {
+                    self.advance();
+                    self.skip_whitespace_and_comments();
+                    if kw.eq_ignore_ascii_case("media") {
+                        let mut query = String::new();
+                        while *self.peek() != Token::OpenCurly && *self.peek() != Token::Eof {
+                            let tok = self.advance();
+                            query.push_str(&self.token_to_string(&tok));
+                        }
+                        if *self.peek() == Token::OpenCurly {
+                            self.advance();
+                            let mut inner_rules = Vec::new();
+                            let nested_decls = self.parse_declarations_with_nesting_until(
+                                Token::CloseCurly,
+                                Some(parent_sel),
+                                Some(&mut inner_rules),
+                            );
+                            let mut media_rules = Vec::new();
+                            if !nested_decls.is_empty() {
+                                media_rules.push(StyleRule {
+                                    selectors: parent_sel.clone(),
+                                    declarations: nested_decls,
+                                });
+                            }
+                            for r in inner_rules {
+                                if let Rule::Style(sr) = r {
+                                    media_rules.push(sr);
+                                }
+                            }
+                            if let Some(out) = out_rules.as_deref_mut() {
+                                out.push(Rule::Media(MediaRule {
+                                    query: query.trim().to_string(),
+                                    rules: media_rules,
+                                }));
+                            }
+                        }
+                        continue;
+                    } else if kw.eq_ignore_ascii_case("supports") {
+                        let mut cond_tokens = Vec::new();
+                        while *self.peek() != Token::OpenCurly && *self.peek() != Token::Eof {
+                            cond_tokens.push(self.advance());
+                        }
+                        if *self.peek() == Token::OpenCurly {
+                            self.advance();
+                            let cond_ok = self.eval_supports_condition(&cond_tokens);
+                            let mut inner_rules = Vec::new();
+                            let nested_decls = self.parse_declarations_with_nesting_until(
+                                Token::CloseCurly,
+                                Some(parent_sel),
+                                Some(&mut inner_rules),
+                            );
+                            if cond_ok {
+                                if let Some(out) = out_rules.as_deref_mut() {
+                                    if !nested_decls.is_empty() {
+                                        out.push(Rule::Style(StyleRule {
+                                            selectors: parent_sel.clone(),
+                                            declarations: nested_decls,
+                                        }));
+                                    }
+                                    out.extend(inner_rules);
+                                }
+                            }
+                        }
+                        continue;
+                    } else {
+                        self.skip_unknown_rule_or_block();
+                        continue;
+                    }
+                }
+
+                if self.is_nested_style_rule_ahead() {
+                    if let Some(child_selectors) = self.parse_selector_list() {
+                        let combined_selectors =
+                            crate::selectors::expand_nested_selectors(parent_sel, &child_selectors);
+                        self.skip_whitespace_and_comments();
+                        if self.advance() == Token::OpenCurly {
+                            let mut inner_rules = Vec::new();
+                            let child_decls = self.parse_declarations_with_nesting_until(
+                                Token::CloseCurly,
+                                Some(&combined_selectors),
+                                Some(&mut inner_rules),
+                            );
+                            if let Some(out) = out_rules.as_deref_mut() {
+                                if !child_decls.is_empty() || inner_rules.is_empty() {
+                                    out.push(Rule::Style(StyleRule {
+                                        selectors: combined_selectors,
+                                        declarations: child_decls,
+                                    }));
+                                }
+                                out.extend(inner_rules);
+                            }
+                        }
+                    } else {
+                        self.skip_unknown_rule_or_block();
+                    }
+                    continue;
+                }
             }
 
             let prop_name = match self.advance() {
@@ -1350,6 +1543,31 @@ impl CssParser {
                             value: y_val,
                             important,
                         });
+                        continue;
+                    }
+                }
+            }
+
+            if prop_lower == "background" {
+                let groups = split_commas(&value_tokens);
+                if groups.len() > 1 {
+                    let mut all_vals = Vec::new();
+                    for (idx, g) in groups.iter().enumerate() {
+                        if idx > 0 {
+                            all_vals.push(Value::Keyword(",".to_string()));
+                        }
+                        if let Some(val) = self.parse_value_from_tokens(g) {
+                            match val {
+                                Value::List(inner) => all_vals.extend(inner),
+                                single => all_vals.push(single),
+                            }
+                        }
+                    }
+                    if !all_vals.is_empty() {
+                        let decl = Declaration::new(prop_name, Value::List(all_vals), important);
+                        for expanded in decl.expand_shorthand() {
+                            declarations.push(expanded);
+                        }
                         continue;
                     }
                 }
@@ -1733,17 +1951,14 @@ impl CssParser {
         }
     }
 
-    /// Parses a CSS `box-shadow` declaration value.
-    fn parse_box_shadow(&self, tokens: &[Token]) -> Option<Value> {
+    /// Parses a single shadow chunk into a `BoxShadow`.
+    fn parse_single_box_shadow(&self, tokens: &[Token]) -> Option<crate::values::BoxShadow> {
         let val = self.parse_value_from_tokens(tokens)?;
         match val {
-            Value::Keyword(ref k) if k.eq_ignore_ascii_case("none") => {
-                Some(Value::Keyword("none".to_string()))
-            }
-            Value::BoxShadow(bs) => Some(Value::BoxShadow(bs)),
+            Value::BoxShadow(bs) => Some(bs),
             Value::List(ref items) => {
                 if items.iter().any(|it| matches!(it, Value::Var { .. })) {
-                    return Some(Value::List(items.clone()));
+                    return None;
                 }
                 let mut offset_x = None;
                 let mut offset_y = None;
@@ -1797,19 +2012,61 @@ impl CssParser {
                 }
 
                 if let (Some(ox), Some(oy)) = (offset_x, offset_y) {
-                    Some(Value::BoxShadow(crate::values::BoxShadow {
+                    Some(crate::values::BoxShadow {
                         offset_x: ox,
                         offset_y: oy,
                         blur_radius,
                         spread_radius,
                         color,
                         inset,
-                    }))
+                    })
                 } else {
                     None
                 }
             }
             _ => None,
+        }
+    }
+
+    /// Parses a CSS `box-shadow` declaration value, supporting comma-separated multiple shadows.
+    fn parse_box_shadow(&self, tokens: &[Token]) -> Option<Value> {
+        let filtered: Vec<&Token> = tokens
+            .iter()
+            .filter(|t| !matches!(t, Token::Whitespace | Token::Comment(_)))
+            .collect();
+        if filtered.is_empty() {
+            return None;
+        }
+        if filtered.len() == 1
+            && let Token::Ident(k) = filtered[0]
+            && k.eq_ignore_ascii_case("none")
+        {
+            return Some(Value::Keyword("none".to_string()));
+        }
+
+        let chunks = split_tokens_by_top_level_comma(tokens);
+        let mut shadows = Vec::new();
+        for chunk in chunks {
+            let chunk_filtered: Vec<&Token> = chunk
+                .iter()
+                .filter(|t| !matches!(t, Token::Whitespace | Token::Comment(_)))
+                .collect();
+            if chunk_filtered.is_empty() {
+                continue;
+            }
+            if let Some(bs) = self.parse_single_box_shadow(chunk) {
+                shadows.push(Value::BoxShadow(bs));
+            } else if let Some(val) = self.parse_value_from_tokens(chunk) {
+                shadows.push(val);
+            }
+        }
+
+        if shadows.is_empty() {
+            None
+        } else if shadows.len() == 1 {
+            Some(shadows.remove(0))
+        } else {
+            Some(Value::List(shadows))
         }
     }
 
@@ -3505,86 +3762,101 @@ impl CssParser {
 
     // ── Text-shadow parsing ───────────────────────────────────────────────────
 
-    /// Tries to parse `text-shadow: offset-x offset-y blur? color?` from token slice.
+
+    /// Tries to parse `text-shadow: offset-x offset-y blur? color?` from token slice,
+    /// supporting multiple comma-separated shadow layers.
     fn try_parse_text_shadow(&self, tokens: &[Token]) -> Option<Value> {
         use crate::values::TextShadow;
-        let text: String = tokens.iter().map(|t| self.token_to_string(t)).collect();
-        let lower = text.trim().to_ascii_lowercase();
-        if lower == "none" {
-            return Some(Value::TextShadow(TextShadow {
-                offset_x: 0.0,
-                offset_y: 0.0,
-                blur_radius: 0.0,
-                color: mango_core::Color::TRANSPARENT,
-            }));
-        }
-        // Must have at least 2 length values; check for length tokens
-        let len_count = tokens
-            .iter()
-            .filter(|t| matches!(t, Token::Dimension { .. }))
-            .count();
-        if len_count < 2 {
-            return None;
-        }
-        let mut offset_x = None;
-        let mut offset_y = None;
-        let mut blur = 0.0f32;
-        let mut color = mango_core::Color::rgba(0, 0, 0, 180);
-        let mut len_idx = 0;
-        let mut i = 0;
-        while i < tokens.len() {
-            match &tokens[i] {
-                Token::Dimension { value, unit } => {
-                    let px = match unit.to_ascii_lowercase().as_str() {
-                        "px" => *value,
-                        "em" => *value * 16.0,
-                        "rem" => *value * 16.0,
-                        _ => *value,
-                    };
-                    match len_idx {
-                        0 => offset_x = Some(px),
-                        1 => offset_y = Some(px),
-                        2 => blur = px,
-                        _ => {}
-                    }
-                    len_idx += 1;
+
+        let mut groups: Vec<Vec<Token>> = Vec::new();
+        let mut current: Vec<Token> = Vec::new();
+        let mut depth = 0i32;
+        for tok in tokens {
+            match tok {
+                Token::OpenParen => {
+                    depth += 1;
+                    current.push(tok.clone());
                 }
-                Token::Number(n) if *n == 0.0 => {
-                    match len_idx {
-                        0 => offset_x = Some(0.0),
-                        1 => offset_y = Some(0.0),
-                        _ => {}
-                    }
-                    len_idx += 1;
+                Token::CloseParen => {
+                    depth -= 1;
+                    current.push(tok.clone());
                 }
-                Token::Hash(hex) => {
-                    if let Some(c) = Value::parse_color(&format!("#{hex}")) {
-                        color = c;
+                Token::Comma if depth == 0 => {
+                    if !current.is_empty() {
+                        groups.push(std::mem::take(&mut current));
                     }
                 }
-                Token::Ident(name) => {
-                    let lower = name.to_ascii_lowercase();
-                    if lower != "none"
-                        && lower != "inherit"
-                        && lower != "initial"
-                        && let Some(c) = Value::parse_color(&lower)
-                    {
-                        color = c;
-                    }
-                }
-                _ => {}
+                _ => current.push(tok.clone()),
             }
-            i += 1;
         }
-        if let (Some(ox), Some(oy)) = (offset_x, offset_y) {
-            Some(Value::TextShadow(TextShadow {
-                offset_x: ox,
-                offset_y: oy,
-                blur_radius: blur,
-                color,
-            }))
-        } else {
+        if !current.is_empty() {
+            groups.push(current);
+        }
+
+        let mut shadows = Vec::new();
+
+        for group in groups {
+            let text: String = group.iter().map(|t| self.token_to_string(t)).collect();
+            let lower = text.trim().to_ascii_lowercase();
+            if lower == "none" {
+                return Some(Value::TextShadow(TextShadow {
+                    offset_x: 0.0,
+                    offset_y: 0.0,
+                    blur_radius: 0.0,
+                    color: mango_core::Color::TRANSPARENT,
+                }));
+            }
+            let parts = split_shadow_args(text.trim());
+            let parse_px = |s: &str| -> Option<f32> {
+                let s = s.trim();
+                if let Some(num) = s.strip_suffix("px") {
+                    num.trim().parse::<f32>().ok()
+                } else if let Some(num) = s.strip_suffix("em") {
+                    num.trim().parse::<f32>().ok().map(|e| e * 16.0)
+                } else if let Some(num) = s.strip_suffix("rem") {
+                    num.trim().parse::<f32>().ok().map(|r| r * 16.0)
+                } else if s == "0" {
+                    Some(0.0)
+                } else {
+                    s.parse::<f32>().ok()
+                }
+            };
+
+            let mut offset_x = None;
+            let mut offset_y = None;
+            let mut blur = 0.0f32;
+            let mut color = mango_core::Color::rgba(0, 0, 0, 180);
+
+            for part in &parts {
+                if let Some(c) = Value::parse_color(part) {
+                    color = c;
+                } else if let Some(px) = parse_px(part) {
+                    if offset_x.is_none() {
+                        offset_x = Some(px);
+                    } else if offset_y.is_none() {
+                        offset_y = Some(px);
+                    } else {
+                        blur = px;
+                    }
+                }
+            }
+
+            if let (Some(ox), Some(oy)) = (offset_x, offset_y) {
+                shadows.push(Value::TextShadow(TextShadow {
+                    offset_x: ox,
+                    offset_y: oy,
+                    blur_radius: blur,
+                    color,
+                }));
+            }
+        }
+
+        if shadows.is_empty() {
             None
+        } else if shadows.len() == 1 {
+            Some(shadows.remove(0))
+        } else {
+            Some(Value::List(shadows))
         }
     }
 
@@ -3695,15 +3967,42 @@ impl CssParser {
                 "hue-rotate" => Some(FilterFunction::HueRotate(val)),
                 "invert" => Some(FilterFunction::Invert(norm(val, false))),
                 "drop-shadow" => {
-                    let parts: Vec<&str> = remaining[args_start..end].split_whitespace().collect();
-                    let px = |s: &str| -> f32 { s.trim_end_matches("px").parse().unwrap_or(0.0) };
-                    let ox = parts.first().map(|s| px(s)).unwrap_or(0.0);
-                    let oy = parts.get(1).map(|s| px(s)).unwrap_or(0.0);
-                    let blur = parts.get(2).map(|s| px(s)).unwrap_or(0.0);
-                    let color = parts
-                        .get(3)
-                        .and_then(|s| Value::parse_color(s))
-                        .unwrap_or(mango_core::Color::rgba(0, 0, 0, 128));
+                    let parts = split_shadow_args(remaining[args_start..end].trim());
+                    let parse_px = |s: &str| -> Option<f32> {
+                        let s = s.trim();
+                        if let Some(num) = s.strip_suffix("px") {
+                            num.trim().parse::<f32>().ok()
+                        } else if let Some(num) = s.strip_suffix("em") {
+                            num.trim().parse::<f32>().ok().map(|e| e * 16.0)
+                        } else if let Some(num) = s.strip_suffix("rem") {
+                            num.trim().parse::<f32>().ok().map(|r| r * 16.0)
+                        } else if s == "0" {
+                            Some(0.0)
+                        } else {
+                            s.parse::<f32>().ok()
+                        }
+                    };
+
+                    let mut ox = 0.0;
+                    let mut oy = 0.0;
+                    let mut blur = 0.0;
+                    let mut color = mango_core::Color::rgba(0, 0, 0, 128);
+                    let mut len_count = 0;
+
+                    for part in &parts {
+                        if let Some(c) = Value::parse_color(part) {
+                            color = c;
+                        } else if let Some(px) = parse_px(part) {
+                            match len_count {
+                                0 => ox = px,
+                                1 => oy = px,
+                                2 => blur = px,
+                                _ => {}
+                            }
+                            len_count += 1;
+                        }
+                    }
+
                     Some(FilterFunction::DropShadow {
                         offset_x: ox,
                         offset_y: oy,
@@ -4551,7 +4850,9 @@ impl CssParser {
             let mut state: Option<Value> = None;
             let mut time_count = 0;
 
-            for tok in group {
+            let mut i = 0;
+            while i < group.len() {
+                let tok = &group[i];
                 match tok {
                     Token::Dimension { value, unit }
                         if unit.eq_ignore_ascii_case("s") || unit.eq_ignore_ascii_case("ms") =>
@@ -4567,6 +4868,7 @@ impl CssParser {
                             delay = Some(Value::Time(ms));
                         }
                         time_count += 1;
+                        i += 1;
                     }
                     Token::Number(n) if *n == 0.0 && (time_count < 2) => {
                         if time_count == 0 {
@@ -4575,14 +4877,44 @@ impl CssParser {
                             delay = Some(Value::Time(0.0));
                         }
                         time_count += 1;
+                        i += 1;
                     }
                     Token::Number(n) if is_animation => {
                         iteration = Some(Value::Number(*n));
+                        i += 1;
                     }
                     Token::Ident(word) => {
                         let lower = word.to_ascii_lowercase();
-                        if let Some(tf) = crate::values::parse_timing_function(&lower) {
+                        if (lower == "cubic-bezier" || lower == "steps")
+                            && i + 1 < group.len()
+                            && matches!(group[i + 1], Token::OpenParen)
+                        {
+                            let mut func_tokens = Vec::new();
+                            func_tokens.push(tok.clone());
+                            i += 1; // move to OpenParen
+                            let mut depth = 0;
+                            while i < group.len() {
+                                let t = &group[i];
+                                func_tokens.push(t.clone());
+                                if matches!(t, Token::OpenParen) {
+                                    depth += 1;
+                                } else if matches!(t, Token::CloseParen) {
+                                    depth -= 1;
+                                    if depth == 0 {
+                                        i += 1;
+                                        break;
+                                    }
+                                }
+                                i += 1;
+                            }
+                            let func_str: String =
+                                func_tokens.iter().map(|t| self.token_to_string(t)).collect();
+                            if let Some(tf) = crate::values::parse_timing_function(&func_str) {
+                                timing = Some(Value::TimingFunction(tf));
+                            }
+                        } else if let Some(tf) = crate::values::parse_timing_function(&lower) {
                             timing = Some(Value::TimingFunction(tf));
+                            i += 1;
                         } else if is_animation {
                             match lower.as_str() {
                                 "infinite" => {
@@ -4597,11 +4929,15 @@ impl CssParser {
                                 "running" | "paused" => state = Some(Value::Keyword(lower.clone())),
                                 _ => name = Some(Value::Keyword(lower.clone())),
                             }
+                            i += 1;
                         } else {
                             name = Some(Value::Keyword(lower.clone()));
+                            i += 1;
                         }
                     }
-                    _ => {}
+                    _ => {
+                        i += 1;
+                    }
                 }
             }
 
@@ -4673,6 +5009,60 @@ impl CssParser {
                 Value::List(v.to_vec())
             }
         };
+        // If a specific longhand property was parsed, emit only that longhand
+        match prop {
+            "transition-property" | "animation-name" => {
+                if !names.is_empty() {
+                    decls.push(Declaration::new(prop, single(&names), important));
+                }
+                return decls;
+            }
+            "transition-duration" | "animation-duration" => {
+                if !durations.is_empty() {
+                    decls.push(Declaration::new(prop, single(&durations), important));
+                }
+                return decls;
+            }
+            "transition-delay" | "animation-delay" => {
+                if !delays.is_empty() {
+                    decls.push(Declaration::new(prop, single(&delays), important));
+                }
+                return decls;
+            }
+            "transition-timing-function" | "animation-timing-function" => {
+                if !timings.is_empty() {
+                    decls.push(Declaration::new(prop, single(&timings), important));
+                }
+                return decls;
+            }
+            "animation-iteration-count" => {
+                if !iterations.is_empty() {
+                    decls.push(Declaration::new(prop, single(&iterations), important));
+                }
+                return decls;
+            }
+            "animation-direction" => {
+                if !directions.is_empty() {
+                    decls.push(Declaration::new(prop, single(&directions), important));
+                }
+                return decls;
+            }
+            "animation-fill-mode" => {
+                if !fills.is_empty() {
+                    decls.push(Declaration::new(prop, single(&fills), important));
+                }
+                return decls;
+            }
+            "animation-play-state" => {
+                if !states.is_empty() {
+                    decls.push(Declaration::new(prop, single(&states), important));
+                }
+                return decls;
+            }
+            _ => {}
+        }
+
+        // Shorthand ("transition" or "animation"): emit all longhands
         if !names.is_empty() {
             decls.push(Declaration::new(longhand_prop, single(&names), important));
             decls.push(Declaration::new(
@@ -4927,6 +5317,37 @@ fn split_gradient_parts(inner: &str) -> Vec<String> {
     parts
 }
 
+fn split_shadow_args(s: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0i32;
+    for ch in s.chars() {
+        match ch {
+            '(' => {
+                depth += 1;
+                current.push(ch);
+            }
+            ')' => {
+                depth -= 1;
+                current.push(ch);
+            }
+            c if c.is_ascii_whitespace() && depth == 0 => {
+                let trimmed = current.trim();
+                if !trimmed.is_empty() {
+                    parts.push(trimmed.to_string());
+                    current = String::new();
+                }
+            }
+            _ => current.push(ch),
+        }
+    }
+    let trimmed = current.trim();
+    if !trimmed.is_empty() {
+        parts.push(trimmed.to_string());
+    }
+    parts
+}
+
 fn parse_angle_deg(s: &str) -> Option<f32> {
     let s = s.trim();
     if s == "0" {
@@ -4989,6 +5410,32 @@ fn split_commas(tokens: &[Token]) -> Vec<Vec<Token>> {
         groups.push(Vec::new());
     }
     groups
+}
+
+/// Splits a token slice on top-level commas into sub-slices without dropping whitespace.
+fn split_tokens_by_top_level_comma(tokens: &[Token]) -> Vec<&[Token]> {
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    let mut depth = 0i32;
+    for (i, tok) in tokens.iter().enumerate() {
+        match tok {
+            Token::OpenParen | Token::OpenBracket | Token::OpenCurly => depth += 1,
+            Token::CloseParen | Token::CloseBracket | Token::CloseCurly => {
+                if depth > 0 {
+                    depth -= 1;
+                }
+            }
+            Token::Comma if depth == 0 => {
+                chunks.push(&tokens[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    if start <= tokens.len() {
+        chunks.push(&tokens[start..]);
+    }
+    chunks
 }
 
 /// Parses a single gradient color stop such as `red`, `red 25%`, or `red 10% 40%`.
@@ -5521,6 +5968,41 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_multiple_box_shadow() {
+        let css = r#"
+            .card {
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.24);
+            }
+        "#;
+        let sheet = CssParser::parse_stylesheet(css);
+        assert_eq!(sheet.rules.len(), 1);
+        if let Rule::Style(sr) = &sheet.rules[0] {
+            let shadow = sr
+                .declarations
+                .iter()
+                .find(|d| d.name == "box-shadow")
+                .unwrap();
+            match &shadow.value {
+                Value::List(items) => {
+                    assert_eq!(items.len(), 2);
+                    match (&items[0], &items[1]) {
+                        (Value::BoxShadow(s1), Value::BoxShadow(s2)) => {
+                            assert_eq!(s1.offset_x, 0.0);
+                            assert_eq!(s1.offset_y, 1.0);
+                            assert_eq!(s1.blur_radius, 3.0);
+                            assert_eq!(s2.offset_x, 0.0);
+                            assert_eq!(s2.offset_y, 1.0);
+                            assert_eq!(s2.blur_radius, 2.0);
+                        }
+                        _ => panic!("expected Value::BoxShadow items"),
+                    }
+                }
+                other => panic!("expected Value::List, got {:?}", other),
+            }
+        }
+    }
+
+    #[test]
     fn test_nested_supports_in_media() {
         let css = r#"
             @media screen {
@@ -5957,4 +6439,37 @@ mod tests {
             panic!("expected media rule for invalid-fallback");
         }
     }
+
+    #[test]
+    fn test_transition_longhands_and_cubic_bezier() {
+        let css = r#"
+            .animated {
+                transition-property: opacity, transform;
+                transition-duration: 300ms;
+                transition-timing-function: cubic-bezier(0.25, 0.1, 0.25, 1.0);
+                transition-delay: 50ms;
+            }
+        "#;
+        let sheet = CssParser::parse_stylesheet(css);
+        assert_eq!(sheet.rules.len(), 1);
+        if let Rule::Style(sr) = &sheet.rules[0] {
+            let decl_prop = sr.declarations.iter().find(|d| d.name == "transition-property").unwrap();
+            assert_eq!(decl_prop.name, "transition-property");
+
+            let decl_dur = sr.declarations.iter().find(|d| d.name == "transition-duration").unwrap();
+            assert_eq!(decl_dur.value, Value::Time(300.0));
+
+            let decl_tf = sr.declarations.iter().find(|d| d.name == "transition-timing-function").unwrap();
+            assert_eq!(
+                decl_tf.value,
+                Value::TimingFunction(crate::values::TimingFunction::CubicBezier(0.25, 0.1, 0.25, 1.0))
+            );
+
+            let decl_del = sr.declarations.iter().find(|d| d.name == "transition-delay").unwrap();
+            assert_eq!(decl_del.value, Value::Time(50.0));
+        } else {
+            panic!("expected style rule");
+        }
+    }
 }
+

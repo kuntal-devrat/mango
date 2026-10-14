@@ -44,6 +44,7 @@ pub struct ComputedStyle {
     pub mask_position: Option<(Length, Length)>,
     pub mask_composite: MaskComposite,
     pub box_shadow: Option<BoxShadow>,
+    pub box_shadows: Vec<BoxShadow>,
     pub content: Option<String>,
     pub content_items: Option<Vec<crate::values::ContentItem>>,
     pub counter_reset: Vec<crate::values::CounterAction>,
@@ -141,6 +142,10 @@ pub struct ComputedStyle {
     pub border_top_right_radius: f32,
     pub border_bottom_right_radius: f32,
     pub border_bottom_left_radius: f32,
+    pub border_top_left_radius_len: Length,
+    pub border_top_right_radius_len: Length,
+    pub border_bottom_right_radius_len: Length,
+    pub border_bottom_left_radius_len: Length,
     pub white_space: WhiteSpace,
     pub text_overflow: TextOverflow,
     pub list_style_type: ListStyleType,
@@ -180,6 +185,8 @@ pub struct ComputedStyle {
     pub transform_origin_y: Length,
     /// CSS `text-shadow` property.
     pub text_shadow: Option<crate::values::TextShadow>,
+    /// All declared `text-shadow` layers (supports multiple comma-separated shadows).
+    pub text_shadows: Vec<crate::values::TextShadow>,
     /// CSS `filter` property — list of filter functions.
     pub filter: Vec<crate::values::FilterFunction>,
     /// CSS `aspect-ratio` as a width/height ratio (e.g. 16/9 → 1.777…). `None` = auto.
@@ -228,6 +235,32 @@ pub struct ComputedStyle {
 }
 
 impl ComputedStyle {
+    /// Returns all declared text shadows. If `text_shadows` is populated, returns it;
+    /// otherwise falls back to `text_shadow` if present.
+    #[inline]
+    pub fn all_text_shadows(&self) -> &[crate::values::TextShadow] {
+        if !self.text_shadows.is_empty() {
+            &self.text_shadows
+        } else if let Some(ts) = &self.text_shadow {
+            std::slice::from_ref(ts)
+        } else {
+            &[]
+        }
+    }
+
+    /// Returns all declared box shadows. If `box_shadows` is populated, returns it;
+    /// otherwise falls back to `box_shadow` if present.
+    #[inline]
+    pub fn all_box_shadows(&self) -> &[BoxShadow] {
+        if !self.box_shadows.is_empty() {
+            &self.box_shadows
+        } else if let Some(bs) = &self.box_shadow {
+            std::slice::from_ref(bs)
+        } else {
+            &[]
+        }
+    }
+
     /// Returns the border radii as [top-left, top-right, bottom-right, bottom-left].
     #[inline]
     pub fn border_radius(&self) -> [f32; 4] {
@@ -239,6 +272,28 @@ impl ComputedStyle {
         ]
     }
 
+    /// Returns the border radii resolved against an explicit box dimension `(width, height)`.
+    /// Percentage radii are computed against `min(width, height)` per CSS Backgrounds and Borders 3.
+    #[inline]
+    pub fn border_radius_with_size(&self, width: f32, height: f32) -> [f32; 4] {
+        let size = width.min(height).max(0.0);
+        let resolve = |len: Length, fallback: f32| -> f32 {
+            match len {
+                Length::Percent(_) => len
+                    .to_px_with_viewport(self.font_size, self.root_font_size, size, size)
+                    .max(0.0),
+                Length::Px(px) if px > 0.0 => px,
+                _ => fallback.max(0.0),
+            }
+        };
+        [
+            resolve(self.border_top_left_radius_len, self.border_top_left_radius),
+            resolve(self.border_top_right_radius_len, self.border_top_right_radius),
+            resolve(self.border_bottom_right_radius_len, self.border_bottom_right_radius),
+            resolve(self.border_bottom_left_radius_len, self.border_bottom_left_radius),
+        ]
+    }
+
     /// Returns true if any corner has a non-zero border radius.
     #[inline]
     pub fn has_border_radius(&self) -> bool {
@@ -246,6 +301,10 @@ impl ComputedStyle {
             || self.border_top_right_radius > 0.0
             || self.border_bottom_right_radius > 0.0
             || self.border_bottom_left_radius > 0.0
+            || matches!(self.border_top_left_radius_len, Length::Percent(p) if p > 0.0)
+            || matches!(self.border_top_right_radius_len, Length::Percent(p) if p > 0.0)
+            || matches!(self.border_bottom_right_radius_len, Length::Percent(p) if p > 0.0)
+            || matches!(self.border_bottom_left_radius_len, Length::Percent(p) if p > 0.0)
     }
 
     /// Returns true if this element should be visually rendered.
@@ -290,6 +349,7 @@ impl Default for ComputedStyle {
             mask_position: None,
             mask_composite: MaskComposite::Add,
             box_shadow: None,
+            box_shadows: Vec::new(),
             content: None,
             content_items: None,
             counter_reset: Vec::new(),
@@ -384,6 +444,10 @@ impl Default for ComputedStyle {
             border_top_right_radius: 0.0,
             border_bottom_right_radius: 0.0,
             border_bottom_left_radius: 0.0,
+            border_top_left_radius_len: Length::Px(0.0),
+            border_top_right_radius_len: Length::Px(0.0),
+            border_bottom_right_radius_len: Length::Px(0.0),
+            border_bottom_left_radius_len: Length::Px(0.0),
             white_space: WhiteSpace::Normal,
             text_overflow: TextOverflow::Clip,
             list_style_type: ListStyleType::Disc,
@@ -419,6 +483,7 @@ impl Default for ComputedStyle {
             transform_origin_x: Length::Percent(50.0),
             transform_origin_y: Length::Percent(50.0),
             text_shadow: None,
+            text_shadows: Vec::new(),
             filter: Vec::new(),
             aspect_ratio: None,
             object_fit: crate::values::ObjectFit::Fill,
@@ -693,6 +758,7 @@ pub fn compute_pseudo_style(
 fn parse_position_len(val: &Value) -> Option<Length> {
     match val {
         Value::Length(l) => Some(*l),
+        Value::Percentage(p) => Some(Length::Percent(*p)),
         Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
             "left" | "top" => Some(Length::Percent(0.0)),
             "center" => Some(Length::Percent(50.0)),
@@ -705,7 +771,8 @@ fn parse_position_len(val: &Value) -> Option<Length> {
 
 fn parse_position_val(val: &Value) -> Option<(Length, Length)> {
     match val {
-        Value::Length(l) => Some((*l, *l)),
+        Value::Length(l) => Some((*l, Length::Percent(50.0))),
+        Value::Percentage(p) => Some((Length::Percent(*p), Length::Percent(50.0))),
         Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
             "center" => Some((Length::Percent(50.0), Length::Percent(50.0))),
             "top" => Some((Length::Percent(50.0), Length::Percent(0.0))),
@@ -714,10 +781,58 @@ fn parse_position_val(val: &Value) -> Option<(Length, Length)> {
             "right" => Some((Length::Percent(100.0), Length::Percent(50.0))),
             _ => None,
         },
-        Value::List(items) if items.len() >= 2 => {
-            let x = parse_position_len(&items[0])?;
-            let y = parse_position_len(&items[1])?;
-            Some((x, y))
+        Value::List(items) => {
+            if items.is_empty() {
+                return None;
+            }
+            if let Some(Value::List(sub)) = items.first() {
+                return parse_position_val(&Value::List(sub.clone()));
+            }
+            if items.len() == 1 {
+                let x = parse_position_len(&items[0])?;
+                Some((x, Length::Percent(50.0)))
+            } else {
+                let x = parse_position_len(&items[0])?;
+                let y = parse_position_len(&items[1])?;
+                Some((x, y))
+            }
+        }
+        _ => None,
+    }
+}
+
+fn parse_background_size(val: &Value) -> Option<BackgroundSize> {
+    match val {
+        Value::BackgroundSize(s) => Some(*s),
+        Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
+            "auto" => Some(BackgroundSize::Auto),
+            "cover" => Some(BackgroundSize::Cover),
+            "contain" => Some(BackgroundSize::Contain),
+            _ => None,
+        },
+        Value::Length(len) => Some(BackgroundSize::Explicit(*len, Length::Auto)),
+        Value::Percentage(p) => Some(BackgroundSize::Explicit(Length::Percent(*p), Length::Auto)),
+        Value::List(items) => {
+            if items.is_empty() {
+                return None;
+            }
+            if let Some(Value::List(sub)) = items.first() {
+                return parse_background_size(&Value::List(sub.clone()));
+            }
+            let parse_dim = |v: &Value| match v {
+                Value::Length(len) => Some(*len),
+                Value::Percentage(p) => Some(Length::Percent(*p)),
+                Value::Keyword(k) if k.eq_ignore_ascii_case("auto") => Some(Length::Auto),
+                _ => None,
+            };
+            if items.len() == 1 {
+                let w = parse_dim(&items[0])?;
+                Some(BackgroundSize::Explicit(w, Length::Auto))
+            } else {
+                let w = parse_dim(&items[0])?;
+                let h = parse_dim(&items[1])?;
+                Some(BackgroundSize::Explicit(w, h))
+            }
         }
         _ => None,
     }
@@ -889,20 +1004,11 @@ pub fn apply_cascaded_properties(
     {
         style.background_position = pos;
     }
-    if let Some(val) = resolved_cascaded.get("background-size") {
-        match val {
-            Value::BackgroundSize(s) => style.background_size = *s,
-            Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
-                "auto" => style.background_size = BackgroundSize::Auto,
-                "cover" => style.background_size = BackgroundSize::Cover,
-                "contain" => style.background_size = BackgroundSize::Contain,
-                _ => {}
-            },
-            Value::Length(len) => {
-                style.background_size = BackgroundSize::Explicit(*len, Length::Auto);
-            }
-            _ => {}
-        }
+    if let Some(s) = resolved_cascaded
+        .get("background-size")
+        .and_then(parse_background_size)
+    {
+        style.background_size = s;
     }
     if let Some(val) = resolved_cascaded.get("background-image") {
         apply_background_image(style, val);
@@ -1051,57 +1157,14 @@ pub fn apply_cascaded_properties(
                 }
                 _ => {}
             },
-            "background-size" => match val {
-                Value::BackgroundSize(s) => {
-                    style.background_size = *s;
-                    for layer in &mut style.background_layers {
-                        layer.size = *s;
-                    }
-                }
-                Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
-                    "auto" => {
-                        style.background_size = BackgroundSize::Auto;
-                        for layer in &mut style.background_layers {
-                            layer.size = BackgroundSize::Auto;
-                        }
-                    }
-                    "cover" => {
-                        style.background_size = BackgroundSize::Cover;
-                        for layer in &mut style.background_layers {
-                            layer.size = BackgroundSize::Cover;
-                        }
-                    }
-                    "contain" => {
-                        style.background_size = BackgroundSize::Contain;
-                        for layer in &mut style.background_layers {
-                            layer.size = BackgroundSize::Contain;
-                        }
-                    }
-                    _ => {}
-                },
-                Value::Length(len) => {
-                    let s = BackgroundSize::Explicit(*len, Length::Auto);
+            "background-size" => {
+                if let Some(s) = parse_background_size(val) {
                     style.background_size = s;
                     for layer in &mut style.background_layers {
                         layer.size = s;
                     }
                 }
-                Value::List(items) if items.len() >= 2 => {
-                    let parse_dim = |v: &Value| match v {
-                        Value::Length(len) => Some(*len),
-                        Value::Keyword(k) if k.eq_ignore_ascii_case("auto") => Some(Length::Auto),
-                        _ => None,
-                    };
-                    if let (Some(w), Some(h)) = (parse_dim(&items[0]), parse_dim(&items[1])) {
-                        let s = BackgroundSize::Explicit(w, h);
-                        style.background_size = s;
-                        for layer in &mut style.background_layers {
-                            layer.size = s;
-                        }
-                    }
-                }
-                _ => {}
-            },
+            }
             "background-position" => {
                 if let Some(pos) = parse_position_val(val) {
                     style.background_position = pos;
@@ -1327,8 +1390,14 @@ pub fn apply_cascaded_properties(
             },
             "line-height" => match val {
                 Value::Number(n) => style.line_height = Some(*n * style.font_size),
+                Value::Percentage(pct) => style.line_height = Some((*pct / 100.0) * style.font_size),
                 Value::Length(len) => {
-                    style.line_height = Some(len.to_px(style.font_size, 16.0, 100.0))
+                    style.line_height = Some(len.to_px_with_viewport(
+                        style.font_size,
+                        style.root_font_size,
+                        style.font_size,
+                        style.font_size,
+                    ))
                 }
                 _ => {}
             },
@@ -1803,7 +1872,7 @@ pub fn apply_cascaded_properties(
                 } else if let Value::Keyword(k) = val
                     && k.eq_ignore_ascii_case("normal")
                 {
-                    style.column_gap = Length::Px(16.0);
+                    style.column_gap = Length::Px(0.0);
                 }
             }
             "order" => {
@@ -1896,38 +1965,70 @@ pub fn apply_cascaded_properties(
             },
             "border-top-left-radius" => match val {
                 Value::Length(len) => {
+                    style.border_top_left_radius_len = *len;
                     style.border_top_left_radius = len
                         .to_px_with_viewport(style.font_size, style.root_font_size, 0.0, 0.0)
-                        .max(0.0)
+                        .max(0.0);
                 }
-                Value::Number(n) => style.border_top_left_radius = (*n).max(0.0),
+                Value::Percentage(pct) => {
+                    style.border_top_left_radius_len = Length::Percent((*pct).max(0.0));
+                    style.border_top_left_radius = 0.0;
+                }
+                Value::Number(n) => {
+                    style.border_top_left_radius_len = Length::Px((*n).max(0.0));
+                    style.border_top_left_radius = (*n).max(0.0);
+                }
                 _ => {}
             },
             "border-top-right-radius" => match val {
                 Value::Length(len) => {
+                    style.border_top_right_radius_len = *len;
                     style.border_top_right_radius = len
                         .to_px_with_viewport(style.font_size, style.root_font_size, 0.0, 0.0)
-                        .max(0.0)
+                        .max(0.0);
                 }
-                Value::Number(n) => style.border_top_right_radius = (*n).max(0.0),
+                Value::Percentage(pct) => {
+                    style.border_top_right_radius_len = Length::Percent((*pct).max(0.0));
+                    style.border_top_right_radius = 0.0;
+                }
+                Value::Number(n) => {
+                    style.border_top_right_radius_len = Length::Px((*n).max(0.0));
+                    style.border_top_right_radius = (*n).max(0.0);
+                }
                 _ => {}
             },
             "border-bottom-right-radius" => match val {
                 Value::Length(len) => {
+                    style.border_bottom_right_radius_len = *len;
                     style.border_bottom_right_radius = len
                         .to_px_with_viewport(style.font_size, style.root_font_size, 0.0, 0.0)
-                        .max(0.0)
+                        .max(0.0);
                 }
-                Value::Number(n) => style.border_bottom_right_radius = (*n).max(0.0),
+                Value::Percentage(pct) => {
+                    style.border_bottom_right_radius_len = Length::Percent((*pct).max(0.0));
+                    style.border_bottom_right_radius = 0.0;
+                }
+                Value::Number(n) => {
+                    style.border_bottom_right_radius_len = Length::Px((*n).max(0.0));
+                    style.border_bottom_right_radius = (*n).max(0.0);
+                }
                 _ => {}
             },
             "border-bottom-left-radius" => match val {
                 Value::Length(len) => {
+                    style.border_bottom_left_radius_len = *len;
                     style.border_bottom_left_radius = len
                         .to_px_with_viewport(style.font_size, style.root_font_size, 0.0, 0.0)
-                        .max(0.0)
+                        .max(0.0);
                 }
-                Value::Number(n) => style.border_bottom_left_radius = (*n).max(0.0),
+                Value::Percentage(pct) => {
+                    style.border_bottom_left_radius_len = Length::Percent((*pct).max(0.0));
+                    style.border_bottom_left_radius = 0.0;
+                }
+                Value::Number(n) => {
+                    style.border_bottom_left_radius_len = Length::Px((*n).max(0.0));
+                    style.border_bottom_left_radius = (*n).max(0.0);
+                }
                 _ => {}
             },
             "white-space" => match val {
@@ -2121,6 +2222,7 @@ pub fn apply_cascaded_properties(
                         "layout" => crate::values::Contain::Layout,
                         "size" => crate::values::Contain::Size,
                         "style" => crate::values::Contain::Style,
+                        "inline-size" => crate::values::Contain::InlineSize,
                         _ => crate::values::Contain::None,
                     };
                 }
@@ -2294,9 +2396,29 @@ pub fn apply_cascaded_properties(
                 style.grid_row_end = value_to_placement(val);
             }
             "box-shadow" => match val {
-                Value::BoxShadow(bs) => style.box_shadow = Some(*bs),
-                Value::List(items) => style.box_shadow = parse_box_shadow_from_values(items),
-                Value::Keyword(k) if k.eq_ignore_ascii_case("none") => style.box_shadow = None,
+                Value::BoxShadow(bs) => {
+                    style.box_shadow = Some(*bs);
+                    style.box_shadows = vec![*bs];
+                }
+                Value::List(items) => {
+                    let mut shadows = Vec::new();
+                    for item in items {
+                        if let Value::BoxShadow(bs) = item {
+                            shadows.push(*bs);
+                        }
+                    }
+                    if !shadows.is_empty() {
+                        style.box_shadow = shadows.first().copied();
+                        style.box_shadows = shadows;
+                    } else if let Some(bs) = parse_box_shadow_from_values(items) {
+                        style.box_shadow = Some(bs);
+                        style.box_shadows = vec![bs];
+                    }
+                }
+                Value::Keyword(k) if k.eq_ignore_ascii_case("none") => {
+                    style.box_shadow = None;
+                    style.box_shadows.clear();
+                }
                 _ => {}
             },
             "content" => match val {
@@ -2573,8 +2695,27 @@ pub fn apply_cascaded_properties(
                 }
             },
             "text-shadow" => match val {
-                Value::TextShadow(ts) => style.text_shadow = Some(*ts),
-                Value::Keyword(k) if k.eq_ignore_ascii_case("none") => style.text_shadow = None,
+                Value::TextShadow(ts) => {
+                    style.text_shadow = Some(*ts);
+                    style.text_shadows = vec![*ts];
+                }
+                Value::List(items) => {
+                    let list: Vec<crate::values::TextShadow> = items
+                        .iter()
+                        .filter_map(|it| match it {
+                            Value::TextShadow(ts) => Some(*ts),
+                            _ => None,
+                        })
+                        .collect();
+                    if !list.is_empty() {
+                        style.text_shadow = list.first().copied();
+                        style.text_shadows = list;
+                    }
+                }
+                Value::Keyword(k) if k.eq_ignore_ascii_case("none") => {
+                    style.text_shadow = None;
+                    style.text_shadows.clear();
+                }
                 _ => {}
             },
             "filter" | "-webkit-filter" => match val {
@@ -2808,20 +2949,6 @@ pub fn apply_cascaded_properties(
             Display::InlineGrid => Display::Grid,
             other => other,
         };
-    }
-
-    // If border width was explicitly given but border style was not specified, default to Solid
-    if !resolved_cascaded.contains_key("border-top-style") && style.border_top_width > 0.0 {
-        style.border_top_style = BorderStyle::Solid;
-    }
-    if !resolved_cascaded.contains_key("border-right-style") && style.border_right_width > 0.0 {
-        style.border_right_style = BorderStyle::Solid;
-    }
-    if !resolved_cascaded.contains_key("border-bottom-style") && style.border_bottom_width > 0.0 {
-        style.border_bottom_style = BorderStyle::Solid;
-    }
-    if !resolved_cascaded.contains_key("border-left-style") && style.border_left_width > 0.0 {
-        style.border_left_style = BorderStyle::Solid;
     }
 
     // CSS 2.1 § 8.5.1: If the border style is 'none' or 'hidden', the computed border width is zero.
@@ -3390,5 +3517,84 @@ mod tests {
             div_style.background_layers[1].repeat,
             BackgroundRepeat::NoRepeat
         );
+    }
+
+    #[test]
+    fn test_background_size_and_position_parsing() {
+        let html = r#"<div style="background-image: url('logo.svg'); background-size: 36px 36px; background-position: 50% 50%;">DDG Logo</div>"#;
+        let doc = parse_html(html);
+        let root = doc.root();
+        let div_id = doc.find_element_by_tag(root, "div").unwrap();
+
+        let div_style = compute_style(div_id, &doc, &[], None);
+        assert_eq!(
+            div_style.background_size,
+            BackgroundSize::Explicit(Length::Px(36.0), Length::Px(36.0))
+        );
+        assert_eq!(
+            div_style.background_position,
+            (Length::Percent(50.0), Length::Percent(50.0))
+        );
+        assert_eq!(div_style.background_layers.len(), 1);
+        assert_eq!(
+            div_style.background_layers[0].size,
+            BackgroundSize::Explicit(Length::Px(36.0), Length::Px(36.0))
+        );
+        assert_eq!(
+            div_style.background_layers[0].position,
+            (Length::Percent(50.0), Length::Percent(50.0))
+        );
+    }
+
+    #[test]
+    fn test_percentage_line_height() {
+        let html = r#"<div style="font-size: 20px; line-height: 150%;">Hello</div>"#;
+        let doc = parse_html(html);
+        let root = doc.root();
+        let div_id = doc.find_element_by_tag(root, "div").unwrap();
+        let style = compute_style(div_id, &doc, &[], None);
+        assert_eq!(style.font_size, 20.0);
+        assert_eq!(style.line_height, Some(30.0));
+    }
+
+    #[test]
+    fn test_border_width_without_style_defaults_none() {
+        let html = r#"<div style="border-width: 5px;">No Border</div>"#;
+        let doc = parse_html(html);
+        let root = doc.root();
+        let div_id = doc.find_element_by_tag(root, "div").unwrap();
+        let style = compute_style(div_id, &doc, &[], None);
+        // BorderStyle must remain None and computed border width must be zero per CSS 2.1 § 8.5.1
+        assert_eq!(style.border_top_style, BorderStyle::None);
+        assert_eq!(style.border_top_width, 0.0);
+    }
+
+    #[test]
+    fn test_border_radius_percentage() {
+        let html = r#"<div style="border-radius: 50%;">Circle</div>"#;
+        let doc = parse_html(html);
+        let root = doc.root();
+        let div_id = doc.find_element_by_tag(root, "div").unwrap();
+        let style = compute_style(div_id, &doc, &[], None);
+        assert_eq!(style.border_top_left_radius_len, Length::Percent(50.0));
+        let radii = style.border_radius_with_size(100.0, 100.0);
+        assert_eq!(radii, [50.0, 50.0, 50.0, 50.0]);
+    }
+
+    #[test]
+    fn test_text_shadow_multi_layers() {
+        let html = r#"<div style="text-shadow: 1px 1px 2px black, 0 0 10px blue;">Glow</div>"#;
+        let doc = parse_html(html);
+        let root = doc.root();
+        let div_id = doc.find_element_by_tag(root, "div").unwrap();
+        let style = compute_style(div_id, &doc, &[], None);
+        let shadows = style.all_text_shadows();
+        assert_eq!(shadows.len(), 2);
+        assert_eq!(shadows[0].offset_x, 1.0);
+        assert_eq!(shadows[0].offset_y, 1.0);
+        assert_eq!(shadows[0].blur_radius, 2.0);
+        assert_eq!(shadows[1].offset_x, 0.0);
+        assert_eq!(shadows[1].offset_y, 0.0);
+        assert_eq!(shadows[1].blur_radius, 10.0);
     }
 }

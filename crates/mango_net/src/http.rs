@@ -129,9 +129,90 @@ impl HttpResponse {
 // SameSite, and on-disk persistence without bloating the HTTP client.
 pub use crate::cookies::{Cookie, CookieJar, SameSite};
 
-fn create_pooled_agent(_timeout: Duration) -> std::sync::Arc<ureq::Agent> {
+/// Maximum response body bytes (50MB DoS cap).
+pub const MAX_RESPONSE_BODY_BYTES: usize = 50 * 1024 * 1024;
+
+/// Reads a ureq body with a 50MB cap, mapping limit errors to [`NetworkError`].
+fn read_body_capped(body: ureq::Body) -> Result<Vec<u8>, NetworkError> {
+    body.into_with_config()
+        .limit(MAX_RESPONSE_BODY_BYTES as u64)
+        .read_to_vec()
+        .map_err(|e| match &e {
+            ureq::Error::BodyExceedsLimit(limit) => NetworkError::Other(format!(
+                "Response body exceeds {limit} byte cap (DoS protection)"
+            )),
+            ureq::Error::Timeout(_) => NetworkError::Timeout,
+            ureq::Error::HostNotFound => {
+                NetworkError::DnsResolutionFailed("Host not found".to_string())
+            }
+            ureq::Error::ConnectionFailed => {
+                NetworkError::ConnectionFailed("Connection failed".to_string())
+            }
+            ureq::Error::Tls(msg) => NetworkError::TlsError(msg.to_string()),
+            ureq::Error::StatusCode(code) => {
+                NetworkError::HttpError(*code, format!("HTTP {code}"))
+            }
+            other => NetworkError::IoError(format!("Failed to read response body: {other}")),
+        })
+}
+/// Reads a ureq body in chunks up to a 50MB cap, passing each chunk to `on_chunk`.
+pub fn read_body_streaming<F: FnMut(&[u8]) -> bool>(
+    body: ureq::Body,
+    mut on_chunk: F,
+) -> Result<Vec<u8>, NetworkError> {
+    use std::io::Read;
+    let mut reader = body
+        .into_with_config()
+        .limit(MAX_RESPONSE_BODY_BYTES as u64)
+        .reader();
+    let mut accumulated = Vec::new();
+    let mut buf = [0u8; 32768]; // 32KB chunks
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                let chunk = &buf[..n];
+                accumulated.extend_from_slice(chunk);
+                if !on_chunk(chunk) {
+                    break;
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(NetworkError::IoError(format!("Streaming read error: {e}"))),
+        }
+    }
+    Ok(accumulated)
+}
+
+fn map_ureq_error(e: ureq::Error, url: &Url) -> NetworkError {
+    match e {
+        ureq::Error::Timeout(_) => NetworkError::Timeout,
+        ureq::Error::HostNotFound => NetworkError::DnsResolutionFailed(format!(
+            "Host not found: {}",
+            url.host.as_deref().unwrap_or("")
+        )),
+        ureq::Error::ConnectionFailed => {
+            NetworkError::ConnectionFailed("Connection failed".to_string())
+        }
+        ureq::Error::Tls(msg) => NetworkError::TlsError(msg.to_string()),
+        ureq::Error::StatusCode(code) => NetworkError::HttpError(code, format!("HTTP {code}")),
+        ureq::Error::BodyExceedsLimit(limit) => NetworkError::Other(format!(
+            "Response body exceeds {limit} byte cap (DoS protection)"
+        )),
+        other => NetworkError::Other(other.to_string()),
+    }
+}
+
+fn create_pooled_agent(timeout: Duration) -> std::sync::Arc<ureq::Agent> {
     let config = ureq::config::Config::builder()
         .http_status_as_error(false)
+        .no_delay(true)
+        .max_idle_connections(64)
+        .max_idle_connections_per_host(16)
+        .max_idle_age(Duration::from_secs(60))
+        .timeout_global(Some(timeout))
+        .timeout_connect(Some(Duration::from_secs(20)))
+        .timeout_resolve(Some(Duration::from_secs(30)))
         .build();
     std::sync::Arc::new(ureq::Agent::new_with_config(config))
 }
@@ -163,7 +244,7 @@ impl Default for HttpClient {
 impl HttpClient {
     /// Creates a new HTTP client with default settings and empty cookie jar.
     pub fn new() -> Self {
-        let timeout = Duration::from_secs(10);
+        let timeout = Duration::from_secs(30);
         Self {
             user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36".to_string(),
             timeout,
@@ -174,7 +255,7 @@ impl HttpClient {
 
     /// Creates an HTTP client sharing an existing cookie jar.
     pub fn with_cookie_jar(cookie_jar: std::sync::Arc<std::sync::Mutex<CookieJar>>) -> Self {
-        let timeout = Duration::from_secs(10);
+        let timeout = Duration::from_secs(30);
         Self {
             user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36".to_string(),
             timeout,
@@ -199,7 +280,20 @@ impl HttpClient {
     }
 
     /// Executes a single HTTP GET request without following redirects.
+    /// Top-level navigation context (`is_top_level=true`).
     pub fn get_single(&self, url: &Url) -> Result<HttpResponse, NetworkError> {
+        self.get_single_with_context(url, None, true, true)
+    }
+
+    /// Executes a single HTTP GET with explicit SameSite initiator context.
+    /// Subresources must pass `initiator` (page URL) with `is_top_level=false`.
+    pub fn get_single_with_context(
+        &self,
+        url: &Url,
+        initiator_url: Option<&Url>,
+        is_top_level: bool,
+        is_safe_method: bool,
+    ) -> Result<HttpResponse, NetworkError> {
         let url_str = url.as_str();
 
         let mut req = self.agent
@@ -217,24 +311,13 @@ impl HttpClient {
             .header("upgrade-insecure-requests", "1");
 
         if let Ok(jar) = self.cookie_jar.lock()
-            && let Some(cookie_hdr) = jar.get_cookie_header(url)
+            && let Some(cookie_hdr) =
+                jar.get_cookie_header_with_context(url, initiator_url, is_top_level, is_safe_method)
         {
             req = req.header("Cookie", &cookie_hdr);
         }
 
-        let response = req.call().map_err(|e| match e {
-            ureq::Error::Timeout(_) => NetworkError::Timeout,
-            ureq::Error::HostNotFound => NetworkError::DnsResolutionFailed(format!(
-                "Host not found: {}",
-                url.host.as_deref().unwrap_or("")
-            )),
-            ureq::Error::ConnectionFailed => {
-                NetworkError::ConnectionFailed("Connection failed".to_string())
-            }
-            ureq::Error::Tls(msg) => NetworkError::TlsError(msg.to_string()),
-            ureq::Error::StatusCode(code) => NetworkError::HttpError(code, format!("HTTP {code}")),
-            other => NetworkError::Other(other.to_string()),
-        })?;
+        let response = req.call().map_err(|e| map_ureq_error(e, url))?;
 
         // Extract Set-Cookie headers into the cookie jar
         if let Ok(mut jar) = self.cookie_jar.lock() {
@@ -262,10 +345,7 @@ impl HttpClient {
             }
         }
 
-        let body = response
-            .into_body()
-            .read_to_vec()
-            .map_err(|e| NetworkError::IoError(format!("Failed to read response body: {e}")))?;
+        let body = read_body_capped(response.into_body())?;
 
         Ok(HttpResponse {
             final_url: url.clone(),
@@ -279,6 +359,19 @@ impl HttpClient {
 
     /// Fetches a URL, following HTTP redirects up to `max_redirects` times.
     pub fn fetch(&self, start_url: &Url) -> Result<HttpResponse, NetworkError> {
+        self.fetch_with_context(start_url, None, true, true)
+    }
+
+    /// Fetches a URL with explicit SameSite initiator context.
+    /// Top-level navigations use `is_top_level=true`; subresources use
+    /// `initiator=Some(page_url)` with `is_top_level=false`.
+    pub fn fetch_with_context(
+        &self,
+        start_url: &Url,
+        initiator_url: Option<&Url>,
+        is_top_level: bool,
+        is_safe_method: bool,
+    ) -> Result<HttpResponse, NetworkError> {
         let mut current_url = start_url.clone();
         let mut redirects_followed = 0;
         let max_redirects = 5;
@@ -291,13 +384,18 @@ impl HttpClient {
 
             visited_urls.push(current_url.as_str());
 
-            let resp = self.get_single(&current_url)?;
+            let resp = self.get_single_with_context(
+                &current_url,
+                initiator_url,
+                is_top_level,
+                is_safe_method,
+            )?;
 
             if resp.is_redirect()
-                && let Some(loc) = resp.location()
+                && let Some(loc) = resp.location().map(|s| s.to_string())
             {
                 let next_url = current_url
-                    .resolve(loc)
+                    .resolve(&loc)
                     .map_err(|e| NetworkError::InvalidUrl(e.to_string()))?;
 
                 if visited_urls.contains(&next_url.as_str()) {
@@ -313,6 +411,165 @@ impl HttpClient {
             let mut final_resp = resp;
             final_resp.final_url = current_url;
             return Ok(final_resp);
+        }
+    }
+
+    /// Fetches a URL with streaming response body callback.
+    /// Follows redirects, handles cookies and HSTS, and streams final response chunks to `on_chunk`.
+    pub fn fetch_streaming<F: FnMut(&[u8]) -> bool>(
+        &self,
+        start_url: &Url,
+        on_chunk: F,
+    ) -> Result<HttpResponse, NetworkError> {
+        self.fetch_streaming_with_context(start_url, None, true, true, on_chunk)
+    }
+
+    /// Fetches a URL with explicit SameSite initiator context and streaming chunks.
+    pub fn fetch_streaming_with_context<F: FnMut(&[u8]) -> bool>(
+        &self,
+        start_url: &Url,
+        initiator_url: Option<&Url>,
+        is_top_level: bool,
+        is_safe_method: bool,
+        mut on_chunk: F,
+    ) -> Result<HttpResponse, NetworkError> {
+        let mut current_url = start_url.clone();
+        let mut redirects_followed = 0;
+        let max_redirects = 5;
+        let mut visited_urls = Vec::new();
+
+        loop {
+            if redirects_followed >= max_redirects {
+                return Err(NetworkError::TooManyRedirects);
+            }
+
+            visited_urls.push(current_url.as_str());
+
+            let url_str = current_url.as_str();
+            let mut req = self
+                .agent
+                .get(&url_str)
+                .header("User-Agent", &self.user_agent)
+                .header(
+                    "Accept",
+                    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+                )
+                .header("Accept-Language", "en-US,en;q=0.9")
+                .header("Accept-Encoding", "gzip, deflate, br")
+                .header(
+                    "sec-ch-ua",
+                    "\"Chromium\";v=\"128\", \"Not;A=Brand\";v=\"24\", \"Google Chrome\";v=\"128\"",
+                )
+                .header("sec-ch-ua-mobile", "?0")
+                .header("sec-ch-ua-platform", "\"Windows\"")
+                .header("upgrade-insecure-requests", "1");
+
+            if let Ok(jar) = self.cookie_jar.lock()
+                && let Some(cookie_hdr) = jar.get_cookie_header_with_context(
+                    &current_url,
+                    initiator_url,
+                    is_top_level,
+                    is_safe_method,
+                )
+            {
+                req = req.header("Cookie", &cookie_hdr);
+            }
+
+            let response = req.call().map_err(|e| map_ureq_error(e, &current_url))?;
+
+            if let Ok(mut jar) = self.cookie_jar.lock() {
+                for (name, val) in response.headers() {
+                    if name.as_str().eq_ignore_ascii_case("set-cookie")
+                        && let Ok(v_str) = val.to_str()
+                        && let Some(cookie) = CookieJar::parse_set_cookie(v_str, &current_url)
+                    {
+                        jar.store_cookie(cookie);
+                    }
+                }
+            }
+
+            let status = response.status().as_u16();
+            let status_text = response
+                .status()
+                .canonical_reason()
+                .unwrap_or("")
+                .to_string();
+
+            let mut headers = HashMap::new();
+            for (name, val) in response.headers() {
+                if let Ok(v_str) = val.to_str() {
+                    headers.insert(name.as_str().to_ascii_lowercase(), v_str.to_string());
+                }
+            }
+
+            let is_redirect = matches!(status, 301 | 302 | 303 | 307 | 308);
+            if is_redirect && let Some(loc) = headers.get("location") {
+                let _ = read_body_capped(response.into_body());
+                let next_url = current_url
+                    .resolve(loc)
+                    .map_err(|e| NetworkError::InvalidUrl(e.to_string()))?;
+
+                if visited_urls.contains(&next_url.as_str()) {
+                    return Err(NetworkError::TooManyRedirects);
+                }
+
+                log::info!("Following redirect {} -> {}", current_url, next_url);
+                current_url = next_url;
+                redirects_followed += 1;
+                continue;
+            }
+
+            let body = read_body_streaming(response.into_body(), &mut on_chunk)?;
+
+            return Ok(HttpResponse {
+                final_url: current_url,
+                status,
+                status_text,
+                headers,
+                version: crate::http2::HttpVersion::Http11,
+                body,
+            });
+        }
+    }
+
+    /// Async non-blocking fetch with bounded timeout.
+    ///
+    /// Runs the blocking `ureq` fetch on Tokio's blocking pool so async
+    /// executors are never stalled, and caps the wait with `timeout`
+    /// (default 20s) to prevent indefinite hangs.
+    pub async fn fetch_async(&self, url: &Url) -> Result<HttpResponse, NetworkError> {
+        self.fetch_async_timeout(url, Duration::from_secs(20)).await
+    }
+
+    /// Async fetch with an explicit timeout.
+    pub async fn fetch_async_timeout(
+        &self,
+        url: &Url,
+        timeout: Duration,
+    ) -> Result<HttpResponse, NetworkError> {
+        let client = self.clone();
+        let url = url.clone();
+        let fut = tokio::task::spawn_blocking(move || client.fetch(&url));
+        match tokio::time::timeout(timeout, fut).await {
+            Err(_) => Err(NetworkError::Timeout),
+            Ok(Err(e)) => Err(NetworkError::Other(format!(
+                "HTTP fetch task panicked: {e}"
+            ))),
+            Ok(Ok(res)) => res,
+        }
+    }
+
+    /// Async non-blocking single GET with bounded timeout.
+    pub async fn get_single_async(&self, url: &Url) -> Result<HttpResponse, NetworkError> {
+        let client = self.clone();
+        let url = url.clone();
+        let fut = tokio::task::spawn_blocking(move || client.get_single(&url));
+        match tokio::time::timeout(Duration::from_secs(20), fut).await {
+            Err(_) => Err(NetworkError::Timeout),
+            Ok(Err(e)) => Err(NetworkError::Other(format!(
+                "HTTP GET task panicked: {e}"
+            ))),
+            Ok(Ok(res)) => res,
         }
     }
 
@@ -341,25 +598,16 @@ impl HttpClient {
             .header("sec-ch-ua-platform", "\"Windows\"")
             .header("upgrade-insecure-requests", "1");
 
+        // POST is a top-level navigation-unsafe method: use Lax rules (not top-level safe).
+        // For form posts the initiator is the page itself; callers needing
+        // subresource context should use request_with_context.
         if let Ok(jar) = self.cookie_jar.lock()
-            && let Some(cookie_hdr) = jar.get_cookie_header(url)
+            && let Some(cookie_hdr) = jar.get_cookie_header_with_context(url, None, true, false)
         {
             req = req.header("Cookie", &cookie_hdr);
         }
 
-        let resp = req.send(body).map_err(|e| match e {
-            ureq::Error::Timeout(_) => NetworkError::Timeout,
-            ureq::Error::HostNotFound => NetworkError::DnsResolutionFailed(format!(
-                "Host not found: {}",
-                url.host.as_deref().unwrap_or("")
-            )),
-            ureq::Error::ConnectionFailed => {
-                NetworkError::ConnectionFailed("Connection failed".to_string())
-            }
-            ureq::Error::Tls(msg) => NetworkError::TlsError(msg.to_string()),
-            ureq::Error::StatusCode(code) => NetworkError::HttpError(code, format!("HTTP {code}")),
-            other => NetworkError::Other(other.to_string()),
-        })?;
+        let resp = req.send(body).map_err(|e| map_ureq_error(e, url))?;
 
         // Extract Set-Cookie headers into the cookie jar
         if let Ok(mut jar) = self.cookie_jar.lock() {
@@ -391,9 +639,7 @@ impl HttpClient {
             return self.fetch(&redirect_url);
         }
 
-        let body_bytes = resp.into_body().read_to_vec().map_err(|e| {
-            NetworkError::IoError(format!("Failed to read POST response body: {e}"))
-        })?;
+        let body_bytes = read_body_capped(resp.into_body())?;
 
         Ok(HttpResponse {
             final_url: url.clone(),
@@ -409,12 +655,35 @@ impl HttpClient {
     ///
     /// Transmits cookies from the cookie jar, handles custom headers, records Set-Cookie responses,
     /// and returns status and body for all responses (including 4xx and 5xx).
+    /// Defaults to top-level navigation context; use [`request_with_context`]
+    /// for subresources (`is_top_level=false` + initiator).
     pub fn request(
         &self,
         method: &str,
         url: &Url,
         custom_headers: &[(String, String)],
         body: Option<&[u8]>,
+    ) -> Result<HttpResponse, NetworkError> {
+        // Heuristic: GET/HEAD with no initiator are treated as subresource-safe
+        // only when explicitly routed via request_with_context. Default here
+        // preserves top-level behavior for backwards compat.
+        self.request_with_context(method, url, custom_headers, body, None, true, true)
+    }
+
+    /// Executes a general HTTP request with explicit SameSite initiator context.
+    ///
+    /// Subresources (fetch/XHR/CSS/JS/img) must pass the page URL as
+    /// `initiator_url` with `is_top_level=false`; top-level navigations pass
+    /// `is_top_level=true`. `is_safe_method` is true for GET/HEAD/OPTIONS/TRACE.
+    pub fn request_with_context(
+        &self,
+        method: &str,
+        url: &Url,
+        custom_headers: &[(String, String)],
+        body: Option<&[u8]>,
+        initiator_url: Option<&Url>,
+        is_top_level: bool,
+        is_safe_method: bool,
     ) -> Result<HttpResponse, NetworkError> {
         let url_str = url.as_str();
         let upper_method = method.trim().to_uppercase();
@@ -428,7 +697,12 @@ impl HttpClient {
                 .header("Accept-Language", "en-US,en;q=0.9")
                 .header("Accept-Encoding", "gzip, deflate, br");
             if let Ok(jar) = self.cookie_jar.lock()
-                && let Some(cookie_hdr) = jar.get_cookie_header_with_context(url, None, true, true)
+                && let Some(cookie_hdr) = jar.get_cookie_header_with_context(
+                    url,
+                    initiator_url,
+                    is_top_level,
+                    is_safe_method,
+                )
             {
                 req = req.header("Cookie", &cookie_hdr);
             }
@@ -445,7 +719,12 @@ impl HttpClient {
                 .header("Accept-Language", "en-US,en;q=0.9")
                 .header("Accept-Encoding", "gzip, deflate, br");
             if let Ok(jar) = self.cookie_jar.lock()
-                && let Some(cookie_hdr) = jar.get_cookie_header_with_context(url, None, true, true)
+                && let Some(cookie_hdr) = jar.get_cookie_header_with_context(
+                    url,
+                    initiator_url,
+                    is_top_level,
+                    is_safe_method,
+                )
             {
                 req = req.header("Cookie", &cookie_hdr);
             }
@@ -462,7 +741,12 @@ impl HttpClient {
                 .header("Accept-Language", "en-US,en;q=0.9")
                 .header("Accept-Encoding", "gzip, deflate, br");
             if let Ok(jar) = self.cookie_jar.lock()
-                && let Some(cookie_hdr) = jar.get_cookie_header_with_context(url, None, true, true)
+                && let Some(cookie_hdr) = jar.get_cookie_header_with_context(
+                    url,
+                    initiator_url,
+                    is_top_level,
+                    is_safe_method,
+                )
             {
                 req = req.header("Cookie", &cookie_hdr);
             }
@@ -482,7 +766,12 @@ impl HttpClient {
                 .header("Accept-Language", "en-US,en;q=0.9")
                 .header("Accept-Encoding", "gzip, deflate, br");
             if let Ok(jar) = self.cookie_jar.lock()
-                && let Some(cookie_hdr) = jar.get_cookie_header_with_context(url, None, true, true)
+                && let Some(cookie_hdr) = jar.get_cookie_header_with_context(
+                    url,
+                    initiator_url,
+                    is_top_level,
+                    is_safe_method,
+                )
             {
                 req = req.header("Cookie", &cookie_hdr);
             }
@@ -494,19 +783,7 @@ impl HttpClient {
                 None => req.send_empty(),
             }
         }
-        .map_err(|e| match e {
-            ureq::Error::Timeout(_) => NetworkError::Timeout,
-            ureq::Error::HostNotFound => NetworkError::DnsResolutionFailed(format!(
-                "Host not found: {}",
-                url.host.as_deref().unwrap_or("")
-            )),
-            ureq::Error::ConnectionFailed => {
-                NetworkError::ConnectionFailed("Connection failed".to_string())
-            }
-            ureq::Error::Tls(msg) => NetworkError::TlsError(msg.to_string()),
-            ureq::Error::StatusCode(code) => NetworkError::HttpError(code, format!("HTTP {code}")),
-            other => NetworkError::Other(other.to_string()),
-        })?;
+        .map_err(|e| map_ureq_error(e, url))?;
 
         // Extract Set-Cookie headers into the cookie jar
         if let Ok(mut jar) = self.cookie_jar.lock() {
@@ -616,5 +893,22 @@ mod tests {
 
         let after_delete = jar.get_cookie_header(&url).unwrap();
         assert_eq!(after_delete, "theme=dark");
+    }
+
+    #[test]
+    fn test_read_body_streaming_chunking() {
+        let fake_data = vec![42u8; 70000];
+        let body = ureq::Body::builder().data(fake_data.clone());
+        let mut chunks_received = 0;
+        let mut total_bytes = 0;
+        let accumulated = read_body_streaming(body, |chunk| {
+            chunks_received += 1;
+            total_bytes += chunk.len();
+            true
+        })
+        .unwrap();
+        assert_eq!(accumulated, fake_data);
+        assert_eq!(total_bytes, 70000);
+        assert!(chunks_received >= 2);
     }
 }

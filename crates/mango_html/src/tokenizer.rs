@@ -203,7 +203,7 @@ impl<'a> Tokenizer<'a> {
                         self.state = State::TagName;
                     }
                     Some('>') => {
-                        self.advance();
+                        // Reconsume '>' in Data: do NOT consume, emit '<' then reprocess '>'.
                         self.state = State::Data;
                         return Token::Character('<');
                     }
@@ -227,6 +227,12 @@ impl<'a> Tokenizer<'a> {
                     Some('>') => {
                         self.advance();
                         self.state = State::Data;
+                    }
+                    None => {
+                        // EOF after "</": emit '<','/' as text, not bogus comment.
+                        self.state = State::Data;
+                        self.pending_chars.push_back('/');
+                        return Token::Character('<');
                     }
                     _ => {
                         self.current_comment.clear();
@@ -401,21 +407,25 @@ impl<'a> Tokenizer<'a> {
                     }
                 },
 
-                State::AfterAttributeValueQuoted => match self.advance() {
+                State::AfterAttributeValueQuoted => match self.peek() {
                     Some(ch) if ch.is_ascii_whitespace() => {
+                        self.advance();
                         self.finish_attribute();
                         self.state = State::BeforeAttributeName;
                     }
                     Some('/') => {
+                        self.advance();
                         self.finish_attribute();
                         self.state = State::SelfClosingStartTag;
                     }
                     Some('>') => {
+                        self.advance();
                         self.finish_attribute();
                         self.state = State::Data;
                         return self.emit_current_tag();
                     }
                     Some(_) => {
+                        // Reconsume: do NOT drop char (e.g. 'b' in id="a"b="c").
                         self.finish_attribute();
                         self.state = State::BeforeAttributeName;
                     }
@@ -426,13 +436,15 @@ impl<'a> Tokenizer<'a> {
                     }
                 },
 
-                State::SelfClosingStartTag => match self.advance() {
+                State::SelfClosingStartTag => match self.peek() {
                     Some('>') => {
+                        self.advance();
                         self.self_closing = true;
                         self.state = State::Data;
                         return self.emit_current_tag();
                     }
                     Some(_) => {
+                        // Reconsume in BeforeAttributeName, do not drop char.
                         self.state = State::BeforeAttributeName;
                     }
                     None => {
@@ -520,6 +532,12 @@ impl<'a> Tokenizer<'a> {
                     Some('-') => {
                         self.state = State::CommentEnd;
                     }
+                    Some('>') => {
+                        // Handles "<!--->" as empty comment close per WHATWG
+                        // (CommentStart '-' -> EndDash, then '>' closes).
+                        self.state = State::Data;
+                        return Token::Comment(self.current_comment.clone());
+                    }
                     Some(ch) => {
                         self.current_comment.push('-');
                         self.current_comment.push(ch);
@@ -538,6 +556,18 @@ impl<'a> Tokenizer<'a> {
                     }
                     Some('-') => {
                         self.current_comment.push('-');
+                    }
+                    Some('!') => {
+                        // Handle "--!>" close: if next char is '>', close without
+                        // adding '!' to data; otherwise "--!" becomes data.
+                        if self.peek() == Some('>') {
+                            self.advance(); // consume '>'
+                            self.state = State::Data;
+                            return Token::Comment(self.current_comment.clone());
+                        } else {
+                            self.current_comment.push_str("--!");
+                            self.state = State::Comment;
+                        }
                     }
                     Some(ch) => {
                         self.current_comment.push_str("--");
@@ -612,7 +642,7 @@ impl<'a> Tokenizer<'a> {
                             name: Some(self.current_doctype_name.clone()),
                             public_id: self.current_doctype_public_id.take(),
                             system_id: self.current_doctype_system_id.take(),
-                            force_quirks: false,
+                            force_quirks: true,
                         };
                     }
                 },
@@ -777,10 +807,20 @@ impl<'a> Tokenizer<'a> {
 
     fn finish_attribute(&mut self) {
         if !self.current_attr_name.is_empty() {
-            let decoded_val = decode_entities(&self.current_attr_val);
-            self.current_attributes
-                .push((std::mem::take(&mut self.current_attr_name), decoded_val));
-            self.current_attr_val.clear();
+            // First duplicate wins: ignore subsequent duplicates per WHATWG.
+            let exists = self
+                .current_attributes
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case(&self.current_attr_name));
+            if !exists {
+                let decoded_val = decode_entities(&self.current_attr_val);
+                self.current_attributes
+                    .push((std::mem::take(&mut self.current_attr_name), decoded_val));
+                self.current_attr_val.clear();
+            } else {
+                self.current_attr_name.clear();
+                self.current_attr_val.clear();
+            }
         }
     }
 

@@ -24,6 +24,75 @@ use mango_render::{
 use crate::config::Config;
 use crate::tab::Tab;
 
+// ── Section 1.1 UI-freeze guards (P0) ─────────────────────────────────────
+// Maximum concurrent network fetches for any background fan-out.
+const MAX_CONCURRENT_FETCHES: usize = 6;
+// Per-fetch timeout for stylesheets, scripts, fonts, and images.
+const SUBRESOURCE_FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+// Bounded wait for synchronous navigation bridges (tests/headless).
+const SYNC_NAVIGATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// UI-thread marker: the thread that constructed the first `BrowserChrome`.
+static UI_THREAD_ID: std::sync::OnceLock<std::thread::ThreadId> = std::sync::OnceLock::new();
+
+/// Records the calling thread as the UI thread. Called from `BrowserChrome::new`.
+fn mark_ui_thread() {
+    let _ = UI_THREAD_ID.set(std::thread::current().id());
+}
+
+/// Returns true when called on the recorded UI thread.
+fn is_ui_thread() -> bool {
+    UI_THREAD_ID
+        .get()
+        .is_some_and(|id| *id == std::thread::current().id())
+}
+
+/// Debug-only guard against blocking network fetches on the UI thread.
+///
+/// In debug builds a blocking fetch on the UI thread logs loudly and trips
+/// `debug_assert`; in release builds it only logs, so production never panics
+/// on this guard.
+fn assert_not_on_ui_thread(context: &'static str) {
+    if is_ui_thread() {
+        log::warn!("Blocking network fetch on UI thread at {context}; use the NavigationActor/background worker instead");
+        debug_assert!(
+            false,
+            "Blocking network fetch on UI thread at {context}: dispatch via NavigationActor"
+        );
+    }
+}
+
+/// Runs a blocking fetch closure bounded by `timeout`.
+///
+/// Spawns a short-lived thread and waits with `recv_timeout`, so a hung
+/// server can never stall the caller forever. Returns `Err` on timeout,
+/// disconnect, or spawn failure.
+fn fetch_with_timeout<T, E, F>(
+    fetch: F,
+    timeout: std::time::Duration,
+) -> Result<Result<T, E>, String>
+where
+    T: Send + 'static,
+    E: Send + 'static,
+    F: FnOnce() -> Result<T, E> + Send + 'static,
+{
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("mango-fetch-timeout".to_string())
+        .spawn(move || {
+            let _ = tx.send(fetch());
+        })
+        .map_err(|e| format!("failed to spawn fetch thread: {e}"))?;
+    rx.recv_timeout(timeout).map_err(|e| match e {
+        std::sync::mpsc::RecvTimeoutError::Timeout => {
+            format!("subresource fetch timed out after {:?}", timeout)
+        }
+        std::sync::mpsc::RecvTimeoutError::Disconnected => {
+            "subresource fetch worker disconnected".to_string()
+        }
+    })
+}
+
 /// A borrowed view of the active DOM.
 ///
 /// `BrowserChrome::active_document()` returns an owned `Document`, which deep-clones
@@ -125,12 +194,6 @@ pub struct PreparedDocument {
     pub image_sources: Vec<String>,
 }
 
-struct PendingNavigation {
-    target_url: Url,
-    rx: std::sync::mpsc::Receiver<Result<PreparedDocument, mango_net::NetworkError>>,
-    push_history: bool,
-}
-
 /// The browser chrome — manages tab bar, navigation toolbar, address bar, content area, and status bar.
 pub struct BrowserChrome {
     /// Current window dimensions.
@@ -197,6 +260,10 @@ pub struct BrowserChrome {
     control_cursor_pos: usize,
     /// Cached layout display list of the current page.
     page_display_list: DisplayList,
+    /// Cached scrollable content height to avoid box tree traversals on every frame/mouse-move.
+    cached_scrollable_height: f32,
+    /// Tracks whether the page layout/display list has changed and needs upload to page_layer.
+    page_dirty: bool,
     /// OPT-005: Display list cache with dirty-tracking and scroll-invalidation.
     display_list_cache: std::cell::RefCell<mango_layout::display_list::DisplayListCache>,
     /// Background color of the content canvas.
@@ -237,16 +304,34 @@ pub struct BrowserChrome {
     active_dom_nodes: HashSet<mango_html::dom::NodeId>,
     /// Active smooth scrolling animation controller.
     pub smooth_scroll: Option<crate::scroll::SmoothScrollAnimation>,
-    /// Active asynchronous navigation task, if any.
-    pending_navigation: Option<PendingNavigation>,
+    /// Dedicated actor handle for concurrent background navigation and pipeline preparation (Phase 2).
+    pub nav_actor: crate::navigation_actor::NavigationActorHandle,
     /// Whether network navigations should proceed asynchronously (true in desktop UI, false in tests/headless).
     pub async_navigation: bool,
     /// Channel receiver for images decoded by background workers.
     image_rx: Option<std::sync::mpsc::Receiver<String>>,
+    /// Epoch guarding background image workers: incremented per navigation so
+    /// stale workers stop sending into a newer page's channel.
+    image_epoch: std::sync::Arc<std::sync::atomic::AtomicU64>,
     /// Compositor layer tree for GPU/tiled layer presentation.
     pub layer_tree: mango_render::LayerTree,
     /// Monotonic frame counter for tile cache lifecycle.
     pub frame_counter: u64,
+    /// Find-in-page interactive search overlay state (Ctrl+F).
+    pub find_in_page: FindInPage,
+    /// Zoom level factor for page contents (1.0 = 100%).
+    pub zoom_level: f32,
+    /// Fullscreen mode toggle (F11).
+    pub is_fullscreen: bool,
+}
+
+/// Find-in-page state for interactive page search and highlighting.
+#[derive(Debug, Clone, Default)]
+pub struct FindInPage {
+    pub active: bool,
+    pub query: String,
+    pub matches: Vec<mango_core::Rect>,
+    pub current_match: usize,
 }
 
 /// Pre-populates Wikipedia Vector 2022 appearance controls (Text size, Width, Color)
@@ -302,13 +387,17 @@ fn preprocess_wikipedia_appearance_html(html: &mut String, url: &str) {
     </div>
 </div>"#;
 
-        if let Some(pos) = html.find("vector-appearance-pinnable-header") {
-            if let Some(hide_pos) = html[pos..].find("hide</button>") {
-                if let Some(close_div) = html[pos + hide_pos..].find("</div>") {
-                    let insert_pos = pos + hide_pos + close_div + 6;
-                    html.insert_str(insert_pos, content_html);
-                }
-            }
+        let insert_pos = html
+            .find("vector-appearance-pinnable-header")
+            .and_then(|pos| {
+                html[pos..].find("hide</button>").and_then(|hide_pos| {
+                    html[pos + hide_pos..]
+                        .find("</div>")
+                        .map(|close_div| pos + hide_pos + close_div + 6)
+                })
+            });
+        if let Some(insert_pos) = insert_pos {
+            html.insert_str(insert_pos, content_html);
         }
     }
 }
@@ -335,6 +424,9 @@ impl BrowserChrome {
         let local_storage: mango_js::web_apis::SharedLocalStorage =
             std::sync::Arc::new(std::sync::Mutex::new(HashMap::new()));
         load_local_storage(&local_storage_path, &local_storage);
+
+        let loader = ResourceLoader::with_cookie_jar(cookie_jar.clone());
+        let nav_actor = crate::navigation_actor::NavigationActorHandle::spawn(loader.clone());
 
         let mut chrome = Self {
             width,
@@ -368,6 +460,8 @@ impl BrowserChrome {
             focused_control: None,
             control_cursor_pos: 0,
             page_display_list: DisplayList::new(),
+            cached_scrollable_height: 0.0,
+            page_dirty: true,
             display_list_cache: std::cell::RefCell::new(
                 mango_layout::display_list::DisplayListCache::new(),
             ),
@@ -377,7 +471,8 @@ impl BrowserChrome {
             drag_start_scroll_y: 0.0,
             anim_state: mango_css::AnimationState::new(),
             style_snapshot: HashMap::new(),
-            loader: ResourceLoader::with_cookie_jar(cookie_jar.clone()),
+            loader,
+            nav_actor,
             cookie_jar,
             cookie_store_path,
             local_storage,
@@ -389,13 +484,17 @@ impl BrowserChrome {
             hovered_dom_nodes: HashSet::new(),
             active_dom_nodes: HashSet::new(),
             smooth_scroll: None,
-            pending_navigation: None,
             async_navigation: false,
             image_rx: None,
+            image_epoch: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             layer_tree: mango_render::LayerTree::new(width, height),
             frame_counter: 0,
+            find_in_page: FindInPage::default(),
+            zoom_level: 1.0,
+            is_fullscreen: false,
         };
 
+        mark_ui_thread();
         chrome.load_html_internal(initial_html, "about:welcome".to_string(), false);
         chrome
     }
@@ -411,6 +510,16 @@ impl BrowserChrome {
     }
 
     #[allow(dead_code)]
+    pub fn tab_count(&self) -> usize {
+        self.tabs.len()
+    }
+
+    #[allow(dead_code)]
+    pub fn tabs(&self) -> &[Tab] {
+        &self.tabs
+    }
+
+    #[allow(dead_code)]
     pub fn page_title(&self) -> &str {
         &self.page_title
     }
@@ -418,6 +527,16 @@ impl BrowserChrome {
     #[allow(dead_code)]
     pub fn current_html(&self) -> &str {
         &self.current_html
+    }
+
+    /// Returns the current mouse X position in window coordinates.
+    pub fn mouse_x(&self) -> f32 {
+        self.mouse_x
+    }
+
+    /// Returns the current mouse Y position in window coordinates.
+    pub fn mouse_y(&self) -> f32 {
+        self.mouse_y
     }
 
     /// Returns the currently active HTML document (from JS runtime snapshot or parsed cache) (OPT-003).
@@ -473,6 +592,8 @@ impl BrowserChrome {
         self.canvas_bg = canvas_color;
         self.page_display_list = page_dl;
         self.root_box = Some(root_box);
+        self.cached_scrollable_height = crate::scroll::compute_scrollable_height(self.root_box.as_ref());
+        self.page_dirty = true;
         self.display_list_cache.borrow_mut().invalidate(None);
 
         self.refresh_animation_targets();
@@ -498,6 +619,10 @@ impl BrowserChrome {
     /// Called after every (re)layout: starts `animation-*` declarations that are not
     /// already running, and retargets `transition-*` declarations whose properties
     /// changed since the previous layout pass.
+    ///
+    /// Deliberately performs NO second layout here: the animated blend is applied
+    /// on the next [`Self::tick_animations`] frame, so each frame lays out at
+    /// most once instead of twice (P0 double-relayout fix).
     fn refresh_animation_targets(&mut self) {
         let Some(root) = self.root_box.as_mut() else {
             return;
@@ -525,29 +650,15 @@ impl BrowserChrome {
         }
 
         self.style_snapshot = fresh;
-
-        if self.anim_state.is_animating()
-            && let Some(mut root) = self.root_box.take()
-        {
-            let snapshot = self.style_snapshot.clone();
-            let anim_state = &self.anim_state;
-            mango_layout::apply_box_style_overrides(&mut root, &mut |node, style| {
-                let Some(node) = node else { return };
-                let Some(base) = snapshot.get(&node.raw()) else {
-                    return;
-                };
-                let mut blended = anim_state.transitions.current_style(node, base);
-                anim_state.animations.apply(node, &mut blended);
-                *style = blended;
-            });
-            let viewport = Size::new(self.content_width(), self.content_height());
-            self.page_display_list = mango_layout::relayout_box_tree(&mut root, viewport);
-            self.root_box = Some(root);
-        }
+        // No second `relayout_box_tree` here by design (see doc comment).
     }
 
     /// Advances CSS transitions/animations by `dt_ms` and re-lays-out the page when
     /// anything is animating. Returns `true` when a redraw is required.
+    ///
+    /// Performs at most ONE layout per call and never clones the full
+    /// `style_snapshot`: the snapshot is borrowed while the owned root box is
+    /// blended in place.
     pub fn tick_animations(&mut self, dt_ms: f32) -> bool {
         let mut needs_redraw = false;
 
@@ -569,15 +680,23 @@ impl BrowserChrome {
         if self.root_box.is_none() || !self.anim_state.is_animating() {
             return needs_redraw;
         }
+        if dt_ms <= 0.0 {
+            return needs_redraw;
+        }
         self.anim_state.advance(dt_ms);
+        if !self.anim_state.is_animating() {
+            // Final settle frame still needs one layout to land on end values.
+        }
 
-        let snapshot = self.style_snapshot.clone();
-        let anim_state = &self.anim_state;
         let mut root = match self.root_box.take() {
             Some(r) => r,
             None => return needs_redraw,
         };
 
+        // Borrow (never clone) the base-style snapshot while blending the
+        // owned root box in place.
+        let snapshot = &self.style_snapshot;
+        let anim_state = &self.anim_state;
         mango_layout::apply_box_style_overrides(&mut root, &mut |node, style| {
             let Some(node) = node else { return };
             let Some(base) = snapshot.get(&node.raw()) else {
@@ -590,6 +709,8 @@ impl BrowserChrome {
 
         let viewport = Size::new(self.content_width(), self.content_height());
         self.page_display_list = mango_layout::relayout_box_tree(&mut root, viewport);
+        self.cached_scrollable_height = crate::scroll::compute_scrollable_height(Some(&root));
+        self.page_dirty = true;
         self.root_box = Some(root);
         true
     }
@@ -651,6 +772,11 @@ impl BrowserChrome {
         &self.anim_state
     }
 
+    /// Returns the current status bar text.
+    pub fn status_text(&self) -> &str {
+        &self.status_text
+    }
+
     /// Navigates the browser to the specified URL or input string.
     pub fn navigate(&mut self, url: &str) {
         self.address_text = url.to_string();
@@ -698,6 +824,9 @@ impl BrowserChrome {
                 style_snapshot: std::mem::take(&mut self.style_snapshot),
                 focused_control: self.focused_control.take(),
                 page_display_list: std::mem::take(&mut self.page_display_list),
+                display_list_cache: self.display_list_cache.replace(mango_layout::display_list::DisplayListCache::new()),
+                image_rx: self.image_rx.take(),
+                has_active_animations: self.anim_state.is_animating(),
                 canvas_bg: self.canvas_bg,
             });
         }
@@ -720,7 +849,11 @@ impl BrowserChrome {
                 self.style_snapshot = contents.style_snapshot;
                 self.focused_control = contents.focused_control;
                 self.page_display_list = contents.page_display_list;
+                self.display_list_cache = std::cell::RefCell::new(contents.display_list_cache);
+                self.image_rx = contents.image_rx;
                 self.canvas_bg = contents.canvas_bg;
+                self.cached_scrollable_height = crate::scroll::compute_scrollable_height(self.root_box.as_ref());
+                self.page_dirty = true;
                 self.status_text = format!("Tab: {}", self.page_title);
                 return;
             }
@@ -782,6 +915,156 @@ impl BrowserChrome {
             let next_idx = (self.active_tab_idx + 1) % self.tabs.len();
             self.switch_tab(next_idx);
         }
+    }
+
+    /// Toggles the Find-in-Page search bar overlay (Ctrl+F).
+    pub fn toggle_find(&mut self) {
+        self.find_in_page.active = !self.find_in_page.active;
+        if self.find_in_page.active {
+            self.address_focused = false;
+            self.clear_form_focus();
+            if !self.find_in_page.query.is_empty() {
+                let q = self.find_in_page.query.clone();
+                self.find_in_page_search(&q);
+            }
+        } else {
+            self.find_in_page.matches.clear();
+        }
+        self.page_dirty = true;
+    }
+
+    /// Searches the page text for `query` and updates matching bounding boxes.
+    pub fn find_in_page_search(&mut self, query: &str) {
+        self.find_in_page.query = query.to_string();
+        self.find_in_page.matches.clear();
+        self.find_in_page.current_match = 0;
+
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            self.page_dirty = true;
+            return;
+        }
+
+        let query_lower = trimmed.to_lowercase();
+        let mut matches = Vec::new();
+
+        if let Some(ref root) = self.root_box {
+            fn collect_matches(
+                b: &mango_layout::box_tree::LayoutBox,
+                q: &str,
+                out: &mut Vec<mango_core::Rect>,
+            ) {
+                if let mango_layout::box_model::BoxType::TextNode(ref text) = b.box_type {
+                    let text_lower = text.to_lowercase();
+                    let mut start = 0;
+                    let total_chars = text.chars().count().max(1) as f32;
+                    let bbox = b.dimensions.border_box();
+                    while let Some(pos) = text_lower[start..].find(q) {
+                        let absolute_byte_idx = start + pos;
+                        let char_start = text[..absolute_byte_idx].chars().count();
+                        let char_len = q.chars().count();
+                        let start_frac = (char_start as f32 / total_chars).clamp(0.0, 1.0);
+                        let len_frac = (char_len as f32 / total_chars).clamp(0.01, 1.0);
+                        let mx = bbox.x() + bbox.width() * start_frac;
+                        let mw = (bbox.width() * len_frac).max(6.0);
+                        out.push(mango_core::Rect::new(mx, bbox.y(), mw, bbox.height().max(12.0)));
+                        start = absolute_byte_idx + q.len();
+                        if start >= text_lower.len() {
+                            break;
+                        }
+                    }
+                }
+                for child in &b.children {
+                    collect_matches(child, q, out);
+                }
+            }
+            collect_matches(root, &query_lower, &mut matches);
+        }
+
+        matches.sort_by(|a, b| {
+            if (a.y() - b.y()).abs() > 4.0 {
+                a.y().partial_cmp(&b.y()).unwrap_or(std::cmp::Ordering::Equal)
+            } else {
+                a.x().partial_cmp(&b.x()).unwrap_or(std::cmp::Ordering::Equal)
+            }
+        });
+
+        if !matches.is_empty() {
+            let target_y = (matches[0].y() - 100.0).max(0.0).min(self.max_scroll());
+            self.scroll_y = target_y;
+            if let Some(tab) = self.tabs.get_mut(self.active_tab_idx) {
+                tab.scroll_y = self.scroll_y;
+            }
+        }
+
+        self.find_in_page.matches = matches;
+        self.page_dirty = true;
+    }
+
+    /// Navigates to the next search match.
+    pub fn find_next(&mut self) {
+        if self.find_in_page.matches.is_empty() {
+            return;
+        }
+        self.find_in_page.current_match =
+            (self.find_in_page.current_match + 1) % self.find_in_page.matches.len();
+        let target_match = self.find_in_page.matches[self.find_in_page.current_match];
+        let target_y = (target_match.y() - 100.0).max(0.0).min(self.max_scroll());
+        self.scroll_y = target_y;
+        if let Some(tab) = self.tabs.get_mut(self.active_tab_idx) {
+            tab.scroll_y = self.scroll_y;
+        }
+        self.page_dirty = true;
+    }
+
+    /// Navigates to the previous search match.
+    pub fn find_previous(&mut self) {
+        if self.find_in_page.matches.is_empty() {
+            return;
+        }
+        self.find_in_page.current_match = (self.find_in_page.current_match
+            + self.find_in_page.matches.len()
+            - 1)
+            % self.find_in_page.matches.len();
+        let target_match = self.find_in_page.matches[self.find_in_page.current_match];
+        let target_y = (target_match.y() - 100.0).max(0.0).min(self.max_scroll());
+        self.scroll_y = target_y;
+        if let Some(tab) = self.tabs.get_mut(self.active_tab_idx) {
+            tab.scroll_y = self.scroll_y;
+        }
+        self.page_dirty = true;
+    }
+
+    /// Increases zoom level by 10% (Ctrl++).
+    pub fn zoom_in(&mut self) {
+        self.zoom_level = (self.zoom_level + 0.1).min(3.0);
+        self.status_text = format!("Zoom: {}%", (self.zoom_level * 100.0).round() as u32);
+        self.relayout();
+    }
+
+    /// Decreases zoom level by 10% (Ctrl+-).
+    pub fn zoom_out(&mut self) {
+        self.zoom_level = (self.zoom_level - 0.1).max(0.25);
+        self.status_text = format!("Zoom: {}%", (self.zoom_level * 100.0).round() as u32);
+        self.relayout();
+    }
+
+    /// Resets zoom level to 100% (Ctrl+0).
+    pub fn zoom_reset(&mut self) {
+        self.zoom_level = 1.0;
+        self.status_text = "Zoom: 100%".to_string();
+        self.relayout();
+    }
+
+    /// Toggles fullscreen mode (F11).
+    pub fn toggle_fullscreen(&mut self) {
+        self.is_fullscreen = !self.is_fullscreen;
+        self.status_text = if self.is_fullscreen {
+            "Fullscreen enabled (F11)".to_string()
+        } else {
+            "Fullscreen disabled (F11)".to_string()
+        };
+        self.page_dirty = true;
     }
 
     /// Public method to load HTML into the active tab.
@@ -855,12 +1138,12 @@ impl BrowserChrome {
         self.focused_initial_value = None;
         self.control_cursor_pos = 0;
 
-        self.cached_document = Some(doc.clone());
         if let Some(title) = extract_title(&doc) {
             self.page_title = title;
         } else {
             self.page_title = url.clone();
         }
+        self.cached_document = None;
 
         if let Some(tab) = self.tabs.get_mut(self.active_tab_idx) {
             if push_history {
@@ -889,38 +1172,41 @@ impl BrowserChrome {
             self.cookie_jar.clone(),
         );
 
-        // Load web fonts and imported stylesheets from embedded and cached stylesheets
-        let embedded_sheets = self
-            .cached_document
-            .as_ref()
-            .map(mango_layout::extract_style_elements)
-            .unwrap_or_default();
+        // Load web fonts and imported stylesheets from embedded and cached stylesheets.
+        // Stylesheet @imports are bounded (6 concurrent + timeout) and font
+        // registration is fully asynchronous: the UI thread never blocks here.
+        let embedded_sheets = mango_layout::extract_style_elements(&js_rt.document_ref());
         self.base_url = Url::parse(&url).ok();
         if !skip_embedded_sheets_and_fonts {
             if self.cached_stylesheets.is_empty()
                 && let Some(ref base) = self.base_url.clone()
             {
                 let mut visited = std::collections::HashSet::new();
+                let mut pending_imports = Vec::new();
                 for sheet in &embedded_sheets {
                     for rule in &sheet.rules {
                         if let mango_css::parser::Rule::Import(import_path) = rule {
-                            load_stylesheet_recursive(
-                                &self.loader,
-                                base,
-                                import_path,
-                                &mut visited,
-                                &mut self.cached_stylesheets,
-                            );
+                            pending_imports.push((base.clone(), import_path.clone()));
                         }
                     }
                 }
+                load_imported_stylesheets_parallel(
+                    &self.loader,
+                    pending_imports,
+                    &mut visited,
+                    &mut self.cached_stylesheets,
+                );
             }
-            load_web_fonts(
-                &self.loader,
-                self.base_url.as_ref(),
-                &self.cached_stylesheets,
+            load_web_fonts_async(
+                self.loader.clone(),
+                self.base_url.clone(),
+                self.cached_stylesheets.clone(),
             );
-            load_web_fonts(&self.loader, self.base_url.as_ref(), &embedded_sheets);
+            load_web_fonts_async(
+                self.loader.clone(),
+                self.base_url.clone(),
+                embedded_sheets.clone(),
+            );
         }
 
         // Inject extension stylesheets (GAP-023)
@@ -945,34 +1231,43 @@ impl BrowserChrome {
                 embedded_sheets.iter().chain(self.cached_stylesheets.iter()),
             ));
 
-        // Pre-layout so the page renders immediately even if scripts take time
-        self.js_runtime = None;
-        self.relayout();
-
-        // Eagerly prefetch any CSS background images that matched active elements on the page (e.g. logos, icons)
-        if let Some(ref root) = self.root_box {
+        // Pre-layout so the page renders immediately even if scripts take time.
+        // CSS background images are queued from the style scan BEFORE the first
+        // layout (no box tree needed) and fetched on a background worker, so
+        // there is exactly ONE layout here and no middle blocking relayout.
+        if let Some(ref base) = self.base_url.clone() {
             let mut bg_images = Vec::new();
-            collect_box_background_images(root, &mut bg_images);
-            if let Some(ref base) = self.base_url {
-                let mut any_fetched = false;
-                for bg in bg_images {
-                    if mango_render::get_cached_image(&bg).is_none() {
-                        self.prefetch_image(base, &bg);
-                        any_fetched = true;
+            let dummy_doc = js_rt.document_ref();
+            collect_stylesheet_images(&dummy_doc, &self.cached_stylesheets, &mut bg_images);
+            collect_stylesheet_images(&dummy_doc, &embedded_sheets, &mut bg_images);
+            drop(dummy_doc);
+            let mut seen_bg = std::collections::HashSet::new();
+            bg_images.retain(|u| seen_bg.insert(u.clone()));
+            // Inline fast path only (data: URIs + memory cache). Remote URLs go
+            // to the background backlog; never block the UI thread here.
+            let mut remote_bg = Vec::new();
+            for bg in bg_images {
+                if bg.trim_start().starts_with("data:") {
+                    if let Some(decoded) = decode_data_uri(&bg) {
+                        cache_image(&bg, decoded);
                     }
-                }
-                if any_fetched {
-                    self.relayout();
+                } else if get_cached_image(&bg).is_none() {
+                    remote_bg.push(bg);
                 }
             }
+            if !remote_bg.is_empty() {
+                self.queue_image_backlog(remote_bg, base.clone());
+            }
         }
+        self.js_runtime = None;
+        self.relayout();
 
         // Extract and execute scripts in document order
         let scripts = if let Some(pre) = preloaded_scripts {
             pre
         } else {
             let mut s = Vec::new();
-            let doc_ref = self.active_document();
+            let doc_ref = self.document_view();
             collect_scripts(&doc_ref, doc_ref.root(), &mut s);
             s
         };
@@ -993,6 +1288,10 @@ impl BrowserChrome {
         }
 
         let mut external_count = 0;
+        // Non-blocking external scripts on the UI thread: serve from the
+        // memory cache only. Uncached remote scripts were already preloaded on
+        // the background pipeline (`prepare_document_pipeline`); blocking the
+        // UI on a network fetch here would freeze the page.
         let run_script = |s: ScriptToRun, rt: &mut mango_js::JsRuntime, ext_cnt: &mut usize| match s
         {
             ScriptToRun::Inline(code) => {
@@ -1003,12 +1302,25 @@ impl BrowserChrome {
             }
             ScriptToRun::External { src, .. } => {
                 const MAX_EXTERNAL_SCRIPTS: usize = 128;
-                if *ext_cnt < MAX_EXTERNAL_SCRIPTS
-                    && let Some(ref base) = self.base_url
-                    && let Ok(script_code) = self.loader.fetch_script(base, &src)
-                {
+                if *ext_cnt >= MAX_EXTERNAL_SCRIPTS {
+                    return;
+                }
+                let Some(ref base) = self.base_url else {
+                    return;
+                };
+                let Ok(resolved) = base.resolve(&src) else {
+                    return;
+                };
+                let key = resolved.as_str();
+                if let Some(cached) = self.loader.cache().get(&key) {
+                    let script_code = String::from_utf8_lossy(&cached.body).into_owned();
                     *ext_cnt += 1;
                     let _ = rt.execute_script(&script_code);
+                } else {
+                    log::warn!(
+                        "Skipping uncached external script on UI thread (preloaded on background): {}",
+                        src
+                    );
                 }
             }
         };
@@ -1044,11 +1356,9 @@ impl BrowserChrome {
         let redirect_url = js_rt.take_pending_navigation();
 
         self.js_runtime = Some(js_rt);
-        self.relayout();
 
         // ── Phase 8: Autofocus on interactive form control if specified ──
         if !self.address_focused {
-            let doc_snap = self.active_document();
             fn find_autofocus(doc: &Document, nid: NodeId) -> Option<NodeId> {
                 if let Some(node) = doc.get(nid) {
                     if let NodeData::Element(elem) = &node.data {
@@ -1070,7 +1380,11 @@ impl BrowserChrome {
                 }
                 None
             }
-            if let Some(autofocus_nid) = find_autofocus(&doc_snap, doc_snap.root()) {
+            let autofocus_nid = {
+                let doc_snap = self.document_view();
+                find_autofocus(&doc_snap, doc_snap.root())
+            };
+            if let Some(autofocus_nid) = autofocus_nid {
                 self.focused_control = Some(autofocus_nid);
                 let current_val = if let Some(ref rt) = self.js_runtime {
                     rt.get_node_attribute(autofocus_nid, "value")
@@ -1087,8 +1401,19 @@ impl BrowserChrome {
                         &self.control_cursor_pos.to_string(),
                     );
                 }
-                self.relayout();
             }
+        }
+
+        // Post-script relayout: only run if the JS runtime's DOM dirty bit was
+        // set during script execution.  The pre-layout already ran above at line
+        // ~1080; a second unconditional full layout wastes ~50ms on every page
+        // load for pages with no script-driven DOM mutations. (B-06 fix)
+        let needs_post_layout = self
+            .js_runtime
+            .as_ref()
+            .is_some_and(|rt| rt.is_dom_dirty());
+        if needs_post_layout {
+            self.relayout();
         }
 
         // If a script requested navigation (e.g. window.location.href = ...), follow it
@@ -1101,8 +1426,14 @@ impl BrowserChrome {
 
     /// Ticks the JavaScript event loop (executing setTimeout/setInterval).
     /// Returns `true` if the DOM was mutated or timers fired, necessitating a redraw.
+    ///
+    /// Only re-lays-out when the JS dirty bit reports a DOM mutation that can
+    /// affect style/layout. Console output, alerts, and timer bookkeeping alone
+    /// never trigger a relayout.
     pub fn tick_js(&mut self) -> bool {
-        if let Some(ref mut rt) = self.js_runtime {
+        // Borrow the runtime mutably in a scoped block so the dirty-bit check
+        // below does not hold the borrow across `relayout()`.
+        let mutated = if let Some(ref mut rt) = self.js_runtime {
             let mutated = rt.tick();
             if let Some(alert_msg) = rt.take_status_text() {
                 self.status_text = alert_msg;
@@ -1120,10 +1451,15 @@ impl BrowserChrome {
                 self.navigate(&redirect);
                 return true;
             }
-            if mutated {
-                self.relayout();
-                return true;
-            }
+            mutated
+        } else {
+            return false;
+        };
+        // Dirty-bit gate: skip the expensive relayout unless JS actually
+        // mutated the DOM this tick and a layout tree exists to update.
+        if mutated && self.root_box.is_some() {
+            self.relayout();
+            return true;
         }
         false
     }
@@ -1158,7 +1494,11 @@ impl BrowserChrome {
 impl BrowserChrome {
     /// Returns the true scrollable document height scanning all layout boxes.
     pub fn scrollable_height(&self) -> f32 {
-        crate::scroll::compute_scrollable_height(self.root_box.as_ref())
+        if self.cached_scrollable_height > 0.0 {
+            self.cached_scrollable_height
+        } else {
+            crate::scroll::compute_scrollable_height(self.root_box.as_ref())
+        }
     }
 
     /// Computes maximum allowed scroll offset based on rendered content height.
@@ -1619,6 +1959,32 @@ impl BrowserChrome {
             }
         }
 
+        // Render Find-in-Page match highlights
+        if self.find_in_page.active && !self.find_in_page.matches.is_empty() {
+            for (i, m) in self.find_in_page.matches.iter().enumerate() {
+                let trans_y = m.y() + content_y - self.scroll_y;
+                let clamped_top = trans_y.max(content_y);
+                let clamped_bottom = (trans_y + m.height()).min(content_y + content_h);
+                if clamped_bottom > clamped_top {
+                    let is_curr = i == self.find_in_page.current_match;
+                    dl.push(DisplayCommand::FillRoundedRect {
+                        rect: Rect::new(
+                            m.x() - 2.0,
+                            clamped_top,
+                            m.width() + 4.0,
+                            clamped_bottom - clamped_top,
+                        ),
+                        color: if is_curr {
+                            Color::rgba(255, 140, 0, 220)
+                        } else {
+                            Color::rgba(255, 235, 59, 150)
+                        },
+                        radii: [3.0; 4],
+                    });
+                }
+            }
+        }
+
         dl.push(DisplayCommand::PopClip);
 
         // Append Chrome UI display commands
@@ -1644,19 +2010,23 @@ impl BrowserChrome {
         let scroll_h = self.scrollable_height();
         let chrome_dl = self.build_chrome_display_list((width, height));
 
-        let page_raw = if let Some(root) = &self.root_box {
-            mango_layout::display_list::build_display_list(root)
-        } else {
-            self.page_display_list.clone()
-        };
-
         // 1. Page Content Layer (unscrolled coordinates, tiled)
         self.layer_tree.page_layer.bounds = Rect::new(0.0, content_y, w, content_h);
         self.layer_tree.page_layer.scroll_offset = (0.0, self.scroll_y);
 
-        if self.layer_tree.page_layer.display_list != page_raw {
+        if self.page_dirty || self.layer_tree.page_layer.display_list.is_empty() {
+            let page_raw = if !self.page_display_list.is_empty() {
+                self.page_display_list.clone()
+            } else if let Some(root) = &self.root_box {
+                let dl = mango_layout::display_list::build_display_list(root);
+                self.page_display_list = dl.clone();
+                dl
+            } else {
+                DisplayList::new()
+            };
             self.layer_tree.page_layer.display_list = page_raw;
             self.layer_tree.page_layer.invalidate_all();
+            self.page_dirty = false;
         }
 
         if let Some(grid) = &mut self.layer_tree.page_layer.tile_grid {
@@ -1670,8 +2040,12 @@ impl BrowserChrome {
         }
 
         // 3. Rasterize dirty regions
-        self.layer_tree.chrome_layer.rasterize_if_dirty(Color::TRANSPARENT, self.frame_counter);
-        self.layer_tree.page_layer.rasterize_if_dirty(self.canvas_bg, self.frame_counter);
+        self.layer_tree
+            .chrome_layer
+            .rasterize_if_dirty(Color::TRANSPARENT, self.frame_counter);
+        self.layer_tree
+            .page_layer
+            .rasterize_if_dirty(self.canvas_bg, self.frame_counter);
 
         // 4. Stale tile eviction
         if let Some(grid) = &mut self.layer_tree.page_layer.tile_grid {
@@ -2720,6 +3094,116 @@ impl BrowserChrome {
             }
         }
 
+        // ── FIND-IN-PAGE FLOATING OVERLAY (Ctrl+F) ──
+        if self.find_in_page.active {
+            let bar_w = 320.0f32;
+            let bar_h = 38.0f32;
+            let bar_x = (w - bar_w - 24.0).max(10.0);
+            let bar_y = content_y + 10.0;
+
+            // Background card with shadow & border
+            dl.push(DisplayCommand::FillRoundedRect {
+                rect: Rect::new(bar_x - 1.0, bar_y - 1.0, bar_w + 2.0, bar_h + 2.0),
+                color: Color::rgba(0, 0, 0, 40),
+                radii: [8.0; 4],
+            });
+            dl.push(DisplayCommand::FillRoundedRect {
+                rect: Rect::new(bar_x, bar_y, bar_w, bar_h),
+                color: Color::rgb(255, 255, 255),
+                radii: [7.0; 4],
+            });
+            dl.push(DisplayCommand::DrawBorder {
+                rect: Rect::new(bar_x, bar_y, bar_w, bar_h),
+                widths: BorderWidths::all(1.0),
+                color: Color::rgb(218, 220, 224),
+                radii: [7.0; 4],
+            });
+
+            // Search query text or placeholder
+            let query_display = if self.find_in_page.query.is_empty() {
+                "Find in page..."
+            } else {
+                &self.find_in_page.query
+            };
+            let text_color = if self.find_in_page.query.is_empty() {
+                Color::rgb(140, 145, 155)
+            } else {
+                Color::rgb(32, 33, 36)
+            };
+            dl.push(DisplayCommand::draw_text(
+                query_display,
+                bar_x + 12.0,
+                bar_y + 11.0,
+                text_color,
+                14.0,
+                FontWeight::Regular,
+                FontFamily::SansSerif,
+            ));
+
+            // Match count badge e.g. "1/5" or "0/0"
+            let badge_str = if self.find_in_page.query.is_empty() {
+                String::new()
+            } else if self.find_in_page.matches.is_empty() {
+                "0/0".to_string()
+            } else {
+                format!(
+                    "{}/{}",
+                    self.find_in_page.current_match + 1,
+                    self.find_in_page.matches.len()
+                )
+            };
+            if !badge_str.is_empty() {
+                let badge_w = mango_layout::measure_text_width(&badge_str, 12.0);
+                let badge_x = bar_x + bar_w - 95.0 - badge_w;
+                dl.push(DisplayCommand::draw_text(
+                    &badge_str,
+                    badge_x,
+                    bar_y + 12.0,
+                    if self.find_in_page.matches.is_empty() {
+                        Color::rgb(217, 48, 37)
+                    } else {
+                        Color::rgb(95, 99, 104)
+                    },
+                    12.0,
+                    FontWeight::Bold,
+                    FontFamily::SansSerif,
+                ));
+            }
+
+            // Prev button (▲)
+            dl.push(DisplayCommand::draw_text(
+                "▲",
+                bar_x + bar_w - 80.0,
+                bar_y + 12.0,
+                Color::rgb(95, 99, 104),
+                12.0,
+                FontWeight::Bold,
+                FontFamily::SansSerif,
+            ));
+
+            // Next button (▼)
+            dl.push(DisplayCommand::draw_text(
+                "▼",
+                bar_x + bar_w - 55.0,
+                bar_y + 12.0,
+                Color::rgb(95, 99, 104),
+                12.0,
+                FontWeight::Bold,
+                FontFamily::SansSerif,
+            ));
+
+            // Close button (✕)
+            dl.push(DisplayCommand::draw_text(
+                "✕",
+                bar_x + bar_w - 28.0,
+                bar_y + 11.0,
+                Color::rgb(95, 99, 104),
+                14.0,
+                FontWeight::Bold,
+                FontFamily::SansSerif,
+            ));
+        }
+
         dl
     }
 
@@ -2734,6 +3218,113 @@ impl BrowserChrome {
             self.devtools.toggle();
             self.relayout();
             return;
+        }
+
+        // Global Shortcuts:
+        // F11: Fullscreen toggle
+        if event.key == MangoKey::F11 {
+            self.toggle_fullscreen();
+            return;
+        }
+
+        // Ctrl+T: New tab
+        if event.modifiers.ctrl
+            && matches!(&event.key, MangoKey::Char('t') | MangoKey::Char('T'))
+        {
+            self.new_tab();
+            return;
+        }
+
+        // Ctrl+W: Close active tab
+        if event.modifiers.ctrl
+            && matches!(&event.key, MangoKey::Char('w') | MangoKey::Char('W'))
+        {
+            self.close_active_tab();
+            return;
+        }
+
+        // Ctrl+L: Focus Omnibox / Address bar
+        if event.modifiers.ctrl
+            && matches!(&event.key, MangoKey::Char('l') | MangoKey::Char('L'))
+        {
+            self.clear_form_focus();
+            if self.find_in_page.active {
+                self.find_in_page.active = false;
+            }
+            self.address_focused = true;
+            self.is_all_selected = true;
+            self.cursor_pos = self.address_text.len();
+            return;
+        }
+
+        // Ctrl+H: History
+        if event.modifiers.ctrl
+            && matches!(&event.key, MangoKey::Char('h') | MangoKey::Char('H'))
+        {
+            self.navigate("about:history");
+            return;
+        }
+
+        // Ctrl+F: Find in page
+        if event.modifiers.ctrl
+            && matches!(&event.key, MangoKey::Char('f') | MangoKey::Char('F'))
+        {
+            self.toggle_find();
+            return;
+        }
+
+        // Ctrl++ or Ctrl+=: Zoom in
+        if event.modifiers.ctrl
+            && matches!(&event.key, MangoKey::Char('+') | MangoKey::Char('='))
+        {
+            self.zoom_in();
+            return;
+        }
+
+        // Ctrl+-: Zoom out
+        if event.modifiers.ctrl
+            && matches!(&event.key, MangoKey::Char('-') | MangoKey::Char('_'))
+        {
+            self.zoom_out();
+            return;
+        }
+
+        // Ctrl+0: Reset zoom
+        if event.modifiers.ctrl && matches!(&event.key, MangoKey::Char('0')) {
+            self.zoom_reset();
+            return;
+        }
+
+        // If Find-in-Page is active, route typing, Enter, Shift+Enter, and Escape
+        if self.find_in_page.active {
+            if event.key == MangoKey::Escape {
+                self.find_in_page.active = false;
+                self.find_in_page.matches.clear();
+                self.page_dirty = true;
+                return;
+            }
+            if event.key == MangoKey::Enter || event.key == MangoKey::F3 {
+                if event.modifiers.shift {
+                    self.find_previous();
+                } else {
+                    self.find_next();
+                }
+                return;
+            }
+            if event.key == MangoKey::Backspace {
+                self.find_in_page.query.pop();
+                let q = self.find_in_page.query.clone();
+                self.find_in_page_search(&q);
+                return;
+            }
+            if let MangoKey::Char(c) = event.key {
+                if !event.modifiers.ctrl && !event.modifiers.alt {
+                    self.find_in_page.query.push(c);
+                    let q = self.find_in_page.query.clone();
+                    self.find_in_page_search(&q);
+                    return;
+                }
+            }
         }
 
         if !self.address_focused {
@@ -3378,114 +3969,186 @@ impl BrowserChrome {
 
         self.status_text = format!("Loading {}...", parsed_url);
         self.is_loading = true;
+        self.address_focused = false;
 
-        if self.async_navigation {
-            let loader = self.loader.clone();
-            let target_url = parsed_url.clone();
-            let (tx, rx) = std::sync::mpsc::channel();
-            std::thread::spawn(move || {
-                let res = loader
-                    .fetch_document(&target_url)
-                    .map(|doc_res| prepare_document_pipeline(&loader, doc_res));
-                let _ = tx.send(res);
-            });
-            self.pending_navigation = Some(PendingNavigation {
-                target_url: parsed_url,
-                rx,
-                push_history,
-            });
-            return;
+        // P0 UI-freeze fix: ALL network navigations dispatch via the background
+        // NavigationActor pool, even when `async_navigation == false`. The UI
+        // thread returns immediately with a loading spinner; completion is
+        // delivered through `tick_navigation()` (desktop event loop) or the
+        // bounded `wait_for_navigation()` bridge (tests/headless). No
+        // synchronous `fetch_document` ever runs on the UI thread here.
+        self.nav_actor.navigate(parsed_url, push_history);
+        if !self.async_navigation {
+            self.wait_for_navigation();
         }
-
-        match self.loader.fetch_document(&parsed_url) {
-            Ok(doc_result) => {
-                self.is_loading = false;
-                self.process_and_load_document(doc_result, push_history);
-            }
-            Err(e) => {
-                self.is_loading = false;
-                let err_msg = e.to_string();
-                let err_html = error_page_html(&parsed_url.as_str(), &err_msg);
-                self.base_url = None;
-                self.cached_stylesheets.clear();
-                self.status_text = format!("Error: {}", err_msg);
-                self.load_html_internal(err_html, parsed_url.to_string(), push_history);
-                self.address_focused = false;
-            }
-        }
-
-        // Network responses may have deposited Set-Cookie headers in the jar;
-        // flush them to the profile so sessions survive a restart (GAP-016).
-        self.persist_cookies();
     }
 
     /// Polls background navigation. Returns true if a page navigation completed and UI needs redrawing.
+    ///
+    /// Drains the entire result queue and applies only the newest result whose
+    /// epoch matches the active epoch; stale superseded results are discarded.
     pub fn tick_navigation(&mut self) -> bool {
-        let Some(pending) = self.pending_navigation.as_ref() else {
+        let mut batch: Vec<crate::navigation_actor::NavResult> = Vec::new();
+        loop {
+            match self.nav_actor.try_recv() {
+                Ok(res) => {
+                    batch.push(res);
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.is_loading = false;
+                    break;
+                }
+            }
+        }
+        if batch.is_empty() {
+            return false;
+        }
+        // Keep newest epoch only: select the drained result with the highest
+        // epoch; anything older is a superseded navigation and is dropped.
+        let active = self.nav_actor.active_epoch();
+        let mut best_idx: Option<usize> = None;
+        let mut best_epoch: u64 = 0;
+        let mut best_is_final = false;
+        for (i, res) in batch.iter().enumerate() {
+            let (epoch, is_final) = match res {
+                crate::navigation_actor::NavResult::DocumentReady { epoch, .. }
+                | crate::navigation_actor::NavResult::Error { epoch, .. } => (*epoch, true),
+                crate::navigation_actor::NavResult::ProgressiveReady { epoch, .. } => (*epoch, false),
+            };
+            if epoch > best_epoch || (epoch == best_epoch && is_final && !best_is_final) {
+                best_epoch = epoch;
+                best_is_final = is_final;
+                best_idx = Some(i);
+            }
+        }
+        let Some(idx) = best_idx else {
             return false;
         };
-
-        match pending.rx.try_recv() {
-            Ok(res) => {
-                let Some(pending) = self.pending_navigation.take() else {
-                    return false;
-                };
+        if best_epoch != active {
+            // Newest drained result is still stale; a newer navigation is in
+            // flight. Keep the spinner and wait for it.
+            return false;
+        }
+        match batch.into_iter().nth(idx).expect("best index valid") {
+            crate::navigation_actor::NavResult::DocumentReady {
+                prep,
+                push_history,
+                ..
+            } => {
                 self.is_loading = false;
-                match res {
-                    Ok(prep) => {
-                        self.apply_prepared_document(prep, pending.push_history);
-                    }
-                    Err(e) => {
-                        let err_msg = e.to_string();
-                        let err_html = error_page_html(&pending.target_url.as_str(), &err_msg);
-                        self.base_url = None;
-                        self.cached_stylesheets.clear();
-                        self.status_text = format!("Error: {}", err_msg);
-                        self.load_html_internal(
-                            err_html,
-                            pending.target_url.to_string(),
-                            pending.push_history,
-                        );
-                        self.address_focused = false;
-                    }
-                }
+                self.apply_prepared_document(prep, push_history);
                 self.persist_cookies();
                 true
             }
-            Err(std::sync::mpsc::TryRecvError::Empty) => false,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.pending_navigation = None;
+            crate::navigation_actor::NavResult::ProgressiveReady {
+                prep,
+                ..
+            } => {
+                self.apply_prepared_document(prep, false);
+                self.page_dirty = true;
+                true
+            }
+            crate::navigation_actor::NavResult::Error {
+                url,
+                message,
+                push_history,
+                ..
+            } => {
                 self.is_loading = false;
-                self.status_text = "Connection lost".to_string();
+                let err_html = error_page_html(&url.as_str(), &message);
+                self.base_url = None;
+                self.cached_stylesheets.clear();
+                self.status_text = format!("Error: {}", message);
+                self.load_html_internal(err_html, url.to_string(), push_history);
+                self.address_focused = false;
+                self.persist_cookies();
                 true
             }
         }
     }
 
-    /// Synchronously waits for any pending asynchronous navigation to complete.
+    /// Synchronously waits for any pending navigation to complete.
+    ///
+    /// Used by headless rendering and tests. Bounded by
+    /// [`SYNC_NAVIGATION_TIMEOUT`]: on timeout an error page is shown instead
+    /// of hanging forever. Stale superseded results are discarded while
+    /// waiting for the active epoch.
     pub fn wait_for_navigation(&mut self) {
-        if let Some(pending) = self.pending_navigation.take() {
-            self.is_loading = false;
-            if let Ok(res) = pending.rx.recv() {
-                match res {
-                    Ok(prep) => {
-                        self.apply_prepared_document(prep, pending.push_history);
-                    }
-                    Err(e) => {
-                        let err_msg = e.to_string();
-                        let err_html = error_page_html(&pending.target_url.as_str(), &err_msg);
-                        self.base_url = None;
-                        self.cached_stylesheets.clear();
-                        self.status_text = format!("Error: {}", err_msg);
-                        self.load_html_internal(
-                            err_html,
-                            pending.target_url.to_string(),
-                            pending.push_history,
-                        );
-                        self.address_focused = false;
-                    }
-                }
+        if !self.is_loading {
+            return;
+        }
+        let deadline = std::time::Instant::now() + SYNC_NAVIGATION_TIMEOUT;
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                self.is_loading = false;
+                let target = self.address_text.clone();
+                let err_html = error_page_html(&target, "Navigation timed out after 30s");
+                self.base_url = None;
+                self.cached_stylesheets.clear();
+                self.status_text = "Error: Navigation timed out after 30s".to_string();
+                self.load_html_internal(err_html, target, true);
+                self.address_focused = false;
                 self.persist_cookies();
+                return;
+            }
+            // First drain anything already delivered without blocking.
+            if self.tick_navigation() {
+                return;
+            }
+            match self.nav_actor.recv_timeout(remaining.min(std::time::Duration::from_millis(200))) {
+                Ok(crate::navigation_actor::NavResult::ProgressiveReady {
+                    prep,
+                    epoch,
+                }) => {
+                    if epoch == self.nav_actor.active_epoch() {
+                        self.apply_prepared_document(prep, false);
+                        self.page_dirty = true;
+                    }
+                    continue;
+                }
+                Ok(crate::navigation_actor::NavResult::DocumentReady {
+                    prep,
+                    push_history,
+                    epoch,
+                }) => {
+                    if epoch != self.nav_actor.active_epoch() {
+                        continue;
+                    }
+                    self.is_loading = false;
+                    self.apply_prepared_document(prep, push_history);
+                    self.persist_cookies();
+                    return;
+                }
+                Ok(crate::navigation_actor::NavResult::Error {
+                    url,
+                    message,
+                    push_history,
+                    epoch,
+                }) => {
+                    if epoch != self.nav_actor.active_epoch() {
+                        continue;
+                    }
+                    self.is_loading = false;
+                    let err_html = error_page_html(&url.as_str(), &message);
+                    self.base_url = None;
+                    self.cached_stylesheets.clear();
+                    self.status_text = format!("Error: {}", message);
+                    self.load_html_internal(err_html, url.to_string(), push_history);
+                    self.address_focused = false;
+                    self.persist_cookies();
+                    return;
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    // Poll again until the deadline; tick_navigation above
+                    // already applied anything that arrived.
+                    continue;
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    self.is_loading = false;
+                    return;
+                }
             }
         }
     }
@@ -3495,50 +4158,235 @@ impl BrowserChrome {
 /// external stylesheets, web fonts, and scripts, so the main UI thread never blocks on I/O.
 pub fn prepare_document_pipeline(
     loader: &ResourceLoader,
+    doc_result: FetchedDocument,
+) -> PreparedDocument {
+    prepare_document_pipeline_cancellable(loader, doc_result, &|| false)
+}
+
+/// Cancellable variant of [`prepare_document_pipeline`].
+///
+/// `should_cancel` is polled before every fetch batch and after every batch;
+/// when it returns true the pipeline abandons remaining subresource fetches
+/// and returns a partial document immediately, so superseded navigations free
+/// their worker without wasting network/time on a dead page.
+/// Prepares an incremental DOM document snapshot for progressive rendering (FCP).
+pub fn prepare_document_pipeline_from_doc(
+    loader: &ResourceLoader,
+    doc: mango_html::Document,
+    final_url: Url,
+    should_cancel: &dyn Fn() -> bool,
+) -> PreparedDocument {
+    prepare_document_pipeline_internal(
+        loader,
+        doc,
+        final_url,
+        String::new(),
+        200,
+        "text/html".to_string(),
+        mango_net::encoding::Encoding::Utf8,
+        Vec::new(),
+        should_cancel,
+    )
+}
+
+/// Cancellable variant of [`prepare_document_pipeline`].
+///
+/// `should_cancel` is polled before every fetch batch and after every batch;
+/// when it returns true the pipeline abandons remaining subresource fetches
+/// and returns a partial document immediately, so superseded navigations free
+/// their worker without wasting network/time on a dead page.
+pub fn prepare_document_pipeline_cancellable(
+    loader: &ResourceLoader,
     mut doc_result: FetchedDocument,
+    should_cancel: &dyn Fn() -> bool,
 ) -> PreparedDocument {
     let final_url = doc_result.url.clone();
     preprocess_wikipedia_appearance_html(&mut doc_result.html, &final_url.as_str());
 
-    let mut doc = parse_html(&doc_result.html);
+    // Speculative Preload Scanner & Incremental Parser (GAP-002, PRD 10.3, Phase 3.1)
+    let mut inc_parser = mango_html::IncrementalParser::new();
+    let early_hints = inc_parser.feed_str(&doc_result.html);
+
+    let mut doc = inc_parser.finish();
     doc.character_set = doc_result.encoding.name().to_string();
     doc.content_type = doc_result.content_type.clone();
 
+    prepare_document_pipeline_internal(
+        loader,
+        doc,
+        final_url,
+        doc_result.html,
+        doc_result.status,
+        doc_result.content_type,
+        doc_result.encoding,
+        early_hints,
+        should_cancel,
+    )
+}
+
+fn prepare_document_pipeline_internal(
+    loader: &ResourceLoader,
+    doc: mango_html::Document,
+    final_url: Url,
+    html: String,
+    status: u16,
+    content_type: String,
+    encoding: mango_net::encoding::Encoding,
+    early_hints: Vec<mango_html::PreloadHint>,
+    should_cancel: &dyn Fn() -> bool,
+) -> PreparedDocument {
+    let preload_scan = loader.scan_and_preload(&html, &final_url, None);
+
     let mut stylesheet_links = Vec::new();
     collect_stylesheet_links(&doc, doc.root(), &mut stylesheet_links);
+    for hint in early_hints {
+        if hint.kind == mango_html::PreloadHintKind::Style && !stylesheet_links.contains(&hint.url) {
+            stylesheet_links.push(hint.url);
+        }
+    }
+    for item in &preload_scan.preloads {
+        if item.kind == mango_net::PreloadKind::Style && !stylesheet_links.contains(&item.url) {
+            stylesheet_links.push(item.url.clone());
+        }
+    }
     let mut visited_css = std::collections::HashSet::new();
     let mut cached_stylesheets = Vec::new();
-    load_stylesheets_parallel(
-        loader,
-        &final_url,
-        &stylesheet_links,
-        &mut visited_css,
-        &mut cached_stylesheets,
-    );
+    if !should_cancel() {
+        load_stylesheets_parallel_cancellable(
+            loader,
+            &final_url,
+            &stylesheet_links,
+            &mut visited_css,
+            &mut cached_stylesheets,
+            should_cancel,
+        );
+    }
 
     let inline_sheets = mango_layout::extract_style_elements(&doc);
+    let mut import_links = Vec::new();
     for sheet in &inline_sheets {
         for rule in &sheet.rules {
             if let mango_css::parser::Rule::Import(import_path) = rule {
-                load_stylesheet_recursive(
-                    loader,
-                    &final_url,
-                    import_path,
-                    &mut visited_css,
-                    &mut cached_stylesheets,
-                );
+                import_links.push(import_path.clone());
+            }
+        }
+    }
+    if !import_links.is_empty() && !should_cancel() {
+        load_stylesheets_parallel_cancellable(
+            loader,
+            &final_url,
+            &import_links,
+            &mut visited_css,
+            &mut cached_stylesheets,
+            should_cancel,
+        );
+    }
+
+    if !should_cancel() {
+        load_web_fonts(loader, Some(&final_url), &cached_stylesheets);
+    }
+    if !should_cancel() {
+        load_web_fonts(loader, Some(&final_url), &inline_sheets);
+    }
+
+    let mut raw_scripts = Vec::new();
+    collect_scripts(&doc, doc.root(), &mut raw_scripts);
+    for item in &preload_scan.preloads {
+        if item.kind == mango_net::PreloadKind::Script {
+            let already_present = raw_scripts.iter().any(|s| match s {
+                ScriptToRun::External { src, .. } | ScriptToRun::Preloaded { src, .. } => {
+                    src == &item.url
+                }
+                _ => false,
+            });
+            if !already_present {
+                raw_scripts.push(ScriptToRun::External {
+                    src: item.url.clone(),
+                    is_defer: false,
+                    is_async: true,
+                });
             }
         }
     }
 
-    load_web_fonts(loader, Some(&final_url), &cached_stylesheets);
-    load_web_fonts(loader, Some(&final_url), &inline_sheets);
+    const MAX_PRELOAD_SCRIPTS: usize = 128;
+    let mut to_fetch: Vec<(usize, String)> = Vec::new();
+    for (idx, s) in raw_scripts.iter().enumerate() {
+        if let ScriptToRun::External { src, .. } = s {
+            if to_fetch.len() < MAX_PRELOAD_SCRIPTS {
+                to_fetch.push((idx, src.clone()));
+            }
+        }
+    }
 
-    let mut raw_scripts = Vec::new();
-    collect_scripts(&doc, doc.root(), &mut raw_scripts);
-    let mut preloaded_scripts = Vec::new();
-    let mut ext_count = 0;
-    for s in raw_scripts {
+    // Bounded parallel script prefetch: at most MAX_CONCURRENT_FETCHES in
+    // flight, per-fetch timeout, epoch abandonment between batches. Sequence
+    // numbers (idx) preserve document order regardless of completion order.
+    let mut fetched_scripts: std::collections::HashMap<usize, Result<String, mango_net::NetworkError>> =
+        std::collections::HashMap::new();
+    if !to_fetch.is_empty() && !should_cancel() {
+        for chunk in to_fetch.chunks(MAX_CONCURRENT_FETCHES) {
+            if should_cancel() {
+                break;
+            }
+            let (tx, rx) = std::sync::mpsc::channel();
+            let n = chunk.len();
+            for (idx, src) in chunk.iter() {
+                let tx = tx.clone();
+                let loader = loader.clone();
+                let base = final_url.clone();
+                let src = src.clone();
+                let idx = *idx;
+                if let Err(e) = std::thread::Builder::new()
+                    .name("mango-script-fetch".to_string())
+                    .spawn(move || {
+                        if src.trim_start().starts_with("data:") {
+                            let res = loader.fetch_script(&base, &src);
+                            let _ = tx.send((idx, res));
+                            return;
+                        }
+                        match fetch_with_timeout(
+                            {
+                                let loader = loader.clone();
+                                let base = base.clone();
+                                let src = src.clone();
+                                move || loader.fetch_script(&base, &src)
+                            },
+                            SUBRESOURCE_FETCH_TIMEOUT,
+                        ) {
+                            Ok(res) => {
+                                let _ = tx.send((idx, res));
+                            }
+                            Err(msg) => {
+                                log::warn!("Script fetch timed out for {src}: {msg}");
+                            }
+                        }
+                    })
+                {
+                    log::warn!("Failed to spawn script fetch thread: {e}");
+                }
+            }
+            drop(tx);
+            for _ in 0..n {
+                if should_cancel() {
+                    break;
+                }
+                match rx.recv_timeout(SUBRESOURCE_FETCH_TIMEOUT + std::time::Duration::from_secs(2)) {
+                    Ok((idx, res)) => {
+                        fetched_scripts.insert(idx, res);
+                    }
+                    Err(_) => {
+                        // Per-item timeout: stop waiting for this batch and
+                        // move on; stragglers are dropped with the channel.
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    let mut preloaded_scripts = Vec::with_capacity(raw_scripts.len());
+    for (idx, s) in raw_scripts.into_iter().enumerate() {
         match s {
             ScriptToRun::Inline(c) => preloaded_scripts.push(ScriptToRun::Inline(c)),
             ScriptToRun::External {
@@ -3546,23 +4394,13 @@ pub fn prepare_document_pipeline(
                 is_defer,
                 is_async,
             } => {
-                const MAX_PRELOAD_SCRIPTS: usize = 128;
-                if ext_count < MAX_PRELOAD_SCRIPTS {
-                    if let Ok(code) = loader.fetch_script(&final_url, &src) {
-                        preloaded_scripts.push(ScriptToRun::Preloaded {
-                            src,
-                            code,
-                            is_defer,
-                            is_async,
-                        });
-                        ext_count += 1;
-                    } else {
-                        preloaded_scripts.push(ScriptToRun::External {
-                            src,
-                            is_defer,
-                            is_async,
-                        });
-                    }
+                if let Some(Ok(code)) = fetched_scripts.remove(&idx) {
+                    preloaded_scripts.push(ScriptToRun::Preloaded {
+                        src,
+                        code,
+                        is_defer,
+                        is_async,
+                    });
                 } else {
                     preloaded_scripts.push(ScriptToRun::External {
                         src,
@@ -3589,6 +4427,11 @@ pub fn prepare_document_pipeline(
 
     let mut doc_images = Vec::new();
     collect_image_sources(&doc, doc.root(), &mut doc_images);
+    for item in &preload_scan.preloads {
+        if item.kind == mango_net::PreloadKind::Image && !doc_images.contains(&item.url) {
+            doc_images.push(item.url.clone());
+        }
+    }
 
     let mut sheet_images = Vec::new();
     collect_stylesheet_images(&doc, &cached_stylesheets, &mut sheet_images);
@@ -3612,10 +4455,10 @@ pub fn prepare_document_pipeline(
     PreparedDocument {
         url: final_url,
         doc,
-        html: doc_result.html,
-        status: doc_result.status,
-        content_type: doc_result.content_type,
-        encoding: doc_result.encoding,
+        html,
+        status,
+        content_type,
+        encoding,
         cached_stylesheets,
         preloaded_scripts,
         image_sources,
@@ -3630,43 +4473,78 @@ impl BrowserChrome {
         self.cached_stylesheets = prep.cached_stylesheets;
         mango_render::clear_global_svg_symbols();
 
-        let inline_sheets = mango_layout::extract_style_elements(&prep.doc);
-        load_web_fonts(&self.loader, Some(&final_url), &self.cached_stylesheets);
-        load_web_fonts(&self.loader, Some(&final_url), &inline_sheets);
+        // Web fonts are already fetched and registered on the background worker
+        // thread in prepare_document_pipeline. Calling load_web_fonts here on the
+        // main UI thread would block the UI with redundant network / lock work.
 
-        // Spawn background worker for queued images to avoid any main-thread freeze
+        // Queue images with epoch guarding: drain/close any stale channel from
+        // the previous page so its late worker cannot pollute this page, dedup
+        // URLs, then fetch on a single epoch-checked background worker.
+        self.close_stale_image_channel();
+        let epoch = self.image_epoch.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        let mut seen_img = std::collections::HashSet::new();
+        let mut deduped: Vec<String> = Vec::with_capacity(prep.image_sources.len());
+        for src in prep.image_sources {
+            if seen_img.insert(src.clone()) {
+                deduped.push(src);
+            }
+        }
         let (tx, rx) = std::sync::mpsc::channel();
         self.image_rx = Some(rx);
         self.image_fetch_base = Some(final_url.clone());
-        self.pending_image_fetches = prep.image_sources.clone();
+        self.pending_image_fetches = deduped.clone();
 
-        if !prep.image_sources.is_empty() {
+        if !deduped.is_empty() {
             let loader = self.loader.clone();
             let base = final_url.clone();
-            let to_fetch = prep.image_sources;
-            std::thread::spawn(move || {
-                for src in to_fetch {
-                    if get_cached_image(&src).is_some() {
-                        continue;
-                    }
-                    if src.trim_start().starts_with("data:") {
-                        if let Some(decoded) = decode_data_uri(&src) {
-                            cache_image(&src, decoded);
+            let epoch_flag = self.image_epoch.clone();
+            if let Err(e) = std::thread::Builder::new()
+                .name("mango-image-fetch".to_string())
+                .spawn(move || {
+                    for src in deduped {
+                        // Epoch abandonment: stop sending into a superseded page.
+                        if epoch_flag.load(std::sync::atomic::Ordering::SeqCst) != epoch {
+                            break;
+                        }
+                        if get_cached_image(&src).is_some() {
+                            continue;
+                        }
+                        if src.trim_start().starts_with("data:") {
+                            if let Some(decoded) = decode_data_uri(&src) {
+                                cache_image(&src, decoded);
+                                if epoch_flag.load(std::sync::atomic::Ordering::SeqCst) == epoch {
+                                    let _ = tx.send(src);
+                                }
+                            }
+                            continue;
+                        }
+                        let fetch_res = fetch_with_timeout(
+                            {
+                                let loader = loader.clone();
+                                let base = base.clone();
+                                let src = src.clone();
+                                move || loader.fetch_image_bytes(&base, &src)
+                            },
+                            SUBRESOURCE_FETCH_TIMEOUT,
+                        );
+                        let Ok(Ok(bytes)) = fetch_res else {
+                            continue;
+                        };
+                        if epoch_flag.load(std::sync::atomic::Ordering::SeqCst) != epoch {
+                            break;
+                        }
+                        if let Some(decoded) = decode_image_bytes(&bytes) {
+                            cache_image(&src, decoded.clone());
+                            if let Ok(resolved) = base.resolve(&src) {
+                                cache_image(&resolved.as_str(), decoded);
+                            }
                             let _ = tx.send(src);
                         }
-                        continue;
                     }
-                    if let Ok(bytes) = loader.fetch_image_bytes(&base, &src)
-                        && let Some(decoded) = decode_image_bytes(&bytes)
-                    {
-                        cache_image(&src, decoded.clone());
-                        if let Ok(resolved) = base.resolve(&src) {
-                            cache_image(&resolved.as_str(), decoded);
-                        }
-                        let _ = tx.send(src);
-                    }
-                }
-            });
+                })
+            {
+                log::warn!("Failed to spawn image fetch thread: {e}");
+            }
         }
 
         self.status_text = format!(
@@ -3704,8 +4582,21 @@ impl BrowserChrome {
         self.apply_prepared_document(prep, push_history);
     }
 
-    /// Flushes the shared cookie jar to the profile file.
+    /// Flushes the shared cookie jar to the profile file asynchronously on a background thread.
     pub fn persist_cookies(&self) {
+        let jar = self.cookie_jar.clone();
+        let path = self.cookie_store_path.clone();
+        std::thread::spawn(move || {
+            if let Ok(jar) = jar.lock() {
+                if let Err(e) = jar.save_to_file(&path) {
+                    log::warn!("Could not persist cookies: {e}");
+                }
+            }
+        });
+    }
+
+    /// Synchronously flushes the cookie jar to disk. Used on browser shutdown.
+    pub fn persist_cookies_sync(&self) {
         let Ok(jar) = self.cookie_jar.lock() else {
             return;
         };
@@ -3721,12 +4612,18 @@ impl BrowserChrome {
 
     /// Flushes both profile-backed web storage stores. Call on shutdown.
     pub fn persist_profile(&self) {
-        self.persist_cookies();
+        self.persist_cookies_sync();
         self.persist_local_storage();
     }
 
     /// Downloads and decodes one image into the shared render cache.
+    ///
+    /// Fast path only (memory cache + `data:` URIs). Remote fetches are never
+    /// issued from the UI thread here; callers must queue them via
+    /// [`Self::queue_image_backlog`] instead. Guards the UI-freeze P0.
+    #[allow(dead_code)]
     fn prefetch_image(&self, base: &Url, src: &str) {
+        assert_not_on_ui_thread("prefetch_image");
         if get_cached_image(src).is_some() {
             return;
         }
@@ -3737,7 +4634,17 @@ impl BrowserChrome {
             }
             return;
         }
-        let Ok(img_bytes) = self.loader.fetch_image_bytes(base, src) else {
+        // Remote images: bounded fetch with timeout. This helper is only
+        // reached from background workers after the async refactor; the UI
+        // path queues instead of calling here.
+        let loader = self.loader.clone();
+        let base_for_fetch = base.clone();
+        let src_owned = src.to_string();
+        let fetch_res = fetch_with_timeout(
+            move || loader.fetch_image_bytes(&base_for_fetch, &src_owned),
+            SUBRESOURCE_FETCH_TIMEOUT,
+        );
+        let Ok(Ok(img_bytes)) = fetch_res else {
             return;
         };
         let Some(decoded) = decode_image_bytes(&img_bytes) else {
@@ -3749,6 +4656,91 @@ impl BrowserChrome {
         }
     }
 
+    /// Drains and closes any stale image channel from a previous navigation.
+    fn close_stale_image_channel(&mut self) {
+        if let Some(old_rx) = self.image_rx.take() {
+            // Drain late arrivals so the old worker's sends never block, then
+            // drop the channel to disconnect it.
+            while old_rx.try_recv().is_ok() {}
+        }
+    }
+
+    /// Queues background image URLs with epoch guarding and dedup.
+    ///
+    /// Used by the pre-layout style scan: remote URLs are fetched by a single
+    /// epoch-checked worker; `data:` URIs and cache hits resolve inline.
+    fn queue_image_backlog(&mut self, sources: Vec<String>, base: Url) {
+        self.close_stale_image_channel();
+        let epoch = self.image_epoch.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        let mut seen = std::collections::HashSet::new();
+        let mut deduped = Vec::with_capacity(sources.len());
+        for src in sources {
+            if get_cached_image(&src).is_some() {
+                continue;
+            }
+            if seen.insert(src.clone()) {
+                deduped.push(src);
+            }
+        }
+        // Inline data: URIs immediately (no network, no thread).
+        let mut remote = Vec::new();
+        for src in deduped {
+            if src.trim_start().starts_with("data:") {
+                if let Some(decoded) = decode_data_uri(&src) {
+                    cache_image(&src, decoded);
+                }
+            } else {
+                remote.push(src);
+            }
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.image_rx = Some(rx);
+        self.image_fetch_base = Some(base.clone());
+        self.pending_image_fetches = remote.clone();
+        if remote.is_empty() {
+            return;
+        }
+        let loader = self.loader.clone();
+        let epoch_flag = self.image_epoch.clone();
+        if let Err(e) = std::thread::Builder::new()
+            .name("mango-image-fetch".to_string())
+            .spawn(move || {
+                for src in remote {
+                    if epoch_flag.load(std::sync::atomic::Ordering::SeqCst) != epoch {
+                        break;
+                    }
+                    if get_cached_image(&src).is_some() {
+                        continue;
+                    }
+                    let fetch_res = fetch_with_timeout(
+                        {
+                            let loader = loader.clone();
+                            let base = base.clone();
+                            let src = src.clone();
+                            move || loader.fetch_image_bytes(&base, &src)
+                        },
+                        SUBRESOURCE_FETCH_TIMEOUT,
+                    );
+                    let Ok(Ok(bytes)) = fetch_res else {
+                        continue;
+                    };
+                    if epoch_flag.load(std::sync::atomic::Ordering::SeqCst) != epoch {
+                        break;
+                    }
+                    if let Some(decoded) = decode_image_bytes(&bytes) {
+                        cache_image(&src, decoded.clone());
+                        if let Ok(resolved) = base.resolve(&src) {
+                            cache_image(&resolved.as_str(), decoded);
+                        }
+                        let _ = tx.send(src);
+                    }
+                }
+            })
+        {
+            log::warn!("Failed to spawn image backlog thread: {e}");
+        }
+    }
+
     /// True while background image prefetch work remains (OPT-009).
     pub fn has_pending_image_fetches(&self) -> bool {
         self.image_rx.is_some() || !self.pending_image_fetches.is_empty()
@@ -3756,6 +4748,10 @@ impl BrowserChrome {
 
     /// Fetches a slice of the queued image backlog. Returns `true` when at
     /// least one newly cached image is available for painting.
+    ///
+    /// Coalesced: marks `page_dirty` and returns `true`; the caller
+    /// (`about_to_wait`) performs a SINGLE relayout per frame instead of N.
+    /// Never calls `relayout()` internally.
     pub fn drain_pending_images(&mut self) -> bool {
         let mut loaded_any = false;
         let mut disconnected = false;
@@ -3784,12 +4780,70 @@ impl BrowserChrome {
             if let Some(base) = self.image_fetch_base.clone() {
                 let take = IMAGE_PREFETCH_PER_FRAME.min(self.pending_image_fetches.len());
                 let batch: Vec<String> = self.pending_image_fetches.drain(..take).collect();
+                let mut remote_to_fetch = Vec::new();
                 for src in batch {
-                    if get_cached_image(&src).is_none() {
-                        self.prefetch_image(&base, &src);
-                    }
                     if get_cached_image(&src).is_some() {
                         loaded_any = true;
+                    } else if src.trim_start().starts_with("data:") {
+                        if let Some(decoded) = decode_data_uri(&src) {
+                            cache_image(&src, decoded);
+                            loaded_any = true;
+                        }
+                    } else {
+                        remote_to_fetch.push(src);
+                    }
+                }
+                if !remote_to_fetch.is_empty() {
+                    // Re-queue unprocessed remote URLs at the front so they are
+                    // not lost, then spawn ONE epoch-checked worker with a
+                    // bounded per-fetch timeout.
+                    let mut requeue = remote_to_fetch.clone();
+                    requeue.extend(self.pending_image_fetches.drain(..));
+                    self.pending_image_fetches = requeue;
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    self.image_rx = Some(rx);
+                    let loader = self.loader.clone();
+                    let epoch = self.image_epoch.load(std::sync::atomic::Ordering::SeqCst);
+                    let epoch_flag = self.image_epoch.clone();
+                    // Only fetch the first batch on this worker; the rest
+                    // stays queued for subsequent frames (per-frame budget).
+                    let first_batch = remote_to_fetch;
+                    if let Err(e) = std::thread::Builder::new()
+                        .name("mango-image-drain".to_string())
+                        .spawn(move || {
+                            for src in first_batch {
+                                if epoch_flag.load(std::sync::atomic::Ordering::SeqCst) != epoch {
+                                    break;
+                                }
+                                if get_cached_image(&src).is_some() {
+                                    continue;
+                                }
+                                let fetch_res = fetch_with_timeout(
+                                    {
+                                        let loader = loader.clone();
+                                        let base = base.clone();
+                                        let src = src.clone();
+                                        move || loader.fetch_image_bytes(&base, &src)
+                                    },
+                                    SUBRESOURCE_FETCH_TIMEOUT,
+                                );
+                                let Ok(Ok(bytes)) = fetch_res else {
+                                    continue;
+                                };
+                                if epoch_flag.load(std::sync::atomic::Ordering::SeqCst) != epoch {
+                                    break;
+                                }
+                                if let Some(decoded) = decode_image_bytes(&bytes) {
+                                    cache_image(&src, decoded.clone());
+                                    if let Ok(resolved) = base.resolve(&src) {
+                                        cache_image(&resolved.as_str(), decoded);
+                                    }
+                                    let _ = tx.send(src);
+                                }
+                            }
+                        })
+                    {
+                        log::warn!("Failed to spawn image drain thread: {e}");
                     }
                 }
             } else {
@@ -3797,7 +4851,7 @@ impl BrowserChrome {
             }
         }
         if loaded_any {
-            self.relayout();
+            self.page_dirty = true;
         }
         loaded_any
     }
@@ -4266,6 +5320,43 @@ impl BrowserChrome {
 
         if state != KeyState::Pressed {
             return;
+        }
+
+        // Find-in-Page bar hit testing
+        if button == MouseButton::Left && self.find_in_page.active {
+            let content_y = HEADER_HEIGHT + 1.0;
+            let bar_w = 320.0f32;
+            let bar_h = 38.0f32;
+            let bar_x = (self.width as f32 - bar_w - 24.0).max(10.0);
+            let bar_y = content_y + 10.0;
+
+            if self.mouse_x >= bar_x
+                && self.mouse_x <= bar_x + bar_w
+                && self.mouse_y >= bar_y
+                && self.mouse_y <= bar_y + bar_h
+            {
+                // Close button (bar_x + bar_w - 32.0 .. bar_x + bar_w)
+                if self.mouse_x >= bar_x + bar_w - 32.0 {
+                    self.find_in_page.active = false;
+                    self.find_in_page.matches.clear();
+                    self.page_dirty = true;
+                    return;
+                }
+                // Next button (bar_x + bar_w - 60.0 .. bar_x + bar_w - 32.0)
+                if self.mouse_x >= bar_x + bar_w - 60.0 {
+                    self.find_next();
+                    return;
+                }
+                // Prev button (bar_x + bar_w - 90.0 .. bar_x + bar_w - 60.0)
+                if self.mouse_x >= bar_x + bar_w - 90.0 {
+                    self.find_previous();
+                    return;
+                }
+                // Click in query input area
+                self.address_focused = false;
+                self.clear_form_focus();
+                return;
+            }
         }
 
         if button == MouseButton::Left
@@ -5314,56 +6405,57 @@ impl BrowserChrome {
                 if let Some(ref mut rt) = self.js_runtime {
                     let radio_name = rt.get_node_attribute(node_id, "name").unwrap_or_default();
                     if !radio_name.is_empty() {
-                        // Find the form ancestor to scope the radio group
-                        let doc = rt.document_snapshot();
-                        let form_root = {
-                            let mut curr = Some(node_id);
-                            let mut found_form = None;
-                            while let Some(nid) = curr {
-                                if let Some(node) = doc.get(nid) {
-                                    if let NodeData::Element(el) = &node.data
-                                        && el.tag_name.eq_ignore_ascii_case("form")
-                                    {
-                                        found_form = Some(nid);
-                                        break;
-                                    }
-                                    curr = node.parent;
-                                } else {
-                                    break;
-                                }
-                            }
-                            found_form.unwrap_or(doc.root())
-                        };
-                        // Collect all radio inputs with the same name under the form
-                        let mut radios_to_uncheck = Vec::new();
-                        let mut stack = vec![form_root];
-                        while let Some(nid) = stack.pop() {
-                            if let Some(node) = doc.get(nid) {
-                                if let NodeData::Element(el) = &node.data
-                                    && el.tag_name.eq_ignore_ascii_case("input")
-                                    && el
-                                        .get_attribute("type")
-                                        .map(|t| t.eq_ignore_ascii_case("radio"))
-                                        .unwrap_or(false)
-                                    && el
-                                        .get_attribute("name")
-                                        .map(|n| n == radio_name)
-                                        .unwrap_or(false)
-                                    && nid != node_id
-                                {
-                                    radios_to_uncheck.push(nid);
-                                }
-                                let mut child = node.first_child;
-                                while let Some(cid) = child {
-                                    stack.push(cid);
-                                    if let Some(cnode) = doc.get(cid) {
-                                        child = cnode.next_sibling;
+                        let radios_to_uncheck = {
+                            let doc = rt.document_ref();
+                            let form_root = {
+                                let mut curr = Some(node_id);
+                                let mut found_form = None;
+                                while let Some(nid) = curr {
+                                    if let Some(node) = doc.get(nid) {
+                                        if let NodeData::Element(el) = &node.data
+                                            && el.tag_name.eq_ignore_ascii_case("form")
+                                        {
+                                            found_form = Some(nid);
+                                            break;
+                                        }
+                                        curr = node.parent;
                                     } else {
                                         break;
                                     }
                                 }
+                                found_form.unwrap_or(doc.root())
+                            };
+                            let mut radios = Vec::new();
+                            let mut stack = vec![form_root];
+                            while let Some(nid) = stack.pop() {
+                                if let Some(node) = doc.get(nid) {
+                                    if let NodeData::Element(el) = &node.data
+                                        && el.tag_name.eq_ignore_ascii_case("input")
+                                        && el
+                                            .get_attribute("type")
+                                            .map(|t| t.eq_ignore_ascii_case("radio"))
+                                            .unwrap_or(false)
+                                        && el
+                                            .get_attribute("name")
+                                            .map(|n| n == radio_name)
+                                            .unwrap_or(false)
+                                        && nid != node_id
+                                    {
+                                        radios.push(nid);
+                                    }
+                                    let mut child = node.first_child;
+                                    while let Some(cid) = child {
+                                        stack.push(cid);
+                                        if let Some(cnode) = doc.get(cid) {
+                                            child = cnode.next_sibling;
+                                        } else {
+                                            break;
+                                        }
+                                    }
+                                }
                             }
-                        }
+                            radios
+                        };
                         // Uncheck all siblings
                         for rid in radios_to_uncheck {
                             rt.remove_node_attribute(rid, "checked");
@@ -5536,18 +6628,21 @@ impl BrowserChrome {
                 if let Some(ref mut rt) = self.js_runtime {
                     let class = rt.get_node_attribute(node_id, "class").unwrap_or_default();
                     if class.contains("vector-pinnable-header-unpin-button") {
-                        let doc = rt.document_snapshot();
-                        let mut content_nid = None;
-                        for idx in 0..15000 {
-                            let nid = mango_core::Id::from_raw(idx);
-                            if let Some(node) = doc.get(nid)
-                                && let NodeData::Element(el) = &node.data
-                                && el.get_attribute("id") == Some("vector-appearance-content")
-                            {
-                                content_nid = Some(nid);
-                                break;
+                        let content_nid = {
+                            let doc = rt.document_ref();
+                            let mut found = None;
+                            for idx in 0..15000 {
+                                let nid = mango_core::Id::from_raw(idx);
+                                if let Some(node) = doc.get(nid)
+                                    && let NodeData::Element(el) = &node.data
+                                    && el.get_attribute("id") == Some("vector-appearance-content")
+                                {
+                                    found = Some(nid);
+                                    break;
+                                }
                             }
-                        }
+                            found
+                        };
                         if let Some(cnid) = content_nid {
                             let cur_style =
                                 rt.get_node_attribute(cnid, "style").unwrap_or_default();
@@ -6142,46 +7237,17 @@ impl BrowserChrome {
             if let Ok(parsed_url) = Url::parse(&resolved_action) {
                 self.status_text = format!("Submitting to {}...", parsed_url);
                 self.is_loading = true;
-                if self.async_navigation {
-                    let loader = self.loader.clone();
-                    let target_url = parsed_url.clone();
-                    let (tx, rx) = std::sync::mpsc::channel();
-                    std::thread::spawn(move || {
-                        let res = loader
-                            .post_document(
-                                &target_url,
-                                query_str.as_bytes(),
-                                "application/x-www-form-urlencoded",
-                            )
-                            .map(|doc_res| prepare_document_pipeline(&loader, doc_res));
-                        let _ = tx.send(res);
-                    });
-                    self.pending_navigation = Some(PendingNavigation {
-                        target_url: parsed_url,
-                        rx,
-                        push_history: true,
-                    });
-                    return;
-                }
-                match self.loader.post_document(
-                    &parsed_url,
-                    query_str.as_bytes(),
-                    "application/x-www-form-urlencoded",
-                ) {
-                    Ok(doc_result) => {
-                        self.is_loading = false;
-                        self.address_text = doc_result.url.to_string();
-                        self.process_and_load_document(doc_result, true);
-                        self.persist_cookies();
-                        return;
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "POST submission error: {}. Falling back to GET navigation.",
-                            e
-                        );
-                    }
-                }
+                self.address_focused = false;
+                // P0 UI-freeze fix: POST navigations always dispatch via the
+                // background NavigationActor pool; the UI thread returns
+                // immediately with a spinner. Never `post_document` on the UI.
+                self.nav_actor.post(
+                    parsed_url,
+                    query_str.into_bytes(),
+                    "application/x-www-form-urlencoded".to_string(),
+                    true,
+                );
+                return;
             }
         }
 
@@ -6294,6 +7360,7 @@ fn collect_stylesheet_links(doc: &Document, node_id: NodeId, links: &mut Vec<Str
     }
 }
 
+#[allow(dead_code)]
 fn load_stylesheets_parallel(
     loader: &ResourceLoader,
     base_url: &Url,
@@ -6301,7 +7368,21 @@ fn load_stylesheets_parallel(
     visited: &mut std::collections::HashSet<String>,
     out: &mut Vec<Stylesheet>,
 ) {
-    if links.is_empty() {
+    load_stylesheets_parallel_cancellable(loader, base_url, links, visited, out, &|| false);
+}
+
+/// Bounded stylesheet fan-out: at most [`MAX_CONCURRENT_FETCHES`] fetches in
+/// flight, per-fetch timeout, sequence-numbered results preserving document
+/// order, and early epoch abandonment via `should_cancel`.
+fn load_stylesheets_parallel_cancellable(
+    loader: &ResourceLoader,
+    base_url: &Url,
+    links: &[String],
+    visited: &mut std::collections::HashSet<String>,
+    out: &mut Vec<Stylesheet>,
+    should_cancel: &dyn Fn() -> bool,
+) {
+    if links.is_empty() || should_cancel() {
         return;
     }
     let mut to_fetch = Vec::new();
@@ -6317,144 +7398,305 @@ fn load_stylesheets_parallel(
         return;
     }
 
-    let results: Vec<Result<String, mango_net::NetworkError>> = std::thread::scope(|s| {
-        let handles: Vec<_> = to_fetch
-            .iter()
-            .map(|(href, _)| s.spawn(|| loader.fetch_stylesheet(base_url, href)))
-            .collect();
-        handles
-            .into_iter()
-            .map(|h| {
-                h.join().unwrap_or_else(|_| {
-                    Err(mango_net::NetworkError::Other("thread join failed".into()))
-                })
-            })
-            .collect()
-    });
-
-    for ((_href, resolved), res) in to_fetch.into_iter().zip(results) {
-        match res {
-            Ok(css_text) => {
-                log::info!("Loaded external stylesheet: {}", resolved);
-                let sheet = parse_stylesheet(&css_text);
-                for rule in &sheet.rules {
-                    if let mango_css::parser::Rule::Import(import_path) = rule {
-                        load_stylesheet_recursive(loader, &resolved, import_path, visited, out);
+    // Scoped fan-out in chunks of MAX_CONCURRENT_FETCHES so concurrency is
+    // capped at 6 regardless of link count. Each chunk joins with a timeout;
+    // sequence numbers (idx) restore document order.
+    let mut results_map: std::collections::HashMap<usize, Result<String, mango_net::NetworkError>> =
+        std::collections::HashMap::new();
+    for chunk in to_fetch.iter().enumerate().collect::<Vec<_>>().chunks(MAX_CONCURRENT_FETCHES) {
+        if should_cancel() {
+            break;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let n = chunk.len();
+        for (idx, (href, _)) in chunk.iter() {
+            let tx = tx.clone();
+            let loader = loader.clone();
+            let base = base_url.clone();
+            let href = (*href).clone();
+            let idx = *idx;
+            if let Err(e) = std::thread::Builder::new()
+                .name("mango-css-fetch".to_string())
+                .spawn(move || {
+                    if href.trim_start().starts_with("data:") {
+                        let res = loader.fetch_stylesheet(&base, &href);
+                        let _ = tx.send((idx, res));
+                        return;
                     }
-                }
-                out.push(sheet);
+                    match fetch_with_timeout(
+                        {
+                            let loader = loader.clone();
+                            let base = base.clone();
+                            let href = href.clone();
+                            move || loader.fetch_stylesheet(&base, &href)
+                        },
+                        SUBRESOURCE_FETCH_TIMEOUT,
+                    ) {
+                        Ok(res) => {
+                            let _ = tx.send((idx, res));
+                        }
+                        Err(msg) => {
+                            log::warn!("Stylesheet fetch timed out for {href}: {msg}");
+                        }
+                    }
+                })
+            {
+                log::warn!("Failed to spawn stylesheet fetch thread: {e}");
             }
-            Err(e) => {
-                log::warn!("Failed to fetch external stylesheet {}: {}", resolved, e);
+        }
+        drop(tx);
+        for _ in 0..n {
+            if should_cancel() {
+                break;
+            }
+            match rx.recv_timeout(SUBRESOURCE_FETCH_TIMEOUT + std::time::Duration::from_secs(2)) {
+                Ok((idx, res)) => {
+                    results_map.insert(idx, res);
+                }
+                Err(_) => break,
+            }
+        }
+    }
+
+    let mut import_rules = Vec::new();
+    for (idx, (_href, resolved)) in to_fetch.into_iter().enumerate() {
+        if should_cancel() {
+            break;
+        }
+        if let Some(res) = results_map.remove(&idx) {
+            match res {
+                Ok(css_text) => {
+                    log::info!("Loaded external stylesheet: {}", resolved);
+                    let sheet = parse_stylesheet(&css_text);
+                    for rule in &sheet.rules {
+                        if let mango_css::parser::Rule::Import(import_path) = rule {
+                            import_rules.push((resolved.clone(), import_path.clone()));
+                        }
+                    }
+                    out.push(sheet);
+                }
+                Err(e) => {
+                    log::warn!("Failed to fetch external stylesheet {}: {}", resolved, e);
+                }
+            }
+        }
+    }
+
+    if !should_cancel() {
+        load_imported_stylesheets_parallel_cancellable(loader, import_rules, visited, out, should_cancel);
+    }
+}
+
+fn load_imported_stylesheets_parallel(
+    loader: &ResourceLoader,
+    pending_imports: Vec<(Url, String)>,
+    visited: &mut std::collections::HashSet<String>,
+    out: &mut Vec<Stylesheet>,
+) {
+    load_imported_stylesheets_parallel_cancellable(loader, pending_imports, visited, out, &|| false);
+}
+
+fn load_imported_stylesheets_parallel_cancellable(
+    loader: &ResourceLoader,
+    mut pending_imports: Vec<(Url, String)>,
+    visited: &mut std::collections::HashSet<String>,
+    out: &mut Vec<Stylesheet>,
+    should_cancel: &dyn Fn() -> bool,
+) {
+    const MAX_IMPORT_DEPTH: usize = 8;
+    let mut depth = 0;
+    while !pending_imports.is_empty() && !should_cancel() {
+        if depth >= MAX_IMPORT_DEPTH {
+            log::warn!("Stylesheet @import depth cap reached; abandoning remaining imports");
+            break;
+        }
+        depth += 1;
+        let current_batch = std::mem::take(&mut pending_imports);
+        let mut to_fetch = Vec::new();
+
+        for (base, href) in current_batch {
+            if let Ok(resolved) = base.resolve(&href) {
+                let key = resolved.to_string();
+                if visited.insert(key) {
+                    to_fetch.push((base, href, resolved));
+                }
+            }
+        }
+
+        if to_fetch.is_empty() {
+            break;
+        }
+
+        // Bounded fan-out preserving order via sequence numbers.
+        let mut results: Vec<(usize, Url, Result<String, mango_net::NetworkError>)> = Vec::new();
+        for chunk in to_fetch.into_iter().enumerate().collect::<Vec<_>>().chunks(MAX_CONCURRENT_FETCHES) {
+            if should_cancel() {
+                break;
+            }
+            let (tx, rx) = std::sync::mpsc::channel();
+            let n = chunk.len();
+            for (idx, (base, href, resolved)) in chunk.iter() {
+                let tx = tx.clone();
+                let loader = loader.clone();
+                let base = (*base).clone();
+                let href = (*href).clone();
+                let resolved = (*resolved).clone();
+                let idx = *idx;
+                if let Err(e) = std::thread::Builder::new()
+                    .name("mango-css-import".to_string())
+                    .spawn(move || {
+                        match fetch_with_timeout(
+                            {
+                                let loader = loader.clone();
+                                let base = base.clone();
+                                let href = href.clone();
+                                move || loader.fetch_stylesheet(&base, &href)
+                            },
+                            SUBRESOURCE_FETCH_TIMEOUT,
+                        ) {
+                            Ok(res) => {
+                                let _ = tx.send((idx, resolved, res));
+                            }
+                            Err(msg) => {
+                                log::warn!("Stylesheet @import fetch timed out for {href}: {msg}");
+                            }
+                        }
+                    })
+                {
+                    log::warn!("Failed to spawn @import fetch thread: {e}");
+                }
+            }
+            drop(tx);
+            for _ in 0..n {
+                if should_cancel() {
+                    break;
+                }
+                match rx.recv_timeout(SUBRESOURCE_FETCH_TIMEOUT + std::time::Duration::from_secs(2)) {
+                    Ok(item) => results.push(item),
+                    Err(_) => break,
+                }
+            }
+        }
+
+        results.sort_by_key(|(idx, _, _)| *idx);
+
+        for (_idx, resolved, res) in results {
+            if should_cancel() {
+                break;
+            }
+            match res {
+                Ok(css_text) => {
+                    log::info!("Loaded external stylesheet: {}", resolved);
+                    let sheet = parse_stylesheet(&css_text);
+                    for rule in &sheet.rules {
+                        if let mango_css::parser::Rule::Import(import_path) = rule {
+                            pending_imports.push((resolved.clone(), import_path.clone()));
+                        }
+                    }
+                    out.push(sheet);
+                }
+                Err(e) => {
+                    log::warn!("Failed to fetch external stylesheet {}: {}", resolved, e);
+                }
             }
         }
     }
 }
 
-fn load_stylesheet_recursive(
-    loader: &ResourceLoader,
-    base_url: &Url,
-    href: &str,
-    visited: &mut std::collections::HashSet<String>,
-    out: &mut Vec<Stylesheet>,
+/// Non-blocking font registration for the UI thread: returns immediately and
+/// fetches + registers web fonts on a detached background thread.
+///
+/// The background pipeline calls the blocking [`load_web_fonts`] directly;
+/// UI code paths must call this async variant so font downloads never freeze
+/// the event loop.
+fn load_web_fonts_async(
+    loader: ResourceLoader,
+    base_url: Option<Url>,
+    stylesheets: Vec<Stylesheet>,
 ) {
-    if let Ok(resolved) = base_url.resolve(href) {
-        let key = resolved.to_string();
-        if !visited.insert(key) {
-            return;
-        }
-        match loader.fetch_stylesheet(base_url, href) {
-            Ok(css_text) => {
-                log::info!("Loaded external stylesheet: {}", resolved);
-                let sheet = parse_stylesheet(&css_text);
-                for rule in &sheet.rules {
-                    if let mango_css::parser::Rule::Import(import_path) = rule {
-                        load_stylesheet_recursive(loader, &resolved, import_path, visited, out);
-                    }
-                }
-                out.push(sheet);
-            }
-            Err(e) => {
-                log::warn!("Failed to fetch external stylesheet {}: {}", resolved, e);
-            }
-        }
+    if let Err(e) = std::thread::Builder::new()
+        .name("mango-font-async".to_string())
+        .spawn(move || {
+            load_web_fonts(&loader, base_url.as_ref(), &stylesheets);
+        })
+    {
+        log::warn!("Failed to spawn async font loader: {e}");
     }
 }
 
 fn load_web_fonts(loader: &ResourceLoader, base_url: Option<&Url>, stylesheets: &[Stylesheet]) {
-    let mut font_faces = Vec::new();
+    assert_not_on_ui_thread("load_web_fonts");
+    let mut font_faces: Vec<mango_css::parser::FontFaceRule> = Vec::new();
     for sheet in stylesheets {
         for rule in &sheet.rules {
             if let mango_css::parser::Rule::FontFace(font_face) = rule {
-                font_faces.push(font_face);
+                font_faces.push(font_face.clone());
             }
         }
     }
+    if font_faces.is_empty() {
+        return;
+    }
 
-    // Prefetch all unique remote font files in parallel
+    // Phase 0: warm the font-byte cache with a bounded parallel prefetch
+    // (max MAX_CONCURRENT_FETCHES in flight, per-fetch timeout). Errors are
+    // ignored here; the registration phase below reports them.
     if let Some(base) = base_url {
+        let mut seen_urls = std::collections::HashSet::new();
         let mut needed_urls: Vec<String> = Vec::new();
         for face in &font_faces {
-            if !face.src_url.starts_with("data:") && !needed_urls.contains(&face.src_url) {
+            if !face.src_url.starts_with("data:") && seen_urls.insert(face.src_url.clone()) {
                 needed_urls.push(face.src_url.clone());
             }
         }
-        if !needed_urls.is_empty() {
-            std::thread::scope(|s| {
-                for url in &needed_urls {
-                    s.spawn(|| {
-                        let _ = loader.fetch_font_bytes(base, url);
-                    });
+        for chunk in needed_urls.chunks(MAX_CONCURRENT_FETCHES) {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let n = chunk.len();
+            for url in chunk {
+                let tx = tx.clone();
+                let loader = loader.clone();
+                let base = base.clone();
+                let url = url.clone();
+                if let Err(e) = std::thread::Builder::new()
+                    .name("mango-font-prefetch".to_string())
+                    .spawn(move || {
+                        let res = fetch_with_timeout(
+                            {
+                                let loader = loader.clone();
+                                let base = base.clone();
+                                let url = url.clone();
+                                move || loader.fetch_font_bytes(&base, &url)
+                            },
+                            SUBRESOURCE_FETCH_TIMEOUT,
+                        );
+                        let _ = tx.send(res.is_ok());
+                    })
+                {
+                    log::warn!("Failed to spawn font prefetch thread: {e}");
                 }
-            });
+            }
+            drop(tx);
+            // Bounded join: wait at most timeout + grace per chunk, then move on.
+            let deadline = std::time::Instant::now() + SUBRESOURCE_FETCH_TIMEOUT + std::time::Duration::from_secs(2);
+            for _ in 0..n {
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                if remaining.is_zero() {
+                    break;
+                }
+                let _ = rx.recv_timeout(remaining);
+            }
         }
     }
 
-    let try_load_face = |font_face: &mango_css::parser::FontFaceRule, weight: FontWeight| -> bool {
-        if font_manager().has_web_font_weight(&font_face.font_family, weight) {
-            return false;
-        }
-
-        // BUG-005 fix: Properly decode data: URI by extracting and base64-decoding the payload
-        let font_bytes_res: Result<Vec<u8>, String> = if font_face.src_url.starts_with("data:") {
-            decode_data_uri_font(&font_face.src_url).map_err(|e| e.to_string())
-        } else if let Some(base) = base_url {
-            loader
-                .fetch_font_bytes(base, &font_face.src_url)
-                .map_err(|e| e.to_string())
-        } else {
-            return false;
-        };
-
-        if let Ok(font_bytes) = font_bytes_res {
-            match font_manager().register_web_font(&font_face.font_family, weight, &font_bytes) {
-                Ok(id) => {
-                    log::info!(
-                        "Loaded and registered web font '{}' (ID: {}, weight: {:?})",
-                        font_face.font_family,
-                        id,
-                        weight
-                    );
-                    true
-                }
-                Err(e) => {
-                    log::warn!(
-                        "Failed to register web font '{}' from {}: {}",
-                        font_face.font_family,
-                        font_face.src_url,
-                        e
-                    );
-                    false
-                }
-            }
-        } else {
-            false
-        }
-    };
-
-    // Pass 1: True Bold (weight >= 700 or Bold / Bolder) and Regular (weight <= 500 or Normal),
-    // prioritizing normal font-style (not italic) so normal text gets upright glyphs.
-    for face in &font_faces {
+    // Phase 1: decide which (face, weight) pairs still need registration,
+    // then fetch their bytes in parallel (bounded) and register serially.
+    struct FontJob {
+        face_idx: usize,
+        weight: FontWeight,
+    }
+    let mut jobs: Vec<FontJob> = Vec::new();
+    // Pass 1: True Bold and Regular, normal style first.
+    for (i, face) in font_faces.iter().enumerate() {
         if face.font_style != mango_css::values::FontStyle::Normal {
             continue;
         }
@@ -6469,14 +7711,17 @@ fn load_web_fonts(loader: &ResourceLoader, base_url: Option<&Url>, stylesheets: 
             _ => false,
         };
         if is_true_bold {
-            try_load_face(face, FontWeight::Bold);
+            if !font_manager().has_web_font_weight(&face.font_family, FontWeight::Bold) {
+                jobs.push(FontJob { face_idx: i, weight: FontWeight::Bold });
+            }
         } else if is_regular {
-            try_load_face(face, FontWeight::Regular);
+            if !font_manager().has_web_font_weight(&face.font_family, FontWeight::Regular) {
+                jobs.push(FontJob { face_idx: i, weight: FontWeight::Regular });
+            }
         }
     }
-
-    // Pass 2: Fallbacks for families still missing Bold (e.g. 600 SemiBold)
-    for face in &font_faces {
+    // Pass 2: SemiBold fallback for families still missing Bold.
+    for (i, face) in font_faces.iter().enumerate() {
         if face.font_style != mango_css::values::FontStyle::Normal {
             continue;
         }
@@ -6484,9 +7729,129 @@ fn load_web_fonts(loader: &ResourceLoader, base_url: Option<&Url>, stylesheets: 
             mango_css::values::FontWeight::Numeric(w) => w >= 600,
             _ => false,
         };
-        if is_semi_bold && !font_manager().has_web_font_weight(&face.font_family, FontWeight::Bold)
+        if is_semi_bold
+            && !font_manager().has_web_font_weight(&face.font_family, FontWeight::Bold)
+            && !jobs.iter().any(|j| j.face_idx == i && j.weight == FontWeight::Bold)
         {
-            try_load_face(face, FontWeight::Bold);
+            jobs.push(FontJob { face_idx: i, weight: FontWeight::Bold });
+        }
+    }
+    if jobs.is_empty() {
+        return;
+    }
+
+    // Parallel byte fetch (bounded chunks + timeout), serial registration.
+    let mut fetched: std::collections::HashMap<usize, Vec<u8>> = std::collections::HashMap::new();
+    // Data: URIs decode inline without threads.
+    let mut remote_jobs: Vec<(usize, FontJob)> = Vec::new();
+    for (job_seq, job) in jobs.into_iter().enumerate() {
+        let face = &font_faces[job.face_idx];
+        if face.src_url.starts_with("data:") {
+            match decode_data_uri_font(&face.src_url) {
+                Ok(bytes) => {
+                    fetched.insert(job_seq, bytes);
+                }
+                Err(e) => {
+                    log::warn!("Failed to decode font data URI: {e}");
+                }
+            }
+            // Keep job_seq stable by storing weight alongside below.
+            remote_jobs.push((job_seq, FontJob { face_idx: job.face_idx, weight: job.weight }));
+            // Mark data jobs as already-fetched so the parallel phase skips them.
+            continue;
+        } else {
+            remote_jobs.push((job_seq, job));
+        }
+    }
+    // Rebuild ordered job list: data URIs already in `fetched`, remotes need fetching.
+    let mut ordered: Vec<(usize, usize, FontWeight)> = Vec::new();
+    for (job_seq, job) in remote_jobs {
+        if fetched.contains_key(&job_seq) {
+            ordered.push((job_seq, job.face_idx, job.weight));
+            continue;
+        }
+        ordered.push((job_seq, job.face_idx, job.weight));
+    }
+    // Fetch remote bytes in bounded parallel chunks.
+    let remotes: Vec<(usize, usize, FontWeight, String)> = ordered
+        .iter()
+        .filter(|(seq, _, _)| !fetched.contains_key(seq))
+        .map(|(seq, face_idx, weight)| {
+            (*seq, *face_idx, *weight, font_faces[*face_idx].src_url.clone())
+        })
+        .collect();
+    if let Some(base) = base_url {
+        for chunk in remotes.chunks(MAX_CONCURRENT_FETCHES) {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let n = chunk.len();
+            for (seq, _face_idx, _weight, url) in chunk.iter() {
+                let tx = tx.clone();
+                let loader = loader.clone();
+                let base = base.clone();
+                let url = url.clone();
+                let seq = *seq;
+                if let Err(e) = std::thread::Builder::new()
+                    .name("mango-font-fetch".to_string())
+                    .spawn(move || {
+                        match fetch_with_timeout(
+                            {
+                                let loader = loader.clone();
+                                let base = base.clone();
+                                let url = url.clone();
+                                move || loader.fetch_font_bytes(&base, &url)
+                            },
+                            SUBRESOURCE_FETCH_TIMEOUT,
+                        ) {
+                            Ok(Ok(bytes)) => {
+                                let _ = tx.send((seq, bytes));
+                            }
+                            Ok(Err(e)) => {
+                                log::warn!("Font fetch failed for {url}: {e}");
+                            }
+                            Err(msg) => {
+                                log::warn!("Font fetch timed out for {url}: {msg}");
+                            }
+                        }
+                    })
+                {
+                    log::warn!("Failed to spawn font fetch thread: {e}");
+                }
+            }
+            drop(tx);
+            for _ in 0..n {
+                match rx.recv_timeout(SUBRESOURCE_FETCH_TIMEOUT + std::time::Duration::from_secs(2)) {
+                    Ok((seq, bytes)) => {
+                        fetched.insert(seq, bytes);
+                    }
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+    // Serial registration in job order.
+    ordered.sort_by_key(|(seq, _, _)| *seq);
+    for (seq, face_idx, weight) in ordered {
+        let Some(bytes) = fetched.remove(&seq) else {
+            continue;
+        };
+        let face = &font_faces[face_idx];
+        match font_manager().register_web_font(&face.font_family, weight, &bytes) {
+            Ok(id) => {
+                log::info!(
+                    "Loaded and registered web font '{}' (ID: {}, weight: {:?})",
+                    face.font_family,
+                    id,
+                    weight
+                );
+            }
+            Err(e) => {
+                log::warn!(
+                    "Failed to register web font '{}' from {}: {}",
+                    face.font_family,
+                    face.src_url,
+                    e
+                );
+            }
         }
     }
 }
@@ -6662,6 +8027,7 @@ fn extract_value_images(val: &mango_css::values::Value, sources: &mut Vec<String
     }
 }
 
+#[allow(dead_code)]
 fn collect_box_background_images(b: &mango_layout::box_tree::LayoutBox, out: &mut Vec<String>) {
     if let Some(ref s) = b.style {
         if let Some(ref bg) = s.background_image {
@@ -8866,5 +10232,130 @@ mod tests {
             Some("yes"),
             "window load event listener executed"
         );
+    }
+
+    #[test]
+    fn test_find_in_page_and_shortcuts() {
+        let mut browser = BrowserChrome::new(800, 600);
+        let html = r#"
+            <!DOCTYPE html>
+            <html>
+                <body>
+                    <p>Mango is a fast browser.</p>
+                    <p>Another Mango instance here.</p>
+                    <p>Third mango mention.</p>
+                </body>
+            </html>
+        "#;
+        browser.load_html(html.to_string(), "https://example.com/find".to_string());
+
+        // 1. Test Ctrl+F toggle
+        let ctrl_mod = mango_platform::input::Modifiers {
+            ctrl: true,
+            ..Default::default()
+        };
+        let none_mod = mango_platform::input::Modifiers::default();
+
+        assert!(!browser.find_in_page.active);
+        browser.handle_key_event(&KeyEvent {
+            key: MangoKey::Char('f'),
+            state: KeyState::Pressed,
+            modifiers: ctrl_mod,
+        });
+        assert!(browser.find_in_page.active);
+
+        // 2. Test search matches
+        browser.find_in_page_search("Mango");
+        assert_eq!(browser.find_in_page.matches.len(), 3);
+        assert_eq!(browser.find_in_page.current_match, 0);
+
+        // 3. Test find_next and find_previous
+        browser.find_next();
+        assert_eq!(browser.find_in_page.current_match, 1);
+        browser.find_next();
+        assert_eq!(browser.find_in_page.current_match, 2);
+        browser.find_next();
+        assert_eq!(browser.find_in_page.current_match, 0);
+        browser.find_previous();
+        assert_eq!(browser.find_in_page.current_match, 2);
+
+        // 4. Test Escape closes find bar
+        browser.handle_key_event(&KeyEvent {
+            key: MangoKey::Escape,
+            state: KeyState::Pressed,
+            modifiers: none_mod,
+        });
+        assert!(!browser.find_in_page.active);
+
+        // 5. Test Zoom shortcuts: Ctrl+=, Ctrl+-, Ctrl+0
+        assert_eq!(browser.zoom_level, 1.0);
+        browser.handle_key_event(&KeyEvent {
+            key: MangoKey::Char('='),
+            state: KeyState::Pressed,
+            modifiers: ctrl_mod,
+        });
+        assert!((browser.zoom_level - 1.1).abs() < 1e-4);
+        browser.handle_key_event(&KeyEvent {
+            key: MangoKey::Char('-'),
+            state: KeyState::Pressed,
+            modifiers: ctrl_mod,
+        });
+        assert!((browser.zoom_level - 1.0).abs() < 1e-4);
+        browser.handle_key_event(&KeyEvent {
+            key: MangoKey::Char('+'),
+            state: KeyState::Pressed,
+            modifiers: ctrl_mod,
+        });
+        browser.handle_key_event(&KeyEvent {
+            key: MangoKey::Char('0'),
+            state: KeyState::Pressed,
+            modifiers: ctrl_mod,
+        });
+        assert_eq!(browser.zoom_level, 1.0);
+
+        // 6. Test F11 Fullscreen toggle
+        assert!(!browser.is_fullscreen);
+        browser.handle_key_event(&KeyEvent {
+            key: MangoKey::F11,
+            state: KeyState::Pressed,
+            modifiers: none_mod,
+        });
+        assert!(browser.is_fullscreen);
+        browser.handle_key_event(&KeyEvent {
+            key: MangoKey::F11,
+            state: KeyState::Pressed,
+            modifiers: none_mod,
+        });
+        assert!(!browser.is_fullscreen);
+
+        // 7. Test Tab shortcuts: Ctrl+T, Ctrl+W, Ctrl+L
+        let initial_tabs = browser.tabs.len();
+        browser.handle_key_event(&KeyEvent {
+            key: MangoKey::Char('t'),
+            state: KeyState::Pressed,
+            modifiers: ctrl_mod,
+        });
+        assert_eq!(browser.tabs.len(), initial_tabs + 1);
+
+        browser.handle_key_event(&KeyEvent {
+            key: MangoKey::Char('l'),
+            state: KeyState::Pressed,
+            modifiers: ctrl_mod,
+        });
+        assert!(browser.address_focused);
+
+        browser.handle_key_event(&KeyEvent {
+            key: MangoKey::Char('w'),
+            state: KeyState::Pressed,
+            modifiers: ctrl_mod,
+        });
+        assert_eq!(browser.tabs.len(), initial_tabs);
+
+        // 8. Test display list and chrome rendering contains find bar when active
+        browser.toggle_find();
+        let chrome_dl = browser.build_chrome_display_list((800, 600));
+        assert!(!chrome_dl.is_empty());
+        let page_dl = browser.build_display_list((800, 600));
+        assert!(!page_dl.is_empty());
     }
 }

@@ -143,6 +143,12 @@ pub fn get_or_rasterize_color_emoji(ch: char, size: f32) -> ColorEmojiBitmap {
     }
     let bmp = rasterize_color_emoji(ch, px);
     if let Ok(mut c) = emoji_cache().write() {
+        if c.len() >= 512 {
+            let keys_to_remove: Vec<_> = c.keys().take(256).cloned().collect();
+            for k in keys_to_remove {
+                c.remove(&k);
+            }
+        }
         c.insert(key, bmp.clone());
     }
     bmp
@@ -549,8 +555,8 @@ pub fn decode_font_bytes(bytes: &[u8]) -> Result<Font, String> {
 struct WebFontEntry {
     #[allow(dead_code)]
     family_name: String,
-    regular: Option<&'static Font>,
-    bold: Option<&'static Font>,
+    regular: Vec<&'static Font>,
+    bold: Vec<&'static Font>,
 }
 
 fn load_system_font(filename: &str) -> Option<Font> {
@@ -564,7 +570,25 @@ fn load_system_font(filename: &str) -> Option<Font> {
     }
     #[cfg(target_os = "linux")]
     {
+        let croscore_name = match filename {
+            "arial.ttf" | "segoeui.ttf" => "Arimo-Regular.ttf",
+            "arialbd.ttf" | "segoeuib.ttf" => "Arimo-Bold.ttf",
+            "times.ttf" | "georgia.ttf" => "Tinos-Regular.ttf",
+            "timesbd.ttf" | "georgiab.ttf" => "Tinos-Bold.ttf",
+            "consola.ttf" | "cour.ttf" => "Cousine-Regular.ttf",
+            other => other,
+        };
+        let liberation_name = match filename {
+            "arial.ttf" | "segoeui.ttf" => "LiberationSans-Regular.ttf",
+            "arialbd.ttf" | "segoeuib.ttf" => "LiberationSans-Bold.ttf",
+            "times.ttf" | "georgia.ttf" => "LiberationSerif-Regular.ttf",
+            "timesbd.ttf" | "georgiab.ttf" => "LiberationSerif-Bold.ttf",
+            "consola.ttf" | "cour.ttf" => "LiberationMono-Regular.ttf",
+            other => other,
+        };
         let paths = [
+            format!("/usr/share/fonts/truetype/croscore/{}", croscore_name),
+            format!("/usr/share/fonts/truetype/liberation/{}", liberation_name),
             format!("/usr/share/fonts/truetype/{}", filename),
             format!("/usr/share/fonts/opentype/{}", filename),
             format!("/usr/share/fonts/TTF/{}", filename),
@@ -740,10 +764,10 @@ impl FontManager {
                     && let Some(entry) = web_fonts.get(&id)
                 {
                     let font_opt = match weight {
-                        FontWeight::Bold => entry.bold.or(entry.regular),
-                        FontWeight::Regular => entry.regular.or(entry.bold),
+                        FontWeight::Bold => entry.bold.first().or_else(|| entry.regular.first()),
+                        FontWeight::Regular => entry.regular.first().or_else(|| entry.bold.first()),
                     };
-                    if let Some(font) = font_opt {
+                    if let Some(&font) = font_opt {
                         return font;
                     }
                 }
@@ -852,6 +876,23 @@ impl FontManager {
         let primary = self.select_font(family, weight);
         if ch.is_ascii_whitespace() || primary.lookup_glyph_index(ch) != 0 {
             return primary;
+        }
+
+        // Check other faces registered for this custom web font family (e.g. latin/cyrillic/greek slices)
+        if let FontFamily::Custom(id) = family {
+            if let Ok(web_fonts) = self.web_fonts.read()
+                && let Some(entry) = web_fonts.get(&id)
+            {
+                let faces = match weight {
+                    FontWeight::Bold => entry.bold.iter().chain(entry.regular.iter()),
+                    FontWeight::Regular => entry.regular.iter().chain(entry.bold.iter()),
+                };
+                for &face in faces {
+                    if face.lookup_glyph_index(ch) != 0 {
+                        return face;
+                    }
+                }
+            }
         }
 
         // Fast-path: if this glyph is known to be missing across all system fallbacks, return immediately
@@ -1025,8 +1066,8 @@ impl FontManager {
         let id = if let Some(&existing_id) = family_map.get(&key) {
             if let Some(entry) = web_fonts.get_mut(&existing_id) {
                 match weight {
-                    FontWeight::Bold => entry.bold = Some(leaked),
-                    FontWeight::Regular => entry.regular = Some(leaked),
+                    FontWeight::Bold => entry.bold.push(leaked),
+                    FontWeight::Regular => entry.regular.push(leaked),
                 }
             }
             existing_id
@@ -1034,12 +1075,12 @@ impl FontManager {
             let new_id = self.next_font_id.fetch_add(1, Ordering::Relaxed);
             let mut entry = WebFontEntry {
                 family_name: family_name.to_string(),
-                regular: None,
-                bold: None,
+                regular: Vec::new(),
+                bold: Vec::new(),
             };
             match weight {
-                FontWeight::Bold => entry.bold = Some(leaked),
-                FontWeight::Regular => entry.regular = Some(leaked),
+                FontWeight::Bold => entry.bold.push(leaked),
+                FontWeight::Regular => entry.regular.push(leaked),
             }
             family_map.insert(key, new_id);
             web_fonts.insert(new_id, entry);
@@ -1075,8 +1116,8 @@ impl FontManager {
             && let Some(entry) = web_fonts.get(&id)
         {
             return match weight {
-                FontWeight::Bold => entry.bold.is_some(),
-                FontWeight::Regular => entry.regular.is_some(),
+                FontWeight::Bold => !entry.bold.is_empty(),
+                FontWeight::Regular => !entry.regular.is_empty(),
             };
         }
         false
@@ -1095,8 +1136,8 @@ impl FontManager {
                     return format!(
                         "{}(has_reg={}, has_bold={})",
                         entry.family_name,
-                        entry.regular.is_some(),
-                        entry.bold.is_some()
+                        !entry.regular.is_empty(),
+                        !entry.bold.is_empty()
                     );
                 }
                 format!("Custom({})", id)
@@ -1166,13 +1207,13 @@ impl FontManager {
             if let Some((reg_file, bold_file)) = system_files {
                 // A family that is exactly the platform's generic face maps straight to
                 // the bundled generic: no second copy of Arial/Times/Courier is loaded.
-                if (clean == "arial" || clean == "helvetica") && cfg!(target_os = "windows") {
+                if clean == "arial" || clean == "helvetica" {
                     return FontFamily::SansSerif;
                 }
-                if (clean == "times new roman" || clean == "times") && cfg!(target_os = "windows") {
+                if clean == "times new roman" || clean == "times" {
                     return FontFamily::Serif;
                 }
-                if (clean == "courier new" || clean == "courier") && cfg!(target_os = "windows") {
+                if clean == "courier new" || clean == "courier" {
                     return FontFamily::Monospace;
                 }
 
@@ -1202,12 +1243,17 @@ impl FontManager {
                             family_map.insert("-apple-system".to_string(), new_id);
                             family_map.insert("blinkmacsystemfont".to_string(), new_id);
                         }
+                        let bold_vec = if let Some(b) = bold_leaked {
+                            vec![b]
+                        } else {
+                            Vec::new()
+                        };
                         web_fonts.insert(
                             new_id,
                             WebFontEntry {
                                 family_name: clean,
-                                regular: Some(reg_leaked),
-                                bold: bold_leaked,
+                                regular: vec![reg_leaked],
+                                bold: bold_vec,
                             },
                         );
                         return FontFamily::Custom(new_id);
@@ -1933,6 +1979,8 @@ unsafe impl Sync for FontManager {}
 mod tests {
     use super::*;
 
+
+
     #[test]
     fn test_font_manager_initializes() {
         let fm = font_manager();
@@ -2314,5 +2362,49 @@ mod tests {
         assert!((interpolate_axis(wght, 900.0) - 1.0).abs() < 0.001);
         // Intermediate weight 650 -> (650 - 400) / (900 - 400) = 250 / 500 = 0.5
         assert!((interpolate_axis(wght, 650.0) - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_render_ddg_snippet_glyphs() {
+        let fm = font_manager();
+        let family = fm.resolve_family_for("sans-serif");
+        let text = "while guaranteeing memory-safety and thread-safety, empowering developers to debug at compile-time. In addition to that Rust has great documentation and a user-friendly";
+        let mut buf = vec![0xFFFFFFFFu32; 1000 * 100];
+        fm.rasterize_text_clipped(
+            &mut buf,
+            1000,
+            100,
+            10,
+            20,
+            text,
+            Color::BLACK,
+            14.0,
+            FontWeight::Regular,
+            family,
+            FontStyle::Normal,
+            0.0,
+            mango_core::Rect::new(0.0, 0.0, 1000.0, 100.0),
+        );
+        let mut img = image::RgbImage::new(1000, 100);
+        for y in 0..100 {
+            for x in 0..1000 {
+                let px = buf[y * 1000 + x];
+                let r = ((px >> 16) & 0xFF) as u8;
+                let g = ((px >> 8) & 0xFF) as u8;
+                let b = (px & 0xFF) as u8;
+                img.put_pixel(x as u32, y as u32, image::Rgb([r, g, b]));
+            }
+        }
+        img.save("/tmp/mango_text_test.png").unwrap();
+    }
+
+    #[test]
+    fn test_web_font_multiple_slices() {
+        if let Ok(bytes) = std::fs::read("/tmp/fira.woff2") {
+            let fm = font_manager();
+            let id = fm.register_web_font("TestSliceFamily", FontWeight::Regular, &bytes).unwrap();
+            let (w, _) = fm.measure_text_with_spacing("Install", 18.0, FontWeight::Regular, FontFamily::Custom(id), 0.0);
+            assert!((w - 51.1).abs() < 1.0);
+        }
     }
 }

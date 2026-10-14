@@ -57,6 +57,10 @@ pub struct JsRuntime {
     hovered_nodes: std::collections::HashSet<mango_html::dom::NodeId>,
     /// Set of DOM nodes currently in the `:active` chain (target and its ancestors).
     active_nodes: std::collections::HashSet<mango_html::dom::NodeId>,
+    /// Thread-safe manager for Web Workers.
+    pub worker_manager: crate::worker::WorkerManager,
+    /// Thread-safe manager for WebSockets.
+    pub ws_manager: mango_net::WebSocketManager,
 }
 
 impl JsRuntime {
@@ -149,6 +153,8 @@ impl JsRuntime {
         let vh = Rc::new(RefCell::new(viewport_height));
         let layout_bounds: dom_bindings::LayoutBounds =
             Rc::new(RefCell::new(std::collections::HashMap::new()));
+        let worker_manager = crate::worker::WorkerManager::new();
+        let ws_manager = mango_net::WebSocketManager::new();
 
         // Register all APIs
         console::register_console(&mut context, console_buffer.clone());
@@ -171,6 +177,8 @@ impl JsRuntime {
             local_storage.clone(),
             session_storage.clone(),
             cookie_jar.clone(),
+            worker_manager.clone(),
+            ws_manager.clone(),
         );
 
         Self {
@@ -187,6 +195,57 @@ impl JsRuntime {
             cookie_jar,
             hovered_nodes: std::collections::HashSet::new(),
             active_nodes: std::collections::HashSet::new(),
+            worker_manager,
+            ws_manager,
+        }
+    }
+
+    /// Returns the Web Worker manager handle.
+    pub fn worker_manager(&self) -> crate::worker::WorkerManager {
+        self.worker_manager.clone()
+    }
+
+    /// Returns the WebSocket manager handle.
+    pub fn ws_manager(&self) -> mango_net::WebSocketManager {
+        self.ws_manager.clone()
+    }
+
+    /// Executes an ES Module script and resolves any top-level exports or promises.
+    pub fn execute_module(&mut self, source: &str) -> Result<(), String> {
+        let prev_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let src = Source::from_bytes(source);
+            let module = boa_engine::module::Module::parse(src, None, &mut self.context)?;
+            let _promise = module.load_link_evaluate(&mut self.context);
+            let _ = self.context.run_jobs();
+            Ok::<(), boa_engine::JsError>(())
+        }));
+        std::panic::set_hook(prev_hook);
+
+        match res {
+            Ok(Ok(_)) => {
+                log::info!("ES Module executed successfully ({} bytes)", source.len());
+                let _ = self.context.run_jobs();
+                Ok(())
+            }
+            Ok(Err(e)) => {
+                let err_msg = format!("ES Module Error: {}", e);
+                log::warn!("{}", err_msg);
+                Err(err_msg)
+            }
+            Err(panic_err) => {
+                let msg = if let Some(s) = panic_err.downcast_ref::<&str>() {
+                    s.to_string()
+                } else if let Some(s) = panic_err.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "Unknown JS panic".to_string()
+                };
+                let err_msg = format!("ES Module Panic caught safely: {}", msg);
+                log::warn!("{}", err_msg);
+                Err(err_msg)
+            }
         }
     }
 
@@ -295,13 +354,14 @@ impl JsRuntime {
             timer_fired
         }));
         std::panic::set_hook(prev_hook);
-        let fired = res.unwrap_or(false);
+        let _fired = res.unwrap_or(false);
         let dirty = *self.dom_dirty.borrow();
         if dirty {
             *self.dom_dirty.borrow_mut() = false;
         }
-        fired || dirty
+        dirty
     }
+
 
     /// Drains any queued Promise microtasks, MutationObserver callbacks, or deferred jobs.
     pub fn run_jobs(&mut self) {
@@ -769,6 +829,7 @@ impl JsRuntime {
                 && let Some(node) = doc.get_mut(*nid)
                 && let mango_html::dom::NodeData::Element(el) = &mut node.data
             {
+                el.is_hovered = false;
                 el.attributes
                     .retain(|(k, _)| !k.eq_ignore_ascii_case("data-mango-hover"));
             }
@@ -779,16 +840,11 @@ impl JsRuntime {
                 && let Some(node) = doc.get_mut(*nid)
                 && let mango_html::dom::NodeData::Element(el) = &mut node.data
             {
-                if let Some((_, v)) = el
-                    .attributes
-                    .iter_mut()
-                    .find(|(k, _)| k.eq_ignore_ascii_case("data-mango-hover"))
-                {
-                    *v = "true".to_string();
-                } else {
-                    el.attributes
-                        .push(("data-mango-hover".to_string(), "true".to_string()));
-                }
+                el.is_hovered = true;
+                el.attributes
+                    .retain(|(k, _)| !k.eq_ignore_ascii_case("data-mango-hover"));
+                el.attributes
+                    .push(("data-mango-hover".to_string(), "true".to_string()));
             }
         }
         self.hovered_nodes = new_chain;
@@ -797,8 +853,8 @@ impl JsRuntime {
     }
 
     /// Sets the currently active (mouse pressed) DOM element by NodeId (or None if released).
-    /// Updates `data-mango-active="true"` on the element and all of its ancestor elements,
-    /// and removes `data-mango-active` from elements that are no longer active.
+    /// Updates `is_active = true` on the element and all of its ancestor elements,
+    /// and clears `is_active` from elements that are no longer active.
     /// Returns `true` if the active state changed (and thus CSS `:active` rules will re-evaluate).
     pub fn set_active_state(&mut self, target_node_id: Option<mango_html::dom::NodeId>) -> bool {
         let mut new_chain = std::collections::HashSet::new();
@@ -827,6 +883,7 @@ impl JsRuntime {
                 && let Some(node) = doc.get_mut(*nid)
                 && let mango_html::dom::NodeData::Element(el) = &mut node.data
             {
+                el.is_active = false;
                 el.attributes
                     .retain(|(k, _)| !k.eq_ignore_ascii_case("data-mango-active"));
             }
@@ -837,16 +894,11 @@ impl JsRuntime {
                 && let Some(node) = doc.get_mut(*nid)
                 && let mango_html::dom::NodeData::Element(el) = &mut node.data
             {
-                if let Some((_, v)) = el
-                    .attributes
-                    .iter_mut()
-                    .find(|(k, _)| k.eq_ignore_ascii_case("data-mango-active"))
-                {
-                    *v = "true".to_string();
-                } else {
-                    el.attributes
-                        .push(("data-mango-active".to_string(), "true".to_string()));
-                }
+                el.is_active = true;
+                el.attributes
+                    .retain(|(k, _)| !k.eq_ignore_ascii_case("data-mango-active"));
+                el.attributes
+                    .push(("data-mango-active".to_string(), "true".to_string()));
             }
         }
         self.active_nodes = new_chain;
@@ -1369,6 +1421,51 @@ mod tests {
 
         if let Err(e) = rt.execute_script(script) {
             panic!("test_canvas_2d_comprehensive_api failed: {}", e);
+        }
+    }
+
+    #[test]
+    fn test_webgl_webgl2_and_webgpu_apis() {
+        let doc = parse_html("<html><body><canvas id='c1' width='300' height='150'></canvas></body></html>");
+        let mut rt = JsRuntime::new(doc, 800.0, 600.0);
+        let script = r#"
+            var c = document.getElementById('c1');
+            if (!c) throw new Error("canvas element not found");
+
+            // WebGL 1
+            var gl = c.getContext('webgl');
+            if (!gl) throw new Error("getContext('webgl') returned null");
+            if (gl.COLOR_BUFFER_BIT !== 0x4000) throw new Error("WebGL constant missing");
+            var vs = gl.createShader(gl.VERTEX_SHADER);
+            gl.shaderSource(vs, "void main() { gl_Position = vec4(0.0); }");
+            gl.compileShader(vs);
+            if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS)) throw new Error("Shader compile failed");
+            var prog = gl.createProgram();
+            gl.attachShader(prog, vs);
+            gl.linkProgram(prog);
+            if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error("Program link failed");
+            gl.useProgram(prog);
+            var buf = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+
+            // WebGL 2
+            var gl2 = c.getContext('webgl2');
+            if (!gl2) throw new Error("getContext('webgl2') returned null");
+            if (gl2.COLOR_BUFFER_BIT !== 0x4000) throw new Error("WebGL2 constant missing");
+            var vao = gl2.createVertexArray();
+            gl2.bindVertexArray(vao);
+
+            // WebGPU
+            if (!navigator.gpu) throw new Error("navigator.gpu not found");
+            var gpuCtx = c.getContext('webgpu');
+            if (!gpuCtx) throw new Error("getContext('webgpu') returned null");
+            gpuCtx.configure({ format: 'bgra8unorm' });
+            var tex = gpuCtx.getCurrentTexture();
+            if (!tex || tex.width !== 300) throw new Error("getCurrentTexture failed");
+        "#;
+
+        if let Err(e) = rt.execute_script(script) {
+            panic!("test_webgl_webgl2_and_webgpu_apis failed: {}", e);
         }
     }
 
@@ -3701,4 +3798,370 @@ mod tests {
             .execute_script(ss_tab2_script)
             .expect("sessionStorage Tab 2 isolation check failed");
     }
+
+    #[test]
+    fn test_phase4_8_1_web_idl_hierarchy() {
+        let doc = parse_html("<html><body><div id='d'></div><p id='p'></p></body></html>");
+        let mut rt = JsRuntime::new(doc, 800.0, 600.0);
+
+        let script = r#"
+            // 1. Core prototypes chain
+            if (!(new EventTarget() instanceof Object)) throw new Error("EventTarget not Object");
+            if (!(new Node() instanceof EventTarget)) throw new Error("Node not EventTarget");
+            if (!(new Element() instanceof Node)) throw new Error("Element not Node");
+            if (!(new HTMLElement() instanceof Element)) throw new Error("HTMLElement not Element");
+
+            // 2. Concrete element prototypes
+            var div = document.createElement("div");
+            if (!(div instanceof HTMLDivElement)) throw new Error("div not HTMLDivElement");
+            if (!(div instanceof HTMLElement)) throw new Error("div not HTMLElement");
+            if (!(div instanceof Element)) throw new Error("div not Element");
+            if (!(div instanceof Node)) throw new Error("div not Node");
+            if (!(div instanceof EventTarget)) throw new Error("div not EventTarget");
+
+            var p = document.createElement("p");
+            if (!(p instanceof HTMLParagraphElement)) throw new Error("p not HTMLParagraphElement");
+            if (!(p instanceof HTMLElement)) throw new Error("p not HTMLElement");
+
+            var h1 = document.createElement("h1");
+            if (!(h1 instanceof HTMLHeadingElement)) throw new Error("h1 not HTMLHeadingElement");
+
+            var ul = document.createElement("ul");
+            if (!(ul instanceof HTMLUListElement)) throw new Error("ul not HTMLUListElement");
+
+            var li = document.createElement("li");
+            if (!(li instanceof HTMLLIElement)) throw new Error("li not HTMLLIElement");
+
+            var table = document.createElement("table");
+            if (!(table instanceof HTMLTableElement)) throw new Error("table not HTMLTableElement");
+
+            var tr = document.createElement("tr");
+            if (!(tr instanceof HTMLTableRowElement)) throw new Error("tr not HTMLTableRowElement");
+
+            var td = document.createElement("td");
+            if (!(td instanceof HTMLTableCellElement)) throw new Error("td not HTMLTableCellElement");
+
+            var input = document.createElement("input");
+            if (!(input instanceof HTMLInputElement)) throw new Error("input not HTMLInputElement");
+
+            var canvas = document.createElement("canvas");
+            if (!(canvas instanceof HTMLCanvasElement)) throw new Error("canvas not HTMLCanvasElement");
+
+            var video = document.createElement("video");
+            if (!(video instanceof HTMLVideoElement)) throw new Error("video not HTMLVideoElement");
+            if (!(video instanceof HTMLMediaElement)) throw new Error("video not HTMLMediaElement");
+
+            var audio = document.createElement("audio");
+            if (!(audio instanceof HTMLAudioElement)) throw new Error("audio not HTMLAudioElement");
+            if (!(audio instanceof HTMLMediaElement)) throw new Error("audio not HTMLMediaElement");
+
+            if (!(document.body instanceof HTMLBodyElement)) throw new Error("document.body not HTMLBodyElement");
+            if (!(document.head instanceof HTMLHeadElement)) throw new Error("document.head not HTMLHeadElement");
+            if (!(document.documentElement instanceof HTMLHtmlElement)) throw new Error("documentElement not HTMLHtmlElement");
+
+            // 3. Event hierarchy
+            var msgEvt = new MessageEvent("message", { data: "test" });
+            if (!(msgEvt instanceof MessageEvent)) throw new Error("MessageEvent not MessageEvent");
+            if (!(msgEvt instanceof Event)) throw new Error("MessageEvent not Event");
+            if (msgEvt.data !== "test") throw new Error("MessageEvent.data mismatch");
+
+            var closeEvt = new CloseEvent("close", { code: 1000, reason: "ok", wasClean: true });
+            if (!(closeEvt instanceof CloseEvent)) throw new Error("CloseEvent not CloseEvent");
+            if (!(closeEvt instanceof Event)) throw new Error("CloseEvent not Event");
+            if (closeEvt.code !== 1000 || closeEvt.wasClean !== true) throw new Error("CloseEvent props mismatch");
+        "#;
+
+        rt.execute_script(script).expect("Web IDL hierarchy test failed");
+    }
+
+    #[test]
+    fn test_phase4_8_1_threaded_web_workers() {
+        let doc = parse_html("<html><body></body></html>");
+        let mut rt = JsRuntime::new(doc, 800.0, 600.0);
+
+        let script = r##"
+            globalThis.workerResult = null;
+            var blobCode = "self.onmessage = function(e) { self.postMessage({ doubled: e.data.num * 2 }); };";
+            var blob = new Blob([blobCode], { type: 'text/javascript' });
+            var blobUrl = URL.createObjectURL(blob);
+
+            var worker = new Worker(blobUrl);
+            worker.onmessage = function(e) {
+                globalThis.workerResult = e.data.doubled;
+            };
+            worker.postMessage({ num: 21 });
+        "##;
+
+        rt.execute_script(script).expect("worker script failed");
+
+        // Wait up to 2 seconds for worker thread execution and reply
+        let start = std::time::Instant::now();
+        while start.elapsed() < std::time::Duration::from_millis(2000) {
+            rt.tick();
+            let check = rt.eval("globalThis.workerResult").unwrap_or_default();
+            if check == "42" {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+
+        let res = rt.eval("globalThis.workerResult").expect("eval workerResult");
+        assert_eq!(res, "42", "Threaded Web Worker should calculate 21 * 2 = 42 in background");
+    }
+
+    #[test]
+    fn test_phase4_8_1_websocket_live() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+        let port = listener.local_addr().expect("local addr").port();
+
+        // Spawn mock WebSocket server thread
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 1024];
+                if let Ok(n) = stream.read(&mut buf) {
+                    let req = String::from_utf8_lossy(&buf[..n]);
+                    let mut key = "";
+                    for line in req.lines() {
+                        if line.to_ascii_lowercase().starts_with("sec-websocket-key:") {
+                            key = line.split(':').nth(1).unwrap_or("").trim();
+                        }
+                    }
+                    let accept = mango_net::websocket::compute_accept_key(key);
+                    let resp = format!(
+                        "HTTP/1.1 101 Switching Protocols\r\n\
+                         Upgrade: websocket\r\n\
+                         Connection: Upgrade\r\n\
+                         Sec-WebSocket-Accept: {}\r\n\r\n",
+                        accept
+                    );
+                    let _ = stream.write_all(resp.as_bytes());
+
+                    // Read one client frame and echo it back unmasked (server frames are not masked)
+                    if let Ok((opcode, payload, _fin)) = mango_net::websocket::decode_frame(&mut stream) {
+                        if opcode == mango_net::websocket::Opcode::Text {
+                            let mut server_frame = vec![0x81, payload.len() as u8];
+                            server_frame.extend_from_slice(&payload);
+                            let _ = stream.write_all(&server_frame);
+                        }
+                    }
+                }
+            }
+        });
+
+        let doc = parse_html("<html><body></body></html>");
+        let mut rt = JsRuntime::new(doc, 800.0, 600.0);
+
+        let ws_url = format!("ws://127.0.0.1:{}/ws", port);
+        let script = format!(
+            r##"
+            var ws = new WebSocket("{}");
+            globalThis.openFired = false;
+            globalThis.receivedMessage = null;
+
+            ws.onopen = function(e) {{
+                globalThis.openFired = true;
+                ws.send("Ping from Mango");
+            }};
+            ws.onmessage = function(e) {{
+                globalThis.receivedMessage = e.data;
+            }};
+        "##,
+            ws_url
+        );
+
+        rt.execute_script(&script).expect("ws script failed");
+
+        // Wait up to 2 seconds for background thread handshake & echo
+        let start = std::time::Instant::now();
+        while start.elapsed() < std::time::Duration::from_millis(2000) {
+            rt.tick();
+            let check = rt.eval("globalThis.receivedMessage").unwrap_or_default();
+            if check.contains("Ping from Mango") {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+
+        let open_res = rt.eval("globalThis.openFired").expect("eval openFired");
+        assert_eq!(open_res, "true", "WebSocket onopen should have fired");
+
+        let msg_res = rt.eval("globalThis.receivedMessage").expect("eval receivedMessage");
+        assert_eq!(msg_res, "Ping from Mango", "WebSocket echoed message mismatch");
+    }
+
+    #[test]
+    fn test_phase4_8_1_es_modules() {
+        let doc = parse_html("<html><body></body></html>");
+        let mut rt = JsRuntime::new(doc, 800.0, 600.0);
+
+        let module_src = r#"
+            globalThis.moduleVar = 100;
+            export const x = 42;
+            export function add(a, b) { return a + b; }
+            globalThis.moduleCalc = add(x, 8);
+        "#;
+
+        rt.execute_module(module_src).expect("execute_module failed");
+
+        let calc_res = rt.eval("globalThis.moduleCalc").expect("eval moduleCalc");
+        assert_eq!(calc_res, "50", "ES Module execution calculation mismatch");
+
+        let var_res = rt.eval("globalThis.moduleVar").expect("eval moduleVar");
+        assert_eq!(var_res, "100", "ES Module execution global assignment mismatch");
+    }
+
+    #[test]
+    fn test_phase4_8_3_html_dom_parity() {
+        let html = r#"
+            <html>
+                <body>
+                    <div id="editable-parent" contenteditable="true">
+                        <span id="editable-child">Editable Child</span>
+                        <div id="non-editable-child" contenteditable="false">Non Editable</div>
+                    </div>
+                    <div id="drag-item">Drag Me</div>
+                </body>
+            </html>
+        "#;
+        let doc = parse_html(html);
+        let mut rt = JsRuntime::new(doc, 800.0, 600.0);
+
+        let script = r#"
+            (function() {
+                var parent = document.getElementById('editable-parent');
+                var child = document.getElementById('editable-child');
+                var nonEdChild = document.getElementById('non-editable-child');
+
+                // 1. contentEditable & isContentEditable
+                if (parent.contentEditable !== 'true') throw new Error("parent contentEditable mismatch: " + parent.contentEditable);
+                if (parent.isContentEditable !== true) throw new Error("parent isContentEditable mismatch");
+                if (child.contentEditable !== 'inherit') throw new Error("child contentEditable mismatch: " + child.contentEditable);
+                if (child.isContentEditable !== true) throw new Error("child isContentEditable should be true via inheritance");
+                if (nonEdChild.contentEditable !== 'false') throw new Error("nonEdChild contentEditable mismatch");
+                if (nonEdChild.isContentEditable !== false) throw new Error("nonEdChild isContentEditable mismatch");
+
+                child.contentEditable = 'false';
+                if (child.isContentEditable !== false) throw new Error("child isContentEditable after setting false mismatch");
+                child.contentEditable = 'inherit';
+                if (child.isContentEditable !== true) throw new Error("child isContentEditable after restore inherit mismatch");
+
+                // 2. draggable property
+                var dragItem = document.getElementById('drag-item');
+                if (dragItem.draggable !== false) throw new Error("default draggable mismatch");
+                dragItem.draggable = true;
+                if (dragItem.draggable !== true) throw new Error("draggable true mismatch");
+                if (dragItem.getAttribute('draggable') !== 'true') throw new Error("draggable attribute mismatch");
+
+                // 3. DataTransfer & DragEvent
+                var dt = new DataTransfer();
+                if (dt.dropEffect !== 'none') throw new Error("dropEffect mismatch");
+                dt.setData('text/plain', 'Mango Drag and Drop');
+                if (dt.getData('text/plain') !== 'Mango Drag and Drop') throw new Error("getData mismatch");
+                if (!dt.types.includes('text/plain')) throw new Error("types mismatch");
+                if (dt.items.length !== 1) throw new Error("items.length mismatch");
+
+                var dragEv = new DragEvent('dragstart', { dataTransfer: dt, clientX: 100, clientY: 200 });
+                if (!(dragEv instanceof MouseEvent)) throw new Error("DragEvent not instanceof MouseEvent");
+                if (!(dragEv instanceof DragEvent)) throw new Error("DragEvent not instanceof DragEvent");
+                if (dragEv.clientX !== 100) throw new Error("DragEvent clientX mismatch");
+                if (!dragEv.dataTransfer || dragEv.dataTransfer.getData('text/plain') !== 'Mango Drag and Drop') {
+                    throw new Error("DragEvent dataTransfer mismatch");
+                }
+
+                // 4. HTMLMediaElement properties
+                var video = document.createElement('video');
+                if (typeof video.play !== 'function' || typeof video.pause !== 'function') {
+                    throw new Error("video play/pause methods missing");
+                }
+                video.currentTime = 25.5;
+                if (video.currentTime !== 25.5) throw new Error("video currentTime mismatch: " + video.currentTime);
+                video.volume = 0.75;
+                if (video.volume !== 0.75) throw new Error("video volume mismatch: " + video.volume);
+                video.muted = true;
+                if (video.muted !== true) throw new Error("video muted mismatch");
+                video.playbackRate = 2.0;
+                if (video.playbackRate !== 2.0) throw new Error("video playbackRate mismatch");
+
+                // 5. HTMLIFrameElement
+                var iframe = document.createElement('iframe');
+                iframe.src = 'https://example.com/test';
+                iframe.srcdoc = '<h1>Hello Mango</h1>';
+                iframe.sandbox.add('allow-scripts');
+                if (!iframe.sandbox.contains('allow-scripts')) throw new Error("iframe sandbox add mismatch");
+                if (!iframe.contentDocument || typeof iframe.contentDocument.createElement !== 'function') {
+                    throw new Error("iframe contentDocument mismatch");
+                }
+                if (!iframe.contentWindow || iframe.contentWindow.document !== iframe.contentDocument) {
+                    throw new Error("iframe contentWindow mismatch");
+                }
+
+                return "ok";
+            })()
+        "#;
+
+        let res = rt.eval(script).expect("eval test script");
+        assert_eq!(res, "ok", "Section 8.3 parity assertions failed");
+    }
+
+    #[test]
+    fn test_audio_context_and_offscreen_canvas() {
+        let html = "<!DOCTYPE html><html><body><canvas id='c' width='200' height='100'></canvas></body></html>";
+        let mut rt = JsRuntime::new(parse_html(html), 800.0, 600.0);
+
+        let script = r#"
+            (function() {
+                // 1. AudioContext
+                if (typeof AudioContext !== 'function') throw new Error("AudioContext missing");
+                var ctx = new AudioContext({ sampleRate: 48000 });
+                if (ctx.sampleRate !== 48000) throw new Error("AudioContext sampleRate mismatch: " + ctx.sampleRate);
+                if (ctx.state !== 'running') throw new Error("AudioContext initial state mismatch: " + ctx.state);
+
+                var osc = ctx.createOscillator();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(880, 0);
+                osc.start();
+                osc.stop();
+
+                var gain = ctx.createGain();
+                gain.gain.value = 0.5;
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+
+                var buf = ctx.createBuffer(2, 512, 48000);
+                if (buf.numberOfChannels !== 2 || buf.length !== 512) {
+                    throw new Error("AudioBuffer dimensions mismatch");
+                }
+                var ch0 = buf.getChannelData(0);
+                ch0[0] = 0.75;
+                if (ch0[0] !== 0.75) throw new Error("Channel data write failed");
+
+                // 2. OffscreenCanvas
+                if (typeof OffscreenCanvas !== 'function') throw new Error("OffscreenCanvas missing");
+                var off = new OffscreenCanvas(400, 300);
+                if (off.width !== 400 || off.height !== 300) throw new Error("OffscreenCanvas size mismatch");
+                var c2d = off.getContext('2d');
+                if (!c2d) throw new Error("OffscreenCanvas 2d context missing");
+                c2d.fillStyle = '#ff0000';
+                c2d.fillRect(0, 0, 100, 100);
+
+                var bmp = off.transferToImageBitmap();
+                if (bmp.width !== 400 || bmp.height !== 300) throw new Error("ImageBitmap size mismatch");
+
+                var canvasEl = document.getElementById('c');
+                var transferred = canvasEl.transferControlToOffscreen();
+                if (transferred.width !== 200 || transferred.height !== 100) {
+                    throw new Error("transferControlToOffscreen size mismatch");
+                }
+
+                return "ok";
+            })()
+        "#;
+
+        let res = rt.eval(script).expect("eval audio and offscreen canvas test");
+        assert_eq!(res, "ok");
+    }
 }
+

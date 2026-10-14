@@ -264,19 +264,19 @@ fn test_subgrid_track_resolution() {
         GridTrackSize::Subgrid,
         GridTrackSize::Length(Length::Px(150.0)),
     ];
-    container.style = Some(c_style);
+    container.style = Some(c_style.into());
 
     let mut item1 =
         mango_layout::box_tree::LayoutBox::new(mango_layout::box_model::BoxType::BlockNode, None);
     let mut i1_style = mango_css::ComputedStyle::default();
     i1_style.height = Length::Px(80.0);
-    item1.style = Some(i1_style);
+    item1.style = Some(i1_style.into());
 
     let mut item2 =
         mango_layout::box_tree::LayoutBox::new(mango_layout::box_model::BoxType::BlockNode, None);
     let mut i2_style = mango_css::ComputedStyle::default();
     i2_style.height = Length::Px(80.0);
-    item2.style = Some(i2_style);
+    item2.style = Some(i2_style.into());
 
     container.children.push(item1);
     container.children.push(item2);

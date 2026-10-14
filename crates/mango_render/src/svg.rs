@@ -16,17 +16,66 @@ use tiny_skia::{
 
 use crate::image_decode::DecodedImage;
 
+/// Bounded memory cache for rendered SVG pixmaps.
+struct BoundedSvgRenderStore<K: std::hash::Hash + Eq + Clone> {
+    entries: HashMap<K, DecodedImage>,
+    total_bytes: usize,
+    max_bytes: usize,
+}
+
+impl<K: std::hash::Hash + Eq + Clone> BoundedSvgRenderStore<K> {
+    fn new(max_bytes: usize) -> Self {
+        Self {
+            entries: HashMap::with_capacity(256),
+            total_bytes: 0,
+            max_bytes,
+        }
+    }
+
+    fn insert(&mut self, key: K, img: DecodedImage) {
+        let entry_bytes = img.pixels.len() * 4;
+        if entry_bytes > self.max_bytes {
+            return;
+        }
+
+        if let Some(old) = self.entries.remove(&key) {
+            self.total_bytes = self.total_bytes.saturating_sub(old.pixels.len() * 4);
+        }
+
+        while (self.total_bytes + entry_bytes > self.max_bytes || self.entries.len() >= 512)
+            && !self.entries.is_empty()
+        {
+            let Some(k) = self.entries.keys().next().cloned() else { break; };
+            if let Some(removed) = self.entries.remove(&k) {
+                self.total_bytes = self.total_bytes.saturating_sub(removed.pixels.len() * 4);
+            }
+        }
+
+        self.total_bytes += entry_bytes;
+        self.entries.insert(key, img);
+    }
+
+    fn get(&self, key: &K) -> Option<&DecodedImage> {
+        self.entries.get(key)
+    }
+
+    #[allow(dead_code)]
+    fn contains_key(&self, key: &K) -> bool {
+        self.entries.contains_key(key)
+    }
+}
+
 static SVG_DOC_CACHE: OnceLock<RwLock<HashMap<String, std::sync::Arc<SvgDocument>>>> =
     OnceLock::new();
-static SVG_RENDER_CACHE: OnceLock<RwLock<HashMap<(String, u32, u32, u32), DecodedImage>>> =
+static SVG_RENDER_CACHE: OnceLock<RwLock<BoundedSvgRenderStore<(String, u32, u32, u32)>>> =
     OnceLock::new();
 
 fn svg_doc_cache() -> &'static RwLock<HashMap<String, std::sync::Arc<SvgDocument>>> {
     SVG_DOC_CACHE.get_or_init(|| RwLock::new(HashMap::with_capacity(256)))
 }
 
-fn svg_render_cache() -> &'static RwLock<HashMap<(String, u32, u32, u32), DecodedImage>> {
-    SVG_RENDER_CACHE.get_or_init(|| RwLock::new(HashMap::with_capacity(256)))
+fn svg_render_cache() -> &'static RwLock<BoundedSvgRenderStore<(String, u32, u32, u32)>> {
+    SVG_RENDER_CACHE.get_or_init(|| RwLock::new(BoundedSvgRenderStore::new(16 * 1024 * 1024)))
 }
 
 /// Render an SVG XML string into a [`DecodedImage`] of `(target_w, target_h)` pixels.
@@ -140,12 +189,6 @@ pub fn render_svg(
 
     // Store in render cache
     if let Ok(mut cache) = svg_render_cache().write() {
-        if cache.len() >= 512 {
-            let keys_to_remove: Vec<_> = cache.keys().take(256).cloned().collect();
-            for k in keys_to_remove {
-                cache.remove(&k);
-            }
-        }
         cache.insert(cache_key, decoded.clone());
     }
 

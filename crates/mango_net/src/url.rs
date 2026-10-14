@@ -37,7 +37,8 @@ pub struct Url {
     pub scheme: String,
     /// Host in lowercase (e.g. "example.com", "127.0.0.1"), if applicable.
     pub host: Option<String>,
-    /// Explicit or default port number.
+    /// Explicit non-default port number. Default ports (80 for http/ws,
+    /// 443 for https/wss) are normalized to `None` for equality.
     pub port: Option<u16>,
     /// Path component (always starts with '/' for network URLs).
     pub path: String,
@@ -45,6 +46,30 @@ pub struct Url {
     pub query: Option<String>,
     /// Fragment identifier without the leading '#', if present.
     pub fragment: Option<String>,
+    /// Username from userinfo (`scheme://user:pass@host`), if present.
+    pub username: Option<String>,
+    /// Password from userinfo, if present.
+    pub password: Option<String>,
+}
+
+/// Returns true if `scheme` matches ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
+/// per RFC 3986 §3.1.
+pub fn is_valid_scheme(scheme: &str) -> bool {
+    let mut chars = scheme.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.')
+}
+
+/// Normalizes a port: default ports become `None` so equality ignores them.
+fn normalize_port(scheme: &str, port: Option<u16>) -> Option<u16> {
+    match (scheme, port) {
+        ("http" | "ws", Some(80)) => None,
+        ("https" | "wss", Some(443)) => None,
+        (_, p) => p,
+    }
 }
 
 impl Url {
@@ -58,76 +83,23 @@ impl Url {
             return Err(UrlError::EmptyUrl);
         }
 
-        // Custom browser schemes
-        if let Some(rest) = trimmed.strip_prefix("about:") {
-            return Ok(Url {
-                scheme: "about".to_string(),
-                host: None,
-                port: None,
-                path: rest.to_string(),
-                query: None,
-                fragment: None,
-            });
-        }
-        if let Some(rest) = trimmed.strip_prefix("test:") {
-            return Ok(Url {
-                scheme: "test".to_string(),
-                host: None,
-                port: None,
-                path: rest.to_string(),
-                query: None,
-                fragment: None,
-            });
-        }
-        if let Some(rest) = trimmed.strip_prefix("data:") {
-            return Ok(Url {
-                scheme: "data".to_string(),
-                host: None,
-                port: None,
-                path: rest.to_string(),
-                query: None,
-                fragment: None,
-            });
-        }
-        if let Some(rest) = trimmed.strip_prefix("javascript:") {
-            return Ok(Url {
-                scheme: "javascript".to_string(),
-                host: None,
-                port: None,
-                path: rest.to_string(),
-                query: None,
-                fragment: None,
-            });
-        }
-        if let Some(rest) = trimmed.strip_prefix("mailto:") {
-            return Ok(Url {
-                scheme: "mailto".to_string(),
-                host: None,
-                port: None,
-                path: rest.to_string(),
-                query: None,
-                fragment: None,
-            });
-        }
-        if let Some(rest) = trimmed.strip_prefix("blob:") {
-            return Ok(Url {
-                scheme: "blob".to_string(),
-                host: None,
-                port: None,
-                path: rest.to_string(),
-                query: None,
-                fragment: None,
-            });
-        }
-        if let Some(rest) = trimmed.strip_prefix("tel:") {
-            return Ok(Url {
-                scheme: "tel".to_string(),
-                host: None,
-                port: None,
-                path: rest.to_string(),
-                query: None,
-                fragment: None,
-            });
+        // Custom browser schemes (case-insensitive per RFC 3986 §3.1)
+        let lower_prefix = trimmed.to_ascii_lowercase();
+        for scheme_name in ["about:", "test:", "data:", "javascript:", "mailto:", "blob:", "tel:"] {
+            if lower_prefix.starts_with(scheme_name) {
+                let rest = trimmed[scheme_name.len()..].to_string();
+                let scheme = scheme_name.trim_end_matches(':').to_string();
+                return Ok(Url {
+                    scheme,
+                    host: None,
+                    port: None,
+                    path: rest,
+                    query: None,
+                    fragment: None,
+                    username: None,
+                    password: None,
+                });
+            }
         }
 
         // Auto-normalize bare domains or protocol-less inputs
@@ -149,7 +121,11 @@ impl Url {
 
         // Extract scheme
         let scheme_end = normalized.find("://").ok_or(UrlError::InvalidScheme)?;
-        let scheme = normalized[..scheme_end].to_ascii_lowercase();
+        let raw_scheme = &normalized[..scheme_end];
+        if !is_valid_scheme(raw_scheme) {
+            return Err(UrlError::InvalidScheme);
+        }
+        let scheme = raw_scheme.to_ascii_lowercase();
         let after_scheme = &normalized[scheme_end + 3..];
 
         // Split authority from path / query / fragment
@@ -158,20 +134,33 @@ impl Url {
             None => (after_scheme, "/"),
         };
 
-        // Parse authority: [userinfo@]host[:port]
-        let host_port_part = match authority.find('@') {
-            Some(idx) => &authority[idx + 1..],
-            None => authority,
+        // Parse authority: [userinfo@]host[:port] — preserve userinfo, never strip silently.
+        let (userinfo, host_port_part) = match authority.rfind('@') {
+            Some(idx) => (Some(&authority[..idx]), &authority[idx + 1..]),
+            None => (None, authority),
+        };
+        let (username, password) = match userinfo {
+            Some(info) => {
+                if info.is_empty() {
+                    return Err(UrlError::Malformed("Empty userinfo in authority".to_string()));
+                }
+                match info.split_once(':') {
+                    Some((u, p)) => (Some(u.to_string()), Some(p.to_string())),
+                    None => (Some(info.to_string()), None),
+                }
+            }
+            None => (None, None),
         };
 
-        let (host, port) = if host_port_part.starts_with('[') {
+        let (host, raw_port) = if host_port_part.starts_with('[') {
             if let Some(bracket_end) = host_port_part.find(']') {
                 let ipv6_host = &host_port_part[..=bracket_end];
                 let remainder = &host_port_part[bracket_end + 1..];
                 if remainder.is_empty() {
                     let default_port = match scheme.as_str() {
-                        "http" => Some(80),
-                        "https" => Some(443),
+                        "http" | "ws" => Some(80),
+                        "https" | "wss" => Some(443),
+                        "ftp" => Some(21),
                         _ => None,
                     };
                     (ipv6_host.to_ascii_lowercase(), default_port)
@@ -194,14 +183,19 @@ impl Url {
         } else if let Some(colon_idx) = host_port_part.rfind(':') {
             let h = &host_port_part[..colon_idx];
             let p_str = &host_port_part[colon_idx + 1..];
+            // Empty port (trailing colon) is malformed.
+            if p_str.is_empty() {
+                return Err(UrlError::InvalidPort("".to_string()));
+            }
             let p = p_str
                 .parse::<u16>()
                 .map_err(|_| UrlError::InvalidPort(p_str.to_string()))?;
             (h.to_ascii_lowercase(), Some(p))
         } else {
             let default_port = match scheme.as_str() {
-                "http" => Some(80),
-                "https" => Some(443),
+                "http" | "ws" => Some(80),
+                "https" | "wss" => Some(443),
+                "ftp" => Some(21),
                 _ => None,
             };
             (host_port_part.to_ascii_lowercase(), default_port)
@@ -210,6 +204,8 @@ impl Url {
         if host.is_empty() {
             return Err(UrlError::MissingHost);
         }
+        // Normalize default ports to None so `https://host/` == `https://host:443/`.
+        let port = normalize_port(&scheme, raw_port);
 
         // Parse path, query, fragment
         let (path_and_query, fragment) = match rest.find('#') {
@@ -238,6 +234,8 @@ impl Url {
             path: final_path,
             query,
             fragment,
+            username,
+            password,
         })
     }
 
@@ -318,23 +316,17 @@ impl Url {
             path: new_path,
             query,
             fragment,
+            username: self.username.clone(),
+            password: self.password.clone(),
         })
     }
 
     /// Returns the origin string formatted as `scheme://host[:port]`.
+    /// Userinfo is excluded per RFC 6454; default ports are omitted.
     pub fn origin(&self) -> String {
         match (&self.host, self.port) {
             (Some(host), Some(port)) => {
-                let default_port = match self.scheme.as_str() {
-                    "http" => 80,
-                    "https" => 443,
-                    _ => 0,
-                };
-                if port == default_port {
-                    format!("{}://{}", self.scheme, host)
-                } else {
-                    format!("{}://{}:{}", self.scheme, host, port)
-                }
+                format!("{}://{}:{}", self.scheme, host, port)
             }
             (Some(host), None) => format!("{}://{}", self.scheme, host),
             (None, _) => format!("{}:", self.scheme),
@@ -342,10 +334,25 @@ impl Url {
     }
 
     /// Reconstitutes the canonical string representation of the URL.
+    /// Includes userinfo when present.
     pub fn as_str(&self) -> String {
         let mut out = String::new();
-        if self.host.is_some() {
-            out.push_str(&self.origin());
+        if let Some(host) = self.host.as_deref() {
+            out.push_str(&self.scheme);
+            out.push_str("://");
+            if let Some(user) = self.username.as_deref() {
+                out.push_str(user);
+                if let Some(pass) = self.password.as_deref() {
+                    out.push(':');
+                    out.push_str(pass);
+                }
+                out.push('@');
+            }
+            out.push_str(host);
+            if let Some(port) = self.port {
+                out.push(':');
+                out.push_str(&port.to_string());
+            }
             out.push_str(&self.path);
         } else {
             out.push_str(&self.scheme);
@@ -372,8 +379,9 @@ impl Url {
     /// Returns the effective port (e.g. 80 for http, 443 for https).
     pub fn effective_port(&self) -> u16 {
         self.port.unwrap_or(match self.scheme.as_str() {
-            "http" => 80,
-            "https" => 443,
+            "http" | "ws" => 80,
+            "https" | "wss" => 443,
+            "ftp" => 21,
             _ => 80,
         })
     }
@@ -424,7 +432,9 @@ mod tests {
         let url = Url::parse("https://example.com/blog/article?id=123#comments").unwrap();
         assert_eq!(url.scheme, "https");
         assert_eq!(url.host.as_deref(), Some("example.com"));
-        assert_eq!(url.port, Some(443));
+        // Default ports normalize to None for equality.
+        assert_eq!(url.port, None);
+        assert_eq!(url.effective_port(), 443);
         assert_eq!(url.path, "/blog/article");
         assert_eq!(url.query.as_deref(), Some("id=123"));
         assert_eq!(url.fragment.as_deref(), Some("comments"));
@@ -432,6 +442,9 @@ mod tests {
             url.as_str(),
             "https://example.com/blog/article?id=123#comments"
         );
+        // Explicit default port equals implicit.
+        let explicit = Url::parse("https://example.com:443/blog/article?id=123#comments").unwrap();
+        assert_eq!(url, explicit);
     }
 
     #[test]
@@ -509,7 +522,8 @@ mod tests {
         let url1 = Url::parse("http://[::1]/index.html").unwrap();
         assert_eq!(url1.scheme, "http");
         assert_eq!(url1.host.as_deref(), Some("[::1]"));
-        assert_eq!(url1.port, Some(80));
+        assert_eq!(url1.port, None);
+        assert_eq!(url1.effective_port(), 80);
         assert_eq!(url1.path, "/index.html");
 
         let url2 = Url::parse("http://[::1]:8080/api").unwrap();
@@ -522,5 +536,47 @@ mod tests {
         assert_eq!(url3.scheme, "http");
         assert_eq!(url3.host.as_deref(), Some("[::1]"));
         assert_eq!(url3.port, Some(3000));
+    }
+
+    #[test]
+    fn test_scheme_case_insensitive_and_validation() {
+        let upper = Url::parse("HTTP://Example.COM/Path").unwrap();
+        assert_eq!(upper.scheme, "http");
+        assert_eq!(upper.host.as_deref(), Some("example.com"));
+        let data_upper = Url::parse("DATA:text/plain,hi").unwrap();
+        assert_eq!(data_upper.scheme, "data");
+        assert!(Url::parse("1http://example.com/").is_err());
+        assert!(Url::parse("ht tp://example.com/").is_err());
+        assert!(is_valid_scheme("https"));
+        assert!(is_valid_scheme("a+b-c.d"));
+        assert!(!is_valid_scheme("1abc"));
+        assert!(!is_valid_scheme(""));
+    }
+
+    #[test]
+    fn test_userinfo_preserved() {
+        let u = Url::parse("https://user:pass@example.com/path").unwrap();
+        assert_eq!(u.username.as_deref(), Some("user"));
+        assert_eq!(u.password.as_deref(), Some("pass"));
+        assert_eq!(u.host.as_deref(), Some("example.com"));
+        assert!(u.as_str().contains("user:pass@"));
+        // Origin must exclude credentials.
+        assert_eq!(u.origin(), "https://example.com");
+        let u2 = Url::parse("https://bob@example.com/").unwrap();
+        assert_eq!(u2.username.as_deref(), Some("bob"));
+        assert_eq!(u2.password, None);
+    }
+
+    #[test]
+    fn test_default_port_normalization() {
+        let a = Url::parse("https://example.com/").unwrap();
+        let b = Url::parse("https://example.com:443/").unwrap();
+        assert_eq!(a, b);
+        assert_eq!(a.port, None);
+        let c = Url::parse("http://example.com/").unwrap();
+        let d = Url::parse("http://example.com:80/").unwrap();
+        assert_eq!(c, d);
+        let e = Url::parse("https://example.com:8443/").unwrap();
+        assert_ne!(a, e);
     }
 }

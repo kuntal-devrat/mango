@@ -106,19 +106,23 @@ class DevTools:
         )
 
         deadline = time.time() + 30
-        ws_url = ""
+        target_ws = ""
         while time.time() < deadline:
-            assert self.proc.stderr is not None
-            line = self.proc.stderr.readline()
-            if not line:
-                break
-            if "DevTools listening on" in line:
-                ws_url = line.split("DevTools listening on", 1)[1].strip()
-                break
-        if not ws_url:
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=2) as resp:
+                    targets = json.load(resp)
+                for target in targets:
+                    if target.get("type") == "page" and target.get("webSocketDebuggerUrl"):
+                        target_ws = target["webSocketDebuggerUrl"]
+                        break
+                if target_ws:
+                    break
+            except OSError:
+                pass
+            time.sleep(0.2)
+        if not target_ws:
             sys.exit("error: Chromium did not expose a DevTools endpoint")
 
-        target_ws = self._page_target(port, ws_url)
         import websockets
 
         self.ws = await websockets.connect(target_ws, max_size=None)
@@ -126,21 +130,6 @@ class DevTools:
         await self.send("Page.enable")
         await self.send("Runtime.enable")
         return self
-
-    def _page_target(self, port: int, browser_ws: str) -> str:
-        """Returns the WebSocket URL of the initial about:blank page target."""
-        deadline = time.time() + 20
-        while time.time() < deadline:
-            try:
-                with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=2) as resp:
-                    targets = json.load(resp)
-                for target in targets:
-                    if target.get("type") == "page" and target.get("webSocketDebuggerUrl"):
-                        return target["webSocketDebuggerUrl"]
-            except OSError:
-                pass
-            time.sleep(0.2)
-        sys.exit("error: no page target exposed by Chromium")
 
     async def send(self, method: str, params: dict | None = None) -> dict:
         assert self.ws is not None
@@ -196,6 +185,7 @@ async def capture_chrome(
     scroll: int,
     script: bool,
     eval_expression: str | None = None,
+    full_page: bool = False,
 ) -> None:
     profile = out.parent / ".chrome-profile"
     async with DevTools(chrome, profile) as dt:
@@ -238,7 +228,21 @@ async def capture_chrome(
             value = result.get("result", {}).get("value")
             print("eval:", json.dumps(value, ensure_ascii=False)[:4000])
 
-        shot = await dt.send("Page.captureScreenshot", {"format": "png", "fromSurface": True})
+        if full_page:
+            metrics = await dt.send("Page.getLayoutMetrics")
+            css_size = metrics.get("cssContentSize") or metrics.get("contentSize") or {}
+            total_h = int(css_size.get("height", height))
+            shot = await dt.send(
+                "Page.captureScreenshot",
+                {
+                    "format": "png",
+                    "fromSurface": True,
+                    "captureBeyondViewport": True,
+                    "clip": {"x": 0, "y": 0, "width": width, "height": total_h, "scale": 1},
+                },
+            )
+        else:
+            shot = await dt.send("Page.captureScreenshot", {"format": "png", "fromSurface": True})
         out.write_bytes(base64.b64decode(shot["data"]))
 
 
@@ -251,10 +255,9 @@ def resolve_mango(binary: str) -> str:
     return str(path.resolve())
 
 
-def capture_mango(url: str, out: Path, width: int, height: int, scroll: int, binary: str) -> None:
-    # `--page` renders the page viewport alone (no tab strip/omnibox), which is what
-    # a Chromium screenshot captures, so the two images are directly comparable.
-    cmd = [resolve_mango(binary), url, str(out.resolve()), str(width), str(height), str(scroll), "--page"]
+def capture_mango(url: str, out: Path, width: int, height: int, scroll: int, binary: str, full_page: bool = False) -> None:
+    flags = ["--full-page"] if full_page else ["--page"]
+    cmd = [resolve_mango(binary), url, str(out.resolve()), str(width), str(height), str(scroll)] + flags
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
     if result.returncode != 0:
         print(result.stdout[-2000:])
@@ -287,9 +290,10 @@ def main() -> None:
     parser.add_argument("--width", type=int, default=1280)
     parser.add_argument("--height", type=int, default=900)
     parser.add_argument("--scroll", type=int, default=0)
+    parser.add_argument("--full-page", action="store_true", help="render full tall page without viewport clipping")
     parser.add_argument("--out", default=".freebuff/out")
     parser.add_argument("--grid", type=int, default=8)
-    parser.add_argument("--mango", default="target/debug/headless.exe")
+    parser.add_argument("--mango", default="target/debug/headless" if os.name != "nt" else "target/debug/headless.exe")
     parser.add_argument("--skip-chrome", action="store_true", help="reuse an existing reference PNG")
     parser.add_argument("--skip-mango", action="store_true", help="reuse an existing Mango PNG")
     parser.add_argument(
@@ -302,8 +306,12 @@ def main() -> None:
 
     out_dir = Path(args.out).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
+    import hashlib
     slug = urllib.parse.urlparse(args.url).netloc + urllib.parse.urlparse(args.url).path
-    slug = slug.strip("/").replace("/", "_").replace(":", "_") or "page"
+    slug = slug.strip("/").replace("/", "_").replace(":", "_").replace("<", "_").replace(">", "_").replace('"', "_") or "page"
+    if len(slug) > 64:
+        h = hashlib.sha256(args.url.encode()).hexdigest()[:8]
+        slug = f"{slug[:50]}_{h}"
 
     chrome_png = out_dir / f"{slug}.chrome.png"
     mango_png = out_dir / f"{slug}.mango.png"
@@ -322,26 +330,36 @@ def main() -> None:
                 args.scroll,
                 args.js,
                 args.eval_expression,
+                args.full_page,
             )
         )
     elif args.eval_expression:
         sys.exit("error: --eval needs a Chromium run (drop --skip-chrome)")
     if not args.skip_mango:
-        capture_mango(args.url, mango_png, args.width, args.height, args.scroll, args.mango)
+        capture_mango(args.url, mango_png, args.width, args.height, args.scroll, args.mango, args.full_page)
 
     reference = Image.open(chrome_png).convert("RGB")
     candidate = Image.open(mango_png).convert("RGB")
-    if reference.size != candidate.size:
-        candidate = candidate.resize(reference.size)
+    print(f"Chrome image size: {reference.size}, Mango image size: {candidate.size}")
 
-    diff = ImageChops.difference(reference, candidate)
+    target_width = min(reference.width, candidate.width)
+    target_height = min(reference.height, candidate.height)
+    if reference.size != candidate.size:
+        print(f"Height difference: {abs(reference.height - candidate.height)}px")
+        ref_cmp = reference.crop((0, 0, target_width, target_height))
+        cand_cmp = candidate.crop((0, 0, target_width, target_height))
+    else:
+        ref_cmp = reference
+        cand_cmp = candidate
+
+    diff = ImageChops.difference(ref_cmp, cand_cmp)
     pixels = list(diff.getdata())
     total = len(pixels)
     differing = sum(1 for p in pixels if max(p) > 32)
     mae = sum(sum(p) for p in pixels) / (total * 3)
 
     diff.save(diff_png)
-    print(f"size            : {reference.size[0]}x{reference.size[1]}")
+    print(f"size            : {ref_cmp.size[0]}x{ref_cmp.size[1]} (common area)")
     print(f"mean abs error  : {mae:.2f} / 255")
     print(f"pixels > 32 off : {differing / total * 100:.1f}%")
     print(f"worst regions   : (row, col, mean diff) with {args.grid}x{args.grid} grid")

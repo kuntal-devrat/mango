@@ -24,6 +24,130 @@ struct PlacedItem {
     row_span: usize,
 }
 
+/// Formats a single grid item within its assigned cell span width.
+fn format_grid_item(
+    child: &mut LayoutBox,
+    span_w: f32,
+    container_height: f32,
+) -> f32 {
+    use mango_core::EdgeSizes;
+    let child_style = child.style.clone().unwrap_or_default();
+    let c_fs = child_style.font_size;
+
+    // Child padding, border, margins
+    let p_top = child_style
+        .padding_top
+        .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+    let p_right = child_style
+        .padding_right
+        .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+    let p_bottom = child_style
+        .padding_bottom
+        .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+    let p_left = child_style
+        .padding_left
+        .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+
+    let b_top = child_style.border_top_width;
+    let b_right = child_style.border_right_width;
+    let b_bottom = child_style.border_bottom_width;
+    let b_left = child_style.border_left_width;
+
+    let m_top = child_style
+        .margin_top
+        .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+    let m_right = child_style
+        .margin_right
+        .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+    let m_bottom = child_style
+        .margin_bottom
+        .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+    let m_left = child_style
+        .margin_left
+        .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+
+    child.dimensions.padding = EdgeSizes::new(p_top, p_right, p_bottom, p_left);
+    child.dimensions.border = EdgeSizes::new(b_top, b_right, b_bottom, b_left);
+    child.dimensions.margin = EdgeSizes::new(m_top, m_right, m_bottom, m_left);
+
+    let non_content_w = p_left + p_right + b_left + b_right + m_left + m_right;
+    let item_content_w = if child_style.width != Length::Auto {
+        let explicit = child_style
+            .width
+            .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+        if child_style.box_sizing == BoxSizing::BorderBox {
+            (explicit - p_left - p_right - b_left - b_right).max(0.0)
+        } else {
+            explicit
+        }
+    } else {
+        (span_w - non_content_w).max(0.0)
+    };
+    let min_w = child_style
+        .min_width
+        .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+    let max_w = if child_style.max_width != Length::Auto {
+        child_style
+            .max_width
+            .to_px_with_viewport(c_fs, 16.0, span_w, container_height)
+    } else {
+        f32::INFINITY
+    };
+    let item_content_w = item_content_w.max(min_w).min(max_w);
+    child.dimensions.content.size.width = item_content_w;
+    child.is_independent_formatting_context = true;
+
+    // Recursive layout for item contents
+    let item_cb = Dimensions::new(Rect::new(0.0, 0.0, item_content_w, 0.0));
+    let child_display = child.style.as_ref().map(|s| s.display);
+    let mut item_float_ctx = FloatContext::new();
+    if child_display == Some(Display::Grid) || child_display == Some(Display::InlineGrid) {
+        layout_grid(child, &item_cb, &mut item_float_ctx);
+    } else if child_display == Some(Display::Flex) {
+        crate::flex_flow::layout_flex(child, &item_cb, &mut item_float_ctx);
+    } else if child.is_block() {
+        layout_block_contents(child, &item_cb, &mut item_float_ctx);
+    } else if child.is_inline() {
+        crate::inline_flow::layout_inline_children(child, &mut item_float_ctx);
+    }
+
+    // Resolve height if specified or measured
+    if child_style.height != Length::Auto {
+        let raw_h = child_style.height.to_px_with_viewport(
+            c_fs,
+            16.0,
+            container_height,
+            container_height,
+        );
+        let content_h = if child_style.box_sizing == BoxSizing::BorderBox {
+            (raw_h - p_top - p_bottom - b_top - b_bottom).max(0.0)
+        } else {
+            raw_h
+        };
+        let min_h = child_style.min_height.to_px_with_viewport(
+            c_fs,
+            16.0,
+            container_height,
+            container_height,
+        );
+        let max_h = if child_style.max_height != Length::Auto {
+            child_style.max_height.to_px_with_viewport(
+                c_fs,
+                16.0,
+                container_height,
+                container_height,
+            )
+        } else {
+            f32::INFINITY
+        };
+        let content_h = content_h.max(min_h).min(max_h);
+        child.dimensions.content.size.height = content_h;
+        child.dimensions.margin_box().height()
+    } else {
+        child.dimensions.margin_box().height()
+    }
+}
+
 /// Executes CSS Grid layout on a grid container box.
 pub fn layout_grid(
     container: &mut LayoutBox,
@@ -765,139 +889,44 @@ pub fn layout_grid(
         }
     }
 
-    // Lay out each item into its cell and update row heights
-    for item in &placed_items {
-        let child = &mut container.children[item.child_idx];
-        let child_style = child.style.clone().unwrap_or_default();
-        let c_fs = child_style.font_size;
+    // Compute span widths for each placed item
+    let item_spans: Vec<(usize, f32)> = placed_items
+        .iter()
+        .map(|item| {
+            let span_w = (item.col_start..item.col_start + item.col_span)
+                .map(|c| col_widths.get(c).copied().unwrap_or(0.0))
+                .sum::<f32>()
+                + (item.col_span.saturating_sub(1) as f32) * col_gap;
+            (item.child_idx, span_w)
+        })
+        .collect();
 
-        // Compute available span width for item
-        let span_w = (item.col_start..item.col_start + item.col_span)
-            .map(|c| col_widths.get(c).copied().unwrap_or(0.0))
-            .sum::<f32>()
-            + (item.col_span.saturating_sub(1) as f32) * col_gap;
+    let item_spans_map: std::collections::HashMap<usize, f32> = item_spans.into_iter().collect();
 
-        // Child padding, border, margins
-        let p_top =
-            child_style
-                .padding_top
-                .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
-        let p_right =
-            child_style
-                .padding_right
-                .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
-        let p_bottom =
-            child_style
-                .padding_bottom
-                .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
-        let p_left =
-            child_style
-                .padding_left
-                .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
-
-        let b_top = child_style.border_top_width;
-        let b_right = child_style.border_right_width;
-        let b_bottom = child_style.border_bottom_width;
-        let b_left = child_style.border_left_width;
-
-        let m_top =
-            child_style
-                .margin_top
-                .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
-        let m_right =
-            child_style
-                .margin_right
-                .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
-        let m_bottom =
-            child_style
-                .margin_bottom
-                .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
-        let m_left =
-            child_style
-                .margin_left
-                .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
-
-        child.dimensions.padding = EdgeSizes::new(p_top, p_right, p_bottom, p_left);
-        child.dimensions.border = EdgeSizes::new(b_top, b_right, b_bottom, b_left);
-        child.dimensions.margin = EdgeSizes::new(m_top, m_right, m_bottom, m_left);
-
-        let non_content_w = p_left + p_right + b_left + b_right + m_left + m_right;
-        let item_content_w = if child_style.width != Length::Auto {
-            let explicit =
-                child_style
-                    .width
-                    .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
-            if child_style.box_sizing == BoxSizing::BorderBox {
-                (explicit - p_left - p_right - b_left - b_right).max(0.0)
-            } else {
-                explicit
+    // Parallel formatting pass for independent grid cells using Rayon
+    if placed_items.len() >= 2 {
+        use rayon::prelude::*;
+        container
+            .children
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(idx, child)| {
+                if let Some(&span_w) = item_spans_map.get(&idx) {
+                    format_grid_item(child, span_w, container_height);
+                }
+            });
+    } else {
+        for (idx, span_w) in &item_spans_map {
+            if let Some(child) = container.children.get_mut(*idx) {
+                format_grid_item(child, *span_w, container_height);
             }
-        } else {
-            (span_w - non_content_w).max(0.0)
-        };
-        let min_w = child_style
-            .min_width
-            .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
-        let max_w = if child_style.max_width != Length::Auto {
-            child_style
-                .max_width
-                .to_px_with_viewport(c_fs, 16.0, span_w, container_height)
-        } else {
-            f32::INFINITY
-        };
-        let item_content_w = item_content_w.max(min_w).min(max_w);
-        child.dimensions.content.size.width = item_content_w;
-
-        // Recursive layout for item contents
-        let item_cb = Dimensions::new(Rect::new(0.0, 0.0, item_content_w, 0.0));
-        let child_display = child.style.as_ref().map(|s| s.display);
-        let mut item_float_ctx = FloatContext::new();
-        if child_display == Some(Display::Grid) || child_display == Some(Display::InlineGrid) {
-            layout_grid(child, &item_cb, &mut item_float_ctx);
-        } else if child_display == Some(Display::Flex) {
-            crate::flex_flow::layout_flex(child, &item_cb, &mut item_float_ctx);
-        } else if child.is_block() {
-            layout_block_contents(child, &item_cb, &mut item_float_ctx);
-        } else if child.is_inline() {
-            crate::inline_flow::layout_inline_children(child, &mut item_float_ctx);
         }
+    }
 
-        // Resolve height if specified or measured
-        let item_outer_h = if child_style.height != Length::Auto {
-            let raw_h = child_style.height.to_px_with_viewport(
-                c_fs,
-                16.0,
-                container_height,
-                container_height,
-            );
-            let content_h = if child_style.box_sizing == BoxSizing::BorderBox {
-                (raw_h - p_top - p_bottom - b_top - b_bottom).max(0.0)
-            } else {
-                raw_h
-            };
-            let min_h = child_style.min_height.to_px_with_viewport(
-                c_fs,
-                16.0,
-                container_height,
-                container_height,
-            );
-            let max_h = if child_style.max_height != Length::Auto {
-                child_style.max_height.to_px_with_viewport(
-                    c_fs,
-                    16.0,
-                    container_height,
-                    container_height,
-                )
-            } else {
-                f32::INFINITY
-            };
-            let content_h = content_h.max(min_h).min(max_h);
-            child.dimensions.content.size.height = content_h;
-            child.dimensions.margin_box().height()
-        } else {
-            child.dimensions.margin_box().height()
-        };
-
+    // Update single-row heights from formatted items
+    for item in &placed_items {
+        let child = &container.children[item.child_idx];
+        let item_outer_h = child.dimensions.margin_box().height();
         if item.row_span == 1 && item.row_start < num_rows {
             row_heights[item.row_start] = row_heights[item.row_start].max(item_outer_h);
         }
@@ -1486,19 +1515,19 @@ mod tests {
             GridTrackSize::Length(Length::Px(200.0)),
             GridTrackSize::Fr(1.0),
         ];
-        container.style = Some(c_style);
+        container.style = Some(c_style.into());
 
         // Child 1: Sidebar (height: 300px)
         let mut sidebar = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
         let mut s_style = ComputedStyle::default();
         s_style.height = Length::Px(300.0);
-        sidebar.style = Some(s_style);
+        sidebar.style = Some(s_style.into());
 
         // Child 2: Main article content (height: 500px)
         let mut main_content = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
         let mut m_style = ComputedStyle::default();
         m_style.height = Length::Px(500.0);
-        main_content.style = Some(m_style);
+        main_content.style = Some(m_style.into());
 
         container.children.push(sidebar);
         container.children.push(main_content);
@@ -1537,7 +1566,7 @@ mod tests {
         c_style.width = Length::Px(400.0);
         c_style.row_gap = Length::Px(10.0);
         c_style.grid_template_columns = vec![GridTrackSize::Fr(1.0), GridTrackSize::Fr(1.0)];
-        container.style = Some(c_style);
+        container.style = Some(c_style.into());
 
         // Item 1: Full-width Header spanning both columns (grid-column: 1 / 3)
         let mut header = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
@@ -1545,19 +1574,19 @@ mod tests {
         h_style.height = Length::Px(60.0);
         h_style.grid_column_start = GridPlacement::Line(1);
         h_style.grid_column_end = GridPlacement::Line(3);
-        header.style = Some(h_style);
+        header.style = Some(h_style.into());
 
         // Item 2: Col 0 on Row 1
         let mut item2 = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
         let mut i2_style = ComputedStyle::default();
         i2_style.height = Length::Px(100.0);
-        item2.style = Some(i2_style);
+        item2.style = Some(i2_style.into());
 
         // Item 3: Col 1 on Row 1
         let mut item3 = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
         let mut i3_style = ComputedStyle::default();
         i3_style.height = Length::Px(120.0);
-        item3.style = Some(i3_style);
+        item3.style = Some(i3_style.into());
 
         container.children.push(header);
         container.children.push(item2);
@@ -1607,7 +1636,7 @@ mod tests {
             vec!["titlebar".to_string(), "columnend".to_string()],
             vec!["content".to_string(), "columnend".to_string()],
         ];
-        container.style = Some(c_style);
+        container.style = Some(c_style.into());
 
         // Sidebar placed in columnend
         let mut sidebar = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
@@ -1615,7 +1644,7 @@ mod tests {
         s_style.grid_column_start = GridPlacement::Area("columnend".to_string());
         s_style.grid_row_start = GridPlacement::Area("columnend".to_string());
         s_style.height = Length::Px(300.0);
-        sidebar.style = Some(s_style);
+        sidebar.style = Some(s_style.into());
 
         // Titlebar placed in titlebar
         let mut titlebar = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
@@ -1623,7 +1652,7 @@ mod tests {
         t_style.grid_column_start = GridPlacement::Area("titlebar".to_string());
         t_style.grid_row_start = GridPlacement::Area("titlebar".to_string());
         t_style.height = Length::Px(50.0);
-        titlebar.style = Some(t_style);
+        titlebar.style = Some(t_style.into());
 
         // Main content placed in content
         let mut content = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
@@ -1631,7 +1660,7 @@ mod tests {
         m_style.grid_column_start = GridPlacement::Area("content".to_string());
         m_style.grid_row_start = GridPlacement::Area("content".to_string());
         m_style.height = Length::Px(400.0);
-        content.style = Some(m_style);
+        content.style = Some(m_style.into());
 
         // Note: added in non-DOM order to verify areas place them correctly!
         container.children.push(sidebar);
@@ -1687,18 +1716,18 @@ mod tests {
             ),
             GridTrackSize::MinContent,
         ];
-        container.style = Some(c_style);
+        container.style = Some(c_style.into());
 
         let mut article = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
         let mut a_style = ComputedStyle::default();
         a_style.height = Length::Px(500.0);
-        article.style = Some(a_style);
+        article.style = Some(a_style.into());
 
         let mut appearance = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
         let mut app_style = ComputedStyle::default();
         app_style.width = Length::Px(196.0);
         app_style.height = Length::Px(300.0);
-        appearance.style = Some(app_style);
+        appearance.style = Some(app_style.into());
 
         container.children.push(article);
         container.children.push(appearance);
@@ -1730,10 +1759,10 @@ mod tests {
         c_style.grid_template_columns = vec![GridTrackSize::RepeatAutoFill(Box::new(
             GridTrackSize::Fr(1.0),
         ))];
-        container.style = Some(c_style);
+        container.style = Some(c_style.into());
 
         let mut item = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
-        item.style = Some(ComputedStyle::default());
+        item.style = Some(ComputedStyle::default().into());
         container.children.push(item);
 
         let mut containing_block = Dimensions::default();
@@ -1755,25 +1784,25 @@ mod tests {
             GridTrackSize::Length(Length::Px(100.0)),
             GridTrackSize::Length(Length::Px(100.0)),
         ];
-        container.style = Some(c_style);
+        container.style = Some(c_style.into());
 
         // Child 0: order: 2 (should be placed in track 2)
         let mut child0 = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
         let mut s0 = ComputedStyle::default();
         s0.order = 2;
-        child0.style = Some(s0);
+        child0.style = Some(s0.into());
 
         // Child 1: order: -1 (should be placed in track 0)
         let mut child1 = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
         let mut s1 = ComputedStyle::default();
         s1.order = -1;
-        child1.style = Some(s1);
+        child1.style = Some(s1.into());
 
         // Child 2: order: 0 (should be placed in track 1)
         let mut child2 = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
         let mut s2 = ComputedStyle::default();
         s2.order = 0;
-        child2.style = Some(s2);
+        child2.style = Some(s2.into());
 
         container.children.push(child0);
         container.children.push(child1);
@@ -1800,7 +1829,7 @@ mod tests {
         c_style.display = Display::Grid;
         c_style.width = Length::Px(400.0);
         c_style.grid_template_columns = vec![GridTrackSize::Length(Length::Px(50.0))];
-        container.style = Some(c_style);
+        container.style = Some(c_style.into());
 
         // Place an item at line 4 (grid-column: 4 / 5 -> track index 3)
         let mut item = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
@@ -1808,7 +1837,7 @@ mod tests {
         i_style.grid_column_start = GridPlacement::Line(4);
         i_style.grid_column_end = GridPlacement::Line(5);
         i_style.width = Length::Px(60.0);
-        item.style = Some(i_style);
+        item.style = Some(i_style.into());
         container.children.push(item);
 
         let mut containing_block = Dimensions::default();
@@ -1835,21 +1864,21 @@ mod tests {
             GridTrackSize::Length(Length::Px(100.0)),
             GridTrackSize::Length(Length::Px(100.0)),
         ];
-        container.style = Some(c_style);
+        container.style = Some(c_style.into());
 
         // Item 1: grid-column: span 2 / 4 (ends at line 4, track index 3, starts at track 3 - 2 = 1)
         let mut item1 = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
         let mut s1 = ComputedStyle::default();
         s1.grid_column_start = GridPlacement::Span(2);
         s1.grid_column_end = GridPlacement::Line(4);
-        item1.style = Some(s1);
+        item1.style = Some(s1.into());
 
         // Item 2: grid-column: 4 / 2 (swapped to start at line 2 = track 1, span 2)
         let mut item2 = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
         let mut s2 = ComputedStyle::default();
         s2.grid_column_start = GridPlacement::Line(4);
         s2.grid_column_end = GridPlacement::Line(2);
-        item2.style = Some(s2);
+        item2.style = Some(s2.into());
 
         container.children.push(item1);
         container.children.push(item2);
@@ -1886,10 +1915,10 @@ mod tests {
             GridTrackSize::Length(Length::Px(100.0)),
             GridTrackSize::Length(Length::Px(100.0)),
         ];
-        container.style = Some(c_style);
+        container.style = Some(c_style.into());
 
         let mut item = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
-        item.style = Some(ComputedStyle::default());
+        item.style = Some(ComputedStyle::default().into());
         container.children.push(item);
 
         let mut containing_block = Dimensions::default();
@@ -1916,7 +1945,7 @@ mod tests {
         c_style.height = Length::Px(300.0);
         c_style.grid_template_columns = vec![GridTrackSize::Length(Length::Px(400.0))];
         c_style.grid_template_rows = vec![GridTrackSize::Length(Length::Px(300.0))];
-        container.style = Some(c_style);
+        container.style = Some(c_style.into());
 
         let mut item = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
         let mut i_style = ComputedStyle::default();
@@ -1926,7 +1955,7 @@ mod tests {
         i_style.margin_right = Length::Auto;
         i_style.margin_top = Length::Auto;
         i_style.margin_bottom = Length::Auto;
-        item.style = Some(i_style);
+        item.style = Some(i_style.into());
         container.children.push(item);
 
         let mut containing_block = Dimensions::default();
@@ -1951,12 +1980,12 @@ mod tests {
         c_style.row_gap = Length::Px(20.0);
         c_style.grid_template_columns = vec![GridTrackSize::Fr(1.0)];
         c_style.grid_template_rows = vec![GridTrackSize::Fr(1.0), GridTrackSize::Fr(2.0)];
-        container.style = Some(c_style);
+        container.style = Some(c_style.into());
 
         let mut item1 = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
-        item1.style = Some(ComputedStyle::default());
+        item1.style = Some(ComputedStyle::default().into());
         let mut item2 = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
-        item2.style = Some(ComputedStyle::default());
+        item2.style = Some(ComputedStyle::default().into());
 
         container.children.push(item1);
         container.children.push(item2);
@@ -1988,7 +2017,7 @@ mod tests {
         c_style.max_width = Length::Px(500.0);
         c_style.height = Length::Px(50.0);
         c_style.min_height = Length::Px(200.0);
-        container.style = Some(c_style);
+        container.style = Some(c_style.into());
 
         let mut containing_block = Dimensions::default();
         containing_block.content = Rect::new(0.0, 0.0, 800.0, 800.0);

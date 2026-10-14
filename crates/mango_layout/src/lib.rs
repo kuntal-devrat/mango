@@ -45,7 +45,10 @@ pub use box_model::{
     OverflowModel, WritingMode, adjust_for_box_sizing, resolve_object_fit_rect,
     resolve_replaced_size,
 };
-pub use box_tree::{FormControlHit, LayoutBox, MediaClickAction, MediaControlHit, build_box_tree};
+pub use box_tree::{
+    FormControlHit, LayoutBox, MediaClickAction, MediaControlHit, build_box_tree,
+    build_box_tree_with_maps,
+};
 pub use dimensions::Dimensions;
 pub use display_list::{
     COLOR_SWATCHES, DisplayListCache, build_display_list, build_display_list_with_scroll,
@@ -62,8 +65,8 @@ pub use shaping::{
 };
 pub use snapshot::LayoutSnapshot;
 pub use style_tree::{
-    StyleInvalidator, StyledNode, build_style_tree, build_style_tree_with_size,
-    extract_style_elements,
+    StyleInvalidator, StyledNode, build_style_tree, build_style_tree_with_env,
+    build_style_tree_with_size, collect_image_maps, extract_style_elements,
 };
 pub use table_flow::layout_table;
 
@@ -78,7 +81,8 @@ pub fn apply_box_style_overrides<F>(root: &mut LayoutBox, f: &mut F)
 where
     F: FnMut(Option<mango_html::dom::NodeId>, &mut mango_css::computed::ComputedStyle),
 {
-    if let Some(style) = root.style.as_mut() {
+    if let Some(style_arc) = root.style.as_mut() {
+        let style = std::sync::Arc::make_mut(style_arc);
         f(root.node_id, style);
     }
     for child in &mut root.children {
@@ -118,7 +122,7 @@ pub fn collect_box_styles(
     out: &mut std::collections::HashMap<u32, mango_css::computed::ComputedStyle>,
 ) {
     if let (Some(node_id), Some(style)) = (root.node_id, root.style.as_ref()) {
-        out.insert(node_id.raw(), style.clone());
+        out.insert(node_id.raw(), (**style).clone());
     }
     for child in &root.children {
         collect_box_styles(child, out);
@@ -153,6 +157,31 @@ pub fn layout_document(
     layout_document_with_scroll_xy(doc, author_styles, viewport, 0.0, 0.0)
 }
 
+/// Fully lays out an HTML DOM [`Document`] with an explicit [`MediaEnvironment`].
+pub fn layout_document_with_env(
+    doc: &Document,
+    author_styles: &[&Stylesheet],
+    env: &mango_css::MediaEnvironment,
+    scroll_x: f32,
+    scroll_y: f32,
+) -> (LayoutBox, DisplayList) {
+    mango_css::set_current_viewport(env.viewport_width, env.viewport_height);
+    let Some(styled_root) = build_style_tree_with_env(doc, author_styles, env) else {
+        return (LayoutBox::new(BoxType::BlockNode, None), DisplayList::new());
+    };
+
+    let maps = collect_image_maps(doc);
+    let mut root_box = build_box_tree_with_maps(&styled_root, Some(&maps));
+    let containing_block =
+        Dimensions::new(Rect::new(0.0, 0.0, env.viewport_width, env.viewport_height));
+    let mut float_ctx = FloatContext::new();
+
+    layout_block(&mut root_box, &containing_block, &mut float_ctx);
+    let display_list = build_display_list_with_scroll_xy(&root_box, scroll_x, scroll_y);
+
+    (root_box, display_list)
+}
+
 /// Fully lays out an HTML DOM [`Document`], applying author stylesheets and inline styles,
 /// with explicit 2D horizontal and vertical scroll offsets applied to the resulting display list.
 pub fn layout_document_with_scroll_xy(
@@ -162,21 +191,10 @@ pub fn layout_document_with_scroll_xy(
     scroll_x: f32,
     scroll_y: f32,
 ) -> (LayoutBox, DisplayList) {
-    mango_css::set_current_viewport(viewport.width, viewport.height);
-    let Some(styled_root) =
-        build_style_tree_with_size(doc, author_styles, viewport.width, viewport.height)
-    else {
-        return (LayoutBox::new(BoxType::BlockNode, None), DisplayList::new());
-    };
-
-    let mut root_box = build_box_tree(&styled_root);
-    let containing_block = Dimensions::new(Rect::new(0.0, 0.0, viewport.width, viewport.height));
-    let mut float_ctx = FloatContext::new();
-
-    layout_block(&mut root_box, &containing_block, &mut float_ctx);
-    let display_list = build_display_list_with_scroll_xy(&root_box, scroll_x, scroll_y);
-
-    (root_box, display_list)
+    let mut env = mango_css::current_media_environment();
+    env.viewport_width = viewport.width;
+    env.viewport_height = viewport.height;
+    layout_document_with_env(doc, author_styles, &env, scroll_x, scroll_y)
 }
 
 #[cfg(test)]

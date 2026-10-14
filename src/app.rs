@@ -101,23 +101,23 @@ impl ApplicationHandler for MangoApp {
 
         if let Some(browser) = &mut self.browser {
             // Check for completed background navigation
-            if browser.tick_navigation() {
+            if browser.is_loading() && browser.tick_navigation() {
                 needs_redraw = true;
             }
 
             // Tick JS event loop (setTimeout/setInterval)
-            if browser.tick_js() {
+            if (browser.has_pending_timers() || browser.is_loading()) && browser.tick_js() {
                 needs_redraw = true;
             }
 
             // Drive CSS transitions and @keyframes animations (GAP-004/GAP-006)
-            if browser.tick_animations(dt_ms) {
+            if browser.is_animating() && browser.tick_animations(dt_ms) {
                 needs_redraw = true;
             }
 
             // Keep draining the background image backlog (OPT-009) so
             // image-heavy pages finish loading instead of dropping images.
-            if browser.drain_pending_images() {
+            if browser.has_pending_image_fetches() && browser.drain_pending_images() {
                 needs_redraw = true;
             }
 
@@ -294,6 +294,25 @@ impl ApplicationHandler for MangoApp {
                         return;
                     }
 
+                    // 8. F11: Fullscreen Toggle
+                    if key_event.key == MangoKey::F11 {
+                        if let Some(window) = &self.window {
+                            let is_full = window.fullscreen().is_some();
+                            if is_full {
+                                window.set_fullscreen(None);
+                            } else {
+                                window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+                            }
+                        }
+                        if let Some(browser) = &mut self.browser {
+                            browser.toggle_fullscreen();
+                            if let Some(window) = &self.window {
+                                window.request_redraw();
+                            }
+                        }
+                        return;
+                    }
+
                     // Forward to browser chrome
                     if let Some(browser) = &mut self.browser {
                         browser.handle_key_event(&key_event);
@@ -318,6 +337,44 @@ impl ApplicationHandler for MangoApp {
                     let key_state = KeyState::from(state);
                     let btn = mango_platform::input::MouseButton::from(button);
                     browser.handle_mouse_click(btn, key_state);
+                    if let Some(window) = &self.window {
+                        window.request_redraw();
+                    }
+                }
+            }
+
+            // ── Touch events (G-15) ─────────────────────────────────────────
+            // Translate touch contacts into the equivalent mouse events so the
+            // full browser pipeline (hit-testing, links, form controls, scroll)
+            // works on touch-screen devices without any separate touch-path code.
+            WindowEvent::Touch(touch) => {
+                use winit::event::TouchPhase;
+                if let Some(browser) = &mut self.browser {
+                    let x = touch.location.x as f32;
+                    let y = touch.location.y as f32;
+                    match touch.phase {
+                        TouchPhase::Started => {
+                            // Move the cursor to the touch point first so hover
+                            // state is updated, then fire a left-button press.
+                            browser.handle_mouse_move(x, y);
+                            browser.handle_mouse_click(
+                                mango_platform::input::MouseButton::Left,
+                                KeyState::Pressed,
+                            );
+                        }
+                        TouchPhase::Moved => {
+                            // Translate drag motion into scroll delta.
+                            let dy = (y - browser.mouse_y()) / 45.0;
+                            browser.handle_scroll(-dy);
+                            browser.handle_mouse_move(x, y);
+                        }
+                        TouchPhase::Ended | TouchPhase::Cancelled => {
+                            browser.handle_mouse_click(
+                                mango_platform::input::MouseButton::Left,
+                                KeyState::Released,
+                            );
+                        }
+                    }
                     if let Some(window) = &self.window {
                         window.request_redraw();
                     }

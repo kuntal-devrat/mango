@@ -71,8 +71,10 @@ pub enum DisplayCommand {
         y: f32,
         width: f32,
         height: f32,
-        /// Pixel data in `0xRRGGBB` format, row-major.
-        pixels: Vec<u32>,
+        /// Pixel data in `0xAARRGGBB` format, row-major.
+        /// Legacy `0x00RRGGBB` buffers (alpha byte 0 with non-zero RGB)
+        /// are treated as fully opaque (`alpha = 255`).
+        pixels: std::sync::Arc<[u32]>,
     },
 
     /// Fill a rectangle with a CSS gradient.
@@ -151,8 +153,9 @@ pub enum DisplayCommand {
     /// Draw a 9-slice scaled border image around a rectangle.
     DrawBorderImage {
         rect: Rect,
-        /// Decoded image pixels in 0xRRGGBB / 0xAARRGGBB format.
-        pixels: Vec<u32>,
+        /// Decoded image pixels in canonical `0xAARRGGBB` format
+        /// (legacy `0x00RRGGBB` treated as opaque).
+        pixels: std::sync::Arc<[u32]>,
         img_width: u32,
         img_height: u32,
         /// Slices in source image coordinates: [top, right, bottom, left].
@@ -250,9 +253,15 @@ impl DisplayCommand {
                 offset_y,
                 blur_radius,
                 spread_radius,
+                inset,
                 ..
             } => {
-                let pad = blur_radius + spread_radius;
+                if *inset {
+                    // Inset shadows never extend outside the border box.
+                    return Some(*rect);
+                }
+                let pad = blur_radius * 3.0 + spread_radius;
+                let pad = pad.max(0.0);
                 Some(Rect::new(
                     rect.x() + offset_x - pad,
                     rect.y() + offset_y - pad,
@@ -271,9 +280,11 @@ impl DisplayCommand {
                 x,
                 y,
                 font_size,
+                letter_spacing,
                 ..
             } => {
-                let approx_w = (text.len() as f32) * font_size * 0.6;
+                let glyphs = text.chars().count() as f32;
+                let approx_w = glyphs * *font_size * 0.6 + glyphs * *letter_spacing;
                 Some(Rect::new(*x, *y, approx_w, *font_size * 1.2))
             }
             DisplayCommand::DrawLine {
@@ -304,9 +315,11 @@ impl DisplayCommand {
                 y,
                 font_size,
                 blur_radius,
+                letter_spacing,
                 ..
             } => {
-                let approx_w = (text.len() as f32) * font_size * 0.6;
+                let glyphs = text.chars().count() as f32;
+                let approx_w = glyphs * *font_size * 0.6 + glyphs * *letter_spacing;
                 Some(Rect::new(
                     *x - blur_radius,
                     *y - blur_radius,
@@ -325,9 +338,11 @@ impl DisplayCommand {
                 x,
                 y,
                 font_size,
+                letter_spacing,
                 ..
             } => {
-                let approx_w = (text.len() as f32) * font_size * 0.6;
+                let glyphs = text.chars().count() as f32;
+                let approx_w = glyphs * *font_size * 0.6 + glyphs * *letter_spacing;
                 Some(Rect::new(*x, *y, approx_w, *font_size * 1.2))
             }
             DisplayCommand::PushClip { rect }
@@ -541,6 +556,12 @@ impl IntoIterator for DisplayList {
 
     fn into_iter(self) -> Self::IntoIter {
         self.commands.into_iter()
+    }
+}
+
+impl Extend<DisplayCommand> for DisplayList {
+    fn extend<T: IntoIterator<Item = DisplayCommand>>(&mut self, iter: T) {
+        self.commands.extend(iter);
     }
 }
 

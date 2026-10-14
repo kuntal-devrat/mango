@@ -1,12 +1,12 @@
 //! Integration tests for GPU Compositing, Tile Rasterization, and Damage-Rect Invalidation.
 
 use mango_core::{Color, Rect};
+use mango_render::SoftwareCompositor;
 use mango_render::damage::DamageRegion;
 use mango_render::display_list::{DisplayCommand, DisplayList};
 use mango_render::layer::LayerTree;
 use mango_render::painter::paint_with_clip;
 use mango_render::tile::{DEFAULT_TILE_SIZE, TileCoord, TileGrid};
-use mango_render::SoftwareCompositor;
 
 #[test]
 fn test_damage_region_tracking_and_bounding() {
@@ -82,7 +82,9 @@ fn test_tile_grid_incremental_rasterization_on_scroll() {
     assert!(initial_tile_count > 0);
 
     // Check that top-left tile is clean
-    let top_left = grid.get_tile(TileCoord::new(0, 0)).expect("tile (0, 0) should exist");
+    let top_left = grid
+        .get_tile(TileCoord::new(0, 0))
+        .expect("tile (0, 0) should exist");
     assert!(!top_left.dirty);
     let top_left_version = top_left.version;
 
@@ -102,7 +104,10 @@ fn test_tile_grid_incremental_rasterization_on_scroll() {
     // Re-rasterizing only updates the dirty tile
     grid.ensure_tiles_rasterized(vp1, &dl, Color::rgb(255, 255, 255), 3);
     assert!(!grid.get_tile(TileCoord::new(0, 0)).unwrap().dirty);
-    assert_eq!(grid.get_tile(TileCoord::new(0, 0)).unwrap().version, top_left_version + 1);
+    assert_eq!(
+        grid.get_tile(TileCoord::new(0, 0)).unwrap().version,
+        top_left_version + 1
+    );
 }
 
 #[test]
@@ -127,7 +132,9 @@ fn test_layer_tree_separation_and_compositor() {
     layers.chrome_layer.display_list = chrome_dl;
 
     // Rasterize both layers
-    layers.chrome_layer.rasterize_if_dirty(Color::TRANSPARENT, 1);
+    layers
+        .chrome_layer
+        .rasterize_if_dirty(Color::TRANSPARENT, 1);
     layers.page_layer.rasterize_if_dirty(Color::WHITE, 1);
 
     assert!(!layers.chrome_layer.is_dirty);
@@ -177,7 +184,9 @@ fn test_compositor_handles_black_text_and_transparent_chrome_viewport() {
     });
     layers.chrome_layer.display_list = chrome_dl;
 
-    layers.chrome_layer.rasterize_if_dirty(Color::TRANSPARENT, 1);
+    layers
+        .chrome_layer
+        .rasterize_if_dirty(Color::TRANSPARENT, 1);
     layers.page_layer.rasterize_if_dirty(Color::WHITE, 1);
 
     let mut screen = vec![0xFFFFFFFFu32; 800 * 600];

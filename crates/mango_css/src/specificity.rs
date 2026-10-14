@@ -75,7 +75,7 @@ impl Specificity {
                 }
             }
             SimpleSelector::Type(_) | SimpleSelector::PseudoElement(_) => c += 1,
-            SimpleSelector::Universal => {}
+            SimpleSelector::Universal | SimpleSelector::Nesting => {}
         };
 
         for simple in &selector.head.simple_selectors {
