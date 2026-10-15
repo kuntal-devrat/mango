@@ -2378,7 +2378,8 @@ mod tests {
                 img.put_pixel(x as u32, y as u32, image::Rgb([r, g, b]));
             }
         }
-        img.save("/tmp/mango_text_test.png").unwrap();
+        let path = std::env::temp_dir().join("mango_text_test.png");
+        let _ = img.save(path);
     }
 
     #[test]
