@@ -1162,6 +1162,8 @@ impl BrowserChrome {
         self.page_display_list = DisplayList::new();
         self.display_list_cache.borrow_mut().clear();
         self.layer_tree.clear_page_tiles();
+        mango_render::prune_image_caches();
+        mango_js::JsRuntime::force_gc();
 
         if let Some(tab) = self.tabs.get_mut(self.active_tab_idx) {
             if push_history {
@@ -1488,6 +1490,13 @@ impl BrowserChrome {
                 .js_runtime
                 .as_ref()
                 .is_some_and(|rt| rt.has_pending_timers())
+    }
+
+    /// Returns the earliest deadline when a JavaScript timer needs execution.
+    pub fn next_timer_deadline(&self) -> Option<std::time::Instant> {
+        self.js_runtime
+            .as_ref()
+            .and_then(|rt| rt.next_timer_deadline())
     }
 
     /// Triggers smooth scrolling to `target_y` over the specified duration.
@@ -4478,6 +4487,7 @@ impl BrowserChrome {
         self.display_list_cache.borrow_mut().clear();
         self.page_display_list = DisplayList::new();
         self.root_box = None;
+        mango_render::prune_image_caches();
         mango_render::clear_global_svg_symbols();
 
         // Web fonts are already fetched and registered on the background worker
@@ -7670,70 +7680,42 @@ fn load_web_fonts(loader: &ResourceLoader, base_url: Option<&Url>, stylesheets: 
         return;
     }
 
-    // Phase 0: warm the font-byte cache with a bounded parallel prefetch
-    // (max MAX_CONCURRENT_FETCHES in flight, per-fetch timeout). Errors are
-    // ignored here; the registration phase below reports them.
-    if let Some(base) = base_url {
-        let mut seen_urls = std::collections::HashSet::new();
-        let mut needed_urls: Vec<String> = Vec::new();
-        for face in &font_faces {
-            if !face.src_url.starts_with("data:") && seen_urls.insert(face.src_url.clone()) {
-                needed_urls.push(face.src_url.clone());
-            }
-        }
-        for chunk in needed_urls.chunks(MAX_CONCURRENT_FETCHES) {
-            let (tx, rx) = std::sync::mpsc::channel();
-            let n = chunk.len();
-            for url in chunk {
-                let tx = tx.clone();
-                let loader = loader.clone();
-                let base = base.clone();
-                let url = url.clone();
-                if let Err(e) = std::thread::Builder::new()
-                    .name("mango-font-prefetch".to_string())
-                    .spawn(move || {
-                        let res = fetch_with_timeout(
-                            {
-                                let loader = loader.clone();
-                                let base = base.clone();
-                                let url = url.clone();
-                                move || loader.fetch_font_bytes(&base, &url)
-                            },
-                            SUBRESOURCE_FETCH_TIMEOUT,
-                        );
-                        let _ = tx.send(res.is_ok());
-                    })
-                {
-                    log::warn!("Failed to spawn font prefetch thread: {e}");
-                }
-            }
-            drop(tx);
-            // Bounded join: wait at most timeout + grace per chunk, then move on.
-            let deadline = std::time::Instant::now()
-                + SUBRESOURCE_FETCH_TIMEOUT
-                + std::time::Duration::from_secs(2);
-            for _ in 0..n {
-                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-                if remaining.is_zero() {
-                    break;
-                }
-                let _ = rx.recv_timeout(remaining);
-            }
-        }
-    }
-
     // Phase 1: decide which (face, weight) pairs still need registration,
-    // then fetch their bytes in parallel (bounded) and register serially.
+    // selecting at most one face per (family, weight) to avoid downloading
+    // dozens of multi-slice subfonts (e.g. Cyrillic/Greek/Vietnamese in Google Fonts).
     struct FontJob {
         face_idx: usize,
         weight: FontWeight,
     }
     let mut jobs: Vec<FontJob> = Vec::new();
-    // Pass 1: True Bold and Regular, normal style first.
+    let mut queued_family_weights: std::collections::HashSet<(String, FontWeight)> =
+        std::collections::HashSet::new();
+
+    let score_face = |face: &mango_css::parser::FontFaceRule| -> i32 {
+        let mut score = 0;
+        let url_lower = face.src_url.to_ascii_lowercase();
+        if url_lower.contains("latin") {
+            score += 10;
+        }
+        if url_lower.contains("regular") || url_lower.contains("bold") {
+            score += 5;
+        }
+        score
+    };
+
+    let mut candidates: std::collections::HashMap<(String, FontWeight), Vec<usize>> =
+        std::collections::HashMap::new();
+
     for (i, face) in font_faces.iter().enumerate() {
         if face.font_style != mango_css::values::FontStyle::Normal {
             continue;
         }
+        let family_key = face
+            .font_family
+            .trim()
+            .trim_matches('\'')
+            .trim_matches('"')
+            .to_ascii_lowercase();
         let is_true_bold = match face.font_weight {
             mango_css::values::FontWeight::Bold | mango_css::values::FontWeight::Bolder => true,
             mango_css::values::FontWeight::Numeric(w) => w >= 700,
@@ -7745,40 +7727,42 @@ fn load_web_fonts(loader: &ResourceLoader, base_url: Option<&Url>, stylesheets: 
             _ => false,
         };
         if is_true_bold {
-            if !font_manager().has_web_font_weight(&face.font_family, FontWeight::Bold) {
-                jobs.push(FontJob {
-                    face_idx: i,
-                    weight: FontWeight::Bold,
-                });
-            }
+            candidates
+                .entry((family_key, FontWeight::Bold))
+                .or_default()
+                .push(i);
         } else if is_regular {
-            if !font_manager().has_web_font_weight(&face.font_family, FontWeight::Regular) {
-                jobs.push(FontJob {
-                    face_idx: i,
-                    weight: FontWeight::Regular,
-                });
+            candidates
+                .entry((family_key, FontWeight::Regular))
+                .or_default()
+                .push(i);
+        } else if let mango_css::values::FontWeight::Numeric(w) = face.font_weight {
+            if w >= 600 {
+                candidates
+                    .entry((family_key, FontWeight::Bold))
+                    .or_default()
+                    .push(i);
             }
         }
     }
-    // Pass 2: SemiBold fallback for families still missing Bold.
-    for (i, face) in font_faces.iter().enumerate() {
-        if face.font_style != mango_css::values::FontStyle::Normal {
+
+    for ((family_key, weight), mut indices) in candidates {
+        if font_manager().has_web_font_weight(&family_key, weight) {
             continue;
         }
-        let is_semi_bold = match face.font_weight {
-            mango_css::values::FontWeight::Numeric(w) => w >= 600,
-            _ => false,
-        };
-        if is_semi_bold
-            && !font_manager().has_web_font_weight(&face.font_family, FontWeight::Bold)
-            && !jobs
-                .iter()
-                .any(|j| j.face_idx == i && j.weight == FontWeight::Bold)
-        {
+        if queued_family_weights.contains(&(family_key.clone(), weight)) {
+            continue;
+        }
+        indices.sort_by_key(|&idx| std::cmp::Reverse(score_face(&font_faces[idx])));
+        if let Some(&best_idx) = indices.first() {
             jobs.push(FontJob {
-                face_idx: i,
-                weight: FontWeight::Bold,
+                face_idx: best_idx,
+                weight,
             });
+            queued_family_weights.insert((family_key, weight));
+        }
+        if jobs.len() >= 8 {
+            break;
         }
     }
     if jobs.is_empty() {

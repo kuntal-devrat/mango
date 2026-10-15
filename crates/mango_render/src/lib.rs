@@ -45,6 +45,7 @@ pub use font::{
 };
 pub use image_decode::{
     DecodedImage, cache_image, decode_data_uri, decode_image_bytes, get_cached_image,
+    prune_image_caches,
 };
 pub use layer::{LayerKind, LayerTree, RenderLayer};
 pub use painter::{paint, paint_damage, paint_with_clip};

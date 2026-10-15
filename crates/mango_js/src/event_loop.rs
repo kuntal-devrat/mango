@@ -198,6 +198,19 @@ impl EventLoop {
         has_tasks || self.timers.values().any(|t| !t.cancelled)
     }
 
+    /// Returns the earliest instant at which a timer or background task needs execution.
+    pub fn next_deadline(&self) -> Option<Instant> {
+        let has_tasks = self.tasks.lock().map(|q| !q.is_empty()).unwrap_or(false);
+        if has_tasks {
+            return Some(Instant::now());
+        }
+        self.timers
+            .values()
+            .filter(|t| !t.cancelled)
+            .map(|t| t.fire_at)
+            .min()
+    }
+
     /// Clears all timers and pending tasks.
     pub fn clear_all(&mut self) {
         self.timers.clear();

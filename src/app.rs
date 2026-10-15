@@ -121,15 +121,26 @@ impl ApplicationHandler for MangoApp {
                 needs_redraw = true;
             }
 
-            // Poll at ~60 FPS while timers or animations are pending, otherwise wait for events
-            if browser.has_pending_timers()
-                || browser.is_animating()
+            // Dynamic event loop pacing:
+            // 1. If animations, active page loading, or image decoding are running, poll at ~60 FPS (16ms).
+            // 2. Otherwise, if JS timers or tasks are pending, sleep until the next timer's deadline (clamped to at most 1000ms).
+            // 3. Otherwise, enter true idle sleep (ControlFlow::Wait) to consume 0% CPU.
+            if browser.is_animating()
                 || browser.has_pending_image_fetches()
                 || browser.is_loading()
+                || browser.smooth_scroll.is_some()
             {
                 event_loop.set_control_flow(ControlFlow::WaitUntil(
                     Instant::now() + Duration::from_millis(16),
                 ));
+            } else if let Some(deadline) = browser.next_timer_deadline() {
+                let now = Instant::now();
+                if deadline <= now {
+                    event_loop.set_control_flow(ControlFlow::WaitUntil(now));
+                } else {
+                    let delay = (deadline - now).min(Duration::from_millis(1000));
+                    event_loop.set_control_flow(ControlFlow::WaitUntil(now + delay));
+                }
             } else {
                 event_loop.set_control_flow(ControlFlow::Wait);
             }

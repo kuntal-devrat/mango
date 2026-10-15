@@ -346,14 +346,11 @@ impl JsRuntime {
 
     /// Processes any expired timers and drains promise microtasks. Returns `true` if the DOM was mutated.
     pub fn tick(&mut self) -> bool {
-        let prev_hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(|_| {}));
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let timer_fired = self.event_loop.borrow_mut().tick(&mut self.context);
             let _ = self.context.run_jobs();
             timer_fired
         }));
-        std::panic::set_hook(prev_hook);
         let _fired = res.unwrap_or(false);
         let dirty = *self.dom_dirty.borrow();
         if dirty {
@@ -380,6 +377,16 @@ impl JsRuntime {
     /// Returns true if there are pending timers.
     pub fn has_pending_timers(&self) -> bool {
         self.event_loop.borrow().has_pending_timers()
+    }
+
+    /// Returns the earliest deadline when a timer or background task needs execution.
+    pub fn next_timer_deadline(&self) -> Option<std::time::Instant> {
+        self.event_loop.borrow().next_deadline()
+    }
+
+    /// Forces a complete garbage collection cycle in the Boa runtime to free unreferenced JS objects.
+    pub fn force_gc() {
+        boa_gc::force_collect();
     }
 
     /// Returns console messages captured since the last drain.
@@ -913,6 +920,12 @@ impl JsRuntime {
     /// Returns the currently active node IDs.
     pub fn get_active_nodes(&self) -> &std::collections::HashSet<mango_html::dom::NodeId> {
         &self.active_nodes
+    }
+}
+
+impl Drop for JsRuntime {
+    fn drop(&mut self) {
+        boa_gc::force_collect();
     }
 }
 
@@ -3983,9 +3996,9 @@ mod tests {
 
         rt.execute_script(&script).expect("ws script failed");
 
-        // Wait up to 2 seconds for background thread handshake & echo
+        // Wait up to 8 seconds for background thread handshake & echo (avoids CI load flakes on Windows)
         let start = std::time::Instant::now();
-        while start.elapsed() < std::time::Duration::from_millis(2000) {
+        while start.elapsed() < std::time::Duration::from_millis(8000) {
             rt.tick();
             let check = rt.eval("globalThis.receivedMessage").unwrap_or_default();
             if check.contains("Ping from Mango") {

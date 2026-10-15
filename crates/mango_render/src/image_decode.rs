@@ -115,6 +115,14 @@ pub fn cache_scaled_image(key: &str, target_w: u32, target_h: u32, img: DecodedI
     }
 }
 
+/// Prunes intermediate scaled image variants to conserve memory across navigations.
+pub fn prune_image_caches() {
+    if let Ok(mut cache) = global_scaled_cache().write() {
+        cache.entries.clear();
+        cache.total_bytes = 0;
+    }
+}
+
 /// Gets an existing scaled image or scales the provided image and caches the result.
 pub fn get_or_resize_cached(
     key: &str,
