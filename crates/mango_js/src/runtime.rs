@@ -284,6 +284,9 @@ impl JsRuntime {
             Ok(Ok(_)) => {
                 log::info!("Script executed successfully ({} bytes)", source.len());
                 let _ = self.context.run_jobs();
+                if source.len() > 64 * 1024 {
+                    boa_gc::force_collect();
+                }
                 Ok(())
             }
             Ok(Err(e)) => {
@@ -3967,6 +3970,8 @@ mod tests {
                             let mut server_frame = vec![0x81, payload.len() as u8];
                             server_frame.extend_from_slice(&payload);
                             let _ = stream.write_all(&server_frame);
+                            let _ = stream.flush();
+                            std::thread::sleep(std::time::Duration::from_millis(1500));
                         }
                     }
                 }
