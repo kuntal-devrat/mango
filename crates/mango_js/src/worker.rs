@@ -121,6 +121,19 @@ impl WorkerManager {
     }
 }
 
+impl Drop for WorkerManager {
+    fn drop(&mut self) {
+        if let Ok(mut map) = self.workers.lock() {
+            for (_, mut worker) in map.drain() {
+                let _ = worker.tx.send(WorkerInboundMsg::Terminate);
+                if let Some(th) = worker._thread.take() {
+                    let _ = th.join();
+                }
+            }
+        }
+    }
+}
+
 /// Resolves script content from a URL (blob, data, HTTP, local path, or inline text).
 fn resolve_script_content(
     script_url: &str,

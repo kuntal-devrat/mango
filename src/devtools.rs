@@ -135,6 +135,9 @@ impl DevTools {
 
     /// Appends a message to the console panel.
     pub fn log(&mut self, level: ConsoleLevel, msg: impl Into<String>) {
+        if self.console_entries.len() >= 500 {
+            self.console_entries.remove(0);
+        }
         self.console_entries.push(ConsoleEntry {
             level,
             message: msg.into(),
@@ -151,6 +154,9 @@ impl DevTools {
         mime_type: impl Into<String>,
         size_bytes: usize,
     ) {
+        if self.network_entries.len() >= 200 {
+            self.network_entries.remove(0);
+        }
         self.network_entries.push(NetworkEntry {
             url: url.into(),
             method: method.into(),

@@ -801,41 +801,50 @@ fn run_websocket_client<F>(
     // Bi-directional event loop
     while running.load(Ordering::Relaxed) {
         // Drain any outgoing commands from JS
-        while let Ok(cmd) = cmd_rx.try_recv() {
-            let mask = random_mask();
-            match cmd {
-                WebSocketCommand::SendText(text) => {
-                    let frame = encode_client_frame(Opcode::Text, text.as_bytes(), mask);
-                    if let Err(e) = stream.write_all(&frame) {
-                        cb(WebSocketEvent::Error {
-                            message: format!("Socket write error: {e}"),
-                        });
-                        running.store(false, Ordering::Relaxed);
-                        break;
+        loop {
+            match cmd_rx.try_recv() {
+                Ok(cmd) => {
+                    let mask = random_mask();
+                    match cmd {
+                        WebSocketCommand::SendText(text) => {
+                            let frame = encode_client_frame(Opcode::Text, text.as_bytes(), mask);
+                            if let Err(e) = stream.write_all(&frame) {
+                                cb(WebSocketEvent::Error {
+                                    message: format!("Socket write error: {e}"),
+                                });
+                                running.store(false, Ordering::Relaxed);
+                                break;
+                            }
+                        }
+                        WebSocketCommand::SendBinary(data) => {
+                            let frame = encode_client_frame(Opcode::Binary, &data, mask);
+                            if let Err(e) = stream.write_all(&frame) {
+                                cb(WebSocketEvent::Error {
+                                    message: format!("Socket write error: {e}"),
+                                });
+                                running.store(false, Ordering::Relaxed);
+                                break;
+                            }
+                        }
+                        WebSocketCommand::Close { code, reason } => {
+                            let mut payload = code.to_be_bytes().to_vec();
+                            payload.extend_from_slice(reason.as_bytes());
+                            let frame = encode_client_frame(Opcode::Close, &payload, mask);
+                            let _ = stream.write_all(&frame);
+                            cb(WebSocketEvent::Close {
+                                code,
+                                reason,
+                                was_clean: true,
+                            });
+                            running.store(false, Ordering::Relaxed);
+                            return;
+                        }
                     }
                 }
-                WebSocketCommand::SendBinary(data) => {
-                    let frame = encode_client_frame(Opcode::Binary, &data, mask);
-                    if let Err(e) = stream.write_all(&frame) {
-                        cb(WebSocketEvent::Error {
-                            message: format!("Socket write error: {e}"),
-                        });
-                        running.store(false, Ordering::Relaxed);
-                        break;
-                    }
-                }
-                WebSocketCommand::Close { code, reason } => {
-                    let mut payload = code.to_be_bytes().to_vec();
-                    payload.extend_from_slice(reason.as_bytes());
-                    let frame = encode_client_frame(Opcode::Close, &payload, mask);
-                    let _ = stream.write_all(&frame);
-                    cb(WebSocketEvent::Close {
-                        code,
-                        reason,
-                        was_clean: true,
-                    });
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     running.store(false, Ordering::Relaxed);
-                    return;
+                    break;
                 }
             }
         }

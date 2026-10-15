@@ -1158,6 +1158,10 @@ impl BrowserChrome {
             self.page_title = url.clone();
         }
         self.cached_document = None;
+        self.root_box = None;
+        self.page_display_list = DisplayList::new();
+        self.display_list_cache.borrow_mut().clear();
+        self.layer_tree.clear_page_tiles();
 
         if let Some(tab) = self.tabs.get_mut(self.active_tab_idx) {
             if push_history {
@@ -1192,6 +1196,7 @@ impl BrowserChrome {
         let embedded_sheets = mango_layout::extract_style_elements(&js_rt.document_ref());
         self.base_url = Url::parse(&url).ok();
         if !skip_embedded_sheets_and_fonts {
+            self.cached_stylesheets.clear();
             if self.cached_stylesheets.is_empty()
                 && let Some(ref base) = self.base_url.clone()
             {
@@ -4469,6 +4474,10 @@ impl BrowserChrome {
         let final_url = prep.url.clone();
         self.base_url = Some(final_url.clone());
         self.cached_stylesheets = prep.cached_stylesheets;
+        self.layer_tree.clear_page_tiles();
+        self.display_list_cache.borrow_mut().clear();
+        self.page_display_list = DisplayList::new();
+        self.root_box = None;
         mango_render::clear_global_svg_symbols();
 
         // Web fonts are already fetched and registered on the background worker

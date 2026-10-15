@@ -14,6 +14,8 @@ use crate::painter::paint;
 
 /// Default tile dimension in pixels (width and height).
 pub const DEFAULT_TILE_SIZE: u32 = 256;
+/// Maximum number of rasterized tiles cached simultaneously (64 tiles * 256KB = 16MB max).
+pub const MAX_CACHED_TILES: usize = 64;
 
 /// 2D coordinate identifying a tile in the grid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -266,6 +268,22 @@ impl TileGrid {
                 tile.rasterize(display_list, bg_color);
             }
         }
+
+        // Bounded tile eviction: ensure grid memory cannot grow uncontrollably
+        if self.tiles.len() > MAX_CACHED_TILES {
+            let mut entries: Vec<(TileCoord, u64)> = self
+                .tiles
+                .iter()
+                .map(|(c, t)| (*c, t.last_used_frame))
+                .collect();
+            entries.sort_unstable_by_key(|&(_, last_used)| last_used);
+            let to_remove = self.tiles.len().saturating_sub(MAX_CACHED_TILES);
+            for (coord, _) in entries.into_iter().take(to_remove) {
+                if !visible_set.contains(&coord) {
+                    self.tiles.remove(&coord);
+                }
+            }
+        }
     }
 
     /// Evicts tiles that have not been visible for `max_idle_frames` to keep RAM usage low.
@@ -273,6 +291,18 @@ impl TileGrid {
         self.tiles.retain(|_, tile| {
             current_frame.saturating_sub(tile.last_used_frame) <= max_idle_frames
         });
+        if self.tiles.len() > MAX_CACHED_TILES {
+            let mut entries: Vec<(TileCoord, u64)> = self
+                .tiles
+                .iter()
+                .map(|(c, t)| (*c, t.last_used_frame))
+                .collect();
+            entries.sort_unstable_by_key(|&(_, last_used)| last_used);
+            let to_remove = self.tiles.len().saturating_sub(MAX_CACHED_TILES);
+            for (coord, _) in entries.into_iter().take(to_remove) {
+                self.tiles.remove(&coord);
+            }
+        }
     }
 
     /// Clears all tiles.

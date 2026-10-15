@@ -5,7 +5,7 @@
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{OnceLock, RwLock};
 
 use fontdue::{Font, FontSettings};
@@ -620,7 +620,6 @@ pub struct FontManager {
     fallback_fonts: RwLock<Vec<&'static Font>>,
     unloaded_fallbacks: RwLock<Vec<&'static str>>,
     missing_glyphs: RwLock<HashSet<char>>,
-    preload_started: AtomicBool,
     web_fonts: RwLock<HashMap<u32, WebFontEntry>>,
     family_to_id: RwLock<HashMap<String, u32>>,
     next_font_id: AtomicU32,
@@ -740,7 +739,6 @@ impl FontManager {
             fallback_fonts: RwLock::new(Vec::new()),
             unloaded_fallbacks: RwLock::new(fallback_names),
             missing_glyphs: RwLock::new(HashSet::new()),
-            preload_started: AtomicBool::new(false),
             web_fonts: RwLock::new(HashMap::new()),
             family_to_id: RwLock::new(HashMap::new()),
             next_font_id: AtomicU32::new(1),
@@ -911,36 +909,9 @@ impl FontManager {
             }
         }
 
-        // Kick off background fallback preloading to avoid future main-thread freezes (OPT-3.2.4)
-        if !self.preload_started.swap(true, Ordering::Relaxed) {
-            std::thread::Builder::new()
-                .name("mango-font-preload".to_string())
-                .spawn(|| {
-                    let fm = font_manager();
-                    loop {
-                        let next_name = {
-                            let mut pending = match fm.unloaded_fallbacks.write() {
-                                Ok(p) => p,
-                                Err(_) => break,
-                            };
-                            if pending.is_empty() {
-                                break;
-                            }
-                            pending.remove(0)
-                        };
-                        if let Some(font) = load_system_font(next_name) {
-                            let leaked: &'static Font = Box::leak(Box::new(font));
-                            if let Ok(mut loaded) = fm.fallback_fonts.write() {
-                                loaded.push(leaked);
-                            }
-                        }
-                        std::thread::sleep(std::time::Duration::from_millis(5));
-                    }
-                })
-                .ok();
-        }
-
         // 2. Targeted script-based fallback search (OPT-3.2.4)
+        // Loaded lazily on-demand when a character actually needs it; avoids parsing
+        // and leaking ~150-200MB of unused system TTC/OTF fonts into RAM.
         let script_candidates = script_candidates_for_char(ch);
         if let Ok(mut pending) = self.unloaded_fallbacks.write() {
             let mut found_font = None;
@@ -1051,9 +1022,6 @@ impl FontManager {
             Cow::Borrowed(font_data)
         };
 
-        let font = decode_font_bytes(&raw_bytes)?;
-        let leaked: &'static Font = Box::leak(Box::new(font));
-
         let key = family_name
             .trim()
             .trim_matches('\'')
@@ -1062,6 +1030,23 @@ impl FontManager {
 
         let mut family_map = self.family_to_id.write().map_err(|e| e.to_string())?;
         let mut web_fonts = self.web_fonts.write().map_err(|e| e.to_string())?;
+
+        // Deduplication fast-path: if this family and weight is already registered,
+        // reuse existing entry immediately without re-decoding or leaking memory.
+        if let Some(&existing_id) = family_map.get(&key) {
+            if let Some(entry) = web_fonts.get(&existing_id) {
+                let already_has = match weight {
+                    FontWeight::Bold => !entry.bold.is_empty(),
+                    FontWeight::Regular => !entry.regular.is_empty(),
+                };
+                if already_has {
+                    return Ok(existing_id);
+                }
+            }
+        }
+
+        let font = decode_font_bytes(&raw_bytes)?;
+        let leaked: &'static Font = Box::leak(Box::new(font));
 
         let id = if let Some(&existing_id) = family_map.get(&key) {
             if let Some(entry) = web_fonts.get_mut(&existing_id) {

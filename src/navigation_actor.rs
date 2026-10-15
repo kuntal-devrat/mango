@@ -146,11 +146,9 @@ impl NavigationActorHandle {
                     };
                     let cancel_flag = epoch_flag.clone();
                     let inc_parser = Arc::new(Mutex::new(mango_html::IncrementalParser::new()));
-                    let preloaded_urls = Arc::new(Mutex::new(std::collections::HashSet::new()));
                     let early_fcp_emitted = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
                     let inc_parser_cb = inc_parser.clone();
-                    let preloaded_urls_cb = preloaded_urls.clone();
                     let early_fcp_cb = early_fcp_emitted.clone();
                     let loader_cb = loader.clone();
                     let url_cb = url.clone();
@@ -166,54 +164,10 @@ impl NavigationActorHandle {
                                     if cancel_flag_cb.load(Ordering::SeqCst) != epoch {
                                         return false;
                                     }
-                                    let new_hints = inc_parser_cb
+                                    let _new_hints = inc_parser_cb
                                         .lock()
                                         .expect("inc_parser lock")
                                         .feed_bytes(chunk);
-
-                                    // Speculatively preload newly discovered links
-                                    for hint in new_hints {
-                                        if preloaded_urls_cb
-                                            .lock()
-                                            .expect("preloaded_urls lock")
-                                            .insert(hint.url.clone())
-                                        {
-                                            let loader_sub = loader_cb.clone();
-                                            let base_sub = url_cb.clone();
-                                            let href = hint.url;
-                                            match hint.kind {
-                                                mango_html::PreloadHintKind::Style => {
-                                                    std::thread::Builder::new()
-                                                        .name("mango-preload-css".into())
-                                                        .spawn(move || {
-                                                            let _ = loader_sub
-                                                                .fetch_stylesheet(&base_sub, &href);
-                                                        })
-                                                        .ok();
-                                                }
-                                                mango_html::PreloadHintKind::Script => {
-                                                    std::thread::Builder::new()
-                                                        .name("mango-preload-js".into())
-                                                        .spawn(move || {
-                                                            let _ = loader_sub
-                                                                .fetch_script(&base_sub, &href);
-                                                        })
-                                                        .ok();
-                                                }
-                                                mango_html::PreloadHintKind::Image => {
-                                                    std::thread::Builder::new()
-                                                        .name("mango-preload-img".into())
-                                                        .spawn(move || {
-                                                            let _ = loader_sub.fetch_image_bytes(
-                                                                &base_sub, &href,
-                                                            );
-                                                        })
-                                                        .ok();
-                                                }
-                                                _ => {}
-                                            }
-                                        }
-                                    }
 
                                     // First Contentful Paint: check if <head> completed or <body> started
                                     if !early_fcp_cb.swap(true, Ordering::SeqCst) {

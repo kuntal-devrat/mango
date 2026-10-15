@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 const DEFAULT_RESOURCE_TTL: Duration = Duration::from_secs(600);
 /// Maximum number of cached items before pruning old entries.
 const MAX_CACHE_ENTRIES: usize = 1000;
-/// Default maximum cache size in bytes (50 MB).
-pub const DEFAULT_MAX_CACHE_BYTES: usize = 50 * 1024 * 1024;
+/// Default maximum cache size in bytes (20 MB).
+pub const DEFAULT_MAX_CACHE_BYTES: usize = 20 * 1024 * 1024;
 
 /// A cached HTTP resource.
 #[derive(Debug, Clone)]

@@ -161,6 +161,13 @@ impl RenderLayer {
         self.is_dirty = false;
     }
 
+    /// Clears any cached rasterized tiles to immediately free memory.
+    pub fn clear_tiles(&mut self) {
+        if let Some(grid) = &mut self.tile_grid {
+            grid.clear();
+        }
+    }
+
     /// Rasterizes any dirty regions in the layer.
     pub fn rasterize_if_dirty(&mut self, bg_color: Color, current_frame: u64) {
         match self.kind {
@@ -178,7 +185,7 @@ impl RenderLayer {
                         bg_color,
                         current_frame,
                     );
-                    grid.prune_unused_tiles(current_frame, 120);
+                    grid.prune_unused_tiles(current_frame, 15);
                 }
                 self.version = self.version.wrapping_add(1);
                 self.clear_damage();
@@ -305,6 +312,11 @@ impl LayerTree {
         for layer in &mut self.promoted_layers {
             layer.invalidate_all();
         }
+    }
+
+    /// Clears all cached page tiles to free memory upon navigation.
+    pub fn clear_page_tiles(&mut self) {
+        self.page_layer.clear_tiles();
     }
 }
 

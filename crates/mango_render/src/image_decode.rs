@@ -74,21 +74,21 @@ impl<K: std::hash::Hash + Eq + Clone> BoundedImageStore<K> {
     }
 }
 
-// 64MB budget for decoded images
+// 24MB budget for decoded images
 static DECODED_IMAGE_CACHE: std::sync::OnceLock<RwLock<BoundedImageStore<String>>> =
     std::sync::OnceLock::new();
 static DECODE_IN_FLIGHT: std::sync::OnceLock<RwLock<HashSet<String>>> = std::sync::OnceLock::new();
 
-// 32MB budget for scaled image variants
+// 12MB budget for scaled image variants
 static SCALED_IMAGE_CACHE: std::sync::OnceLock<RwLock<BoundedImageStore<(String, u32, u32)>>> =
     std::sync::OnceLock::new();
 
 fn global_image_cache() -> &'static RwLock<BoundedImageStore<String>> {
-    DECODED_IMAGE_CACHE.get_or_init(|| RwLock::new(BoundedImageStore::new(64 * 1024 * 1024)))
+    DECODED_IMAGE_CACHE.get_or_init(|| RwLock::new(BoundedImageStore::new(24 * 1024 * 1024)))
 }
 
 fn global_scaled_cache() -> &'static RwLock<BoundedImageStore<(String, u32, u32)>> {
-    SCALED_IMAGE_CACHE.get_or_init(|| RwLock::new(BoundedImageStore::new(32 * 1024 * 1024)))
+    SCALED_IMAGE_CACHE.get_or_init(|| RwLock::new(BoundedImageStore::new(12 * 1024 * 1024)))
 }
 
 fn in_flight_set() -> &'static RwLock<HashSet<String>> {
@@ -292,8 +292,8 @@ fn global_animated_cache() -> &'static RwLock<HashMap<String, AnimatedImage>> {
 /// Stores an animated image in the cache.
 pub fn cache_animated_image(key: &str, anim: AnimatedImage) {
     if let Ok(mut cache) = global_animated_cache().write() {
-        if cache.len() > 128 {
-            let keys_to_remove: Vec<_> = cache.keys().take(64).cloned().collect();
+        if cache.len() >= 8 {
+            let keys_to_remove: Vec<_> = cache.keys().take(4).cloned().collect();
             for k in keys_to_remove {
                 cache.remove(&k);
             }
