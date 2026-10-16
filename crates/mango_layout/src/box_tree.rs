@@ -1168,6 +1168,9 @@ pub fn build_box_tree_with_maps(
                 items.push(anon);
             } else {
                 child.is_independent_formatting_context = true;
+                if child.is_inline() || child.box_type.is_inline_block() {
+                    child.box_type = BoxType::BlockNode;
+                }
                 items.push(child);
             }
         }

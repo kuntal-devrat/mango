@@ -1874,9 +1874,6 @@ pub fn layout_flex(
                 };
             }
 
-            let old_x = child.dimensions.content.x();
-            let old_y = child.dimensions.content.y();
-
             let item_outer_main = m.final_main + m.pad_main + m.border_main + m.margin_main;
             if is_row {
                 let x = if is_reverse {
@@ -1925,23 +1922,16 @@ pub fn layout_flex(
             let was_stretched = item_align == AlignItems::Stretch
                 && is_child_cross_auto
                 && (item_cross - m.cross).abs() > 0.5;
-            if !was_stretched && (is_child_cross_auto && is_row) {
-                // Already laid out in row measurement pass at this exact height; shift descendants to final placed position
-                let dx = child.dimensions.content.x() - old_x;
-                let dy = child.dimensions.content.y() - old_y;
-                crate::block_flow::shift_descendants(child, dx, dy);
-            } else {
-                // Recursively lay out the contents of the flex item
-                let item_containing_block = Dimensions::new(child.dimensions.border_box());
-                let mut item_float_ctx = FloatContext::new();
-                let c_fs = child.style.as_ref().map(|s| s.font_size).unwrap_or(16.0);
-                layout_flex_item(child, &item_containing_block, &mut item_float_ctx, c_fs);
-                if was_stretched {
-                    if is_row {
-                        child.dimensions.content.size.height = item_cross;
-                    } else {
-                        child.dimensions.content.size.width = item_cross;
-                    }
+            // Recursively lay out the contents of the flex item at its final placed dimensions
+            let item_containing_block = Dimensions::new(child.dimensions.border_box());
+            let mut item_float_ctx = FloatContext::new();
+            let c_fs = child.style.as_ref().map(|s| s.font_size).unwrap_or(16.0);
+            layout_flex_item(child, &item_containing_block, &mut item_float_ctx, c_fs);
+            if was_stretched {
+                if is_row {
+                    child.dimensions.content.size.height = item_cross;
+                } else {
+                    child.dimensions.content.size.width = item_cross;
                 }
             }
         }

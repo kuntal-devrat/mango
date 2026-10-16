@@ -217,29 +217,9 @@ fn main() {
     let mut bold_count = 0;
     let mut reg_count = 0;
     for cmd in dl.iter() {
-        if let mango_render::DisplayCommand::DrawText {
-            text,
-            weight,
-            family,
-            font_size,
-            ..
-        } = cmd
-        {
+        if let mango_render::DisplayCommand::DrawText { weight, .. } = cmd {
             if *weight == mango_render::FontWeight::Bold {
                 bold_count += 1;
-                if bold_count <= 10 {
-                    let fm = mango_render::font::font_manager();
-                    let f_bold =
-                        fm.select_font(*family, mango_render::FontWeight::Bold) as *const _;
-                    let f_reg =
-                        fm.select_font(*family, mango_render::FontWeight::Regular) as *const _;
-                    let same_font = f_bold == f_reg;
-                    let desc = fm.debug_family_name(*family);
-                    println!(
-                        "BOLD TEXT [family={}, size={}, same_as_reg={}]: {:?}",
-                        desc, font_size, same_font, text
-                    );
-                }
             } else {
                 reg_count += 1;
             }

@@ -60,7 +60,7 @@ impl HttpRequest {
         let mut headers = HashMap::new();
         headers.insert(
             "User-Agent".to_string(),
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Mango/0.2.1".to_string(),
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Mango/0.2.2".to_string(),
         );
         headers.insert(
             "Accept".to_string(),
@@ -252,7 +252,7 @@ impl HttpClient {
     pub fn new() -> Self {
         let timeout = Duration::from_secs(30);
         Self {
-            user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Mango/0.2.1".to_string(),
+            user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Mango/0.2.2".to_string(),
             timeout,
             cookie_jar: std::sync::Arc::new(std::sync::Mutex::new(CookieJar::new())),
             referrer_policies: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
@@ -264,7 +264,7 @@ impl HttpClient {
     pub fn with_cookie_jar(cookie_jar: std::sync::Arc<std::sync::Mutex<CookieJar>>) -> Self {
         let timeout = Duration::from_secs(30);
         Self {
-            user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Mango/0.2.1".to_string(),
+            user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Mango/0.2.2".to_string(),
             timeout,
             cookie_jar,
             referrer_policies: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),

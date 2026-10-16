@@ -259,33 +259,19 @@ impl BrowserChrome {
                 }
                 DisplayCommand::FillRoundedRect { rect, color, radii } => {
                     let translated_y = rect.y() + content_y - self.scroll_y;
-                    let clamped_top = translated_y.max(content_y);
-                    let clamped_bottom = (translated_y + rect.height()).min(content_y + content_h);
-                    if clamped_bottom > clamped_top {
-                        if translated_y >= content_y
-                            && translated_y + rect.height() <= content_y + content_h
-                        {
-                            dl.push(DisplayCommand::FillRoundedRect {
-                                rect: Rect::new(
-                                    rect.x(),
-                                    translated_y,
-                                    rect.width(),
-                                    rect.height(),
-                                ),
-                                color,
-                                radii,
-                            });
-                        } else {
-                            dl.push(DisplayCommand::FillRect {
-                                rect: Rect::new(
-                                    rect.x(),
-                                    clamped_top,
-                                    rect.width(),
-                                    clamped_bottom - clamped_top,
-                                ),
-                                color,
-                            });
-                        }
+                    if translated_y + rect.height() >= content_y
+                        && translated_y <= content_y + content_h
+                    {
+                        dl.push(DisplayCommand::FillRoundedRect {
+                            rect: Rect::new(
+                                rect.x(),
+                                translated_y,
+                                rect.width(),
+                                rect.height(),
+                            ),
+                            color,
+                            radii,
+                        });
                     }
                 }
                 DisplayCommand::DrawBorder {
@@ -295,15 +281,15 @@ impl BrowserChrome {
                     radii,
                 } => {
                     let translated_y = rect.y() + content_y - self.scroll_y;
-                    let clamped_top = translated_y.max(content_y);
-                    let clamped_bottom = (translated_y + rect.height()).min(content_y + content_h);
-                    if clamped_bottom > clamped_top {
+                    if translated_y + rect.height() >= content_y
+                        && translated_y <= content_y + content_h
+                    {
                         dl.push(DisplayCommand::DrawBorder {
                             rect: Rect::new(
                                 rect.x(),
-                                clamped_top,
+                                translated_y,
                                 rect.width(),
-                                clamped_bottom - clamped_top,
+                                rect.height(),
                             ),
                             color,
                             widths,

@@ -728,7 +728,7 @@ pub(crate) fn measure_box_intrinsic_widths(
     if matches!(
         node.tag_name.as_deref(),
         Some("img") | Some("svg") | Some("iframe") | Some("canvas") | Some("video")
-    ) {
+    ) || node.box_type.is_replaced() {
         let mut w = None;
         if let Some(w_attr) = node.get_attribute("width") {
             let trimmed = w_attr.trim().trim_end_matches("px");
@@ -749,9 +749,36 @@ pub(crate) fn measure_box_intrinsic_widths(
         let fixed_w = w.unwrap_or(if node.dimensions.content.width() > 0.0 {
             node.dimensions.content.width()
         } else {
-            16.0
+            match &node.box_type {
+                crate::box_model::BoxType::ReplacedElement { intrinsic_width, .. }
+                    if *intrinsic_width > 0.0 =>
+                {
+                    *intrinsic_width
+                }
+                _ => 16.0,
+            }
         });
-        let res = (fixed_w, fixed_w);
+        let is_border_box = node
+            .style
+            .as_ref()
+            .map(|s| s.box_sizing == BoxSizing::BorderBox)
+            .unwrap_or(false);
+        let spacing = get_node_horizontal_spacing(node, font_size);
+        let total_w = if is_border_box {
+            let m_h = if let Some(s) = &node.style {
+                let fs = s.font_size;
+                let rfs = s.root_font_size;
+                let ml = s.margin_left.to_px(fs, rfs, 0.0);
+                let mr = s.margin_right.to_px(fs, rfs, 0.0);
+                ml + mr
+            } else {
+                node.dimensions.margin.left + node.dimensions.margin.right
+            };
+            fixed_w + m_h
+        } else {
+            fixed_w + spacing
+        };
+        let res = (total_w, total_w);
         memo.insert(key, res);
         return res;
     }

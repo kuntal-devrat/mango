@@ -18,7 +18,16 @@ struct VertexOutput {
 @vertex
 fn vs_main(@builtin(vertex_index) vid: u32) -> VertexOutput {
     var out: VertexOutput;
-    var uvs = array<vec2<f32>, 6>(
+    let idx = vid % 6u;
+    var pos_table = array<vec2<f32>, 6>(
+        vec2<f32>(pc.rect.x, pc.rect.y),
+        vec2<f32>(pc.rect.x, pc.rect.w),
+        vec2<f32>(pc.rect.z, pc.rect.w),
+        vec2<f32>(pc.rect.x, pc.rect.y),
+        vec2<f32>(pc.rect.z, pc.rect.w),
+        vec2<f32>(pc.rect.z, pc.rect.y),
+    );
+    var uv_table = array<vec2<f32>, 6>(
         vec2<f32>(pc.uv_rect.x, pc.uv_rect.y),
         vec2<f32>(pc.uv_rect.x, pc.uv_rect.w),
         vec2<f32>(pc.uv_rect.z, pc.uv_rect.w),
@@ -26,11 +35,8 @@ fn vs_main(@builtin(vertex_index) vid: u32) -> VertexOutput {
         vec2<f32>(pc.uv_rect.z, pc.uv_rect.w),
         vec2<f32>(pc.uv_rect.z, pc.uv_rect.y),
     );
-    let uv = uvs[vid % 6u];
-    out.uv = uv;
-    let x = mix(pc.rect.x, pc.rect.z, select(0.0, 1.0, uv.x == pc.uv_rect.z));
-    let y = mix(pc.rect.y, pc.rect.w, select(0.0, 1.0, uv.y == pc.uv_rect.w));
-    out.pos = vec4<f32>(x, y, 0.0, 1.0);
+    out.pos = vec4<f32>(pos_table[idx], 0.0, 1.0);
+    out.uv = uv_table[idx];
     return out;
 }
 

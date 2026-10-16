@@ -72,8 +72,20 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     println!("SPIR-V word count: {}", spv.len());
     assert!(!spv.is_empty());
 
-    let instance = lgpu::Instance::new().expect("instance");
-    let adapters = instance.enumerate_adapters().expect("adapters");
+    let instance = match lgpu::Instance::new() {
+        Ok(inst) => inst,
+        Err(e) => {
+            println!("Skipping GPU device creation (no Vulkan driver found in CI): {:?}", e);
+            return;
+        }
+    };
+    let adapters = match instance.enumerate_adapters() {
+        Ok(ad) => ad,
+        Err(e) => {
+            println!("Skipping GPU device creation (enumerate_adapters failed): {:?}", e);
+            return;
+        }
+    };
     if !adapters.is_empty() {
         let (device, _queue) = adapters[0].request_device(&instance).expect("device");
         let shader = device.create_shader_spirv(&spv).expect("shader");
