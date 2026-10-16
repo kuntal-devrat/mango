@@ -340,11 +340,105 @@ pub fn is_public_suffix(domain: &str) -> bool {
         "gov.il",
         "ac.il",
         "muni.il",
+        // Additional ccTLDs
+        "com.es",
+        "org.es",
+        "gob.es",
+        "edu.es",
+        "nom.es",
+        "asso.fr",
+        "nom.fr",
+        "com.fr",
+        "co.it",
+        "gov.it",
+        "edu.it",
+        "co.nl",
+        "net.nl",
+        "com.pl",
+        "net.pl",
+        "org.pl",
+        "edu.pl",
+        "gov.pl",
+        "com.ru",
+        "net.ru",
+        "org.ru",
+        "gov.ru",
+        "edu.ru",
+        "com.se",
+        "org.se",
+        "co.at",
+        "or.at",
+        "gv.at",
+        "co.ch",
+        "co.be",
+        "com.pt",
+        "org.pt",
+        "gov.pt",
+        "com.gr",
+        "edu.gr",
+        "com.ro",
+        "org.ro",
+        "com.co",
+        "org.co",
+        "edu.co",
+        "gov.co",
+        "com.cl",
+        "com.pe",
+        "edu.pe",
+        "gob.pe",
+        "com.ve",
+        "com.ec",
+        "co.th",
+        "ac.th",
+        "go.th",
+        "com.pk",
+        "org.pk",
+        "com.bd",
+        "gov.bd",
+        "com.ng",
+        "gov.ng",
+        "com.eg",
+        "gov.eg",
+        "co.ke",
+        // Major cloud platforms, shared hosting, and PaaS providers (RFC 6265bis cookie boundary protection)
         "github.io",
         "gitlab.io",
         "vercel.app",
         "netlify.app",
         "pages.dev",
+        "workers.dev",
+        "herokuapp.com",
+        "herokuapp.net",
+        "azurewebsites.net",
+        "azurewebsites.windows.net",
+        "cloudapp.net",
+        "appspot.com",
+        "firebaseapp.com",
+        "web.app",
+        "cloudfront.net",
+        "s3.amazonaws.com",
+        "s3-website.amazonaws.com",
+        "elasticbeanstalk.com",
+        "fly.dev",
+        "railway.app",
+        "onrender.com",
+        "glitch.me",
+        "replit.app",
+        "replit.dev",
+        "repl.co",
+        "supabase.co",
+        "deno.dev",
+        "ngrok.io",
+        "ngrok-free.app",
+        "fastly.net",
+        "fastlylb.net",
+        "myshopify.com",
+        "blogspot.com",
+        "wordpress.com",
+        "wixsite.com",
+        "azureedge.net",
+        "trafficmanager.net",
+        "surge.sh",
     ];
 
     MULTI_PART_SUFFIXES.iter().any(|&s| d == s)
@@ -360,6 +454,16 @@ pub fn get_registrable_domain(host: &str) -> String {
     if parts.len() <= 2 {
         return d;
     }
+
+    // Check for 3-part public suffixes (e.g. s3.amazonaws.com, azurewebsites.windows.net)
+    if parts.len() >= 4 {
+        let last_three = format!("{}.{}.{}", parts[parts.len() - 3], parts[parts.len() - 2], parts[parts.len() - 1]);
+        if is_public_suffix(&last_three) {
+            return format!("{}.{}", parts[parts.len() - 4], last_three);
+        }
+    }
+
+    // Check for 2-part public suffixes (e.g. co.uk, com.au, github.io)
     let last_two = format!("{}.{}", parts[parts.len() - 2], parts[parts.len() - 1]);
     if is_public_suffix(&last_two) && parts.len() >= 3 {
         return format!("{}.{}", parts[parts.len() - 3], last_two);
@@ -375,6 +479,13 @@ pub fn is_same_site_hosts(h1: &str, h2: &str) -> bool {
 }
 
 /// An RFC 6265 compliant cookie storage jar.
+///
+/// # Concurrency & Synchronization Invariant
+/// When shared across threads (e.g., via `Arc<Mutex<CookieJar>>`), callers MUST
+/// hold the mutex guard across the entire read-modify-write cycle. All mutating
+/// operations (`store_cookie`, `set_from_script`, `remove_for_domain`, etc.)
+/// require `&mut self` and perform atomic lookup-and-replacement without releasing
+/// internal state, preventing TOCTOU races.
 #[derive(Debug, Clone, Default)]
 pub struct CookieJar {
     cookies: Vec<Cookie>,
@@ -386,6 +497,7 @@ impl CookieJar {
             cookies: Vec::new(),
         }
     }
+
 
     /// Parses a `Set-Cookie` response header value for a given request URL.
     ///
@@ -467,7 +579,12 @@ impl CookieJar {
                                 is_deleted = true;
                                 expires_at = Some(0);
                             }
-                            Ok(secs) => expires_at = Some(now_secs() + secs as u64),
+                            Ok(secs) => {
+                                // RFC 6265bis §5.4: Cap Max-Age to at most 400 days and use saturating arithmetic (M-05)
+                                const MAX_COOKIE_LIFETIME_SECS: u64 = 400 * 86_400;
+                                let clamped_secs = (secs as u64).min(MAX_COOKIE_LIFETIME_SECS);
+                                expires_at = Some(now_secs().saturating_add(clamped_secs));
+                            }
                             Err(_) => {}
                         }
                     }
@@ -480,7 +597,9 @@ impl CookieJar {
                             if ts <= now_secs() {
                                 is_deleted = true;
                             }
-                            expires_at = Some(ts);
+                            // RFC 6265bis §5.4: Cap Expires to at most 400 days in the future
+                            let max_future = now_secs().saturating_add(400 * 86_400);
+                            expires_at = Some(ts.min(max_future));
                         }
                     }
                     "samesite" => same_site = SameSite::from_str(val),
@@ -1327,6 +1446,16 @@ mod tests {
         let uk = url("https://shop.co.uk/");
         // Multi-part TLD .co.uk must be rejected
         assert!(CookieJar::parse_set_cookie("tracker=1; Domain=co.uk", &uk).is_none());
+
+        // Cloud provider and PaaS shared domains must be rejected
+        let heroku = url("https://myapp.herokuapp.com/");
+        assert!(CookieJar::parse_set_cookie("shared=1; Domain=herokuapp.com", &heroku).is_none());
+        assert_eq!(get_registrable_domain("myapp.herokuapp.com"), "myapp.herokuapp.com");
+
+        // 3-part public suffixes (e.g. s3.amazonaws.com) must be protected
+        let s3 = url("https://mybucket.s3.amazonaws.com/");
+        assert!(CookieJar::parse_set_cookie("shared=1; Domain=s3.amazonaws.com", &s3).is_none());
+        assert_eq!(get_registrable_domain("mybucket.s3.amazonaws.com"), "mybucket.s3.amazonaws.com");
     }
 
     #[test]
@@ -1422,5 +1551,21 @@ mod tests {
         assert_eq!(dropped, 1);
         assert_eq!(jar.len(), 1);
         assert_eq!(jar.all()[0].name, "persist");
+    }
+
+    #[test]
+    fn test_max_age_overflow_protection() {
+        let u = url("https://example.com/");
+        // Enormous Max-Age that could overflow u64 addition if unchecked
+        let c = CookieJar::parse_set_cookie(
+            "big=1; Max-Age=9223372036854775807; Path=/",
+            &u,
+        )
+        .unwrap();
+        let exp = c.expires_at.unwrap();
+        // Capped to at most 400 days in the future
+        let max_expected = now_secs() + 400 * 86_400 + 5;
+        assert!(exp <= max_expected);
+        assert!(exp > now_secs());
     }
 }

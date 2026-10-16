@@ -2,9 +2,7 @@
 
 #![allow(
     clippy::collapsible_if,
-    clippy::too_many_arguments,
     clippy::extend_with_drain,
-    clippy::question_mark,
     clippy::type_complexity,
     clippy::needless_range_loop
 )]

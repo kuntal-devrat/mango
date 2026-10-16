@@ -60,7 +60,7 @@ impl HttpRequest {
         let mut headers = HashMap::new();
         headers.insert(
             "User-Agent".to_string(),
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36".to_string(),
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Mango/0.2.1".to_string(),
         );
         headers.insert(
             "Accept".to_string(),
@@ -75,7 +75,7 @@ impl HttpRequest {
             url,
             method: HttpMethod::Get,
             headers,
-            timeout: Duration::from_secs(10),
+            timeout: Duration::from_secs(30),
         }
     }
 }
@@ -170,6 +170,12 @@ pub fn read_body_streaming<F: FnMut(&[u8]) -> bool>(
             Ok(0) => break,
             Ok(n) => {
                 let chunk = &buf[..n];
+                if accumulated.len().saturating_add(n) > MAX_RESPONSE_BODY_BYTES {
+                    return Err(NetworkError::IoError(format!(
+                        "Response body exceeded maximum limit of {} bytes",
+                        MAX_RESPONSE_BODY_BYTES
+                    )));
+                }
                 accumulated.extend_from_slice(chunk);
                 if !on_chunk(chunk) {
                     break;
@@ -221,6 +227,8 @@ pub struct HttpClient {
     pub user_agent: String,
     pub timeout: Duration,
     pub cookie_jar: std::sync::Arc<std::sync::Mutex<CookieJar>>,
+    pub referrer_policies:
+        std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, String>>>,
     pub agent: std::sync::Arc<ureq::Agent>,
 }
 
@@ -244,9 +252,10 @@ impl HttpClient {
     pub fn new() -> Self {
         let timeout = Duration::from_secs(30);
         Self {
-            user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36".to_string(),
+            user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Mango/0.2.1".to_string(),
             timeout,
             cookie_jar: std::sync::Arc::new(std::sync::Mutex::new(CookieJar::new())),
+            referrer_policies: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             agent: create_pooled_agent(timeout),
         }
     }
@@ -255,10 +264,50 @@ impl HttpClient {
     pub fn with_cookie_jar(cookie_jar: std::sync::Arc<std::sync::Mutex<CookieJar>>) -> Self {
         let timeout = Duration::from_secs(30);
         Self {
-            user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36".to_string(),
+            user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Mango/0.2.1".to_string(),
             timeout,
             cookie_jar,
+            referrer_policies: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             agent: create_pooled_agent(timeout),
+        }
+    }
+
+    /// Sets a known Referrer-Policy for an origin.
+    pub fn set_referrer_policy(&self, origin: &str, policy: &str) {
+        if let Ok(mut map) = self.referrer_policies.lock() {
+            map.insert(origin.to_string(), policy.to_string());
+        }
+    }
+
+    /// Looks up the Referrer-Policy for a given page URL or origin.
+    pub fn referrer_policy_for(&self, page_url: &Url) -> Option<String> {
+        let origin = crate::security::Origin::parse(&page_url.as_str())?.to_string();
+        self.referrer_policies.lock().ok()?.get(&origin).cloned()
+    }
+
+    /// Computes the Referer header value to attach to a request to `target_url` initiated by `initiator_url`.
+    pub fn compute_referrer_header(
+        &self,
+        target_url: &Url,
+        initiator_url: Option<&Url>,
+    ) -> Option<String> {
+        let initiator = initiator_url?;
+        let policy_str = self.referrer_policy_for(initiator);
+        crate::security::compute_referrer_with_policy_str(
+            initiator,
+            target_url,
+            policy_str.as_deref(),
+        )
+    }
+
+    /// Records the Referrer-Policy response header if present.
+    fn record_referrer_policy(&self, url: &Url, headers: &HashMap<String, String>) {
+        if let Some(rp) = headers.get("referrer-policy") {
+            if let Some(orig) = crate::security::Origin::parse(&url.as_str()) {
+                if let Ok(mut map) = self.referrer_policies.lock() {
+                    map.insert(orig.to_string(), rp.clone());
+                }
+            }
         }
     }
 
@@ -315,6 +364,10 @@ impl HttpClient {
             req = req.header("Cookie", &cookie_hdr);
         }
 
+        if let Some(ref_hdr) = self.compute_referrer_header(url, initiator_url) {
+            req = req.header("Referer", &ref_hdr);
+        }
+
         let response = req.call().map_err(|e| map_ureq_error(e, url))?;
 
         // Extract Set-Cookie headers into the cookie jar
@@ -342,6 +395,8 @@ impl HttpClient {
                 headers.insert(name.as_str().to_ascii_lowercase(), v_str.to_string());
             }
         }
+
+        self.record_referrer_policy(url, &headers);
 
         let body = read_body_capped(response.into_body())?;
 
@@ -473,6 +528,10 @@ impl HttpClient {
                 req = req.header("Cookie", &cookie_hdr);
             }
 
+            if let Some(ref_hdr) = self.compute_referrer_header(&current_url, initiator_url) {
+                req = req.header("Referer", &ref_hdr);
+            }
+
             let response = req.call().map_err(|e| map_ureq_error(e, &current_url))?;
 
             if let Ok(mut jar) = self.cookie_jar.lock() {
@@ -499,6 +558,8 @@ impl HttpClient {
                     headers.insert(name.as_str().to_ascii_lowercase(), v_str.to_string());
                 }
             }
+
+            self.record_referrer_policy(&current_url, &headers);
 
             let is_redirect = matches!(status, 301 | 302 | 303 | 307 | 308);
             if is_redirect && let Some(loc) = headers.get("location") {
@@ -592,9 +653,20 @@ impl HttpClient {
             .header("sec-ch-ua", "\"Chromium\";v=\"128\", \"Not;A=Brand\";v=\"24\", \"Google Chrome\";v=\"128\"")
             .header("sec-ch-ua-mobile", "?0")
             .header("sec-ch-ua-platform", "\"Windows\"")
-            .header("upgrade-insecure-requests", "1");
+            .header("upgrade-insecure-requests", "1")
+            .header("Sec-Fetch-Dest", "document")
+            .header("Sec-Fetch-Mode", "navigate")
+            .header("Sec-Fetch-Site", "same-origin")
+            .header("Sec-Fetch-User", "?1");
 
-        // POST is a top-level navigation-unsafe method: use Lax rules (not top-level safe).
+        if let Some(host) = &url.host {
+            let port_suffix = match (url.scheme.as_str(), url.port) {
+                ("http", Some(80)) | ("https", Some(443)) | (_, None) => String::new(),
+                (_, Some(p)) => format!(":{p}"),
+            };
+            let origin = format!("{}://{}{}", url.scheme, host, port_suffix);
+            req = req.header("Origin", &origin);
+        }
         // For form posts the initiator is the page itself; callers needing
         // subresource context should use request_with_context.
         if let Ok(jar) = self.cookie_jar.lock()
@@ -684,6 +756,15 @@ impl HttpClient {
         let url_str = url.as_str();
         let upper_method = method.trim().to_uppercase();
 
+        let has_custom_referer = custom_headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("referer"));
+        let auto_referer = if !has_custom_referer {
+            self.compute_referrer_header(url, initiator_url)
+        } else {
+            None
+        };
+
         let resp = if upper_method == "GET" && body.is_none() {
             let mut req = self
                 .agent
@@ -701,6 +782,9 @@ impl HttpClient {
                 )
             {
                 req = req.header("Cookie", &cookie_hdr);
+            }
+            if let Some(ref r) = auto_referer {
+                req = req.header("Referer", r);
             }
             for (k, v) in custom_headers {
                 req = req.header(k.as_str(), v.as_str());
@@ -724,6 +808,9 @@ impl HttpClient {
             {
                 req = req.header("Cookie", &cookie_hdr);
             }
+            if let Some(ref r) = auto_referer {
+                req = req.header("Referer", r);
+            }
             for (k, v) in custom_headers {
                 req = req.header(k.as_str(), v.as_str());
             }
@@ -745,6 +832,9 @@ impl HttpClient {
                 )
             {
                 req = req.header("Cookie", &cookie_hdr);
+            }
+            if let Some(ref r) = auto_referer {
+                req = req.header("Referer", r);
             }
             for (k, v) in custom_headers {
                 req = req.header(k.as_str(), v.as_str());
@@ -770,6 +860,9 @@ impl HttpClient {
                 )
             {
                 req = req.header("Cookie", &cookie_hdr);
+            }
+            if let Some(ref r) = auto_referer {
+                req = req.header("Referer", r);
             }
             for (k, v) in custom_headers {
                 req = req.header(k.as_str(), v.as_str());
@@ -802,6 +895,8 @@ impl HttpClient {
                 headers.insert(name.as_str().to_ascii_lowercase(), v_str.to_string());
             }
         }
+
+        self.record_referrer_policy(url, &headers);
 
         let body_bytes = resp
             .into_body()

@@ -395,6 +395,38 @@ impl Url {
             _ => 80,
         })
     }
+
+    /// Returns the origin URL string with trailing slash (e.g. `https://example.com/` or `https://example.com:8080/`).
+    pub fn origin_url(&self) -> Option<String> {
+        let host = self.host.as_deref()?;
+        let mut out = format!("{}://{}", self.scheme, host);
+        if let Some(port) = self.port {
+            out.push(':');
+            out.push_str(&port.to_string());
+        }
+        out.push('/');
+        Some(out)
+    }
+
+    /// Serializes this URL stripped for HTTP Referer: without userinfo (username/password) and without fragment.
+    pub fn stripped_for_referrer(&self) -> Option<String> {
+        let host = self.host.as_deref()?;
+        let mut out = format!("{}://{}", self.scheme, host);
+        if let Some(port) = self.port {
+            out.push(':');
+            out.push_str(&port.to_string());
+        }
+        if self.path.is_empty() {
+            out.push('/');
+        } else {
+            out.push_str(&self.path);
+        }
+        if let Some(q) = &self.query {
+            out.push('?');
+            out.push_str(q);
+        }
+        Some(out)
+    }
 }
 
 impl fmt::Display for Url {

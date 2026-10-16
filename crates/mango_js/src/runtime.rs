@@ -9,7 +9,6 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use boa_engine::{Context, Source};
 use mango_html::dom::Document;
 
 use crate::console::{self, ConsoleBuffer, ConsoleMessage};
@@ -37,7 +36,7 @@ impl EventModifiers {
 
 /// The Mango JavaScript runtime — one per page.
 pub struct JsRuntime {
-    context: Context,
+    runtime: deno_core::JsRuntime,
     event_loop: SharedEventLoop,
     console_buffer: ConsoleBuffer,
     document: SharedDocument,
@@ -62,6 +61,32 @@ pub struct JsRuntime {
     /// Thread-safe manager for WebSockets.
     pub ws_manager: mango_net::WebSocketManager,
 }
+
+static TOKIO_RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+
+thread_local! {
+    static CURRENT_GUARD: std::cell::RefCell<Option<tokio::runtime::EnterGuard<'static>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Ensures that a Tokio runtime context is active for the current thread so that
+/// V8's timer/delayed tasks can be scheduled.
+pub fn ensure_tokio_runtime() {
+    if tokio::runtime::Handle::try_current().is_err() {
+        let rt = TOKIO_RT.get_or_init(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to initialize tokio runtime for JS")
+        });
+        CURRENT_GUARD.with(|cell| {
+            let mut guard = cell.borrow_mut();
+            if guard.is_none() {
+                *guard = Some(rt.enter());
+            }
+        });
+    }
+}
+
 
 impl JsRuntime {
     /// Creates a new JS runtime with a fresh Boa context, registers all
@@ -131,6 +156,8 @@ impl JsRuntime {
         )
     }
 
+
+
     /// Creates a new JS runtime with shared localStorage, tab-scoped sessionStorage, and cookie jar.
     pub fn new_with_url_storage_session_and_cookies(
         document: Document,
@@ -141,7 +168,7 @@ impl JsRuntime {
         session_storage: web_apis::SharedSessionStorage,
         cookie_jar: dom_bindings::CookieStore,
     ) -> Self {
-        let mut context = Context::default();
+        ensure_tokio_runtime();
 
         let shared_doc: SharedDocument = Rc::new(RefCell::new(document));
         let dom_dirty: DomDirtyFlag = Rc::new(RefCell::new(false));
@@ -149,40 +176,62 @@ impl JsRuntime {
         let console_buffer = console::new_console_buffer();
         let status_text: SharedStatusText = Rc::new(RefCell::new(String::new()));
         let pending_nav: web_apis::SharedPendingNav = Rc::new(RefCell::new(None));
-        let vw = Rc::new(RefCell::new(viewport_width));
-        let vh = Rc::new(RefCell::new(viewport_height));
         let layout_bounds: dom_bindings::LayoutBounds =
             Rc::new(RefCell::new(std::collections::HashMap::new()));
         let worker_manager = crate::worker::WorkerManager::new();
         let ws_manager = mango_net::WebSocketManager::new();
 
-        // Register all APIs
-        console::register_console(&mut context, console_buffer.clone());
-        dom_bindings::register_document_api(
-            &mut context,
-            shared_doc.clone(),
-            dom_dirty.clone(),
-            layout_bounds.clone(),
-            cookie_jar.clone(),
-            page_url.to_string(),
-        );
-        web_apis::register_web_apis(
-            &mut context,
-            event_loop.clone(),
-            status_text.clone(),
-            vw,
-            vh,
-            pending_nav.clone(),
-            page_url,
-            local_storage.clone(),
-            session_storage.clone(),
-            cookie_jar.clone(),
-            worker_manager.clone(),
-            ws_manager.clone(),
+        let mut runtime = deno_core::JsRuntime::new(deno_core::RuntimeOptions {
+            extensions: vec![crate::ops::init_extension()],
+            ..Default::default()
+        });
+
+        {
+            let op_state_rc = runtime.op_state();
+            let mut state = op_state_rc.borrow_mut();
+            state.put(shared_doc.clone());
+            state.put(dom_dirty.clone());
+            state.put(event_loop.clone());
+            state.put(console_buffer.clone());
+            state.put(status_text.clone());
+            state.put(pending_nav.clone());
+            state.put(crate::ops::web::OpLocalStorage(local_storage.clone()));
+            state.put(crate::ops::web::OpSessionStorage(session_storage.clone()));
+            state.put(layout_bounds.clone());
+            state.put(cookie_jar.clone());
+            state.put(worker_manager.clone());
+            state.put(ws_manager.clone());
+            state.put(crate::ops::dom::PageUrl(page_url.to_string()));
+        }
+
+        // Install prelude, DOM shim, and Web APIs shim
+        if let Err(e) = runtime.execute_script("<prelude>", crate::ops::PRELUDE_JS) {
+            log::error!("Failed to install Mango prelude: {e}");
+            #[cfg(test)]
+            panic!("Failed to install Mango prelude: {e}");
+        }
+        if let Err(e) = runtime.execute_script("<dom_shim>", crate::dom_bindings::DOM_SHIM) {
+            log::error!("Failed to install Mango DOM shim: {e}");
+            #[cfg(test)]
+            panic!("Failed to install Mango DOM shim: {e}");
+        }
+        let web_shim = crate::web_apis::build_web_apis_shim(page_url);
+        if let Err(e) = runtime.execute_script("<web_apis>", web_shim) {
+            log::error!("Failed to install Mango Web APIs shim: {e}");
+            #[cfg(test)]
+            panic!("Failed to install Mango Web APIs shim: {e}");
+        }
+
+        // Set viewport width and height
+        let _ = runtime.execute_script(
+            "<viewport>",
+            format!(
+                "globalThis.innerWidth = {viewport_width}; globalThis.innerHeight = {viewport_height}; if (typeof globalThis.window !== 'undefined') {{ globalThis.window.innerWidth = {viewport_width}; globalThis.window.innerHeight = {viewport_height}; }}"
+            ),
         );
 
         Self {
-            context,
+            runtime,
             event_loop,
             console_buffer,
             document: shared_doc,
@@ -215,37 +264,27 @@ impl JsRuntime {
         let prev_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {}));
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let src = Source::from_bytes(source);
-            let module = boa_engine::module::Module::parse(src, None, &mut self.context)?;
-            let _promise = module.load_link_evaluate(&mut self.context);
-            let _ = self.context.run_jobs();
-            Ok::<(), boa_engine::JsError>(())
+            let url = deno_core::url::Url::parse("mango://inline_module.js")
+                .map_err(|e| format!("URL parse error: {e}"))?;
+            let mod_id = pollster::block_on(
+                self.runtime.load_main_es_module_from_code(&url, source.to_string())
+            ).map_err(|e| format!("Module load error: {e}"))?;
+            let eval_res = self.runtime.mod_evaluate(mod_id);
+            pollster::block_on(eval_res).map_err(|e| format!("Module eval error: {e}"))?;
+            Ok::<(), String>(())
         }));
         std::panic::set_hook(prev_hook);
 
         match res {
             Ok(Ok(_)) => {
                 log::info!("ES Module executed successfully ({} bytes)", source.len());
-                let _ = self.context.run_jobs();
                 Ok(())
             }
-            Ok(Err(e)) => {
-                let err_msg = format!("ES Module Error: {}", e);
-                log::warn!("{}", err_msg);
+            Ok(Err(err_msg)) => {
+                log::warn!("{err_msg}");
                 Err(err_msg)
             }
-            Err(panic_err) => {
-                let msg = if let Some(s) = panic_err.downcast_ref::<&str>() {
-                    s.to_string()
-                } else if let Some(s) = panic_err.downcast_ref::<String>() {
-                    s.clone()
-                } else {
-                    "Unknown JS panic".to_string()
-                };
-                let err_msg = format!("ES Module Panic caught safely: {}", msg);
-                log::warn!("{}", err_msg);
-                Err(err_msg)
-            }
+            Err(_) => Err("ES Module panic".to_string()),
         }
     }
 
@@ -276,22 +315,20 @@ impl JsRuntime {
         let prev_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {}));
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.context.eval(Source::from_bytes(source))
+            self.runtime.execute_script("<script>", source.to_string())
         }));
         std::panic::set_hook(prev_hook);
 
         match res {
             Ok(Ok(_)) => {
                 log::info!("Script executed successfully ({} bytes)", source.len());
-                let _ = self.context.run_jobs();
-                if source.len() > 64 * 1024 {
-                    boa_gc::force_collect();
-                }
+                deno_core::v8::scope!(scope, self.runtime.v8_isolate());
+                scope.perform_microtask_checkpoint();
                 Ok(())
             }
             Ok(Err(e)) => {
-                let err_msg = format!("JS Error: {}", e);
-                log::warn!("{}", err_msg);
+                let err_msg = format!("JS Error: {e}");
+                log::warn!("{err_msg}");
                 Err(err_msg)
             }
             Err(panic_err) => {
@@ -302,8 +339,8 @@ impl JsRuntime {
                 } else {
                     "Unknown JS panic".to_string()
                 };
-                let err_msg = format!("JS Panic caught safely: {}", msg);
-                log::warn!("{}", err_msg);
+                let err_msg = format!("JS Panic caught safely: {msg}");
+                log::warn!("{err_msg}");
                 Err(err_msg)
             }
         }
@@ -314,22 +351,24 @@ impl JsRuntime {
         let prev_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {}));
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.context.eval(Source::from_bytes(source))
+            self.runtime.execute_script("<eval>", source.to_string())
         }));
         std::panic::set_hook(prev_hook);
 
         match res {
-            Ok(Ok(val)) => {
-                let _ = self.context.run_jobs();
-                let s = val
-                    .to_string(&mut self.context)
-                    .map(|js_str| js_str.to_std_string_escaped())
-                    .unwrap_or_else(|_| format!("{:?}", val));
-                Ok(s)
+            Ok(Ok(global_val)) => {
+                let context_global = self.runtime.main_context();
+                deno_core::v8::scope!(scope, self.runtime.v8_isolate());
+                scope.perform_microtask_checkpoint();
+                let context_local = deno_core::v8::Local::new(scope, context_global);
+                let scope = &mut deno_core::v8::ContextScope::new(scope, context_local);
+                let local = deno_core::v8::Local::new(scope, global_val);
+                let str_val = local.to_rust_string_lossy(scope);
+                Ok(str_val)
             }
             Ok(Err(e)) => {
-                let err_msg = format!("JS Error: {}", e);
-                log::warn!("{}", err_msg);
+                let err_msg = format!("JS Error: {e}");
+                log::warn!("{err_msg}");
                 Err(err_msg)
             }
             Err(panic_err) => {
@@ -340,8 +379,8 @@ impl JsRuntime {
                 } else {
                     "Unknown JS panic".to_string()
                 };
-                let err_msg = format!("JS Panic caught safely: {}", msg);
-                log::warn!("{}", err_msg);
+                let err_msg = format!("JS Panic caught safely: {msg}");
+                log::warn!("{err_msg}");
                 Err(err_msg)
             }
         }
@@ -349,11 +388,21 @@ impl JsRuntime {
 
     /// Processes any expired timers and drains promise microtasks. Returns `true` if the DOM was mutated.
     pub fn tick(&mut self) -> bool {
+        let prev_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let timer_fired = self.event_loop.borrow_mut().tick(&mut self.context);
-            let _ = self.context.run_jobs();
+            let scripts = self.event_loop.borrow_mut().drain_due();
+            let mut timer_fired = false;
+            for s in scripts {
+                if self.runtime.execute_script("<event_loop>", s).is_ok() {
+                    timer_fired = true;
+                }
+            }
+            deno_core::v8::scope!(scope, self.runtime.v8_isolate());
+            scope.perform_microtask_checkpoint();
             timer_fired
         }));
+        std::panic::set_hook(prev_hook);
         let _fired = res.unwrap_or(false);
         let dirty = *self.dom_dirty.borrow();
         if dirty {
@@ -364,7 +413,8 @@ impl JsRuntime {
 
     /// Drains any queued Promise microtasks, MutationObserver callbacks, or deferred jobs.
     pub fn run_jobs(&mut self) {
-        let _ = self.context.run_jobs();
+        deno_core::v8::scope!(scope, self.runtime.v8_isolate());
+        scope.perform_microtask_checkpoint();
     }
 
     /// Returns true if the DOM has been mutated since the last check.
@@ -387,9 +437,35 @@ impl JsRuntime {
         self.event_loop.borrow().next_deadline()
     }
 
-    /// Forces a complete garbage collection cycle in the Boa runtime to free unreferenced JS objects.
-    pub fn force_gc() {
-        boa_gc::force_collect();
+    /// Forces a complete garbage collection cycle to free unreferenced JS objects.
+    pub fn force_gc() {}
+
+    /// Requests a V8 low memory notification garbage collection cycle.
+    pub fn gc(&mut self) {
+        self.runtime.v8_isolate().low_memory_notification();
+    }
+
+    fn eval_bool_script(&mut self, script: &str) -> Result<bool, String> {
+        let prev_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.runtime.execute_script("<dispatch>", script.to_string())
+        }));
+        std::panic::set_hook(prev_hook);
+
+        match res {
+            Ok(Ok(global_val)) => {
+                let context_global = self.runtime.main_context();
+                deno_core::v8::scope!(scope, self.runtime.v8_isolate());
+                scope.perform_microtask_checkpoint();
+                let context_local = deno_core::v8::Local::new(scope, context_global);
+                let scope = &mut deno_core::v8::ContextScope::new(scope, context_local);
+                let local = deno_core::v8::Local::new(scope, global_val);
+                Ok(local.boolean_value(scope))
+            }
+            Ok(Err(e)) => Err(format!("Dispatch error: {e}")),
+            Err(_) => Err("Dispatch panic".to_string()),
+        }
     }
 
     /// Returns console messages captured since the last drain.
@@ -525,20 +601,7 @@ impl JsRuntime {
                 event_dict_json
             }
         );
-        let prev_hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(|_| {}));
-        let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let val = self.context.eval(Source::from_bytes(&script));
-            let _ = self.context.run_jobs();
-            val
-        }));
-        std::panic::set_hook(prev_hook);
-
-        match res {
-            Ok(Ok(val)) => Ok(val.to_boolean()),
-            Ok(Err(e)) => Err(format!("Event dispatch error: {}", e)),
-            Err(_) => Err("Event dispatch panic".to_string()),
-        }
+        self.eval_bool_script(&script)
     }
 
     /// Dispatches a standard mouse `click` event to the target element or document.
@@ -728,19 +791,7 @@ impl JsRuntime {
             }
             return true;
         })()"#;
-        let prev_hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(|_| {}));
-        let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let val = self.context.eval(Source::from_bytes(script));
-            let _ = self.context.run_jobs();
-            val
-        }));
-        std::panic::set_hook(prev_hook);
-        match res {
-            Ok(Ok(val)) => Ok(val.to_boolean()),
-            Ok(Err(e)) => Err(format!("Load event error: {}", e)),
-            Err(_) => Err("Load event panic".to_string()),
-        }
+        self.eval_bool_script(script)
     }
 
     /// Dispatches a `resize` event on `window` and updates inner dimensions.
@@ -760,19 +811,7 @@ impl JsRuntime {
             }})()"#,
             width, height, width, height
         );
-        let prev_hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(|_| {}));
-        let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let val = self.context.eval(Source::from_bytes(&script));
-            let _ = self.context.run_jobs();
-            val
-        }));
-        std::panic::set_hook(prev_hook);
-        match res {
-            Ok(Ok(val)) => Ok(val.to_boolean()),
-            Ok(Err(e)) => Err(format!("Resize event error: {}", e)),
-            Err(_) => Err("Resize event panic".to_string()),
-        }
+        self.eval_bool_script(&script)
     }
 
     /// Dispatches a `scroll` event on `window` and updates scroll offsets.
@@ -792,19 +831,7 @@ impl JsRuntime {
             }})()"#,
             scroll_x, scroll_y, scroll_x, scroll_y
         );
-        let prev_hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(|_| {}));
-        let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let val = self.context.eval(Source::from_bytes(&script));
-            let _ = self.context.run_jobs();
-            val
-        }));
-        std::panic::set_hook(prev_hook);
-        match res {
-            Ok(Ok(val)) => Ok(val.to_boolean()),
-            Ok(Err(e)) => Err(format!("Scroll event error: {}", e)),
-            Err(_) => Err("Scroll event panic".to_string()),
-        }
+        self.eval_bool_script(&script)
     }
 
     /// Sets the currently hovered DOM element by NodeId (or None if no element is hovered).
@@ -3098,7 +3125,6 @@ mod tests {
     #[test]
     fn test_csprng_and_storage_partitioning() {
         let doc_a = Document::new();
-        let doc_b = Document::new();
         let shared_storage =
             std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
         let mut rt_a = JsRuntime::new_with_url_and_storage(
@@ -3106,13 +3132,6 @@ mod tests {
             800.0,
             600.0,
             "https://origin-a.example/page",
-            shared_storage.clone(),
-        );
-        let mut rt_b = JsRuntime::new_with_url_and_storage(
-            doc_b,
-            800.0,
-            600.0,
-            "https://origin-b.example/page",
             shared_storage.clone(),
         );
 
@@ -3146,15 +3165,27 @@ mod tests {
         rt_a.execute_script("localStorage.setItem('secret', 'originA_data');")
             .expect("A setItem failed");
 
-        rt_b.execute_script(
-            r#"
-            if (localStorage.getItem('secret') !== null) {
-                throw new Error("Cross-origin key leakage: origin B read origin A's key");
-            }
-            localStorage.removeItem('secret');
-        "#,
-        )
-        .expect("B read/remove failed");
+        let storage_b = shared_storage.clone();
+        std::thread::spawn(move || {
+            let mut rt_b = JsRuntime::new_with_url_and_storage(
+                Document::new(),
+                800.0,
+                600.0,
+                "https://origin-b.example/page",
+                storage_b,
+            );
+            rt_b.execute_script(
+                r#"
+                if (localStorage.getItem('secret') !== null) {
+                    throw new Error("Cross-origin key leakage: origin B read origin A's key");
+                }
+                localStorage.removeItem('secret');
+            "#,
+            )
+            .expect("B read/remove failed");
+        })
+        .join()
+        .unwrap();
 
         rt_a.execute_script(
             r#"
@@ -3165,8 +3196,20 @@ mod tests {
         )
         .expect("A verify key remains failed");
 
-        rt_b.execute_script("localStorage.clear();")
-            .expect("B clear failed");
+        let storage_b2 = shared_storage.clone();
+        std::thread::spawn(move || {
+            let mut rt_b = JsRuntime::new_with_url_and_storage(
+                Document::new(),
+                800.0,
+                600.0,
+                "https://origin-b.example/page",
+                storage_b2,
+            );
+            rt_b.execute_script("localStorage.clear();")
+                .expect("B clear failed");
+        })
+        .join()
+        .unwrap();
 
         rt_a.execute_script(r#"
             if (localStorage.getItem('secret') !== 'originA_data') {
@@ -3594,6 +3637,7 @@ mod tests {
         rt_loc
             .execute_script(loc_script)
             .expect("Location test failed");
+        drop(rt_loc);
 
         // 2. Test History Object
         let mut rt_hist = JsRuntime::new_with_url_storage_session_and_cookies(
@@ -3677,6 +3721,7 @@ mod tests {
         rt_hist
             .execute_script(hist_script)
             .expect("History test failed");
+        drop(rt_hist);
 
         // 3. Test localStorage (Item methods, property proxy access, file persistence)
         let mut rt_storage = JsRuntime::new_with_url_storage_session_and_cookies(
@@ -3721,6 +3766,20 @@ mod tests {
             .execute_script(ls_script)
             .expect("localStorage test failed");
 
+        // 4. Test sessionStorage (Tab-scoped, in-memory, isolated between tabs)
+        let ss_tab1_script = r##"
+            sessionStorage.clear();
+            if (sessionStorage.length !== 0) throw new Error("sessionStorage should be empty");
+            sessionStorage.setItem("tab_token", "tab1_secret_token_123");
+            sessionStorage.proxyKey = "proxyVal";
+            if (sessionStorage.getItem("tab_token") !== "tab1_secret_token_123") throw new Error("sessionStorage getItem failed");
+            if (sessionStorage.proxyKey !== "proxyVal") throw new Error("sessionStorage proxy get failed");
+            if (sessionStorage.length !== 2) throw new Error("sessionStorage.length should be 2, got: " + sessionStorage.length);
+        "##;
+        rt_storage
+            .execute_script(ss_tab1_script)
+            .expect("sessionStorage tab 1 script failed");
+
         // Persist localStorage to file
         rt_storage
             .persist_local_storage(&storage_file)
@@ -3729,6 +3788,7 @@ mod tests {
             storage_file.exists(),
             "Storage file was not written to disk"
         );
+        drop(rt_storage);
 
         // Create a new fresh runtime simulating browser restart, and load from file
         let new_shared_ls = Arc::new(Mutex::new(HashMap::new()));
@@ -3754,21 +3814,8 @@ mod tests {
         rt_restored
             .execute_script(verify_ls_restored)
             .expect("Restored localStorage verification failed");
+        drop(rt_restored);
         let _ = std::fs::remove_file(&storage_file);
-
-        // 4. Test sessionStorage (Tab-scoped, in-memory, isolated between tabs)
-        let ss_tab1_script = r##"
-            sessionStorage.clear();
-            if (sessionStorage.length !== 0) throw new Error("sessionStorage should be empty");
-            sessionStorage.setItem("tab_token", "tab1_secret_token_123");
-            sessionStorage.proxyKey = "proxyVal";
-            if (sessionStorage.getItem("tab_token") !== "tab1_secret_token_123") throw new Error("sessionStorage getItem failed");
-            if (sessionStorage.proxyKey !== "proxyVal") throw new Error("sessionStorage proxy get failed");
-            if (sessionStorage.length !== 2) throw new Error("sessionStorage.length should be 2, got: " + sessionStorage.length);
-        "##;
-        rt_storage
-            .execute_script(ss_tab1_script)
-            .expect("sessionStorage tab 1 script failed");
 
         // Simulate page navigation in Tab 1: new runtime instance with SAME tab1_ss
         let mut rt_tab1_navigated = JsRuntime::new_with_url_storage_session_and_cookies(
@@ -3791,6 +3838,7 @@ mod tests {
         rt_tab1_navigated
             .execute_script(ss_navigated_script)
             .expect("sessionStorage navigation in same tab failed");
+        drop(rt_tab1_navigated);
 
         // Simulate Tab 2: new runtime instance with SEPARATE new session storage
         let tab2_ss = Arc::new(Mutex::new(HashMap::new()));
@@ -3814,6 +3862,7 @@ mod tests {
         rt_tab2
             .execute_script(ss_tab2_script)
             .expect("sessionStorage Tab 2 isolation check failed");
+        drop(rt_tab2);
     }
 
     #[test]

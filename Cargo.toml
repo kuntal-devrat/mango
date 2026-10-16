@@ -14,7 +14,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 authors = ["Mango Contributors"]
 license = "MIT"
@@ -47,13 +47,15 @@ arboard = "3.4"
 boa_engine = "0.22"
 boa_gc = "0.22"
 wuff = "0.2.9"
-wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "vulkan", "metal", "gles", "wgsl"] }
+lgpu = "0.1.2"
+naga = { version = "30", default-features = false, features = ["wgsl-in", "spv-out"] }
 bytemuck = { version = "1.25", features = ["derive"] }
 pollster = "1.0"
-base64 = "0.22"
-zstd = "0.13"
 serde_json = "1.0"
 rayon = "1.10"
+deno_core = "0.412.0"
+getrandom = "0.2"
+
 
 [package]
 name = "mango-browser"
@@ -92,6 +94,7 @@ env_logger.workspace = true
 winit.workspace = true
 arboard.workspace = true
 fontdue.workspace = true
+rayon.workspace = true
 
 [profile.release]
 opt-level = "z"     # Optimize for size

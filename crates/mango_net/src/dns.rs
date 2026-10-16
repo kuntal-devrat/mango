@@ -14,12 +14,34 @@ const MAX_DNS_CACHE_ENTRIES: usize = 512;
 /// Default timeout for a single DNS lookup (prevents UI hangs on dead DNS).
 pub const DNS_LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
 
+struct InflightSignal {
+    sync_notify: std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+    async_notify: std::sync::Arc<tokio::sync::Notify>,
+}
+
+impl InflightSignal {
+    fn new() -> Self {
+        Self {
+            sync_notify: std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new())),
+            async_notify: std::sync::Arc::new(tokio::sync::Notify::new()),
+        }
+    }
+
+    fn notify_all(&self) {
+        if let Ok(mut done) = self.sync_notify.0.lock() {
+            *done = true;
+            self.sync_notify.1.notify_all();
+        }
+        self.async_notify.notify_waiters();
+    }
+}
+
 /// A thread-safe in-memory cache for DNS lookups.
 pub struct DnsCache {
     entries: RwLock<HashMap<String, (Vec<SocketAddr>, Instant)>>,
     ttl: Duration,
-    /// Hosts with a lookup currently in flight (singleflight dedup).
-    inflight: std::sync::Mutex<std::collections::HashSet<String>>,
+    /// Hosts with a lookup currently in flight (singleflight dedup with event notifications).
+    inflight: std::sync::Mutex<HashMap<String, InflightSignal>>,
 }
 
 impl Default for DnsCache {
@@ -34,7 +56,7 @@ impl DnsCache {
         Self {
             entries: RwLock::new(HashMap::new()),
             ttl: DEFAULT_DNS_TTL,
-            inflight: std::sync::Mutex::new(std::collections::HashSet::new()),
+            inflight: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -58,12 +80,15 @@ impl DnsCache {
                 guard.retain(|_, (_, ts)| ts.elapsed() < ttl);
             }
             if guard.len() >= MAX_DNS_CACHE_ENTRIES {
-                let oldest_key = guard
+                // Batch-evict the oldest 10% of entries to avoid O(n) scan on every insert (M-06)
+                let to_evict = (MAX_DNS_CACHE_ENTRIES / 10).max(1);
+                let mut entries_by_age: Vec<(String, Instant)> = guard
                     .iter()
-                    .min_by_key(|(_, (_, ts))| *ts)
-                    .map(|(k, _)| k.clone());
-                if let Some(key) = oldest_key {
-                    guard.remove(&key);
+                    .map(|(k, (_, ts))| (k.clone(), *ts))
+                    .collect();
+                entries_by_age.sort_by_key(|(_, ts)| *ts);
+                for (k, _) in entries_by_age.into_iter().take(to_evict) {
+                    guard.remove(&k);
                 }
             }
             guard.insert(cache_key, (addrs, Instant::now()));
@@ -187,31 +212,52 @@ impl DnsCache {
         if let Some(addrs) = self.get_cached(&cache_key) {
             return Ok(addrs);
         }
-        // If another thread is already resolving this host, wait for its
-        // cache entry instead of issuing a duplicate lookup.
-        let is_duplicate = self
-            .inflight
-            .lock()
-            .map(|mut s| !s.insert(cache_key.clone()))
-            .unwrap_or(false);
-        if is_duplicate {
+
+        let signal_opt = {
+            let mut inflight = self.inflight.lock().map_err(|e| e.to_string())?;
+            if let Some(existing) = inflight.get(&cache_key) {
+                Some(existing.sync_notify.clone())
+            } else {
+                inflight.insert(cache_key.clone(), InflightSignal::new());
+                None
+            }
+        };
+
+        if let Some(sync_notify) = signal_opt {
+            let (lock, cvar) = &*sync_notify;
+            let mut done = lock.lock().map_err(|e| e.to_string())?;
             let deadline = Instant::now() + timeout;
-            loop {
-                if let Some(addrs) = self.get_cached(&cache_key) {
-                    return Ok(addrs);
-                }
-                if Instant::now() >= deadline {
+            while !*done {
+                let now = Instant::now();
+                if now >= deadline {
                     return Err(format!(
                         "DNS singleflight wait timed out after {:?} for '{host}'",
                         timeout
                     ));
                 }
-                std::thread::sleep(Duration::from_millis(10));
+                let remaining = deadline - now;
+                let (new_guard, timeout_result) =
+                    cvar.wait_timeout(done, remaining).map_err(|e| e.to_string())?;
+                done = new_guard;
+                if timeout_result.timed_out() && !*done {
+                    return Err(format!(
+                        "DNS singleflight wait timed out after {:?} for '{host}'",
+                        timeout
+                    ));
+                }
             }
+            return self.get_cached(&cache_key).ok_or_else(|| {
+                format!("DNS resolution failed for '{host}' in primary resolver")
+            });
         }
+
         let res = self.resolve_timeout(host, port, timeout);
-        if let Ok(mut s) = self.inflight.lock() {
-            s.remove(&cache_key);
+        let signal = {
+            let inflight = self.inflight.lock().ok();
+            inflight.and_then(|mut s| s.remove(&cache_key))
+        };
+        if let Some(sig) = signal {
+            sig.notify_all();
         }
         res
     }
@@ -229,34 +275,45 @@ impl DnsCache {
         if let Some(addrs) = self.get_cached(&cache_key) {
             return Ok(addrs);
         }
-        let is_duplicate = self
-            .inflight
-            .lock()
-            .map(|mut s| !s.insert(cache_key.clone()))
-            .unwrap_or(false);
-        if is_duplicate {
-            let deadline = Instant::now() + timeout;
-            loop {
-                if let Some(addrs) = self.get_cached(&cache_key) {
-                    return Ok(addrs);
-                }
-                if Instant::now() >= deadline {
-                    return Err(format!(
+
+        let signal_opt = {
+            let mut inflight = self.inflight.lock().map_err(|e| e.to_string())?;
+            if let Some(existing) = inflight.get(&cache_key) {
+                Some(existing.async_notify.clone())
+            } else {
+                inflight.insert(cache_key.clone(), InflightSignal::new());
+                None
+            }
+        };
+
+        if let Some(async_notify) = signal_opt {
+            let wait_fut = async_notify.notified();
+            tokio::time::timeout(timeout, wait_fut)
+                .await
+                .map_err(|_| {
+                    format!(
                         "DNS singleflight wait timed out after {:?} for '{host}'",
                         timeout
-                    ));
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
+                    )
+                })?;
+            return self.get_cached(&cache_key).ok_or_else(|| {
+                format!("DNS resolution failed for '{host}' in primary resolver")
+            });
         }
+
         let host_owned = host.to_string();
         let fut = self.resolve_async(&host_owned, port);
         let res = tokio::time::timeout(timeout, fut)
             .await
             .map_err(|_| format!("DNS resolution timed out after {:?} for '{host}'", timeout))?
             .map_err(|e| e.to_string());
-        if let Ok(mut s) = self.inflight.lock() {
-            s.remove(&cache_key);
+
+        let signal = {
+            let inflight = self.inflight.lock().ok();
+            inflight.and_then(|mut s| s.remove(&cache_key))
+        };
+        if let Some(sig) = signal {
+            sig.notify_all();
         }
         res
     }

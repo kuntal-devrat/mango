@@ -30,7 +30,7 @@ pub type LayoutBounds = Rc<RefCell<std::collections::HashMap<u32, [f32; 4]>>>;
 /// visible to the very next request with no copy step (GAP-016).
 pub type CookieStore = std::sync::Arc<std::sync::Mutex<mango_net::CookieJar>>;
 
-fn jar_lock(store: &CookieStore) -> std::sync::MutexGuard<'_, mango_net::CookieJar> {
+pub(crate) fn jar_lock(store: &CookieStore) -> std::sync::MutexGuard<'_, mango_net::CookieJar> {
     store
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -2068,8 +2068,15 @@ pub fn register_document_api(
         )
         .unwrap();
 
-    // Install JS shim that wraps raw node IDs into rich element-like objects
-    let shim = r#"
+    let shim = DOM_SHIM;
+    if let Err(e) = context.eval(boa_engine::Source::from_bytes(shim)) {
+        log::error!("Failed to install DOM shim: {}", e);
+        #[cfg(test)]
+        panic!("Failed to install DOM shim: {}", e);
+    }
+}
+
+pub const DOM_SHIM: &str = r#"
     function _normalizeEventOptions(options) {
         var capture = false;
         var once = false;
@@ -5565,15 +5572,8 @@ pub fn register_document_api(
     };
     "#;
 
-    if let Err(e) = context.eval(boa_engine::Source::from_bytes(shim)) {
-        log::error!("Failed to install DOM shim: {}", e);
-        #[cfg(test)]
-        panic!("Failed to install DOM shim: {}", e);
-    }
-}
-
 /// Deep- or shallow-clones a node (and its attributes) into the same document.
-fn clone_subtree(doc: &mut Document, node_id: NodeId, deep: bool) -> Option<NodeId> {
+pub(crate) fn clone_subtree(doc: &mut Document, node_id: NodeId, deep: bool) -> Option<NodeId> {
     let data = doc.get(node_id)?.data.clone();
     let new_id = match data {
         NodeData::Element(el) => doc.create_element(&el.tag_name, el.attributes.clone()),
@@ -5613,7 +5613,7 @@ fn clone_subtree(doc: &mut Document, node_id: NodeId, deep: bool) -> Option<Node
 ///
 /// Used by `innerHTML`/`outerHTML` setters: the fragment is parsed into a temporary
 /// `Document` and then adopted into the live tree.
-fn adopt_children(source: &Document, source_id: NodeId, target: &mut Document, parent: NodeId) {
+pub(crate) fn adopt_children(source: &Document, source_id: NodeId, target: &mut Document, parent: NodeId) {
     for child in source.children(source_id) {
         match &child.data {
             NodeData::Element(el) => {
@@ -5636,7 +5636,7 @@ fn adopt_children(source: &Document, source_id: NodeId, target: &mut Document, p
 
 /// Copies all element/text/comment children of `source` into `target` under `parent`,
 /// inserting before `before_node`.
-fn adopt_children_before(
+pub(crate) fn adopt_children_before(
     source: &Document,
     source_id: NodeId,
     target: &mut Document,
@@ -5709,7 +5709,7 @@ fn set_element_attribute(el: &mut mango_html::dom::ElementData, name: &str, valu
 }
 
 /// Collects document-level collections (`document.forms`, `document.images`, …).
-fn collect_elements_by_kind(doc: &Document, node_id: NodeId, kind: &str, out: &mut Vec<NodeId>) {
+pub(crate) fn collect_elements_by_kind(doc: &Document, node_id: NodeId, kind: &str, out: &mut Vec<NodeId>) {
     for child in doc.children(node_id) {
         if let NodeData::Element(el) = &child.data {
             let tag = el.tag_name.to_ascii_lowercase();
@@ -5732,7 +5732,7 @@ fn collect_elements_by_kind(doc: &Document, node_id: NodeId, kind: &str, out: &m
 }
 
 /// Recursively finds an element by its `id` attribute.
-fn find_element_by_id_recursive(
+pub(crate) fn find_element_by_id_recursive(
     doc: &Document,
     node_id: NodeId,
     target_id: &str,
@@ -5752,7 +5752,7 @@ fn find_element_by_id_recursive(
 }
 
 /// Simple CSS selector matching: supports `#id`, `.class`, and `tagname`.
-fn query_selector_simple(doc: &Document, node_id: NodeId, selector: &str) -> Option<NodeId> {
+pub(crate) fn query_selector_simple(doc: &Document, node_id: NodeId, selector: &str) -> Option<NodeId> {
     let selector = selector.trim();
     if let Some(id) = selector.strip_prefix('#') {
         return find_element_by_id_recursive(doc, node_id, id);
@@ -5763,7 +5763,7 @@ fn query_selector_simple(doc: &Document, node_id: NodeId, selector: &str) -> Opt
     doc.find_element_by_tag(node_id, selector)
 }
 
-fn find_element_by_class_recursive(
+pub(crate) fn find_element_by_class_recursive(
     doc: &Document,
     node_id: NodeId,
     target_class: &str,
@@ -5782,7 +5782,7 @@ fn find_element_by_class_recursive(
     None
 }
 
-fn find_first_matching_element(
+pub(crate) fn find_first_matching_element(
     doc: &Document,
     current: NodeId,
     selectors: &mango_css::SelectorList,
@@ -5800,7 +5800,7 @@ fn find_first_matching_element(
     None
 }
 
-fn collect_matching_elements(
+pub(crate) fn collect_matching_elements(
     doc: &Document,
     current: NodeId,
     selectors: &mango_css::SelectorList,

@@ -37,13 +37,17 @@ pub fn establishes_bfc(box_node: &LayoutBox) -> bool {
     ) {
         return true;
     }
-    if matches!(
-        style.overflow_x,
-        Overflow::Hidden | Overflow::Scroll | Overflow::Auto
-    ) || matches!(
-        style.overflow_y,
-        Overflow::Hidden | Overflow::Scroll | Overflow::Auto
-    ) {
+    // CSS Overflow 3 § 3.3: body overflow is propagated to viewport and does not establish a BFC
+    let is_body = box_node.tag_name.as_deref() == Some("body");
+    if !is_body
+        && (matches!(
+            style.overflow_x,
+            Overflow::Hidden | Overflow::Scroll | Overflow::Auto
+        ) || matches!(
+            style.overflow_y,
+            Overflow::Hidden | Overflow::Scroll | Overflow::Auto
+        ))
+    {
         return true;
     }
     if style.column_count.is_some() || style.column_width.is_some() {
@@ -1309,6 +1313,59 @@ fn extract_floats_from_children(
     extracted_floats
 }
 
+/// Recursively determines the collapsed top margin for a box and its first in-flow descendants
+/// when no top border, padding, or BFC strut intervenes (CSS 2.1 § 8.3.1).
+fn collapsed_margin_top_for_box(layout_box: &LayoutBox, container_dims: &Dimensions) -> f32 {
+    let style = match &layout_box.style {
+        Some(s) => s,
+        None => return layout_box.dimensions.margin.top,
+    };
+    let font_size = style.font_size;
+    let root_font_size = style.root_font_size;
+    let cb_w = container_dims.content.width();
+    let cb_h = container_dims.content.height().max(0.0);
+
+    let my_margin_top = if layout_box.dimensions.margin.top != 0.0 {
+        layout_box.dimensions.margin.top
+    } else {
+        style.margin_top.to_px_with_viewport(font_size, root_font_size, cb_w, cb_h)
+    };
+
+    let pad_top = if layout_box.dimensions.padding.top != 0.0 {
+        layout_box.dimensions.padding.top
+    } else {
+        style.padding_top.to_px_with_viewport(font_size, root_font_size, cb_w, cb_h)
+    };
+    let border_top = if layout_box.dimensions.border.top != 0.0 {
+        layout_box.dimensions.border.top
+    } else {
+        style.border_top_width
+    };
+
+    if pad_top > 0.0 || border_top > 0.0 || establishes_bfc(layout_box) {
+        return my_margin_top;
+    }
+
+    for child in &layout_box.children {
+        let child_pos = child.style.as_ref().map(|s| s.position).unwrap_or(Position::Static);
+        if matches!(child_pos, Position::Absolute | Position::Fixed) {
+            continue;
+        }
+        let child_float = child.style.as_ref().map(|s| s.float).unwrap_or(Float::None);
+        if child_float != Float::None {
+            continue;
+        }
+        let child_disp = child.style.as_ref().map(|s| s.display);
+        if child_disp == Some(Display::None) {
+            continue;
+        }
+        let child_collapsed = collapsed_margin_top_for_box(child, container_dims);
+        return collapse_margins(my_margin_top, child_collapsed);
+    }
+
+    my_margin_top
+}
+
 /// Lays out the children of a block box, handling margin collapsing between siblings
 /// and dispatching to inline formatting context when children are inline.
 fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut FloatContext) {
@@ -1454,19 +1511,27 @@ fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut FloatContext)
             calculate_block_width(child, &container_dims);
 
             // Margin collapsing with previous sibling (CSS 2.1 §8.3.1)
-            let curr_margin_top = child.dimensions.margin.top;
             let parent_has_top_strut = container_dims.border.top > 0.0
                 || container_dims.padding.top > 0.0
                 || box_establishes_bfc;
+            let curr_margin_top = if in_flow_count == 0 && !parent_has_top_strut {
+                let collapsed = collapsed_margin_top_for_box(child, &container_dims);
+                child.dimensions.margin.top = collapsed;
+                collapsed
+            } else {
+                child.dimensions.margin.top
+            };
+
             if in_flow_count > 0 {
                 let collapsed_margin = collapse_margins(prev_margin_bottom, curr_margin_top);
                 cursor_y += collapsed_margin;
             } else if parent_has_top_strut {
                 cursor_y += curr_margin_top;
             } else {
-                let diff = curr_margin_top - box_node.dimensions.margin.top;
+                let collapsed = collapse_margins(box_node.dimensions.margin.top, curr_margin_top);
+                let diff = collapsed - box_node.dimensions.margin.top;
                 if diff > 0.0 {
-                    box_node.dimensions.margin.top = curr_margin_top;
+                    box_node.dimensions.margin.top = collapsed;
                     box_node.dimensions.content.origin.y += diff;
                 }
                 cursor_y = box_node.dimensions.content.origin.y;

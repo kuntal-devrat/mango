@@ -134,7 +134,7 @@ flowchart TD
 
 ### 🖌️ Graphics, Compositing & Rasterization
 - **Multi-Layer Compositing Engine**: Separates page content, fixed overlays, and chrome UI into independent compositing layers with damage region tracking and dirty tile invalidation.
-- **Hardware-Accelerated GPU Compositor**: Zero-copy textured quad compositor powered by `wgpu` (Vulkan/Metal/DX12) with transparent Wayland/X11 surface presentation and smooth 60+ FPS scrolling.
+- **Hardware-Accelerated GPU Compositor**: Zero-copy textured quad compositor powered by `lgpu` (Lean GPU — Vulkan 1.3 dynamic rendering & bindless textures) with transparent Wayland/X11 surface presentation and smooth 60+ FPS scrolling.
 - **Pure Software Fallback**: Robust CPU scanline rasterizer runs seamlessly in headless CI and minimal containerized environments without GPU dependencies.
 - **Analytical Signed Distance Field (SDF) Anti-Aliasing**: High-fidelity subpixel rounded rect rasterization producing perfectly continuous borders and corner radii without diagonal stepping or dotted artifacts.
 - **Subpixel Text Rendering**: Glyph cache with embedded fallback fonts and WOFF2/WOFF/TTF web font streaming.

@@ -30,6 +30,11 @@ pub struct EventLoop {
     tasks: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 }
 
+/// Maximum number of concurrent active timers allowed to prevent DoS attacks (M-09).
+pub const MAX_ACTIVE_TIMERS: usize = 1000;
+/// Minimum allowed interval duration in milliseconds per HTML timer spec.
+pub const MIN_TIMER_INTERVAL_MS: u64 = 4;
+
 impl EventLoop {
     pub fn new() -> Self {
         Self {
@@ -66,6 +71,13 @@ impl EventLoop {
         callback_source: String,
         delay_ms: u64,
     ) {
+        if self.timers.len() >= MAX_ACTIVE_TIMERS {
+            self.timers.retain(|_, t| !t.cancelled);
+        }
+        if self.timers.len() >= MAX_ACTIVE_TIMERS {
+            log::warn!("Maximum active timers reached ({}), ignoring setTimeout (M-09)", MAX_ACTIVE_TIMERS);
+            return;
+        }
         if id >= self.next_id {
             self.next_id = id + 1;
         }
@@ -96,10 +108,17 @@ impl EventLoop {
         callback_source: String,
         delay_ms: u64,
     ) {
+        if self.timers.len() >= MAX_ACTIVE_TIMERS {
+            self.timers.retain(|_, t| !t.cancelled);
+        }
+        if self.timers.len() >= MAX_ACTIVE_TIMERS {
+            log::warn!("Maximum active timers reached ({}), ignoring setInterval (M-09)", MAX_ACTIVE_TIMERS);
+            return;
+        }
         if id >= self.next_id {
             self.next_id = id + 1;
         }
-        let period = Duration::from_millis(delay_ms.max(4)); // Minimum 4ms like browsers
+        let period = Duration::from_millis(delay_ms.max(MIN_TIMER_INTERVAL_MS));
         self.timers.insert(
             id,
             Timer {
@@ -120,27 +139,13 @@ impl EventLoop {
         }
     }
 
-    /// Processes expired timers and queued background tasks. Evaluates their callback in the given Boa context.
-    /// Returns `true` if any timer or task fired (indicating the page might need re-rendering).
-    pub fn tick(&mut self, context: &mut Context) -> bool {
-        let mut fired = false;
+    /// Collects and reschedules/removes all due tasks and timer scripts.
+    pub fn drain_due(&mut self) -> Vec<String> {
+        let mut scripts = Vec::new();
 
         // Drain background tasks (e.g. async fetch resolutions)
-        let tasks = if let Ok(mut q) = self.tasks.lock() {
-            std::mem::take(&mut *q)
-        } else {
-            Vec::new()
-        };
-
-        for source in tasks {
-            match context.eval(boa_engine::Source::from_bytes(&source)) {
-                Ok(_) => {
-                    fired = true;
-                }
-                Err(e) => {
-                    log::warn!("Background task callback error: {}", e);
-                }
-            }
+        if let Ok(mut q) = self.tasks.lock() {
+            scripts.extend(std::mem::take(&mut *q));
         }
 
         let now = Instant::now();
@@ -162,16 +167,7 @@ impl EventLoop {
                 (timer.callback_source.clone(), timer.interval)
             };
 
-            // Execute the callback
-            match context.eval(boa_engine::Source::from_bytes(&source)) {
-                Ok(_) => {
-                    log::debug!("Timer {} fired successfully", id);
-                    fired = true;
-                }
-                Err(e) => {
-                    log::warn!("Timer {} callback error: {}", id, e);
-                }
-            }
+            scripts.push(source);
 
             // Reschedule intervals, remove timeouts
             match interval {
@@ -189,6 +185,42 @@ impl EventLoop {
         // Clean up cancelled timers
         self.timers.retain(|_, t| !t.cancelled);
 
+        scripts
+    }
+
+    /// Evaluates due tasks and timers on deno_core::JsRuntime.
+    /// Returns `true` if any timer or task fired.
+    pub fn tick_deno(&mut self, runtime: &mut deno_core::JsRuntime) -> bool {
+        let scripts = self.drain_due();
+        let mut fired = false;
+        for s in scripts {
+            match runtime.execute_script("<event_loop>", s) {
+                Ok(_) => {
+                    fired = true;
+                }
+                Err(e) => {
+                    log::warn!("EventLoop task execution error: {e}");
+                }
+            }
+        }
+        fired
+    }
+
+    /// Processes expired timers and queued background tasks. Evaluates their callback in the given Boa context.
+    /// Returns `true` if any timer or task fired (indicating the page might need re-rendering).
+    pub fn tick(&mut self, context: &mut Context) -> bool {
+        let scripts = self.drain_due();
+        let mut fired = false;
+        for source in scripts {
+            match context.eval(boa_engine::Source::from_bytes(&source)) {
+                Ok(_) => {
+                    fired = true;
+                }
+                Err(e) => {
+                    log::warn!("Background task callback error: {}", e);
+                }
+            }
+        }
         fired
     }
 
@@ -223,5 +255,30 @@ impl EventLoop {
 impl Default for EventLoop {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_timer_capacity_limit_and_interval_clamping() {
+        let mut el = EventLoop::new();
+        // Clamping to MIN_TIMER_INTERVAL_MS
+        let id1 = el.schedule_interval("console.log('hi')".to_string(), 0);
+        let timer = el.timers.get(&id1).unwrap();
+        assert_eq!(timer.interval, Some(Duration::from_millis(MIN_TIMER_INTERVAL_MS)));
+
+        // Attempting to exceed MAX_ACTIVE_TIMERS
+        for _ in 1..MAX_ACTIVE_TIMERS {
+            el.schedule_timeout("1+1".to_string(), 100);
+        }
+        assert_eq!(el.timers.len(), MAX_ACTIVE_TIMERS);
+
+        // Additional timers are safely rejected
+        let excess_id = el.schedule_timeout("overflow()".to_string(), 100);
+        assert!(!el.timers.contains_key(&excess_id));
+        assert_eq!(el.timers.len(), MAX_ACTIVE_TIMERS);
     }
 }

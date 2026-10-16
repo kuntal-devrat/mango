@@ -72,21 +72,33 @@ impl Config {
                 let key = k.trim();
                 let val = v.trim().trim_matches('"').trim_matches('\'');
                 match key {
-                    "homepage" => cfg.homepage = val.to_string(),
-                    "search_url" => cfg.search_url = val.to_string(),
+                    "homepage" => {
+                        let h = val.trim();
+                        if !h.is_empty() {
+                            cfg.homepage = h.to_string();
+                        }
+                    }
+                    "search_url" => {
+                        let s = val.trim();
+                        if !s.is_empty() {
+                            cfg.search_url = s.to_string();
+                        }
+                    }
                     "default_font_size" => {
                         if let Ok(sz) = val.parse::<f32>() {
-                            cfg.default_font_size = sz;
+                            if sz.is_finite() {
+                                cfg.default_font_size = sz.clamp(6.0, 144.0);
+                            }
                         }
                     }
                     "window_width" => {
                         if let Ok(w) = val.parse::<u32>() {
-                            cfg.window_width = w;
+                            cfg.window_width = w.clamp(320, 7680);
                         }
                     }
                     "window_height" => {
                         if let Ok(h) = val.parse::<u32>() {
-                            cfg.window_height = h;
+                            cfg.window_height = h.clamp(240, 4320);
                         }
                     }
                     _ => {}
@@ -133,4 +145,30 @@ mod tests {
         let search_req = cfg.format_search_url("hello world");
         assert_eq!(search_req, "https://search.brave.com/search?q=hello+world");
     }
+
+    #[test]
+    fn test_config_validation_and_clamping() {
+        let toml = r#"
+            homepage = ""
+            search_url = ""
+            default_font_size = -15.0
+            window_width = 100
+            window_height = 99999
+        "#;
+        let cfg = Config::parse_toml(toml);
+        // Empty strings do not overwrite defaults
+        assert_eq!(cfg.homepage, "about:welcome");
+        assert_eq!(cfg.search_url, "https://html.duckduckgo.com/html/?q=%s");
+        // Values are clamped to safe ranges
+        assert_eq!(cfg.default_font_size, 6.0);
+        assert_eq!(cfg.window_width, 320);
+        assert_eq!(cfg.window_height, 4320);
+
+        let toml_huge = r#"
+            default_font_size = 500.0
+        "#;
+        let cfg2 = Config::parse_toml(toml_huge);
+        assert_eq!(cfg2.default_font_size, 144.0);
+    }
 }
+

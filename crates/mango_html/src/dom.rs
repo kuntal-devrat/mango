@@ -701,12 +701,12 @@ impl Document {
 
     /// Returns `true` if `ancestor` is an ancestor of `descendant` (or if they are identical).
     pub fn is_ancestor(&self, ancestor: NodeId, descendant: NodeId) -> bool {
-        if ancestor == descendant {
+        if ancestor.matches(descendant) {
             return true;
         }
         let mut cur = self.arena.get(descendant).and_then(|n| n.parent);
         while let Some(p) = cur {
-            if p == ancestor {
+            if p.matches(ancestor) {
                 return true;
             }
             cur = self.arena.get(p).and_then(|n| n.parent);
@@ -719,6 +719,14 @@ impl Document {
     /// Per the DOM spec, appending a `DocumentFragment` moves all of its children
     /// rather than inserting the fragment itself.
     pub fn append_child(&mut self, parent: NodeId, child: NodeId) {
+        let parent = match self.arena.get(parent) {
+            Some(n) => n.id,
+            None => return,
+        };
+        let child = match self.arena.get(child) {
+            Some(n) => n.id,
+            None => return,
+        };
         if parent == child || self.is_ancestor(child, parent) {
             return;
         }
@@ -799,6 +807,18 @@ impl Document {
         child: NodeId,
         before: NodeId,
     ) -> Result<(), DomError> {
+        let parent = match self.arena.get(parent) {
+            None => return Err(DomError::NotFoundError),
+            Some(n) => n.id,
+        };
+        let child = match self.arena.get(child) {
+            None => return Err(DomError::NotFoundError),
+            Some(n) => n.id,
+        };
+        let before = match self.arena.get(before) {
+            None => return Err(DomError::NotFoundError),
+            Some(n) => n.id,
+        };
         if child == before || parent == child || self.is_ancestor(child, parent) {
             return Err(DomError::HierarchyRequestError);
         }
@@ -883,6 +903,18 @@ impl Document {
         new_child: NodeId,
         old_child: NodeId,
     ) -> NodeId {
+        let parent = match self.arena.get(parent) {
+            Some(n) => n.id,
+            None => return old_child,
+        };
+        let new_child = match self.arena.get(new_child) {
+            Some(n) => n.id,
+            None => return old_child,
+        };
+        let old_child = match self.arena.get(old_child) {
+            Some(n) => n.id,
+            None => return old_child,
+        };
         if new_child == old_child {
             return old_child;
         }
@@ -910,6 +942,18 @@ impl Document {
         child: NodeId,
         after: NodeId,
     ) -> Result<(), DomError> {
+        let parent = match self.arena.get(parent) {
+            None => return Err(DomError::NotFoundError),
+            Some(n) => n.id,
+        };
+        let child = match self.arena.get(child) {
+            None => return Err(DomError::NotFoundError),
+            Some(n) => n.id,
+        };
+        let after = match self.arena.get(after) {
+            None => return Err(DomError::NotFoundError),
+            Some(n) => n.id,
+        };
         if child == after {
             return Ok(());
         }
@@ -953,6 +997,10 @@ impl Document {
 
     /// Detaches a node from its current parent and siblings.
     pub fn detach(&mut self, node: NodeId) {
+        let node = match self.arena.get(node) {
+            Some(n) => n.id,
+            None => return,
+        };
         let (parent, prev, next) = match self.arena.get(node) {
             Some(n) => (n.parent, n.prev_sibling, n.next_sibling),
             None => return,

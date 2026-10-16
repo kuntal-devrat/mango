@@ -11,6 +11,8 @@ pub struct HistoryEntry {
     pub title: String,
     /// Scroll position when navigated away.
     pub scroll_y: f32,
+    /// High-precision 64-bit scroll position (M-10).
+    pub scroll_y_f64: f64,
 }
 
 /// Per-tab web contents state (DOM tree, JS runtime, stylesheets, layout, scroll, and form state).
@@ -38,6 +40,8 @@ pub struct Tab {
     pub title: String,
     /// Scroll position (vertical).
     pub scroll_y: f32,
+    /// High-precision 64-bit vertical scroll position (M-10).
+    pub scroll_y_f64: f64,
     /// History stack.
     history: Vec<HistoryEntry>,
     /// Current position in history.
@@ -60,11 +64,13 @@ impl Tab {
             url: u.clone(),
             title: t.clone(),
             scroll_y: 0.0,
+            scroll_y_f64: 0.0,
         };
         Self {
             url: u,
             title: t,
             scroll_y: 0.0,
+            scroll_y_f64: 0.0,
             history: vec![initial_entry],
             history_idx: 0,
             contents: None,
@@ -82,6 +88,7 @@ impl Tab {
         // Save current scroll position on current history entry if exists
         if let Some(entry) = self.history.get_mut(self.history_idx) {
             entry.scroll_y = self.scroll_y;
+            entry.scroll_y_f64 = self.scroll_y_f64;
         }
 
         // Truncate any forward history beyond current index
@@ -92,11 +99,13 @@ impl Tab {
         self.url = u.clone();
         self.title = t.clone();
         self.scroll_y = 0.0;
+        self.scroll_y_f64 = 0.0;
 
         self.history.push(HistoryEntry {
             url: u,
             title: t,
             scroll_y: 0.0,
+            scroll_y_f64: 0.0,
         });
         self.history_idx = self.history.len().saturating_sub(1);
     }
@@ -113,10 +122,16 @@ impl Tab {
 
     /// Navigates back in history. Returns the target URL and scroll_y if available.
     pub fn go_back(&mut self) -> Option<(String, f32)> {
+        self.go_back_f64().map(|(u, s)| (u, s as f32))
+    }
+
+    /// Navigates back in history with 64-bit precision scroll offset (M-10).
+    pub fn go_back_f64(&mut self) -> Option<(String, f64)> {
         if self.can_go_back() {
             // Save current scroll pos
             if let Some(entry) = self.history.get_mut(self.history_idx) {
                 entry.scroll_y = self.scroll_y;
+                entry.scroll_y_f64 = self.scroll_y_f64;
             }
 
             self.history_idx -= 1;
@@ -124,7 +139,8 @@ impl Tab {
             self.url = entry.url.clone();
             self.title = entry.title.clone();
             self.scroll_y = entry.scroll_y;
-            Some((self.url.clone(), self.scroll_y))
+            self.scroll_y_f64 = entry.scroll_y_f64;
+            Some((self.url.clone(), self.scroll_y_f64))
         } else {
             None
         }
@@ -132,9 +148,15 @@ impl Tab {
 
     /// Navigates forward in history. Returns the target URL and scroll_y if available.
     pub fn go_forward(&mut self) -> Option<(String, f32)> {
+        self.go_forward_f64().map(|(u, s)| (u, s as f32))
+    }
+
+    /// Navigates forward in history with 64-bit precision scroll offset (M-10).
+    pub fn go_forward_f64(&mut self) -> Option<(String, f64)> {
         if self.can_go_forward() {
             if let Some(entry) = self.history.get_mut(self.history_idx) {
                 entry.scroll_y = self.scroll_y;
+                entry.scroll_y_f64 = self.scroll_y_f64;
             }
 
             self.history_idx += 1;
@@ -142,7 +164,8 @@ impl Tab {
             self.url = entry.url.clone();
             self.title = entry.title.clone();
             self.scroll_y = entry.scroll_y;
-            Some((self.url.clone(), self.scroll_y))
+            self.scroll_y_f64 = entry.scroll_y_f64;
+            Some((self.url.clone(), self.scroll_y_f64))
         } else {
             None
         }

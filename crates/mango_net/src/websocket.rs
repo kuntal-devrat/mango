@@ -51,51 +51,13 @@ fn make_tls_stream(tcp: TcpStream, hostname: &str) -> Result<impl Read + Write +
     Ok(rustls::StreamOwned::new(connector, tcp))
 }
 
-/// Generates 16 cryptographically random bytes for the handshake nonce.
-/// Reads from the OS CSPRNG (`/dev/urandom`); falls back to a
-/// time/pid/counter mix when unavailable.
+/// Generates 16 cryptographically random bytes for the handshake nonce using the OS CSPRNG.
 pub fn random_bytes_16() -> [u8; 16] {
     let mut out = [0u8; 16];
-    if let Ok(f) = std::fs::File::open("/dev/urandom") {
-        use std::io::Read as _;
-        let mut f = f;
-        let mut buf = [0u8; 16];
-        if f.read_exact(&mut buf).is_ok() {
-            return buf;
-        }
-    }
-    // Fallback: mix nanotime, pid, and an atomic counter through xorshift.
-    static COUNTER: AtomicU64 = AtomicU64::new(0x9E3779B97F4A7C15);
-    let c = COUNTER.fetch_add(0x9E3779B97F4A7C15, Ordering::Relaxed);
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0x12345678);
-    let pid = std::process::id() as u64;
-    let tid = {
-        let s = format!("{:?}", std::thread::current().id());
-        let mut h: u64 = 0xcbf29ce484222325;
-        for b in s.bytes() {
-            h ^= b as u64;
-            h = h.wrapping_mul(0x100000001b3);
-        }
-        h
-    };
-    let mut state = nanos ^ pid.wrapping_mul(0x9E3779B1) ^ tid ^ c;
-    // xorshift64* to fill 16 bytes.
-    for chunk in out.chunks_mut(8) {
-        state ^= state >> 12;
-        state ^= state << 25;
-        state ^= state >> 27;
-        let v = state.wrapping_mul(0x2545F4914F6CDD1D);
-        chunk.copy_from_slice(&v.to_le_bytes()[..chunk.len()]);
-    }
-    // Mix counter in to guarantee uniqueness across rapid calls.
-    for (i, b) in out.iter_mut().enumerate() {
-        *b ^= ((c >> ((i % 8) * 8)) & 0xFF) as u8;
-    }
+    getrandom::getrandom(&mut out).expect("Failed to generate cryptographically secure random bytes");
     out
 }
+
 
 /// Generates a random 4-byte masking key per frame (RFC 6455 §5.3).
 pub fn random_mask() -> [u8; 4] {

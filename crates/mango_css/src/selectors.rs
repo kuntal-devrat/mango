@@ -53,6 +53,7 @@ impl SimpleSelector {
         let Some(node) = doc.get(node_id) else {
             return false;
         };
+        let node_id = node.id;
         let NodeData::Element(el) = &node.data else {
             return false;
         };
@@ -651,6 +652,7 @@ fn parse_and_match_nth_child(arg: &str, node_id: NodeId, doc: &Document, from_la
     let Some(node) = doc.get(node_id) else {
         return false;
     };
+    let node_id = node.id;
     let Some(parent_id) = node.parent else {
         return false;
     };

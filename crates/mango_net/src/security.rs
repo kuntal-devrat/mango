@@ -126,7 +126,14 @@ impl CspPolicy {
             return true;
         }
 
+        // CSP spec: 'none' matches nothing and denies all requests.
+        // It must be checked before evaluating permissive sources like `*`.
+        if sources.iter().any(|s| s.trim().eq_ignore_ascii_case("'none'")) {
+            return false;
+        }
+
         let url_trimmed = url.trim();
+
         let url_lower = url_trimmed.to_ascii_lowercase();
         // Same-document fragment references are always allowed.
         if url_lower.starts_with('#') {
@@ -621,12 +628,28 @@ impl HstsDirective {
     }
 }
 
+/// Maximum number of stored HSTS host policies to prevent unbounded memory growth (H-12).
+pub const MAX_HSTS_ENTRIES: usize = 1024;
+
 /// An in-memory HSTS store (RFC 6797) with expiry.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct HstsStore {
     entries: HashMap<String, (HstsDirective, Instant)>,
     /// Whether the store should also upgrade subdomains known via `includeSubDomains`.
     subdomains: HashMap<String, bool>,
+    last_pruned: Instant,
+}
+
+impl Default for HstsStore {
+    fn default() -> Self {
+        Self {
+            entries: HashMap::new(),
+            subdomains: HashMap::new(),
+            last_pruned: Instant::now()
+                .checked_sub(Duration::from_secs(60))
+                .unwrap_or_else(Instant::now),
+        }
+    }
 }
 
 impl HstsStore {
@@ -643,6 +666,25 @@ impl HstsStore {
             self.subdomains.remove(&host);
             return;
         }
+
+        // Automatic pruning of expired entries on write (H-12).
+        if self.entries.len() >= MAX_HSTS_ENTRIES || self.last_pruned.elapsed() >= Duration::from_secs(10) {
+            self.prune();
+        }
+
+        // If still at capacity after pruning expired entries, evict the entry closest to expiration.
+        if self.entries.len() >= MAX_HSTS_ENTRIES && !self.entries.contains_key(&host) {
+            if let Some(oldest_host) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, (_, exp))| *exp)
+                .map(|(h, _)| h.clone())
+            {
+                self.entries.remove(&oldest_host);
+                self.subdomains.remove(&oldest_host);
+            }
+        }
+
         let expires = Instant::now() + Duration::from_secs(directive.max_age_secs);
         self.entries.insert(host.clone(), (directive, expires));
         self.subdomains.insert(host, directive.include_subdomains);
@@ -694,24 +736,26 @@ impl HstsStore {
     /// Removes expired entries.
     pub fn prune(&mut self) {
         let now = Instant::now();
+        self.last_pruned = now;
         self.entries.retain(|_, (_, expires)| *expires > now);
-        let active: Vec<String> = self.entries.keys().cloned().collect();
-        self.subdomains.retain(|host, _| active.contains(host));
+        let active: std::collections::HashSet<&str> = self.entries.keys().map(|s| s.as_str()).collect();
+        self.subdomains.retain(|host, _| active.contains(host.as_str()));
     }
 }
 
 /// Returns true when an HTTP subresource on an HTTPS page must be blocked.
 ///
-/// Active mixed content (scripts, stylesheets) is always blocked; passive mixed
-/// content (images, media) is upgraded when `upgrade` is set.
-pub fn blocks_mixed_content(page_url: &str, resource_url: &str, active: bool) -> bool {
+/// Both active mixed content (scripts, stylesheets) and passive mixed content
+/// (images, media) are blocked to prevent MITM attacks and cookie exfiltration.
+pub fn blocks_mixed_content(page_url: &str, resource_url: &str, _active: bool) -> bool {
     let page_is_https = page_url.trim().to_ascii_lowercase().starts_with("https://");
     let resource_is_http = resource_url
         .trim()
         .to_ascii_lowercase()
         .starts_with("http://");
-    page_is_https && resource_is_http && active
+    page_is_https && resource_is_http
 }
+
 
 /// Upgrades an `http://` URL to `https://` (used for mixed-content upgrade and HSTS).
 pub fn upgrade_to_https(url: &str) -> String {
@@ -1595,6 +1639,151 @@ impl ProxyConfig {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Referrer-Policy (W3C Referrer Policy Level 1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// W3C Referrer Policy directives controlling the `Referer` request header.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReferrerPolicy {
+    /// Never send the `Referer` header.
+    NoReferrer,
+    /// Send full URL to equally or more secure destinations (HTTPS->HTTPS, HTTP->HTTP),
+    /// but omit when downgrading (HTTPS->HTTP).
+    NoReferrerWhenDowngrade,
+    /// Only send the origin (scheme, host, port) in all requests.
+    Origin,
+    /// Send full URL for same-origin; send only origin for cross-origin.
+    OriginWhenCrossOrigin,
+    /// Send full URL for same-origin requests; omit for cross-origin.
+    SameOrigin,
+    /// Send origin for secure/same-level destinations; omit on downgrade (HTTPS->HTTP).
+    StrictOrigin,
+    /// Default modern policy: send full URL for same-origin, origin for cross-origin
+    /// (HTTPS->HTTPS), and omit on downgrade (HTTPS->HTTP).
+    #[default]
+    StrictOriginWhenCrossOrigin,
+    /// Send full URL for all requests (even on downgrade).
+    UnsafeUrl,
+}
+
+impl ReferrerPolicy {
+    /// Parses a `Referrer-Policy` header value.
+    ///
+    /// Per W3C spec, comma-separated tokens are processed left-to-right,
+    /// and the last recognized token takes precedence.
+    pub fn parse(header: &str) -> Self {
+        let mut policy = ReferrerPolicy::default();
+        for token in header.split(',') {
+            match token.trim().to_ascii_lowercase().as_str() {
+                "no-referrer" => policy = ReferrerPolicy::NoReferrer,
+                "no-referrer-when-downgrade" => policy = ReferrerPolicy::NoReferrerWhenDowngrade,
+                "origin" => policy = ReferrerPolicy::Origin,
+                "origin-when-cross-origin" => policy = ReferrerPolicy::OriginWhenCrossOrigin,
+                "same-origin" => policy = ReferrerPolicy::SameOrigin,
+                "strict-origin" => policy = ReferrerPolicy::StrictOrigin,
+                "strict-origin-when-cross-origin" => {
+                    policy = ReferrerPolicy::StrictOriginWhenCrossOrigin
+                }
+                "unsafe-url" => policy = ReferrerPolicy::UnsafeUrl,
+                _ => {} // Unknown or deprecated tokens are ignored
+            }
+        }
+        policy
+    }
+}
+
+/// Computes the `Referer` header value to be sent with a request, following W3C Referrer Policy.
+///
+/// Strips userinfo (`username`/`password`) and fragment identifiers per RFC 7231 §5.5.2.
+/// Returns `None` if the header should be omitted entirely.
+pub fn compute_referrer(
+    page_url: &crate::url::Url,
+    destination_url: &crate::url::Url,
+    policy: ReferrerPolicy,
+) -> Option<String> {
+    // 1. If page is not http or https (e.g. data:, blob:, file:, about:), never send Referer.
+    if !page_url.is_http_or_https() {
+        return None;
+    }
+    // 2. If destination is not http or https, never send Referer.
+    if !destination_url.is_http_or_https() {
+        return None;
+    }
+
+    let is_same_origin = page_url.scheme.eq_ignore_ascii_case(&destination_url.scheme)
+        && page_url.host == destination_url.host
+        && page_url.port == destination_url.port;
+
+    // TLS downgrade occurs when source is https and target is http.
+    let is_downgrade = page_url.scheme.eq_ignore_ascii_case("https")
+        && destination_url.scheme.eq_ignore_ascii_case("http");
+
+    match policy {
+        ReferrerPolicy::NoReferrer => None,
+        ReferrerPolicy::NoReferrerWhenDowngrade => {
+            if is_downgrade {
+                None
+            } else {
+                page_url.stripped_for_referrer()
+            }
+        }
+        ReferrerPolicy::SameOrigin => {
+            if is_same_origin {
+                page_url.stripped_for_referrer()
+            } else {
+                None
+            }
+        }
+        ReferrerPolicy::Origin => page_url.origin_url(),
+        ReferrerPolicy::StrictOrigin => {
+            if is_downgrade {
+                None
+            } else {
+                page_url.origin_url()
+            }
+        }
+        ReferrerPolicy::OriginWhenCrossOrigin => {
+            if is_same_origin {
+                page_url.stripped_for_referrer()
+            } else {
+                page_url.origin_url()
+            }
+        }
+        ReferrerPolicy::StrictOriginWhenCrossOrigin => {
+            if is_same_origin {
+                page_url.stripped_for_referrer()
+            } else if is_downgrade {
+                None
+            } else {
+                page_url.origin_url()
+            }
+        }
+        ReferrerPolicy::UnsafeUrl => page_url.stripped_for_referrer(),
+    }
+}
+
+/// Convenience helper to compute Referer with an optional policy string.
+pub fn compute_referrer_with_policy_str(
+    page_url: &crate::url::Url,
+    destination_url: &crate::url::Url,
+    policy_str: Option<&str>,
+) -> Option<String> {
+    let policy = policy_str.map(ReferrerPolicy::parse).unwrap_or_default();
+    compute_referrer(page_url, destination_url, policy)
+}
+
+/// Convenience helper parsing URL strings to compute Referer.
+pub fn compute_referrer_from_str(
+    page_url: &str,
+    destination_url: &str,
+    policy_str: Option<&str>,
+) -> Option<String> {
+    let p_url = crate::url::Url::parse(page_url).ok()?;
+    let d_url = crate::url::Url::parse(destination_url).ok()?;
+    compute_referrer_with_policy_str(&p_url, &d_url, policy_str)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1866,6 +2055,52 @@ mod tests {
     }
 
     #[test]
+    fn test_hsts_store_automatic_pruning_and_cap() {
+        let mut store = HstsStore::new();
+        // Insert an entry that will immediately expire (duration 0 simulated or very short)
+        store.entries.insert(
+            "expired.test".to_string(),
+            (
+                HstsDirective {
+                    max_age_secs: 1,
+                    include_subdomains: false,
+                    preload: false,
+                },
+                Instant::now() - Duration::from_secs(10),
+            ),
+        );
+        store.subdomains.insert("expired.test".to_string(), false);
+        assert_eq!(store.len(), 1);
+
+        // Recording a new entry triggers auto-prune on modulo/capacity check.
+        store.record(
+            "fresh.test",
+            HstsDirective {
+                max_age_secs: 300,
+                include_subdomains: true,
+                preload: false,
+            },
+        );
+        // The expired entry was pruned automatically!
+        assert_eq!(store.len(), 1);
+        assert!(store.policy_for("fresh.test").is_some());
+        assert!(store.policy_for("expired.test").is_none());
+
+        // Test capacity cap
+        for i in 0..(MAX_HSTS_ENTRIES + 10) {
+            store.record(
+                &format!("host{i}.test"),
+                HstsDirective {
+                    max_age_secs: 3600,
+                    include_subdomains: false,
+                    preload: false,
+                },
+            );
+        }
+        assert!(store.len() <= MAX_HSTS_ENTRIES);
+    }
+
+    #[test]
     fn test_parse_hsts_header() {
         let d = HstsDirective::parse("max-age=63072000; includeSubDomains; preload").unwrap();
         assert_eq!(d.max_age_secs, 63_072_000);
@@ -1902,8 +2137,8 @@ mod tests {
             "http://cdn.test/app.js",
             true
         ));
-        // Passive mixed content is allowed (browsers auto-upgrade instead)
-        assert!(!blocks_mixed_content(
+        // Passive mixed content on an HTTPS page is also blocked
+        assert!(blocks_mixed_content(
             "https://example.com",
             "http://cdn.test/a.png",
             false
@@ -1915,6 +2150,26 @@ mod tests {
             true
         ));
     }
+
+    #[test]
+    fn test_csp_none_precedence() {
+        // Even if permissive source `*` or domain appears before/after `'none'`,
+        // `'none'` must strictly deny all requests.
+        let policy1 = CspPolicy::parse("script-src * 'none'", false).unwrap();
+        assert!(!policy1.allows(
+            ResourceDirective::Script,
+            "https://example.com/app.js",
+            "https://example.com"
+        ));
+
+        let policy2 = CspPolicy::parse("script-src 'none' *", false).unwrap();
+        assert!(!policy2.allows(
+            ResourceDirective::Script,
+            "https://example.com/app.js",
+            "https://example.com"
+        ));
+    }
+
 
     #[test]
     fn test_upgrade_to_https() {
@@ -2158,4 +2413,90 @@ mod tests {
         let u3 = crate::url::Url::parse("https://service.internal.corp/secret").unwrap();
         assert_eq!(proxy.resolve_proxy_for_url(&u3), None);
     }
+
+    #[test]
+    fn test_referrer_policy_parsing_and_computation() {
+        let page_https = crate::url::Url::parse(
+            "https://user:pass@example.com:443/dir/page.html?token=123#frag",
+        )
+        .unwrap();
+        let same_dest = crate::url::Url::parse("https://example.com/assets/style.css").unwrap();
+        let cross_https = crate::url::Url::parse("https://other.com/image.png").unwrap();
+        let cross_http = crate::url::Url::parse("http://other.com/script.js").unwrap();
+
+        // 1. NoReferrer
+        assert_eq!(
+            compute_referrer(&page_https, &same_dest, ReferrerPolicy::NoReferrer),
+            None
+        );
+        assert_eq!(
+            compute_referrer(&page_https, &cross_https, ReferrerPolicy::NoReferrer),
+            None
+        );
+
+        // 2. StrictOriginWhenCrossOrigin (default)
+        // Same-origin: stripped full URL (no userinfo, no frag)
+        assert_eq!(
+            compute_referrer(&page_https, &same_dest, ReferrerPolicy::StrictOriginWhenCrossOrigin),
+            Some("https://example.com/dir/page.html?token=123".to_string())
+        );
+        // Cross-origin HTTPS: origin only
+        assert_eq!(
+            compute_referrer(&page_https, &cross_https, ReferrerPolicy::StrictOriginWhenCrossOrigin),
+            Some("https://example.com/".to_string())
+        );
+        // Downgrade HTTPS -> HTTP: None
+        assert_eq!(
+            compute_referrer(&page_https, &cross_http, ReferrerPolicy::StrictOriginWhenCrossOrigin),
+            None
+        );
+
+        // 3. SameOrigin
+        assert_eq!(
+            compute_referrer(&page_https, &same_dest, ReferrerPolicy::SameOrigin),
+            Some("https://example.com/dir/page.html?token=123".to_string())
+        );
+        assert_eq!(
+            compute_referrer(&page_https, &cross_https, ReferrerPolicy::SameOrigin),
+            None
+        );
+
+        // 4. Origin
+        assert_eq!(
+            compute_referrer(&page_https, &same_dest, ReferrerPolicy::Origin),
+            Some("https://example.com/".to_string())
+        );
+        assert_eq!(
+            compute_referrer(&page_https, &cross_http, ReferrerPolicy::Origin),
+            Some("https://example.com/".to_string())
+        );
+
+        // 5. StrictOrigin
+        assert_eq!(
+            compute_referrer(&page_https, &cross_https, ReferrerPolicy::StrictOrigin),
+            Some("https://example.com/".to_string())
+        );
+        assert_eq!(
+            compute_referrer(&page_https, &cross_http, ReferrerPolicy::StrictOrigin),
+            None
+        );
+
+        // 6. UnsafeUrl
+        assert_eq!(
+            compute_referrer(&page_https, &cross_http, ReferrerPolicy::UnsafeUrl),
+            Some("https://example.com/dir/page.html?token=123".to_string())
+        );
+
+        // 7. Non-HTTP(S) scheme source (e.g. data:, blob:, file:)
+        let page_data = crate::url::Url::parse("data:text/html,test").unwrap();
+        assert_eq!(
+            compute_referrer(&page_data, &same_dest, ReferrerPolicy::UnsafeUrl),
+            None
+        );
+
+        // 8. Multiple tokens comma-separated (last valid wins)
+        let parsed = ReferrerPolicy::parse("no-referrer, unsafe-url, strict-origin");
+        assert_eq!(parsed, ReferrerPolicy::StrictOrigin);
+    }
 }
+

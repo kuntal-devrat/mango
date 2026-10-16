@@ -1185,9 +1185,10 @@ mod tests {
                     "http://secure.example.com/pic.png",
                     false
                 )
-                .is_ok(),
-            "passive mixed content is allowed (upgraded elsewhere)"
+                .is_err(),
+            "passive mixed content must also be blocked on HTTPS pages"
         );
+
         // An http:// page has no mixed-content constraint.
         let insecure = Url::parse("http://secure.example.com/").unwrap();
         assert!(

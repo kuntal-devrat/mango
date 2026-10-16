@@ -656,7 +656,7 @@ impl<'a> RuleIndex<'a> {
         node_id: NodeId,
         doc: &Document,
         elem: &mango_html::dom::ElementData,
-        source_order: &mut usize,
+        _source_order: &mut usize,
         out: &mut Vec<MatchedDeclaration>,
     ) {
         let mut seen_rules: HashSet<usize> = HashSet::new();
@@ -670,7 +670,7 @@ impl<'a> RuleIndex<'a> {
                     doc,
                     cand.origin,
                     cand.layer_order,
-                    source_order,
+                    cand.source_order,
                     out,
                 );
             }
@@ -687,7 +687,7 @@ impl<'a> RuleIndex<'a> {
                         doc,
                         cand.origin,
                         cand.layer_order,
-                        source_order,
+                        cand.source_order,
                         out,
                     );
                 }
@@ -706,7 +706,7 @@ impl<'a> RuleIndex<'a> {
                         doc,
                         cand.origin,
                         cand.layer_order,
-                        source_order,
+                        cand.source_order,
                         out,
                     );
                 }
@@ -724,7 +724,7 @@ impl<'a> RuleIndex<'a> {
                             doc,
                             cand.origin,
                             cand.layer_order,
-                            source_order,
+                            cand.source_order,
                             out,
                         );
                     }
@@ -745,7 +745,7 @@ impl<'a> RuleIndex<'a> {
                     doc,
                     cand.origin,
                     None,
-                    source_order,
+                    cand.source_order,
                     out,
                 );
             }
@@ -758,7 +758,7 @@ impl<'a> RuleIndex<'a> {
         node_id: NodeId,
         doc: &Document,
         pseudo: &str,
-        source_order: &mut usize,
+        _source_order: &mut usize,
         out: &mut Vec<MatchedDeclaration>,
     ) {
         let pseudo_lower = pseudo.to_ascii_lowercase();
@@ -780,25 +780,26 @@ impl<'a> RuleIndex<'a> {
                     }
                 }
                 if let Some(specificity) = max_specificity {
+                    let mut decl_idx = 0;
                     for decl in &cand.style_rule.declarations {
                         if decl.is_shorthand() {
                             for expanded in decl.expand_shorthand_ref() {
-                                *source_order += 1;
+                                decl_idx += 1;
                                 out.push(MatchedDeclaration {
                                     declaration: expanded,
                                     specificity,
                                     origin: cand.origin,
-                                    source_order: *source_order,
+                                    source_order: cand.source_order * 1000 + decl_idx,
                                     layer_order: cand.layer_order,
                                 });
                             }
                         } else {
-                            *source_order += 1;
+                            decl_idx += 1;
                             out.push(MatchedDeclaration {
                                 declaration: decl.clone(),
                                 specificity,
                                 origin: cand.origin,
-                                source_order: *source_order,
+                                source_order: cand.source_order * 1000 + decl_idx,
                                 layer_order: cand.layer_order,
                             });
                         }
@@ -827,25 +828,26 @@ impl<'a> RuleIndex<'a> {
                     }
                 }
                 if let Some(specificity) = max_specificity {
+                    let mut decl_idx = 0;
                     for decl in &cand.style_rule.declarations {
                         if decl.is_shorthand() {
                             for expanded in decl.expand_shorthand_ref() {
-                                *source_order += 1;
+                                decl_idx += 1;
                                 out.push(MatchedDeclaration {
                                     declaration: expanded,
                                     specificity,
                                     origin: cand.origin,
-                                    source_order: *source_order,
+                                    source_order: cand.source_order * 1000 + decl_idx,
                                     layer_order: None,
                                 });
                             }
                         } else {
-                            *source_order += 1;
+                            decl_idx += 1;
                             out.push(MatchedDeclaration {
                                 declaration: decl.clone(),
                                 specificity,
                                 origin: cand.origin,
-                                source_order: *source_order,
+                                source_order: cand.source_order * 1000 + decl_idx,
                                 layer_order: None,
                             });
                         }
@@ -1563,7 +1565,7 @@ fn apply_style_rule(
     doc: &Document,
     origin: Origin,
     layer_order: Option<u32>,
-    source_order: &mut usize,
+    rule_source_order: usize,
     out: &mut Vec<MatchedDeclaration>,
 ) {
     let mut max_specificity: Option<Specificity> = None;
@@ -1578,25 +1580,26 @@ fn apply_style_rule(
     }
 
     if let Some(specificity) = max_specificity {
+        let mut decl_idx = 0;
         for decl in &style_rule.declarations {
             if decl.is_shorthand() {
                 for expanded in decl.expand_shorthand_ref() {
-                    *source_order += 1;
+                    decl_idx += 1;
                     out.push(MatchedDeclaration {
                         declaration: expanded,
                         specificity,
                         origin,
-                        source_order: *source_order,
+                        source_order: rule_source_order * 1000 + decl_idx,
                         layer_order,
                     });
                 }
             } else {
-                *source_order += 1;
+                decl_idx += 1;
                 out.push(MatchedDeclaration {
                     declaration: decl.clone(),
                     specificity,
                     origin,
-                    source_order: *source_order,
+                    source_order: rule_source_order * 1000 + decl_idx,
                     layer_order,
                 });
             }

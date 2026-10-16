@@ -40,11 +40,7 @@ impl<T> Clone for Id<T> {
 impl<T> PartialEq for Id<T> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        if self.generation == 0 || other.generation == 0 {
-            self.index == other.index
-        } else {
-            self.index == other.index && self.generation == other.generation
-        }
+        self.index == other.index && self.generation == other.generation
     }
 }
 
@@ -69,9 +65,8 @@ impl<T> Ord for Id<T> {
 impl<T> std::hash::Hash for Id<T> {
     #[inline]
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        // Hash index to maintain k1 == k2 ==> hash(k1) == hash(k2) even for wildcard (gen 0) handles.
-        // Active slots in an arena have unique indices, guaranteeing optimal distribution.
         self.index.hash(state);
+        self.generation.hash(state);
     }
 }
 
@@ -645,23 +640,22 @@ mod tests {
         let c = Id::<i32>::from_raw_parts(1, 2);
         let wildcard = Id::<i32>::from_raw(1);
 
-        // Exact equality
+        // Exact equality is transitive: a == b, a != c, b != c
         assert_eq!(a, b);
         assert_ne!(a, c);
+        assert_ne!(a, wildcard);
 
-        // Wildcard equality: gen 0 matches any gen at the same index
-        assert_eq!(a, wildcard);
-        assert_eq!(wildcard, c);
-
-        // Matches method
+        // Wildcard matching is performed explicitly via .matches()
         assert!(a.matches(wildcard));
         assert!(wildcard.matches(c));
+        assert!(!a.matches(Id::<i32>::from_raw_parts(2, 1)));
 
-        // HashSet lookup works seamlessly with wildcard handles
+        // HashSet lookup works strictly and consistently
         let mut set = HashSet::new();
         set.insert(a);
         assert!(set.contains(&b));
-        assert!(set.contains(&wildcard));
+        assert!(!set.contains(&c));
+        assert!(!set.contains(&wildcard));
 
         // BTreeSet ordering works
         let mut tree = BTreeSet::new();

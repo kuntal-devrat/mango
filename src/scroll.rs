@@ -51,7 +51,7 @@ pub fn compute_max_scroll(doc_h: f32, viewport_h: f32, header_h: f32, status_bar
 }
 
 /// Clamps scroll offset given a scroll wheel delta.
-pub fn clamp_scroll(current_scroll_y: f32, delta_y: f32, max_scroll: f32) -> f32 {
+pub fn clamp_scroll(current_scroll_y: f64, delta_y: f64, max_scroll: f64) -> f64 {
     let scroll_step = delta_y * 45.0;
     (current_scroll_y - scroll_step).clamp(0.0, max_scroll)
 }
@@ -64,24 +64,24 @@ pub enum ScrollBehavior {
     Smooth,
 }
 
-/// A smooth scrolling animation controller implementing cubic ease-out interpolation.
+/// A smooth scrolling animation controller implementing cubic ease-out interpolation in double precision.
 #[derive(Debug, Clone)]
 pub struct SmoothScrollAnimation {
-    pub start_y: f32,
-    pub target_y: f32,
-    pub current_y: f32,
+    pub start_y: f64,
+    pub target_y: f64,
+    pub current_y: f64,
     pub start_time: std::time::Instant,
     pub duration: std::time::Duration,
-    pub max_scroll: f32,
+    pub max_scroll: f64,
     pub active: bool,
 }
 
 impl SmoothScrollAnimation {
-    /// Creates a new smooth scroll animation towards `target_y`.
+    /// Creates a new smooth scroll animation towards `target_y` in double precision.
     pub fn new(
-        current_y: f32,
-        target_y: f32,
-        max_scroll: f32,
+        current_y: f64,
+        target_y: f64,
+        max_scroll: f64,
         duration: std::time::Duration,
     ) -> Self {
         let clamped_target = target_y.clamp(0.0, max_scroll);
@@ -92,19 +92,19 @@ impl SmoothScrollAnimation {
             start_time: std::time::Instant::now(),
             duration: duration.max(std::time::Duration::from_millis(50)),
             max_scroll,
-            active: (current_y - clamped_target).abs() > 0.5,
+            active: (current_y - clamped_target).abs() > 0.001,
         }
     }
 
     /// Advances the smooth scroll animation to time `now`.
     /// Returns `(new_scroll_y, is_finished)`.
-    pub fn step(&mut self, now: std::time::Instant) -> (f32, bool) {
+    pub fn step(&mut self, now: std::time::Instant) -> (f64, bool) {
         if !self.active {
             return (self.current_y, true);
         }
 
         let elapsed = now.saturating_duration_since(self.start_time);
-        let progress = (elapsed.as_secs_f32() / self.duration.as_secs_f32()).clamp(0.0, 1.0);
+        let progress = (elapsed.as_secs_f64() / self.duration.as_secs_f64()).clamp(0.0, 1.0);
 
         // Cubic ease-out: 1.0 - (1.0 - t)^3
         let ease_out = 1.0 - (1.0 - progress).powi(3);
@@ -124,13 +124,13 @@ impl SmoothScrollAnimation {
     ///
     /// Applies the same minimum 50ms duration clamp as `new()` so a zero-duration
     /// call cannot cause division by zero in `step()`. (B-05)
-    pub fn update_target(&mut self, new_target: f32, duration: std::time::Duration) {
+    pub fn update_target(&mut self, new_target: f64, duration: std::time::Duration) {
         let clamped = new_target.clamp(0.0, self.max_scroll);
         self.start_y = self.current_y;
         self.target_y = clamped;
         self.start_time = std::time::Instant::now();
         self.duration = duration.max(std::time::Duration::from_millis(50));
-        self.active = (self.current_y - clamped).abs() > 0.5;
+        self.active = (self.current_y - clamped).abs() > 0.001;
     }
 }
 
@@ -241,10 +241,10 @@ mod tests {
         let max_s = compute_max_scroll(1200.0, 600.0, 76.0, 24.0);
         assert!(max_s > 0.0);
 
-        let scrolled = clamp_scroll(0.0, -2.0, max_s);
+        let scrolled = clamp_scroll(0.0, -2.0, max_s as f64);
         assert!(scrolled > 0.0);
 
-        let clamped_top = clamp_scroll(0.0, 2.0, max_s);
+        let clamped_top = clamp_scroll(0.0, 2.0, max_s as f64);
         assert_eq!(clamped_top, 0.0);
 
         let geom = ScrollbarGeometry::compute(800.0, 600.0, 76.0, 24.0, 1200.0, 100.0, max_s);
@@ -294,4 +294,21 @@ mod tests {
         assert_eq!(anim.start_y, 200.0);
         assert_eq!(anim.target_y, 400.0);
     }
+
+    #[test]
+    fn test_smooth_scroll_extreme_height_precision() {
+        // At 100,000 pixels, f32 has an epsilon of ~0.0078125, losing sub-pixel precision.
+        // f64 maintains sub-nanometer precision even at millions of pixels.
+        let mut anim = SmoothScrollAnimation::new(
+            100_000.0,
+            100_000.125,
+            200_000.0,
+            std::time::Duration::from_millis(100),
+        );
+        let t_end = anim.start_time + std::time::Duration::from_millis(150);
+        let (y_end, finished) = anim.step(t_end);
+        assert!(finished);
+        assert_eq!(y_end, 100_000.125);
+    }
 }
+

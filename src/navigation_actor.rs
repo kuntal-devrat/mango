@@ -23,7 +23,7 @@ use mango_net::{ResourceLoader, Url};
 /// Number of background navigation workers (fixed pool, no per-nav spawn).
 pub const NAV_WORKER_COUNT: usize = 4;
 /// Per-navigation fetch timeout applied inside the pipeline stages.
-pub const NAV_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
+pub const NAV_FETCH_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Commands sent from the UI thread to the Navigation Actor.
 #[derive(Debug)]
@@ -44,6 +44,8 @@ pub enum NavCommand {
     },
     /// Cancel any in-flight navigation.
     Cancel,
+    /// Gracefully terminate worker threads.
+    Shutdown,
 }
 
 /// Results emitted by the Navigation Actor back to the UI thread.
@@ -115,19 +117,23 @@ impl NavigationActorHandle {
         epoch_flag: Arc<AtomicU64>,
     ) {
         loop {
-            // Receive the next command. The Mutex is held only for the duration
-            // of the `recv()` call, then released immediately so other workers
-            // can compete for the next command.  Holding the lock across a
-            // blocking `recv()` would starve all other workers (R-02 fix).
+            // Receive the next command with bounded timeout so the Mutex is not
+            // held indefinitely, preventing worker starvation across the pool (H-06).
             let cmd = {
-                let guard = shared_rx.lock().expect("nav command queue poisoned");
-                guard.recv()
+                let Ok(guard) = shared_rx.lock() else {
+                    break;
+                };
+                match guard.recv_timeout(Duration::from_millis(50)) {
+                    Ok(c) => Some(c),
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => None,
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                }
             };
-            let cmd = match cmd {
-                Ok(c) => c,
-                Err(_) => break,
+            let Some(cmd) = cmd else {
+                continue;
             };
             match cmd {
+                NavCommand::Shutdown => break,
                 NavCommand::Cancel => {
                     // Epoch already bumped by `cancel()`; queued stale
                     // commands are discarded by their epoch check below.
@@ -368,6 +374,23 @@ impl NavigationActorHandle {
     /// Returns the current active epoch.
     pub fn active_epoch(&self) -> u64 {
         self.current_epoch.load(Ordering::SeqCst)
+    }
+
+    /// Gracefully signals all navigation workers to terminate and awaits their completion.
+    pub fn shutdown(&mut self) {
+        self.cancel();
+        for _ in 0..self._workers.len() {
+            let _ = self.cmd_tx.send(NavCommand::Shutdown);
+        }
+        while let Some(worker) = self._workers.pop() {
+            let _ = worker.join();
+        }
+    }
+}
+
+impl Drop for NavigationActorHandle {
+    fn drop(&mut self) {
+        self.shutdown();
     }
 }
 

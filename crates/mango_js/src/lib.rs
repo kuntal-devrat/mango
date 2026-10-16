@@ -21,6 +21,7 @@
 pub mod console;
 pub mod dom_bindings;
 pub mod event_loop;
+pub mod ops;
 pub mod runtime;
 pub mod web_apis;
 pub mod worker;

@@ -135,7 +135,7 @@ pub fn save_local_storage_to_file(
 pub type SharedCookieStore = Arc<Mutex<mango_net::CookieJar>>;
 
 #[cfg(windows)]
-fn fill_secure_random(buf: &mut [u8]) {
+pub(crate) fn fill_secure_random(buf: &mut [u8]) {
     #[link(name = "advapi32")]
     unsafe extern "system" {
         fn SystemFunction036(buffer: *mut u8, length: u32) -> u8;
@@ -148,14 +148,14 @@ fn fill_secure_random(buf: &mut [u8]) {
 }
 
 #[cfg(not(windows))]
-fn fill_secure_random(buf: &mut [u8]) {
+pub(crate) fn fill_secure_random(buf: &mut [u8]) {
     use std::io::Read;
     if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
         let _ = f.read_exact(buf);
     }
 }
 
-fn encode_base64_bytes(input: &[u8]) -> String {
+pub(crate) fn encode_base64_bytes(input: &[u8]) -> String {
     const B64_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
     for chunk in input.chunks(3) {
@@ -1148,10 +1148,10 @@ fn register_native_fns(
 
 // ── JS shim ───────────────────────────────────────────────────────────────────
 
-fn install_js_shim(context: &mut Context, page_url: &str) {
+pub fn build_web_apis_shim(page_url: &str) -> String {
     let safe_url = page_url.replace('\\', "\\\\").replace('"', "\\\"");
 
-    let shim = format!(
+    format!(
         r##"
 (function() {{
     // ── 1. Window / global aliases ────────────────────────────────────────────
@@ -3796,7 +3796,7 @@ fn install_js_shim(context: &mut Context, page_url: &str) {
     Object.assign(globalThis.Node, _nodeConsts);
     Object.assign(globalThis.Node.prototype, _nodeConsts);
     globalThis.Node.prototype.insertBefore    = function(n, r) {{ return this.appendChild ? this.appendChild(n) : n; }};
-    globalThis.Node.prototype.replaceChild    = function(n, o) {{ if (this.removeChild) this.removeChild(o); return this.appendChild ? this.appendChild(n) : n; }};
+    globalThis.Node.prototype.replaceChild    = function(n, o) {{ if (this.removeChild) this.removeChild(o); if (this.appendChild) this.appendChild(n); return o; }};
     globalThis.Node.prototype.cloneNode       = function(deep) {{ return this; }};
     globalThis.Node.prototype.contains        = function(o) {{ return o === this; }};
     globalThis.Node.prototype.hasChildNodes   = function() {{ return (this.children && this.children.length > 0) || false; }};
@@ -7540,8 +7540,11 @@ fn install_js_shim(context: &mut Context, page_url: &str) {
 
 }})();
 "##
-    );
+    )
+}
 
+fn install_js_shim(context: &mut Context, page_url: &str) {
+    let shim = build_web_apis_shim(page_url);
     if let Err(e) = context.eval(boa_engine::Source::from_bytes(shim.as_bytes())) {
         log::error!("Failed to install browser Web API shims: {}", e);
         #[cfg(test)]

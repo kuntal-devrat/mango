@@ -322,8 +322,10 @@ impl EventDispatcher {
             return;
         };
 
-        // Sort by insertion order for stable dispatch
-        list.sort_by_key(|l| l.insertion_order);
+        // Listeners are appended in insertion order; avoid redundant O(N log N) sorting
+        if list.len() > 1 && !list.windows(2).all(|w| w[0].insertion_order <= w[1].insertion_order) {
+            list.sort_by_key(|l| l.insertion_order);
+        }
 
         // Collect indices to invoke (we can't borrow mutably while iterating)
         let indices: Vec<usize> = list

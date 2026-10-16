@@ -151,15 +151,15 @@ impl<'a> Tokenizer<'a> {
                         // Gather entity
                         let mut entity = String::from('&');
                         while let Some(ch) = self.peek() {
+                            if entity.len() >= 32 {
+                                break;
+                            }
                             if ch == ';' {
                                 entity.push(self.advance().unwrap());
                                 break;
                             }
                             if ch.is_alphanumeric() || ch == '#' {
                                 entity.push(self.advance().unwrap());
-                                if entity.len() > 32 {
-                                    break;
-                                }
                             } else {
                                 break;
                             }
@@ -770,15 +770,15 @@ impl<'a> Tokenizer<'a> {
                         self.advance(); // consume '&'
                         let mut entity = String::from('&');
                         while let Some(ch) = self.peek() {
+                            if entity.len() >= 32 {
+                                break;
+                            }
                             if ch == ';' {
                                 entity.push(self.advance().unwrap());
                                 break;
                             }
                             if ch.is_alphanumeric() || ch == '#' {
                                 entity.push(self.advance().unwrap());
-                                if entity.len() > 32 {
-                                    break;
-                                }
                             } else {
                                 break;
                             }

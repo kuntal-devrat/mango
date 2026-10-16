@@ -160,11 +160,11 @@ impl ApplicationHandler for MangoApp {
         match event {
             WindowEvent::CloseRequested => {
                 log::info!("Window close requested. Goodbye! 🥭");
-                if let Some(browser) = &self.browser {
+                if let Some(browser) = self.browser.take() {
                     browser.persist_profile();
+                    drop(browser);
                 }
                 self.surface = None;
-                self.browser = None;
                 self.window = None;
                 event_loop.exit();
             }
@@ -225,9 +225,12 @@ impl ApplicationHandler for MangoApp {
                         && matches!(&key_event.key, MangoKey::Char('q') | MangoKey::Char('Q'))
                     {
                         log::info!("Ctrl+Q — quitting Mango");
-                        if let Some(browser) = &self.browser {
+                        if let Some(browser) = self.browser.take() {
                             browser.persist_profile();
+                            drop(browser);
                         }
+                        self.surface = None;
+                        self.window = None;
                         event_loop.exit();
                         return;
                     }

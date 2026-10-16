@@ -33,6 +33,21 @@ impl CachedResource {
         self.inserted_at.elapsed() > self.ttl
     }
 
+    /// Returns `true` if this cache entry requires origin server revalidation before use
+    /// (e.g. `Cache-Control: no-cache` or `must-revalidate` when expired) per RFC 9111 (M-04).
+    pub fn requires_revalidation(&self) -> bool {
+        if let Some(cc) = self.headers.get("cache-control") {
+            let cc_lower = cc.to_ascii_lowercase();
+            if cc_lower.contains("no-cache") {
+                return true;
+            }
+            if cc_lower.contains("must-revalidate") && self.is_expired() {
+                return true;
+            }
+        }
+        self.is_expired()
+    }
+
     /// Approximate memory consumption in bytes for this cache entry.
     pub fn byte_size(&self) -> usize {
         self.body.len() + self.url.len() + self.content_type.len() + 256
@@ -95,13 +110,23 @@ impl ResourceCache {
 
     /// Looks up a resource in the cache by URL (excluding URL fragments).
     ///
-    /// Returns `Some(resource)` if present and not expired, otherwise `None`.
+    /// Returns `Some(resource)` if present, not expired, and not requiring revalidation.
+    /// Fast read-lock path avoids write contention on cache misses and expired checks (M-01).
     /// Automatically updates the LRU access timestamp on hits.
     pub fn get(&self, url: &str) -> Option<CachedResource> {
         let key = normalize_cache_key(url);
+        // Fast path: take a read lock first so multiple readers don't serialize.
+        {
+            let inner = self.inner.read().ok()?;
+            let res = inner.entries.get(key)?;
+            if res.is_expired() || res.requires_revalidation() {
+                return None;
+            }
+        }
+        // Cache hit and valid: acquire write lock briefly to update last_accessed.
         let mut inner = self.inner.write().ok()?;
         let res = inner.entries.get_mut(key)?;
-        if res.is_expired() {
+        if res.is_expired() || res.requires_revalidation() {
             None
         } else {
             res.last_accessed = Instant::now();
@@ -470,5 +495,33 @@ mod tests {
             cache.get(url_404).is_some(),
             "404 with explicit max-age may be cached"
         );
+    }
+
+    #[test]
+    fn test_cache_control_no_cache_requires_revalidation() {
+        let cache = ResourceCache::new();
+        let url = "https://example.com/dynamic.json";
+        let mut headers = HashMap::new();
+        headers.insert("cache-control".to_string(), "no-cache".to_string());
+        headers.insert("etag".to_string(), "\"v1\"".to_string());
+        cache.insert(
+            url,
+            "application/json",
+            200,
+            headers,
+            b"{\"fresh\": true}".to_vec(),
+            None,
+        );
+
+        // Even though stored, get() returns None because it requires revalidation
+        assert!(cache.get(url).is_none());
+
+        // Revalidation headers are present for the network request
+        let reval = cache.get_revalidation_headers(url).expect("etag present");
+        assert_eq!(reval, vec![("If-None-Match".to_string(), "\"v1\"".to_string())]);
+
+        // When server replies 304, revalidate_304 refreshes and returns resource
+        let revalidated = cache.revalidate_304(url, &HashMap::new());
+        assert!(revalidated.is_some());
     }
 }

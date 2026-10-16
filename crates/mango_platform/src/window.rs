@@ -74,7 +74,7 @@ impl PixelBuffer {
     }
 }
 
-/// Unified presentation surface that manages either hardware GPU compositing via `wgpu`
+/// Unified presentation surface that manages either hardware GPU compositing via `lgpu`
 /// or high-speed software compositing via `softbuffer`.
 pub enum WindowSurface {
     Gpu(Box<crate::gpu::GpuCompositor>),
@@ -90,7 +90,7 @@ impl WindowSurface {
     pub fn new(window: Arc<Window>) -> Self {
         match crate::gpu::GpuCompositor::new(window.clone()) {
             Ok(gpu) => {
-                log::info!("Hardware GPU Compositor active (wgpu) 🚀");
+                log::info!("Hardware GPU Compositor active (lgpu) 🚀");
                 Self::Gpu(Box::new(gpu))
             }
             Err(err) => {
