@@ -2,7 +2,7 @@
 //!
 //! This module owns the browser's cookie jar. Cookies are stored per
 //! (name, domain, path) and are persisted to a profile file so that sessions
-//! survive a browser restart (PRD GAP-016). The serialization format is a
+//! survive a browser restart. The serialization format is a
 //! line-oriented, tab-separated text file (Netscape `cookies.txt` compatible
 //! in shape) which keeps the profile human-readable and diffable.
 
@@ -12,8 +12,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::url::Url;
 
-/// Maximum cookies per host (RFC 6265 §6.3 recommendation: at least 50).
-pub const MAX_COOKIES_PER_HOST: usize = 50;
+/// Maximum cookies per host (RFC 6265 §6.3 / Chromium standard: 180).
+pub const MAX_COOKIES_PER_HOST: usize = 180;
 /// Maximum bytes per cookie value (4KB).
 pub const MAX_COOKIE_BYTES: usize = 4096;
 /// Maximum cookies globally.
@@ -55,6 +55,33 @@ impl SameSite {
     }
 }
 
+/// Cookie Priority attribute (Chromium extension / RFC 6265bis Draft).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum CookiePriority {
+    Low = 1,
+    #[default]
+    Medium = 2,
+    High = 3,
+}
+
+impl CookiePriority {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CookiePriority::Low => "low",
+            CookiePriority::Medium => "medium",
+            CookiePriority::High => "high",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s.trim().trim_matches('"').to_ascii_lowercase().as_str() {
+            "low" => CookiePriority::Low,
+            "high" => CookiePriority::High,
+            _ => CookiePriority::Medium,
+        }
+    }
+}
+
 /// A single HTTP cookie stored in the cookie jar.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cookie {
@@ -75,6 +102,11 @@ pub struct Cookie {
     pub creation_time: u64,
     /// Last access timestamp (seconds) for eviction.
     pub last_access_time: u64,
+    /// Partition key for CHIPS (Cookies Having Independent Partitioned State).
+    /// `None` indicates a standard unpartitioned cookie.
+    pub partition_key: Option<String>,
+    /// Priority level for Chromium-standard eviction.
+    pub priority: CookiePriority,
 }
 
 impl Cookie {
@@ -97,6 +129,8 @@ impl Cookie {
             host_only: false,
             creation_time: now,
             last_access_time: now,
+            partition_key: None,
+            priority: CookiePriority::Medium,
         }
     }
 
@@ -117,7 +151,7 @@ impl Cookie {
     /// Serializes the cookie for the profile file (one line, tab separated).
     pub fn to_profile_line(&self) -> String {
         format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             self.domain,
             encode_field(&self.path),
             u8::from(self.secure),
@@ -129,6 +163,8 @@ impl Cookie {
             encode_field(&self.value),
             self.creation_time,
             self.last_access_time,
+            encode_field(self.partition_key.as_deref().unwrap_or("")),
+            self.priority.as_str(),
         )
     }
 
@@ -156,6 +192,16 @@ impl Cookie {
         } else {
             creation_time
         };
+        let partition_key = if fields.len() > 11 && !fields[11].is_empty() {
+            Some(decode_field(fields[11]))
+        } else {
+            None
+        };
+        let priority = if fields.len() > 12 {
+            CookiePriority::from_str(fields[12])
+        } else {
+            CookiePriority::Medium
+        };
         let cookie = Cookie {
             domain: fields[0].trim_start_matches('.').to_ascii_lowercase(),
             path: decode_field(fields[1]),
@@ -168,6 +214,8 @@ impl Cookie {
             value: decode_field(fields[8]),
             creation_time,
             last_access_time,
+            partition_key,
+            priority,
         };
         if cookie.name.is_empty() || cookie.domain.is_empty() {
             return None;
@@ -457,7 +505,12 @@ pub fn get_registrable_domain(host: &str) -> String {
 
     // Check for 3-part public suffixes (e.g. s3.amazonaws.com, azurewebsites.windows.net)
     if parts.len() >= 4 {
-        let last_three = format!("{}.{}.{}", parts[parts.len() - 3], parts[parts.len() - 2], parts[parts.len() - 1]);
+        let last_three = format!(
+            "{}.{}.{}",
+            parts[parts.len() - 3],
+            parts[parts.len() - 2],
+            parts[parts.len() - 1]
+        );
         if is_public_suffix(&last_three) {
             return format!("{}.{}", parts[parts.len() - 4], last_three);
         }
@@ -498,13 +551,21 @@ impl CookieJar {
         }
     }
 
-
     /// Parses a `Set-Cookie` response header value for a given request URL.
     ///
     /// Validates attributes: Max-Age, Expires, Domain, Path, Secure, HttpOnly, SameSite,
     /// and enforces RFC 6265 / RFC 6265bis domain-matching, public suffix restrictions,
     /// SameSite=None requirements, and `__Secure-` / `__Host-` prefixes.
-    pub fn parse_set_cookie(header_value: &str, request_url: &Url) -> Option<Cookie> {
+    /// Parses a `Set-Cookie` response header value for a given request URL and optional top-level partition key (CHIPS).
+    ///
+    /// Validates attributes: Max-Age, Expires, Domain, Path, Secure, HttpOnly, SameSite, Partitioned, Priority,
+    /// and enforces RFC 6265 / RFC 6265bis domain-matching, public suffix restrictions,
+    /// SameSite=None requirements, and `__Secure-` / `__Host-` prefixes.
+    pub fn parse_set_cookie_with_partition(
+        header_value: &str,
+        request_url: &Url,
+        top_level_partition_key: Option<&str>,
+    ) -> Option<Cookie> {
         let request_host = match &request_url.host {
             Some(h) if !h.is_empty() => h.to_ascii_lowercase(),
             _ => return None,
@@ -531,6 +592,8 @@ impl CookieJar {
         let mut secure = false;
         let mut http_only = false;
         let mut is_deleted = false;
+        let mut is_partitioned = false;
+        let mut priority = CookiePriority::Medium;
         let mut expires_at = None;
         let mut same_site = SameSite::Unspecified;
 
@@ -580,7 +643,7 @@ impl CookieJar {
                                 expires_at = Some(0);
                             }
                             Ok(secs) => {
-                                // RFC 6265bis §5.4: Cap Max-Age to at most 400 days and use saturating arithmetic (M-05)
+                                // RFC 6265bis §5.4: Cap Max-Age to at most 400 days and use saturating arithmetic.
                                 const MAX_COOKIE_LIFETIME_SECS: u64 = 400 * 86_400;
                                 let clamped_secs = (secs as u64).min(MAX_COOKIE_LIFETIME_SECS);
                                 expires_at = Some(now_secs().saturating_add(clamped_secs));
@@ -603,8 +666,10 @@ impl CookieJar {
                         }
                     }
                     "samesite" => same_site = SameSite::from_str(val),
+                    "priority" => priority = CookiePriority::from_str(val),
                     "secure" => secure = true,
                     "httponly" => http_only = true,
+                    "partitioned" => is_partitioned = true,
                     _ => {}
                 }
             } else {
@@ -612,6 +677,7 @@ impl CookieJar {
                 match attr_lower.as_str() {
                     "secure" => secure = true,
                     "httponly" => http_only = true,
+                    "partitioned" => is_partitioned = true,
                     _ => {}
                 }
             }
@@ -619,6 +685,11 @@ impl CookieJar {
 
         // RFC 6265bis §5.4: Secure cookies must only be accepted over secure transport (HTTPS)
         if secure && !is_https {
+            return None;
+        }
+
+        // RFC 6265bis / CHIPS: Partitioned cookies MUST have the Secure attribute and use HTTPS
+        if is_partitioned && (!secure || !is_https) {
             return None;
         }
 
@@ -638,6 +709,19 @@ impl CookieJar {
             return None;
         }
 
+        let partition_key = if is_partitioned {
+            match top_level_partition_key {
+                Some(pk) => Some(pk.trim().to_ascii_lowercase()),
+                None => Some(format!(
+                    "{}://{}",
+                    if is_https { "https" } else { "http" },
+                    get_registrable_domain(&request_host)
+                )),
+            }
+        } else {
+            None
+        };
+
         let host_only = !explicit_domain;
         let now = now_secs();
 
@@ -654,6 +738,8 @@ impl CookieJar {
                 host_only,
                 creation_time: now,
                 last_access_time: now,
+                partition_key,
+                priority,
             });
         }
 
@@ -669,14 +755,21 @@ impl CookieJar {
             host_only,
             creation_time: now,
             last_access_time: now,
+            partition_key,
+            priority,
         })
+    }
+
+    /// Parses a `Set-Cookie` response header value for a given request URL.
+    pub fn parse_set_cookie(header_value: &str, request_url: &Url) -> Option<Cookie> {
+        Self::parse_set_cookie_with_partition(header_value, request_url, None)
     }
 
     /// Stores or deletes a cookie in the jar.
     ///
     /// An empty value alone does NOT delete — only expiry (`Max-Age<=0`,
     /// past `Expires`) removes. Cookie names are case-sensitive per RFC 6265.
-    /// Enforces 4KB per-cookie (value truncated), 50 per-host, 3000 global.
+    /// Enforces 4KB per-cookie (value truncated), 180 per-host, 3000 global.
     pub fn store_cookie(&mut self, mut cookie: Cookie) {
         if cookie.is_expired() {
             self.remove_matching(&cookie);
@@ -696,7 +789,12 @@ impl CookieJar {
         if let Some(existing) = self
             .cookies
             .iter_mut()
-            .find(|c| c.name == cookie.name && c.domain == cookie.domain && c.path == cookie.path)
+            .find(|c| {
+                c.name == cookie.name
+                    && c.domain == cookie.domain
+                    && c.path == cookie.path
+                    && c.partition_key == cookie.partition_key
+            })
         {
             // RFC 6265 §5.3 step 11: preserve creation_time of existing cookie
             cookie.creation_time = existing.creation_time;
@@ -714,13 +812,14 @@ impl CookieJar {
         self.enforce_limits();
     }
 
-    /// Evicts oldest cookies for `domain` when exceeding 50 per-host.
+    /// Evicts oldest cookies for `domain` when exceeding MAX_COOKIES_PER_HOST (180 per-host)
+    /// using Chromium priority-LRU eviction (Low -> Medium -> High).
     fn enforce_per_host_limit(&mut self, domain: &str) {
         let count = self.cookies.iter().filter(|c| c.domain == domain).count();
         if count <= MAX_COOKIES_PER_HOST {
             return;
         }
-        // Collect indices of this host sorted by oldest access first.
+        let drop_count = count - MAX_COOKIES_PER_HOST;
         let mut idxs: Vec<usize> = self
             .cookies
             .iter()
@@ -728,9 +827,13 @@ impl CookieJar {
             .filter(|(_, c)| c.domain == domain)
             .map(|(i, _)| i)
             .collect();
-        idxs.sort_by_key(|&i| self.cookies[i].last_access_time);
-        let drop_count = count - MAX_COOKIES_PER_HOST;
-        // Remove from highest index down to keep indices valid.
+        idxs.sort_by(|&a, &b| {
+            let ca = &self.cookies[a];
+            let cb = &self.cookies[b];
+            ca.priority
+                .cmp(&cb.priority)
+                .then_with(|| ca.last_access_time.cmp(&cb.last_access_time))
+        });
         let mut to_remove: Vec<usize> = idxs.into_iter().take(drop_count).collect();
         to_remove.sort_unstable_by(|a, b| b.cmp(a));
         for i in to_remove {
@@ -752,7 +855,10 @@ impl CookieJar {
 
     fn remove_matching(&mut self, cookie: &Cookie) {
         self.cookies.retain(|c| {
-            !(c.name == cookie.name && c.domain == cookie.domain && c.path == cookie.path)
+            !(c.name == cookie.name
+                && c.domain == cookie.domain
+                && c.path == cookie.path
+                && c.partition_key == cookie.partition_key)
         });
     }
 
@@ -776,13 +882,14 @@ impl CookieJar {
         before - self.cookies.len()
     }
 
-    /// Returns all cookies matching the given URL and same-site context, longest-path first.
-    pub fn get_cookies_with_context(
+    /// Returns all cookies matching the given URL, same-site context, and partition key, longest-path first.
+    pub fn get_cookies_with_context_and_partition(
         &self,
         url: &Url,
         initiator_url: Option<&Url>,
         is_top_level_navigation: bool,
         is_safe_method: bool,
+        partition_key: Option<&str>,
     ) -> Vec<Cookie> {
         let host = match &url.host {
             Some(h) => h.to_ascii_lowercase(),
@@ -816,6 +923,14 @@ impl CookieJar {
                     return false;
                 }
 
+                // CHIPS Partitioning matching:
+                if let Some(ref c_pk) = c.partition_key {
+                    match partition_key {
+                        Some(pk) if pk.eq_ignore_ascii_case(c_pk) => {}
+                        _ => return false,
+                    }
+                }
+
                 // RFC 6265bis SameSite enforcement:
                 if !is_same_site {
                     match c.same_site {
@@ -847,7 +962,25 @@ impl CookieJar {
                 .cmp(&a.path.len())
                 .then_with(|| a.creation_time.cmp(&b.creation_time))
         });
+
         matching
+    }
+
+    /// Returns all cookies matching the given URL and same-site context, longest-path first.
+    pub fn get_cookies_with_context(
+        &self,
+        url: &Url,
+        initiator_url: Option<&Url>,
+        is_top_level_navigation: bool,
+        is_safe_method: bool,
+    ) -> Vec<Cookie> {
+        self.get_cookies_with_context_and_partition(
+            url,
+            initiator_url,
+            is_top_level_navigation,
+            is_safe_method,
+            None,
+        )
     }
 
     /// Returns all cookies matching the given URL, longest-path first,
@@ -1450,12 +1583,18 @@ mod tests {
         // Cloud provider and PaaS shared domains must be rejected
         let heroku = url("https://myapp.herokuapp.com/");
         assert!(CookieJar::parse_set_cookie("shared=1; Domain=herokuapp.com", &heroku).is_none());
-        assert_eq!(get_registrable_domain("myapp.herokuapp.com"), "myapp.herokuapp.com");
+        assert_eq!(
+            get_registrable_domain("myapp.herokuapp.com"),
+            "myapp.herokuapp.com"
+        );
 
         // 3-part public suffixes (e.g. s3.amazonaws.com) must be protected
         let s3 = url("https://mybucket.s3.amazonaws.com/");
         assert!(CookieJar::parse_set_cookie("shared=1; Domain=s3.amazonaws.com", &s3).is_none());
-        assert_eq!(get_registrable_domain("mybucket.s3.amazonaws.com"), "mybucket.s3.amazonaws.com");
+        assert_eq!(
+            get_registrable_domain("mybucket.s3.amazonaws.com"),
+            "mybucket.s3.amazonaws.com"
+        );
     }
 
     #[test]
@@ -1557,11 +1696,8 @@ mod tests {
     fn test_max_age_overflow_protection() {
         let u = url("https://example.com/");
         // Enormous Max-Age that could overflow u64 addition if unchecked
-        let c = CookieJar::parse_set_cookie(
-            "big=1; Max-Age=9223372036854775807; Path=/",
-            &u,
-        )
-        .unwrap();
+        let c =
+            CookieJar::parse_set_cookie("big=1; Max-Age=9223372036854775807; Path=/", &u).unwrap();
         let exp = c.expires_at.unwrap();
         // Capped to at most 400 days in the future
         let max_expected = now_secs() + 400 * 86_400 + 5;

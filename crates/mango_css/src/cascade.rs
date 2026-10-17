@@ -104,37 +104,37 @@ pub fn user_agent_stylesheet() -> &'static Stylesheet {
                 font-family: monospace;
             }
             h1 {
-                font-size: 32px;
+                font-size: 2em;
                 font-weight: bold;
-                margin: 21px 0px;
+                margin: 0.67em 0px;
             }
             h2 {
-                font-size: 24px;
+                font-size: 1.5em;
                 font-weight: bold;
-                margin: 19px 0px;
+                margin: 0.83em 0px;
             }
             h3 {
-                font-size: 19px;
+                font-size: 1.17em;
                 font-weight: bold;
-                margin: 18px 0px;
+                margin: 1em 0px;
             }
             h4 {
-                font-size: 16px;
+                font-size: 1em;
                 font-weight: bold;
-                margin: 21px 0px;
+                margin: 1.33em 0px;
             }
             h5 {
-                font-size: 13px;
+                font-size: 0.83em;
                 font-weight: bold;
-                margin: 22px 0px;
+                margin: 1.67em 0px;
             }
             h6 {
-                font-size: 11px;
+                font-size: 0.67em;
                 font-weight: bold;
-                margin: 25px 0px;
+                margin: 2.33em 0px;
             }
             p {
-                margin: 16px 0px;
+                margin: 1em 0px;
             }
             b, strong {
                 font-weight: bold;
@@ -158,14 +158,14 @@ pub fn user_agent_stylesheet() -> &'static Stylesheet {
             ul {
                 display: block;
                 list-style-type: disc;
-                margin: 16px 0px;
-                padding-left: 30px;
+                margin: 1em 0px;
+                padding-left: 40px;
             }
             ol {
                 display: block;
                 list-style-type: decimal;
-                margin: 16px 0px;
-                padding-left: 30px;
+                margin: 1em 0px;
+                padding-left: 40px;
             }
             li {
                 display: list-item;
@@ -334,6 +334,25 @@ pub fn user_agent_stylesheet() -> &'static Stylesheet {
             dialog[open] {
                 display: block;
             }
+            [popover] {
+                display: none;
+                position: fixed;
+                left: 0px;
+                right: 0px;
+                top: 0px;
+                bottom: 0px;
+                margin: auto;
+                border: 1px solid black;
+                padding: 4px;
+                background-color: white;
+                color: black;
+            }
+            :popover-open, [popover]:popover-open {
+                display: block;
+            }
+            dialog:not([open])[popover]:popover-open {
+                display: block;
+            }
             datalist {
                 display: none;
             }
@@ -430,6 +449,8 @@ pub struct IndexedRule<'a> {
     pub origin: Origin,
     pub source_order: usize,
     pub layer_order: Option<u32>,
+    pub scope_root: Option<&'a crate::selectors::SelectorList>,
+    pub scope_limit: Option<&'a crate::selectors::SelectorList>,
 }
 
 /// An indexed container query rule for accelerated container matching.
@@ -449,6 +470,7 @@ pub struct RuleIndex<'a> {
     pub viewport_width: f32,
     pub viewport_height: f32,
     pub layer_count: u32,
+    pub layer_map: HashMap<String, u32>,
     id_rules: HashMap<String, Vec<IndexedRule<'a>>>,
     class_rules: HashMap<String, Vec<IndexedRule<'a>>>,
     tag_rules: HashMap<String, Vec<IndexedRule<'a>>>,
@@ -456,6 +478,8 @@ pub struct RuleIndex<'a> {
     pseudo_rules: HashMap<String, Vec<IndexedRule<'a>>>,
     pub container_rules: Vec<IndexedContainerRule<'a>>,
     pub env: MediaEnvironment,
+    pub position_try_rules: HashMap<String, Vec<crate::properties::Declaration>>,
+    pub view_transition: Option<crate::parser::ViewTransitionRule>,
 }
 
 impl<'a> Default for RuleIndex<'a> {
@@ -481,6 +505,7 @@ impl<'a> RuleIndex<'a> {
             viewport_width: env.viewport_width,
             viewport_height: env.viewport_height,
             layer_count: 0,
+            layer_map: HashMap::new(),
             id_rules: HashMap::new(),
             class_rules: HashMap::new(),
             tag_rules: HashMap::new(),
@@ -488,6 +513,8 @@ impl<'a> RuleIndex<'a> {
             pseudo_rules: HashMap::new(),
             container_rules: Vec::new(),
             env,
+            position_try_rules: HashMap::new(),
+            view_transition: None,
         }
     }
 
@@ -557,11 +584,47 @@ impl<'a> RuleIndex<'a> {
                     }
                 }
                 Rule::Layer(layer_rule) => {
-                    self.layer_count += 1;
-                    let layer_id = self.layer_count;
+                    let layer_id = if let Some(ref name) = layer_rule.name {
+                        if let Some(&existing_id) = self.layer_map.get(name) {
+                            existing_id
+                        } else {
+                            self.layer_count += 1;
+                            self.layer_map.insert(name.clone(), self.layer_count);
+                            self.layer_count
+                        }
+                    } else {
+                        self.layer_count += 1;
+                        self.layer_count
+                    };
                     for style_rule in &layer_rule.rules {
-                        self.add_style_rule_with_layer(style_rule, origin, order, Some(layer_id));
+                        self.add_style_rule_with_layer_and_scope(
+                            style_rule,
+                            origin,
+                            order,
+                            Some(layer_id),
+                            None,
+                            None,
+                        );
                     }
+                }
+                Rule::Scope(scope_rule) => {
+                    for style_rule in &scope_rule.rules {
+                        self.add_style_rule_with_layer_and_scope(
+                            style_rule,
+                            origin,
+                            order,
+                            None,
+                            scope_rule.root.as_ref(),
+                            scope_rule.limit.as_ref(),
+                        );
+                    }
+                }
+                Rule::PositionTry(pos_try) => {
+                    self.position_try_rules
+                        .insert(pos_try.name.clone(), pos_try.declarations.clone());
+                }
+                Rule::ViewTransition(vt) => {
+                    self.view_transition = Some(vt.clone());
                 }
                 _ => {}
             }
@@ -569,15 +632,35 @@ impl<'a> RuleIndex<'a> {
     }
 
     fn add_style_rule(&mut self, style_rule: &'a StyleRule, origin: Origin, order: &mut usize) {
-        self.add_style_rule_with_layer(style_rule, origin, order, None);
+        self.add_style_rule_with_layer_and_scope(style_rule, origin, order, None, None, None);
     }
 
+    #[allow(dead_code)]
     fn add_style_rule_with_layer(
         &mut self,
         style_rule: &'a StyleRule,
         origin: Origin,
         order: &mut usize,
         layer_order: Option<u32>,
+    ) {
+        self.add_style_rule_with_layer_and_scope(
+            style_rule,
+            origin,
+            order,
+            layer_order,
+            None,
+            None,
+        );
+    }
+
+    fn add_style_rule_with_layer_and_scope(
+        &mut self,
+        style_rule: &'a StyleRule,
+        origin: Origin,
+        order: &mut usize,
+        layer_order: Option<u32>,
+        scope_root: Option<&'a crate::selectors::SelectorList>,
+        scope_limit: Option<&'a crate::selectors::SelectorList>,
     ) {
         *order += 1;
         let rule_order = *order;
@@ -594,6 +677,8 @@ impl<'a> RuleIndex<'a> {
                 origin,
                 source_order: rule_order,
                 layer_order,
+                scope_root,
+                scope_limit,
             };
 
             // 1. Check if subject targets a pseudo-element
@@ -670,6 +755,8 @@ impl<'a> RuleIndex<'a> {
                     doc,
                     cand.origin,
                     cand.layer_order,
+                    cand.scope_root,
+                    cand.scope_limit,
                     cand.source_order,
                     out,
                 );
@@ -687,6 +774,8 @@ impl<'a> RuleIndex<'a> {
                         doc,
                         cand.origin,
                         cand.layer_order,
+                        cand.scope_root,
+                        cand.scope_limit,
                         cand.source_order,
                         out,
                     );
@@ -706,6 +795,8 @@ impl<'a> RuleIndex<'a> {
                         doc,
                         cand.origin,
                         cand.layer_order,
+                        cand.scope_root,
+                        cand.scope_limit,
                         cand.source_order,
                         out,
                     );
@@ -724,6 +815,8 @@ impl<'a> RuleIndex<'a> {
                             doc,
                             cand.origin,
                             cand.layer_order,
+                            cand.scope_root,
+                            cand.scope_limit,
                             cand.source_order,
                             out,
                         );
@@ -744,6 +837,8 @@ impl<'a> RuleIndex<'a> {
                     node_id,
                     doc,
                     cand.origin,
+                    None,
+                    None,
                     None,
                     cand.source_order,
                     out,
@@ -1565,18 +1660,88 @@ fn apply_style_rule(
     doc: &Document,
     origin: Origin,
     layer_order: Option<u32>,
+    scope_root: Option<&crate::selectors::SelectorList>,
+    scope_limit: Option<&crate::selectors::SelectorList>,
     rule_source_order: usize,
     out: &mut Vec<MatchedDeclaration>,
 ) {
+    let mut added_scope_spec = Specificity::ZERO;
+
+    if scope_root.is_some() || scope_limit.is_some() {
+        let mut matching_root: Option<(NodeId, Specificity)> = None;
+
+        if let Some(root_sel) = scope_root {
+            let is_root_self = root_sel.matches(node_id, doc);
+            let limit_excludes_self = scope_limit.map_or(false, |lim| lim.matches(node_id, doc));
+
+            if is_root_self && !limit_excludes_self {
+                let root_spec = root_sel
+                    .selectors
+                    .iter()
+                    .map(Specificity::of)
+                    .max()
+                    .unwrap_or(Specificity::ZERO);
+                matching_root = Some((node_id, root_spec));
+            }
+
+            if matching_root.is_none() {
+                if limit_excludes_self {
+                    return;
+                }
+                let mut curr = doc.get(node_id).and_then(|n| n.parent);
+                let mut hit_limit = false;
+                while let Some(ancestor_id) = curr {
+                    if root_sel.matches(ancestor_id, doc) {
+                        if !hit_limit {
+                            let root_spec = root_sel
+                                .selectors
+                                .iter()
+                                .map(Specificity::of)
+                                .max()
+                                .unwrap_or(Specificity::ZERO);
+                            matching_root = Some((ancestor_id, root_spec));
+                        }
+                        break;
+                    }
+                    if let Some(lim) = scope_limit {
+                        if lim.matches(ancestor_id, doc) {
+                            hit_limit = true;
+                        }
+                    }
+                    curr = doc.get(ancestor_id).and_then(|n| n.parent);
+                }
+            }
+
+            if let Some((root_node, root_spec)) = matching_root {
+                crate::selectors::set_current_scope_root(Some(root_node));
+                added_scope_spec = root_spec;
+            } else {
+                return;
+            }
+        } else if let Some(lim) = scope_limit {
+            let mut curr = Some(node_id);
+            while let Some(elem_id) = curr {
+                if lim.matches(elem_id, doc) {
+                    return;
+                }
+                curr = doc.get(elem_id).and_then(|n| n.parent);
+            }
+        }
+    }
+
     let mut max_specificity: Option<Specificity> = None;
     for complex_sel in &style_rule.selectors.selectors {
         if complex_sel.matches(node_id, doc) {
-            let spec = Specificity::of(complex_sel);
+            let spec = Specificity::of(complex_sel) + added_scope_spec;
             max_specificity = Some(match max_specificity {
                 Some(current) => current.max(spec),
                 None => spec,
             });
         }
+    }
+
+    if scope_root.is_some() {
+        crate::selectors::set_current_scope_root(None);
     }
 
     if let Some(specificity) = max_specificity {
@@ -1845,6 +2010,27 @@ fn matches_single_condition(
     }
     if let Some(rest) = lower.strip_prefix("not ") {
         return !matches_single_condition(rest.trim(), width, height, env, is_container);
+    }
+
+    while lower.starts_with('(') && lower.ends_with(')') {
+        let mut depth = 0;
+        let mut closed_early = false;
+        for (i, c) in lower.char_indices() {
+            if c == '(' {
+                depth += 1;
+            } else if c == ')' {
+                depth -= 1;
+                if depth == 0 && i < lower.len() - 1 {
+                    closed_early = true;
+                    break;
+                }
+            }
+        }
+        if depth == 0 && !closed_early {
+            lower = lower[1..lower.len() - 1].trim().to_string();
+        } else {
+            break;
+        }
     }
 
     let normalized = lower.replace(")and", ") and ").replace("and(", " and (");
@@ -2956,6 +3142,98 @@ mod tests {
             cascaded_active.get("background-color"),
             Some(&Value::Color(Color::GREEN)),
             "Nested selector &.active must resolve background-color: green"
+        );
+    }
+
+    #[test]
+    fn test_layer_statement_order() {
+        let html = r#"<div id="target" class="item">Test</div>"#;
+        let doc = parse_html(html);
+        let root = doc.root();
+        let div_id = doc.find_element_by_id(root, "target").unwrap();
+
+        // Statement establishes base < components precedence upfront
+        let css = r#"
+            @layer base, components;
+            @layer components {
+                .item { color: green; }
+            }
+            @layer base {
+                .item { color: red; }
+            }
+        "#;
+        let sheet = parse_stylesheet(css);
+        let cascaded = resolve_cascade(div_id, &doc, &[&sheet]);
+        assert_eq!(
+            cascaded.get("color"),
+            Some(&Value::Color(Color::GREEN)),
+            "components layer must beat base layer even though base block appears later in source"
+        );
+    }
+
+    #[test]
+    fn test_scope_and_doughnut_hole() {
+        let html = r#"
+            <div id="card" class="card">
+                <p id="in-scope">In scope</p>
+                <div id="fig" class="figure">
+                    <p id="in-hole">In doughnut hole</p>
+                </div>
+            </div>
+            <p id="outside">Outside card</p>
+        "#;
+        let doc = parse_html(html);
+        let root = doc.root();
+        let card_id = doc.find_element_by_id(root, "card").unwrap();
+        let in_scope_id = doc.find_element_by_id(root, "in-scope").unwrap();
+        let in_hole_id = doc.find_element_by_id(root, "in-hole").unwrap();
+        let outside_id = doc.find_element_by_id(root, "outside").unwrap();
+
+        let css = r#"
+            @scope (.card) to (.figure) {
+                :scope {
+                    border-top-width: 5px;
+                }
+                p {
+                    color: blue;
+                }
+            }
+            p {
+                color: black;
+            }
+        "#;
+        let sheet = parse_stylesheet(css);
+
+        // 1. :scope matches .card
+        let card_cascaded = resolve_cascade(card_id, &doc, &[&sheet]);
+        assert_eq!(
+            card_cascaded.get("border-top-width"),
+            Some(&Value::Length(Length::Px(5.0))),
+            ":scope must match scoping root .card"
+        );
+
+        // 2. p inside .card and outside .figure matches color: blue
+        let in_scope_cascaded = resolve_cascade(in_scope_id, &doc, &[&sheet]);
+        assert_eq!(
+            in_scope_cascaded.get("color"),
+            Some(&Value::Color(Color::BLUE)),
+            "p in scope must resolve color: blue"
+        );
+
+        // 3. p inside .figure is in doughnut hole -> does not match scoped rule, gets black
+        let in_hole_cascaded = resolve_cascade(in_hole_id, &doc, &[&sheet]);
+        assert_eq!(
+            in_hole_cascaded.get("color"),
+            Some(&Value::Color(Color::BLACK)),
+            "p in doughnut hole must NOT match scoped rule"
+        );
+
+        // 4. p outside .card does not match scoped rule, gets black
+        let outside_cascaded = resolve_cascade(outside_id, &doc, &[&sheet]);
+        assert_eq!(
+            outside_cascaded.get("color"),
+            Some(&Value::Color(Color::BLACK)),
+            "p outside scope root must NOT match scoped rule"
         );
     }
 }

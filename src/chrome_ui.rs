@@ -1,4 +1,4 @@
-//! Chrome UI definitions, layouts, and rendering routines for Mango Browser (OPT-001).
+//! Chrome UI definitions, layouts, and rendering routines for Mango Browser.
 //!
 //! Owns Chrome tab bar metrics, toolbar geometry, omnibox styling,
 //! color palette constants, and UI element hover targets.

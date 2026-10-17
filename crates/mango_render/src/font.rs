@@ -1,7 +1,7 @@
 //! Font subsystem: TrueType font loading, text measurement, and glyph rasterization.
 //!
-//! Replaces the Phase 0 bitmap font renderer with `fontdue` for proper anti-aliased
-//! TrueType/OpenType glyph rendering with proportional metrics.
+//! Uses `fontdue` for high-performance anti-aliased TrueType/OpenType
+//! glyph rendering with proportional metrics.
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -28,13 +28,18 @@ pub fn font_manager() -> &'static FontManager {
     FONT_MANAGER.get_or_init(FontManager::new)
 }
 
+/// Prunes custom web fonts loaded across navigations, reclaiming heap allocations.
+pub fn prune_web_fonts() {
+    font_manager().prune_web_fonts();
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FontWeight {
     Regular,
     Bold,
 }
 
-/// A cached rasterized glyph with its metrics and 8-bit coverage bitmap (OPT-007).
+/// A cached rasterized glyph with its metrics and 8-bit coverage bitmap.
 #[derive(Clone)]
 pub struct CachedGlyph {
     pub metrics: fontdue::Metrics,
@@ -552,11 +557,16 @@ pub fn decode_font_bytes(bytes: &[u8]) -> Result<Font, String> {
         .map_err(|e| format!("Failed to parse TrueType/OpenType font tables: {}", e))
 }
 
+const MAX_WEB_FONT_FAMILIES: usize = 64;
+static FONT_ACCESS_TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 struct WebFontEntry {
     #[allow(dead_code)]
     family_name: String,
     regular: Vec<&'static Font>,
     bold: Vec<&'static Font>,
+    is_system: bool,
+    last_accessed: std::sync::atomic::AtomicU64,
 }
 
 fn load_system_font(filename: &str) -> Option<Font> {
@@ -635,7 +645,7 @@ impl FontManager {
     /// Chromium on Windows uses Arial for `sans-serif`, Times New Roman for `serif`
     /// and Consolas for `monospace`; `system-ui` is Segoe UI and is resolved
     /// separately, by name, in `resolve_family_for`.
-    fn new() -> Self {
+    pub fn new() -> Self {
         let settings = FontSettings::default();
 
         let sans_regular = load_system_font("arial.ttf")
@@ -761,6 +771,10 @@ impl FontManager {
                 if let Ok(web_fonts) = self.web_fonts.read()
                     && let Some(entry) = web_fonts.get(&id)
                 {
+                    entry.last_accessed.store(
+                        FONT_ACCESS_TICK.fetch_add(1, Ordering::Relaxed),
+                        Ordering::Relaxed,
+                    );
                     let font_opt = match weight {
                         FontWeight::Bold => entry.bold.first().or_else(|| entry.regular.first()),
                         FontWeight::Regular => entry.regular.first().or_else(|| entry.bold.first()),
@@ -778,7 +792,7 @@ impl FontManager {
     }
 }
 
-/// Returns targeted system font filenames prioritized for the Unicode script of `ch` (OPT-3.2.4).
+/// Returns targeted system font filenames prioritized for the Unicode script of `ch`.
 fn script_candidates_for_char(ch: char) -> &'static [&'static str] {
     let u = ch as u32;
     match u {
@@ -909,7 +923,7 @@ impl FontManager {
             }
         }
 
-        // 2. Targeted script-based fallback search (OPT-3.2.4)
+        // 2. Targeted script-based fallback search
         // Loaded lazily on-demand when a character actually needs it; avoids parsing
         // and leaking ~150-200MB of unused system TTC/OTF fonts into RAM.
         let script_candidates = script_candidates_for_char(ch);
@@ -1050,6 +1064,10 @@ impl FontManager {
 
         let id = if let Some(&existing_id) = family_map.get(&key) {
             if let Some(entry) = web_fonts.get_mut(&existing_id) {
+                entry.last_accessed.store(
+                    FONT_ACCESS_TICK.fetch_add(1, Ordering::Relaxed),
+                    Ordering::Relaxed,
+                );
                 match weight {
                     FontWeight::Bold => entry.bold.push(leaked),
                     FontWeight::Regular => entry.regular.push(leaked),
@@ -1057,11 +1075,36 @@ impl FontManager {
             }
             existing_id
         } else {
+            // Evict oldest web font if reaching capacity to prevent unbounded heap growth
+            if web_fonts.len() >= MAX_WEB_FONT_FAMILIES {
+                let oldest_id = web_fonts
+                    .iter()
+                    .filter(|(_, entry)| !entry.is_system)
+                    .min_by_key(|(_, entry)| entry.last_accessed.load(Ordering::Relaxed))
+                    .map(|(id, _)| *id);
+                if let Some(old_id) = oldest_id {
+                    if let Some(removed) = web_fonts.remove(&old_id) {
+                        let key = removed.family_name.trim().trim_matches('\'').trim_matches('"').to_ascii_lowercase();
+                        family_map.remove(&key);
+                        for font_ref in removed.regular.into_iter().chain(removed.bold.into_iter()) {
+                            unsafe {
+                                let ptr = font_ref as *const Font as *mut Font;
+                                drop(Box::from_raw(ptr));
+                            }
+                        }
+                    }
+                }
+            }
+
             let new_id = self.next_font_id.fetch_add(1, Ordering::Relaxed);
             let mut entry = WebFontEntry {
                 family_name: family_name.to_string(),
                 regular: Vec::new(),
                 bold: Vec::new(),
+                is_system: false,
+                last_accessed: std::sync::atomic::AtomicU64::new(
+                    FONT_ACCESS_TICK.fetch_add(1, Ordering::Relaxed),
+                ),
             };
             match weight {
                 FontWeight::Bold => entry.bold.push(leaked),
@@ -1239,6 +1282,10 @@ impl FontManager {
                                 family_name: clean,
                                 regular: vec![reg_leaked],
                                 bold: bold_vec,
+                                is_system: true,
+                                last_accessed: std::sync::atomic::AtomicU64::new(
+                                    FONT_ACCESS_TICK.fetch_add(1, Ordering::Relaxed),
+                                ),
                             },
                         );
                         return FontFamily::Custom(new_id);
@@ -1259,6 +1306,33 @@ impl FontManager {
             FontFamily::Serif
         } else {
             FontFamily::SansSerif
+        }
+    }
+
+    /// Prunes custom web fonts loaded across navigations, reclaiming heap allocations.
+    /// Retains platform system fonts and built-in generic faces.
+    pub fn prune_web_fonts(&self) {
+        if let Ok(mut family_map) = self.family_to_id.write()
+            && let Ok(mut web_fonts) = self.web_fonts.write()
+        {
+            let to_remove: Vec<(u32, String)> = web_fonts
+                .iter()
+                .filter(|(_, entry)| !entry.is_system)
+                .map(|(id, entry)| (*id, entry.family_name.clone()))
+                .collect();
+
+            for (id, family_name) in to_remove {
+                let key = family_name.trim().trim_matches('\'').trim_matches('"').to_ascii_lowercase();
+                family_map.remove(&key);
+                if let Some(removed) = web_fonts.remove(&id) {
+                    for font_ref in removed.regular.into_iter().chain(removed.bold.into_iter()) {
+                        unsafe {
+                            let ptr = font_ref as *const Font as *mut Font;
+                            drop(Box::from_raw(ptr));
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1384,7 +1458,7 @@ impl FontManager {
         );
     }
 
-    /// Retrieves a rasterized glyph from the glyph cache, or rasterizes and caches it (OPT-007).
+    /// Retrieves a rasterized glyph from the glyph cache, or rasterizes and caches it.
     pub fn get_or_rasterize_glyph(
         &self,
         family: FontFamily,
@@ -1444,7 +1518,7 @@ impl FontManager {
 
         if let Ok(mut cache) = glyph_cache().write() {
             if cache.len() >= 4096 {
-                // Bounded LRU eviction: retain the most recent 2048 entries instead of clearing all (OPT-3.2.3)
+                // Bounded LRU eviction: retain the most recent 2048 entries instead of clearing all
                 let mut access_times: Vec<u64> = cache
                     .values()
                     .map(|e| e.last_access.load(Ordering::Relaxed))
@@ -2398,5 +2472,28 @@ mod tests {
             );
             assert!((w - 51.1).abs() < 1.0);
         }
+    }
+
+    #[test]
+    fn test_prune_web_fonts() {
+        let fm = FontManager::new();
+        let family_name = "PrunableWebFont";
+        let id = fm
+            .register_web_font(family_name, FontWeight::Regular, FONT_SANS)
+            .expect("register web font should succeed");
+
+        assert!(fm.has_web_font(family_name));
+        let resolved = fm.resolve_family_for(family_name);
+        assert_eq!(resolved, FontFamily::Custom(id));
+
+        // Pruning should reclaim dynamic web fonts
+        fm.prune_web_fonts();
+        assert!(!fm.has_web_font(family_name));
+
+        // Built-in generic families remain functional
+        let sans = fm.resolve_family_for("sans-serif");
+        assert_eq!(sans, FontFamily::SansSerif);
+        let (w, h) = fm.measure_text("Hello", 16.0, FontWeight::Regular, sans);
+        assert!(w > 0.0 && h > 0.0);
     }
 }

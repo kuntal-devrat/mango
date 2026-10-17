@@ -1,4 +1,4 @@
-//! Typed CSS property identifier system (ARCH-007).
+//! Typed CSS property identifier system.
 //!
 //! Provides a strongly-typed `CssPropertyId` enum covering all CSS properties
 //! supported by the Mango engine. Using enum discriminants instead of string
@@ -155,6 +155,8 @@ pub enum CssPropertyId {
     FlexDirection,
     FlexWrap,
     JustifyContent,
+    JustifyItems,
+    JustifySelf,
     AlignItems,
     AlignSelf,
     AlignContent,
@@ -213,10 +215,44 @@ pub enum CssPropertyId {
     WebkitAppearance,
     MozAppearance,
     AccentColor,
+
+    // ── Anchor Positioning ──
+    AnchorName,
+    PositionAnchor,
+    PositionTryFallbacks,
+    PositionTryOrder,
+
+    // ── Scroll-Driven Animations ──
+    ScrollTimelineName,
+    ScrollTimelineAxis,
+    ScrollTimeline,
+    ViewTimelineName,
+    ViewTimelineAxis,
+    ViewTimelineInset,
+    ViewTimeline,
+    AnimationTimeline,
+    AnimationRangeStart,
+    AnimationRangeEnd,
+    AnimationRange,
+
+    // ── View Transitions ──
+    ViewTransitionName,
+    ViewTransitionClass,
+
+    // ── Typography 2.0 ──
+    TextWrap,
+
+    // ── Container Queries & Containment ──
+    ContainerType,
+    ContainerName,
+    Container,
+    ContainIntrinsicSize,
+    ContainIntrinsicWidth,
+    ContainIntrinsicHeight,
 }
 
 /// Total number of supported CSS properties.
-pub const CSS_PROPERTY_COUNT: usize = CssPropertyId::AccentColor as usize + 1;
+pub const CSS_PROPERTY_COUNT: usize = CssPropertyId::ContainIntrinsicHeight as usize + 1;
 
 impl CssPropertyId {
     /// Converts a canonical CSS property name to its typed ID.
@@ -342,6 +378,8 @@ impl CssPropertyId {
             "flex-direction" => Some(Self::FlexDirection),
             "flex-wrap" => Some(Self::FlexWrap),
             "justify-content" => Some(Self::JustifyContent),
+            "justify-items" => Some(Self::JustifyItems),
+            "justify-self" => Some(Self::JustifySelf),
             "align-items" => Some(Self::AlignItems),
             "align-self" => Some(Self::AlignSelf),
             "align-content" => Some(Self::AlignContent),
@@ -390,6 +428,30 @@ impl CssPropertyId {
             "-webkit-appearance" => Some(Self::WebkitAppearance),
             "-moz-appearance" => Some(Self::MozAppearance),
             "accent-color" => Some(Self::AccentColor),
+            "anchor-name" => Some(Self::AnchorName),
+            "position-anchor" => Some(Self::PositionAnchor),
+            "position-try-fallbacks" | "position-try-options" => Some(Self::PositionTryFallbacks),
+            "position-try-order" => Some(Self::PositionTryOrder),
+            "scroll-timeline-name" => Some(Self::ScrollTimelineName),
+            "scroll-timeline-axis" => Some(Self::ScrollTimelineAxis),
+            "scroll-timeline" => Some(Self::ScrollTimeline),
+            "view-timeline-name" => Some(Self::ViewTimelineName),
+            "view-timeline-axis" => Some(Self::ViewTimelineAxis),
+            "view-timeline-inset" => Some(Self::ViewTimelineInset),
+            "view-timeline" => Some(Self::ViewTimeline),
+            "animation-timeline" => Some(Self::AnimationTimeline),
+            "animation-range-start" => Some(Self::AnimationRangeStart),
+            "animation-range-end" => Some(Self::AnimationRangeEnd),
+            "animation-range" => Some(Self::AnimationRange),
+            "view-transition-name" => Some(Self::ViewTransitionName),
+            "view-transition-class" => Some(Self::ViewTransitionClass),
+            "text-wrap" => Some(Self::TextWrap),
+            "container-type" => Some(Self::ContainerType),
+            "container-name" => Some(Self::ContainerName),
+            "container" => Some(Self::Container),
+            "contain-intrinsic-size" => Some(Self::ContainIntrinsicSize),
+            "contain-intrinsic-width" => Some(Self::ContainIntrinsicWidth),
+            "contain-intrinsic-height" => Some(Self::ContainIntrinsicHeight),
             _ => None,
         }
     }
@@ -515,6 +577,8 @@ impl CssPropertyId {
             Self::FlexDirection => "flex-direction",
             Self::FlexWrap => "flex-wrap",
             Self::JustifyContent => "justify-content",
+            Self::JustifyItems => "justify-items",
+            Self::JustifySelf => "justify-self",
             Self::AlignItems => "align-items",
             Self::AlignSelf => "align-self",
             Self::AlignContent => "align-content",
@@ -563,6 +627,30 @@ impl CssPropertyId {
             Self::WebkitAppearance => "-webkit-appearance",
             Self::MozAppearance => "-moz-appearance",
             Self::AccentColor => "accent-color",
+            Self::AnchorName => "anchor-name",
+            Self::PositionAnchor => "position-anchor",
+            Self::PositionTryFallbacks => "position-try-fallbacks",
+            Self::PositionTryOrder => "position-try-order",
+            Self::ScrollTimelineName => "scroll-timeline-name",
+            Self::ScrollTimelineAxis => "scroll-timeline-axis",
+            Self::ScrollTimeline => "scroll-timeline",
+            Self::ViewTimelineName => "view-timeline-name",
+            Self::ViewTimelineAxis => "view-timeline-axis",
+            Self::ViewTimelineInset => "view-timeline-inset",
+            Self::ViewTimeline => "view-timeline",
+            Self::AnimationTimeline => "animation-timeline",
+            Self::AnimationRangeStart => "animation-range-start",
+            Self::AnimationRangeEnd => "animation-range-end",
+            Self::AnimationRange => "animation-range",
+            Self::ViewTransitionName => "view-transition-name",
+            Self::ViewTransitionClass => "view-transition-class",
+            Self::TextWrap => "text-wrap",
+            Self::ContainerType => "container-type",
+            Self::ContainerName => "container-name",
+            Self::Container => "container",
+            Self::ContainIntrinsicSize => "contain-intrinsic-size",
+            Self::ContainIntrinsicWidth => "contain-intrinsic-width",
+            Self::ContainIntrinsicHeight => "contain-intrinsic-height",
         }
     }
 
@@ -606,6 +694,7 @@ impl CssPropertyId {
                 | Self::FontFeatureSettings
                 | Self::FontVariationSettings
                 | Self::AccentColor
+                | Self::TextWrap
                 // CSS spec: `direction` is an inherited property.
                 | Self::Direction
         )
@@ -782,6 +871,8 @@ impl CssPropertyId {
             FlexDirection,
             FlexWrap,
             JustifyContent,
+            JustifyItems,
+            JustifySelf,
             AlignItems,
             AlignSelf,
             AlignContent,
@@ -830,6 +921,30 @@ impl CssPropertyId {
             WebkitAppearance,
             MozAppearance,
             AccentColor,
+            AnchorName,
+            PositionAnchor,
+            PositionTryFallbacks,
+            PositionTryOrder,
+            ScrollTimelineName,
+            ScrollTimelineAxis,
+            ScrollTimeline,
+            ViewTimelineName,
+            ViewTimelineAxis,
+            ViewTimelineInset,
+            ViewTimeline,
+            AnimationTimeline,
+            AnimationRangeStart,
+            AnimationRangeEnd,
+            AnimationRange,
+            ViewTransitionName,
+            ViewTransitionClass,
+            TextWrap,
+            ContainerType,
+            ContainerName,
+            Container,
+            ContainIntrinsicSize,
+            ContainIntrinsicWidth,
+            ContainIntrinsicHeight,
         ]
     }
 }
@@ -843,7 +958,7 @@ impl std::fmt::Display for CssPropertyId {
 use crate::values::Value;
 use std::collections::HashMap;
 
-/// An enum-indexed map of CSS properties (ARCH-007).
+/// An enum-indexed map of CSS properties.
 ///
 /// Backed by a fixed-size `[Option<Value>; CSS_PROPERTY_COUNT]` array indexed by
 /// `CssPropertyId` discriminant, providing true O(1) access with zero hashing

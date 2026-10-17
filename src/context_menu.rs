@@ -1,4 +1,4 @@
-//! Context menu subsystem for Mango Browser (OPT-001).
+//! Context menu subsystem for Mango Browser.
 //!
 //! Provides popup context menus for right-click interactions on pages, links,
 //! and media elements with theme styling and item hit-testing.
@@ -13,6 +13,7 @@ pub enum ContextMenuAction {
     Back,
     Forward,
     Reload,
+    OpenLinkInNewTab(String),
     CopyLink(String),
     ViewSource,
     Inspect,

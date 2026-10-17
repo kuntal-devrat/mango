@@ -1,4 +1,4 @@
-//! Navigation subsystem for Mango Browser (OPT-001).
+//! Navigation subsystem for Mango Browser.
 //!
 //! Provides URL parsing, search query detection, percent-encoding,
 //! special page routing, and connection error page generation.

@@ -2,7 +2,7 @@
 name = "mango_engine"
 version.workspace = true
 edition.workspace = true
-description = "Core browser engine orchestrating DOM, CSS, layout, events, and display list generation (ARCH-001)"
+description = "Core browser engine orchestrating DOM, CSS, layout, events, and display list generation"
 
 [dependencies]
 mango_core.workspace = true
@@ -11,4 +11,6 @@ mango_css.workspace = true
 mango_layout.workspace = true
 mango_render.workspace = true
 mango_events.workspace = true
+mango_ipc.workspace = true
+mango_net.workspace = true
 log.workspace = true

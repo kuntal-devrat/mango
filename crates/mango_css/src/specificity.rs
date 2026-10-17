@@ -8,7 +8,7 @@
 //!
 //! Universal selector (`*`) and combinators (` `, `>`, `+`, `~`) contribute `(0, 0, 0)`.
 
-use crate::selectors::{ComplexSelector, SimpleSelector};
+use crate::selectors::{get_or_parse_complex_selector, ComplexSelector, SimpleSelector};
 use std::cmp::Ordering;
 
 /// Specificity tuple `(a, b, c)`.
@@ -37,8 +37,10 @@ impl Specificity {
                     && lower.ends_with(')')
                 {
                     let prefix_len = if lower.starts_with("is(") { 3 } else { 4 };
-                    let inner = &pseudo[prefix_len..pseudo.len() - 1];
-                    if let Some(list) = crate::parser::parse_selectors(inner) {
+                    let inner = pseudo[prefix_len..pseudo.len() - 1].trim();
+                    if inner.is_empty() {
+                        // Empty :is(), :not(), :has() has zero specificity (0, 0, 0)
+                    } else if let Some(list) = get_or_parse_complex_selector(inner) {
                         let max_spec = list
                             .selectors
                             .iter()
@@ -58,7 +60,7 @@ impl Specificity {
                     let inner = &pseudo[..pseudo.len() - 1];
                     if let Some(idx) = inner.to_ascii_lowercase().find(" of ") {
                         let sel_str = inner[idx + 4..].trim();
-                        if let Some(list) = crate::parser::parse_selectors(sel_str) {
+                        if let Some(list) = get_or_parse_complex_selector(sel_str) {
                             let max_spec = list
                                 .selectors
                                 .iter()
@@ -107,6 +109,13 @@ impl Ord for Specificity {
             },
             other_ord => other_ord,
         }
+    }
+}
+
+impl std::ops::Add for Specificity {
+    type Output = Self;
+    fn add(self, rhs: Self) -> Self {
+        Specificity(self.0 + rhs.0, self.1 + rhs.1, self.2 + rhs.2)
     }
 }
 

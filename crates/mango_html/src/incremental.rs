@@ -1,4 +1,4 @@
-//! # Incremental HTML Parser & Preload Scanner (Phase 3.1)
+//! # Incremental HTML Parser & Preload Scanner
 //!
 //! Allows feeding HTML bytes or text in streaming chunks as they arrive over the network,
 //! discovering speculative preloads (<link>, <script>, <img>) before parsing completes,

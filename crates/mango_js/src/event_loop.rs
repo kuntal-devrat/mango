@@ -6,7 +6,6 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use boa_engine::Context;
 
 /// Unique identifier for a scheduled timer.
 pub type TimerId = u32;
@@ -30,7 +29,7 @@ pub struct EventLoop {
     tasks: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 }
 
-/// Maximum number of concurrent active timers allowed to prevent DoS attacks (M-09).
+/// Maximum number of concurrent active timers allowed to prevent DoS attacks.
 pub const MAX_ACTIVE_TIMERS: usize = 1000;
 /// Minimum allowed interval duration in milliseconds per HTML timer spec.
 pub const MIN_TIMER_INTERVAL_MS: u64 = 4;
@@ -75,7 +74,10 @@ impl EventLoop {
             self.timers.retain(|_, t| !t.cancelled);
         }
         if self.timers.len() >= MAX_ACTIVE_TIMERS {
-            log::warn!("Maximum active timers reached ({}), ignoring setTimeout (M-09)", MAX_ACTIVE_TIMERS);
+            log::warn!(
+                "Maximum active timers reached ({}), ignoring setTimeout",
+                MAX_ACTIVE_TIMERS
+            );
             return;
         }
         if id >= self.next_id {
@@ -112,7 +114,10 @@ impl EventLoop {
             self.timers.retain(|_, t| !t.cancelled);
         }
         if self.timers.len() >= MAX_ACTIVE_TIMERS {
-            log::warn!("Maximum active timers reached ({}), ignoring setInterval (M-09)", MAX_ACTIVE_TIMERS);
+            log::warn!(
+                "Maximum active timers reached ({}), ignoring setInterval",
+                MAX_ACTIVE_TIMERS
+            );
             return;
         }
         if id >= self.next_id {
@@ -206,24 +211,6 @@ impl EventLoop {
         fired
     }
 
-    /// Processes expired timers and queued background tasks. Evaluates their callback in the given Boa context.
-    /// Returns `true` if any timer or task fired (indicating the page might need re-rendering).
-    pub fn tick(&mut self, context: &mut Context) -> bool {
-        let scripts = self.drain_due();
-        let mut fired = false;
-        for source in scripts {
-            match context.eval(boa_engine::Source::from_bytes(&source)) {
-                Ok(_) => {
-                    fired = true;
-                }
-                Err(e) => {
-                    log::warn!("Background task callback error: {}", e);
-                }
-            }
-        }
-        fired
-    }
-
     /// Returns true if there are any pending timers or background tasks.
     pub fn has_pending_timers(&self) -> bool {
         let has_tasks = self.tasks.lock().map(|q| !q.is_empty()).unwrap_or(false);
@@ -268,7 +255,10 @@ mod tests {
         // Clamping to MIN_TIMER_INTERVAL_MS
         let id1 = el.schedule_interval("console.log('hi')".to_string(), 0);
         let timer = el.timers.get(&id1).unwrap();
-        assert_eq!(timer.interval, Some(Duration::from_millis(MIN_TIMER_INTERVAL_MS)));
+        assert_eq!(
+            timer.interval,
+            Some(Duration::from_millis(MIN_TIMER_INTERVAL_MS))
+        );
 
         // Attempting to exceed MAX_ACTIVE_TIMERS
         for _ in 1..MAX_ACTIVE_TIMERS {

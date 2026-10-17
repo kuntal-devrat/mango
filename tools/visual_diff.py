@@ -186,6 +186,7 @@ async def capture_chrome(
     script: bool,
     eval_expression: str | None = None,
     full_page: bool = False,
+    wait_sec: int = 30,
 ) -> None:
     profile = out.parent / ".chrome-profile"
     async with DevTools(chrome, profile) as dt:
@@ -206,7 +207,7 @@ async def capture_chrome(
         )
         await dt.send("Page.navigate", {"url": url})
         await dt.wait_for_event("Page.loadEventFired", timeout=45)
-        await asyncio.sleep(1.0)  # images, fonts, first paint
+        await asyncio.sleep(float(wait_sec) if wait_sec > 0 else 1.0)  # wait for images, dynamic JS, fonts, layout settling
 
         if scroll > 0:
             await dt.send(
@@ -255,10 +256,13 @@ def resolve_mango(binary: str) -> str:
     return str(path.resolve())
 
 
-def capture_mango(url: str, out: Path, width: int, height: int, scroll: int, binary: str, full_page: bool = False) -> None:
+def capture_mango(url: str, out: Path, width: int, height: int, scroll: int, binary: str, full_page: bool = False, wait_sec: int = 30) -> None:
     flags = ["--full-page"] if full_page else ["--page"]
+    if wait_sec > 0:
+        flags.extend(["--wait", str(wait_sec)])
     cmd = [resolve_mango(binary), url, str(out.resolve()), str(width), str(height), str(scroll)] + flags
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    timeout = max(180, wait_sec + 60)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0:
         print(result.stdout[-2000:])
         print(result.stderr[-2000:], file=sys.stderr)
@@ -293,7 +297,10 @@ def main() -> None:
     parser.add_argument("--full-page", action="store_true", help="render full tall page without viewport clipping")
     parser.add_argument("--out", default=".freebuff/out")
     parser.add_argument("--grid", type=int, default=8)
-    parser.add_argument("--mango", default="target/debug/headless" if os.name != "nt" else "target/debug/headless.exe")
+    default_mango = "target/release/headless" if os.path.exists("target/release/headless") else ("target/debug/headless" if os.name != "nt" else "target/debug/headless.exe")
+    if os.name == "nt" and os.path.exists("target/release/headless.exe"):
+        default_mango = "target/release/headless.exe"
+    parser.add_argument("--mango", default=default_mango)
     parser.add_argument("--skip-chrome", action="store_true", help="reuse an existing reference PNG")
     parser.add_argument("--skip-mango", action="store_true", help="reuse an existing Mango PNG")
     parser.add_argument(
@@ -302,6 +309,7 @@ def main() -> None:
         help="let the Chromium reference execute JavaScript (default: disabled for a fair HTML/CSS comparison)",
     )
     parser.add_argument("--eval", dest="eval_expression", default=None, help="evaluate JS in Chromium after load")
+    parser.add_argument("--wait", type=int, default=30, help="seconds to wait for dynamic JS and network settling (default: 30)")
     args = parser.parse_args()
 
     out_dir = Path(args.out).resolve()
@@ -331,12 +339,13 @@ def main() -> None:
                 args.js,
                 args.eval_expression,
                 args.full_page,
+                args.wait,
             )
         )
     elif args.eval_expression:
         sys.exit("error: --eval needs a Chromium run (drop --skip-chrome)")
     if not args.skip_mango:
-        capture_mango(args.url, mango_png, args.width, args.height, args.scroll, args.mango, args.full_page)
+        capture_mango(args.url, mango_png, args.width, args.height, args.scroll, args.mango, args.full_page, args.wait)
 
     reference = Image.open(chrome_png).convert("RGB")
     candidate = Image.open(mango_png).convert("RGB")
@@ -365,6 +374,26 @@ def main() -> None:
     print(f"worst regions   : (row, col, mean diff) with {args.grid}x{args.grid} grid")
     for row, col, value in grid_heatmap(diff, args.grid)[:6]:
         print(f"  row {row:2d} col {col:2d}  {value:6.1f}   x={col * args.width // args.grid}-{(col + 1) * args.width // args.grid}")
+
+    # Vertical Slices Comparison
+    slice_h = min(args.height, target_height)
+    num_slices = max(1, (target_height + slice_h - 1) // slice_h)
+    print(f"\n--- Vertical Slices Comparison ({num_slices} slices of ~{slice_h}px) ---")
+    for s in range(num_slices):
+        y1 = s * slice_h
+        y2 = min((s + 1) * slice_h, target_height)
+        if y2 <= y1:
+            continue
+        ref_slice = ref_cmp.crop((0, y1, target_width, y2))
+        cand_slice = cand_cmp.crop((0, y1, target_width, y2))
+        diff_slice = ImageChops.difference(ref_slice, cand_slice)
+        sl_pixels = list(diff_slice.getdata())
+        sl_total = len(sl_pixels)
+        sl_differing = sum(1 for p in sl_pixels if max(p) > 32)
+        sl_mae = sum(sum(p) for p in sl_pixels) / (sl_total * 3)
+        slice_diff_png = out_dir / f"{slug}.slice_{s}.diff.png"
+        diff_slice.save(slice_diff_png)
+        print(f"  Slice {s:2d} (y: {y1:5d}..{y2:5d}px): MAE = {sl_mae:5.2f} / 255 | Differing = {sl_differing / sl_total * 100:5.1f}%")
 
 
 if __name__ == "__main__":

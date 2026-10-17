@@ -1,7 +1,7 @@
 //! Cookie and localStorage profile persistence on disk.
 
-use std::path::Path;
 use super::BrowserChrome;
+use std::path::Path;
 
 /// Restores a `localStorage` profile (`<key>\t<value>` or `<origin>\t<key>\t<value>` per line) into the store.
 pub fn load_local_storage(path: &Path, store: &mango_js::web_apis::SharedLocalStorage) {
@@ -16,7 +16,7 @@ pub fn load_local_storage(path: &Path, store: &mango_js::web_apis::SharedLocalSt
     }
 }
 
-/// Writes the `localStorage` store to its profile file (GAP-017, Phase 6.4 / PRD 7.6).
+/// Writes the `localStorage` store to its profile file.
 pub fn save_local_storage(path: &Path, store: &mango_js::web_apis::SharedLocalStorage) {
     if let Err(e) = mango_js::web_apis::save_local_storage_to_file(path, store) {
         log::warn!("Could not persist localStorage: {e}");
@@ -47,7 +47,7 @@ impl BrowserChrome {
         }
     }
 
-    /// Flushes the shared localStorage store to the profile file (GAP-017).
+    /// Flushes the shared localStorage store to the profile file.
     pub fn persist_local_storage(&self) {
         save_local_storage(&self.local_storage_path, &self.local_storage);
     }

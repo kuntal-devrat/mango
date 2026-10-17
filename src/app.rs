@@ -1,8 +1,9 @@
 //! Application state and the winit event loop handler.
 //!
 //! Implements `winit::application::ApplicationHandler` to receive window
-//! events and drive the browser's main loop, timers, and rendering.
+//! events and drive the browser's multi-window main loop, timers, and rendering.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -16,14 +17,47 @@ use mango_platform::window::{WindowSurface, create_window};
 
 use crate::browser::BrowserChrome;
 
-/// The top-level application state.
+/// State associated with a single top-level window.
+pub struct WindowState {
+    pub window: Arc<Window>,
+    pub surface: WindowSurface,
+    pub browser: BrowserChrome,
+}
+
+impl WindowState {
+    pub fn new(window: Arc<Window>) -> Self {
+        let surface = WindowSurface::new(window.clone());
+        let size = window.inner_size();
+        let mut browser = BrowserChrome::new(size.width, size.height);
+        browser.async_navigation = true;
+        Self {
+            window,
+            surface,
+            browser,
+        }
+    }
+
+    /// Redraws the browser window, rendering the unified display list directly
+    /// to guarantee identical visual rendering between desktop and headless modes.
+    pub fn redraw(&mut self) {
+        let size = self.surface.size();
+        let dl = self.browser.build_display_list(size);
+
+        if let Err(err) = self
+            .surface
+            .present_display_list(&dl, self.browser.canvas_bg())
+        {
+            log::warn!("Presentation error: {err}");
+        }
+    }
+}
+
+/// The top-level multi-window application state.
 pub struct MangoApp {
-    /// The main window (created on resume).
-    window: Option<Arc<Window>>,
-    /// Unified presentation surface (GPU compositor or software tile blitter).
-    surface: Option<WindowSurface>,
-    /// The browser chrome (UI, tabs, navigation, JS runtime).
-    browser: Option<BrowserChrome>,
+    /// Active windows keyed by winit WindowId.
+    windows: HashMap<WindowId, WindowState>,
+    /// Initial URL specified on command line.
+    pub initial_url: Option<String>,
     /// Current modifier key state.
     modifiers: Modifiers,
     /// Timestamp of the previous animation tick, for frame-delta computation.
@@ -32,64 +66,48 @@ pub struct MangoApp {
 
 impl Default for MangoApp {
     fn default() -> Self {
-        Self::new()
+        Self::new(None)
     }
 }
 
 impl MangoApp {
-    pub fn new() -> Self {
+    pub fn new(initial_url: Option<String>) -> Self {
         Self {
-            window: None,
-            surface: None,
-            browser: None,
+            windows: HashMap::new(),
+            initial_url,
             modifiers: Modifiers::default(),
             last_frame: None,
         }
     }
 
-    /// Redraws the browser window via hardware GPU compositing or software tile blits.
-    fn redraw(&mut self) {
-        let Some(browser) = &mut self.browser else {
-            return;
-        };
-        let Some(surface) = &mut self.surface else {
-            return;
-        };
-
-        let size = surface.size();
-        browser.update_layers(size);
-
-        if let Err(err) = surface.composite_and_present(&browser.layer_tree, browser.canvas_bg()) {
-            log::warn!("Compositor presentation error: {err}");
+    /// Spawns a new top-level window, optionally navigating to `url`.
+    pub fn create_new_window(&mut self, event_loop: &ActiveEventLoop, url: Option<&str>) -> WindowId {
+        log::info!("Creating new Mango window...");
+        let window = create_window(event_loop);
+        let id = window.id();
+        let mut state = WindowState::new(window.clone());
+        if let Some(u) = url {
+            state.browser.navigate(u);
         }
+        window.request_redraw();
+        self.windows.insert(id, state);
+        id
     }
 }
 
 impl ApplicationHandler for MangoApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_some() {
+        if !self.windows.is_empty() {
             return; // Already initialized
         }
 
-        log::info!("Creating Mango window...");
-        let window = create_window(event_loop);
-        let surface = WindowSurface::new(window.clone());
-
-        let size = window.inner_size();
-        let mut browser = BrowserChrome::new(size.width, size.height);
-        browser.async_navigation = true;
-
-        self.window = Some(window.clone());
-        self.surface = Some(surface);
-        self.browser = Some(browser);
-
-        window.request_redraw();
-        log::info!("Mango is ready with Hardware GPU Compositing & Viewport Engine! 🥭");
+        log::info!("Initializing Mango Browser...");
+        let initial_url = self.initial_url.clone();
+        self.create_new_window(event_loop, initial_url.as_deref());
+        log::info!("Mango is ready with Multi-Window Rendering Engine! 🥭");
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        let mut needs_redraw = false;
-
         // Frame delta for the CSS animation/transition runtime.
         let now = Instant::now();
         let dt_ms = self
@@ -99,93 +117,144 @@ impl ApplicationHandler for MangoApp {
             .clamp(0.0, 100.0);
         self.last_frame = Some(now);
 
-        if let Some(browser) = &mut self.browser {
+        let mut any_animating = false;
+        let mut any_loading = false;
+        let mut any_pending_images = false;
+        let mut any_smooth_scroll = false;
+        let mut earliest_timer_deadline: Option<Instant> = None;
+        let mut windows_to_open: Vec<String> = Vec::new();
+
+        for state in self.windows.values_mut() {
+            let mut needs_redraw = false;
+
             // Check for completed background navigation
-            if browser.is_loading() && browser.tick_navigation() {
+            if state.browser.is_loading() && state.browser.tick_navigation() {
                 needs_redraw = true;
             }
 
             // Tick JS event loop (setTimeout/setInterval)
-            if (browser.has_pending_timers() || browser.is_loading()) && browser.tick_js() {
-                needs_redraw = true;
-            }
-
-            // Drive CSS transitions and @keyframes animations (GAP-004/GAP-006)
-            if browser.is_animating() && browser.tick_animations(dt_ms) {
-                needs_redraw = true;
-            }
-
-            // Keep draining the background image backlog (OPT-009) so
-            // image-heavy pages finish loading instead of dropping images.
-            if browser.has_pending_image_fetches() && browser.drain_pending_images() {
-                needs_redraw = true;
-            }
-
-            // Dynamic event loop pacing:
-            // 1. If animations, active page loading, or image decoding are running, poll at ~60 FPS (16ms).
-            // 2. Otherwise, if JS timers or tasks are pending, sleep until the next timer's deadline (clamped to at most 1000ms).
-            // 3. Otherwise, enter true idle sleep (ControlFlow::Wait) to consume 0% CPU.
-            if browser.is_animating()
-                || browser.has_pending_image_fetches()
-                || browser.is_loading()
-                || browser.smooth_scroll.is_some()
+            if (state.browser.has_pending_timers() || state.browser.is_loading())
+                && state.browser.tick_js()
             {
-                event_loop.set_control_flow(ControlFlow::WaitUntil(
-                    Instant::now() + Duration::from_millis(16),
-                ));
-            } else if let Some(deadline) = browser.next_timer_deadline() {
-                let now = Instant::now();
-                if deadline <= now {
-                    event_loop.set_control_flow(ControlFlow::WaitUntil(now));
+                needs_redraw = true;
+            }
+
+            // Check for pending window.open requests from scripts
+            if let Some(open_req) = state
+                .browser
+                .js_runtime
+                .as_mut()
+                .and_then(|rt| rt.take_pending_open_window())
+            {
+                let nav_url = if let Some(base) = &state.browser.base_url {
+                    base.resolve(&open_req.url)
+                        .map(|u| u.to_string())
+                        .unwrap_or(open_req.url.clone())
                 } else {
-                    let delay = (deadline - now).min(Duration::from_millis(1000));
-                    event_loop.set_control_flow(ControlFlow::WaitUntil(now + delay));
+                    open_req.url.clone()
+                };
+                if open_req.features.contains("width=") || open_req.features.contains("popup") {
+                    windows_to_open.push(nav_url);
+                } else {
+                    state.browser.new_tab_and_navigate(&nav_url);
+                    needs_redraw = true;
                 }
-            } else {
-                event_loop.set_control_flow(ControlFlow::Wait);
+            }
+
+            // Drive CSS transitions and @keyframes animations
+            if state.browser.is_animating() && state.browser.tick_animations(dt_ms) {
+                needs_redraw = true;
+            }
+
+            // Keep draining the background image backlog
+            if state.browser.has_pending_image_fetches() && state.browser.drain_pending_images() {
+                needs_redraw = true;
+            }
+
+            if state.browser.is_animating() {
+                any_animating = true;
+            }
+            if state.browser.is_loading() {
+                any_loading = true;
+            }
+            if state.browser.has_pending_image_fetches() {
+                any_pending_images = true;
+            }
+            if state.browser.smooth_scroll.is_some() {
+                any_smooth_scroll = true;
+            }
+
+            if let Some(dl) = state.browser.next_timer_deadline() {
+                earliest_timer_deadline = match earliest_timer_deadline {
+                    Some(prev) => Some(prev.min(dl)),
+                    None => Some(dl),
+                };
+            }
+
+            if needs_redraw {
+                state.window.request_redraw();
             }
         }
 
-        if needs_redraw && let Some(window) = &self.window {
-            window.request_redraw();
+        // Spawn any requested popup windows
+        for url in windows_to_open {
+            self.create_new_window(event_loop, Some(&url));
+        }
+
+        // Event loop control flow pacing:
+        // 1. If animations, active page loading, or image decoding are running, poll at ~60 FPS (16ms).
+        // 2. Otherwise, if JS timers or tasks are pending, sleep until the earliest deadline (clamped to at most 1000ms).
+        // 3. Otherwise, enter true idle sleep (ControlFlow::Wait) to consume 0% CPU.
+        if any_animating || any_loading || any_pending_images || any_smooth_scroll {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                Instant::now() + Duration::from_millis(16),
+            ));
+        } else if let Some(deadline) = earliest_timer_deadline {
+            let now = Instant::now();
+            if deadline <= now {
+                event_loop.set_control_flow(ControlFlow::WaitUntil(now));
+            } else {
+                let delay = (deadline - now).min(Duration::from_millis(1000));
+                event_loop.set_control_flow(ControlFlow::WaitUntil(now + delay));
+            }
+        } else {
+            event_loop.set_control_flow(ControlFlow::Wait);
         }
     }
 
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
-        _window_id: WindowId,
+        window_id: WindowId,
         event: WindowEvent,
     ) {
         match event {
             WindowEvent::CloseRequested => {
-                log::info!("Window close requested. Goodbye! 🥭");
-                if let Some(browser) = self.browser.take() {
-                    browser.persist_profile();
-                    drop(browser);
+                log::info!("Window close requested for {:?}.", window_id);
+                if let Some(state) = self.windows.remove(&window_id) {
+                    state.browser.persist_profile();
                 }
-                self.surface = None;
-                self.window = None;
-                event_loop.exit();
+                if self.windows.is_empty() {
+                    log::info!("All windows closed. Goodbye! 🥭");
+                    event_loop.exit();
+                }
             }
 
             WindowEvent::Resized(size) => {
                 if size.width == 0 || size.height == 0 {
                     return;
                 }
-                if let Some(surface) = &mut self.surface {
-                    surface.resize(size.width, size.height);
-                }
-                if let Some(browser) = &mut self.browser {
-                    browser.resize(size.width, size.height);
-                }
-                if let Some(window) = &self.window {
-                    window.request_redraw();
+                if let Some(state) = self.windows.get_mut(&window_id) {
+                    state.surface.resize(size.width, size.height);
+                    state.browser.resize(size.width, size.height);
+                    state.window.request_redraw();
                 }
             }
 
             WindowEvent::RedrawRequested => {
-                self.redraw();
+                if let Some(state) = self.windows.get_mut(&window_id) {
+                    state.redraw();
+                }
             }
 
             WindowEvent::ModifiersChanged(mods) => {
@@ -199,15 +268,13 @@ impl ApplicationHandler for MangoApp {
             }
 
             WindowEvent::MouseWheel { delta, .. } => {
-                if let Some(browser) = &mut self.browser {
+                if let Some(state) = self.windows.get_mut(&window_id) {
                     let dy = match delta {
                         MouseScrollDelta::LineDelta(_, y) => y,
                         MouseScrollDelta::PixelDelta(pos) => (pos.y / 20.0) as f32,
                     };
-                    browser.handle_scroll(dy);
-                    if let Some(window) = &self.window {
-                        window.request_redraw();
-                    }
+                    state.browser.handle_scroll(dy);
+                    state.window.request_redraw();
                 }
             }
 
@@ -220,180 +287,153 @@ impl ApplicationHandler for MangoApp {
 
                 if key_event.state == KeyState::Pressed {
                     // Global Application Shortcuts:
-                    // 1. Ctrl+Q: Quit
+                    // 1. Ctrl+Q: Quit all windows
                     if key_event.modifiers.ctrl
                         && matches!(&key_event.key, MangoKey::Char('q') | MangoKey::Char('Q'))
                     {
                         log::info!("Ctrl+Q — quitting Mango");
-                        if let Some(browser) = self.browser.take() {
-                            browser.persist_profile();
-                            drop(browser);
+                        for (_, s) in self.windows.drain() {
+                            s.browser.persist_profile();
                         }
-                        self.surface = None;
-                        self.window = None;
                         event_loop.exit();
                         return;
                     }
 
-                    // 2. Ctrl+T: New Tab
+                    // 2. Ctrl+N: New Window
                     if key_event.modifiers.ctrl
-                        && matches!(&key_event.key, MangoKey::Char('t') | MangoKey::Char('T'))
+                        && matches!(&key_event.key, MangoKey::Char('n') | MangoKey::Char('N'))
                     {
-                        if let Some(browser) = &mut self.browser {
-                            browser.new_tab();
-                            if let Some(window) = &self.window {
-                                window.request_redraw();
-                            }
-                        }
+                        self.create_new_window(event_loop, None);
                         return;
                     }
 
-                    // 3. Ctrl+W: Close Tab
-                    if key_event.modifiers.ctrl
-                        && matches!(&key_event.key, MangoKey::Char('w') | MangoKey::Char('W'))
-                    {
-                        if let Some(browser) = &mut self.browser {
-                            browser.close_active_tab();
-                            if let Some(window) = &self.window {
-                                window.request_redraw();
-                            }
+                    // Window-specific shortcuts
+                    if let Some(win_state) = self.windows.get_mut(&window_id) {
+                        // 3. Ctrl+T: New Tab
+                        if key_event.modifiers.ctrl
+                            && matches!(&key_event.key, MangoKey::Char('t') | MangoKey::Char('T'))
+                        {
+                            win_state.browser.new_tab();
+                            win_state.window.request_redraw();
+                            return;
                         }
-                        return;
-                    }
 
-                    // 4. Ctrl+Tab: Switch Tab
-                    if key_event.modifiers.ctrl && matches!(&key_event.key, MangoKey::Tab) {
-                        if let Some(browser) = &mut self.browser {
-                            browser.next_tab();
-                            if let Some(window) = &self.window {
-                                window.request_redraw();
-                            }
-                        }
-                        return;
-                    }
-
-                    // 5. F5 or Ctrl+R: Reload
-                    if matches!(&key_event.key, MangoKey::F5)
-                        || (key_event.modifiers.ctrl
-                            && matches!(&key_event.key, MangoKey::Char('r') | MangoKey::Char('R')))
-                    {
-                        if let Some(browser) = &mut self.browser {
-                            browser.reload();
-                            if let Some(window) = &self.window {
-                                window.request_redraw();
-                            }
-                        }
-                        return;
-                    }
-
-                    // 6. Alt+Left: Go Back
-                    if key_event.modifiers.alt && matches!(&key_event.key, MangoKey::ArrowLeft) {
-                        if let Some(browser) = &mut self.browser {
-                            browser.go_back();
-                            if let Some(window) = &self.window {
-                                window.request_redraw();
-                            }
-                        }
-                        return;
-                    }
-
-                    // 7. Alt+Right: Go Forward
-                    if key_event.modifiers.alt && matches!(&key_event.key, MangoKey::ArrowRight) {
-                        if let Some(browser) = &mut self.browser {
-                            browser.go_forward();
-                            if let Some(window) = &self.window {
-                                window.request_redraw();
-                            }
-                        }
-                        return;
-                    }
-
-                    // 8. F11: Fullscreen Toggle
-                    if key_event.key == MangoKey::F11 {
-                        if let Some(window) = &self.window {
-                            let is_full = window.fullscreen().is_some();
-                            if is_full {
-                                window.set_fullscreen(None);
+                        // 4. Ctrl+W: Close Tab
+                        if key_event.modifiers.ctrl
+                            && matches!(&key_event.key, MangoKey::Char('w') | MangoKey::Char('W'))
+                        {
+                            if win_state.browser.tab_count() <= 1 {
+                                // Close window if last tab closed
+                                win_state.browser.persist_profile();
+                                self.windows.remove(&window_id);
+                                if self.windows.is_empty() {
+                                    event_loop.exit();
+                                }
                             } else {
-                                window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(
-                                    None,
-                                )));
+                                win_state.browser.close_active_tab();
+                                win_state.window.request_redraw();
                             }
+                            return;
                         }
-                        if let Some(browser) = &mut self.browser {
-                            browser.toggle_fullscreen();
-                            if let Some(window) = &self.window {
-                                window.request_redraw();
-                            }
-                        }
-                        return;
-                    }
 
-                    // Forward to browser chrome
-                    if let Some(browser) = &mut self.browser {
-                        browser.handle_key_event(&key_event);
-                        if let Some(window) = &self.window {
-                            window.request_redraw();
+                        // 5. Ctrl+Tab: Switch Tab
+                        if key_event.modifiers.ctrl && matches!(&key_event.key, MangoKey::Tab) {
+                            win_state.browser.next_tab();
+                            win_state.window.request_redraw();
+                            return;
                         }
+
+                        // 6. F5 or Ctrl+R: Reload
+                        if matches!(&key_event.key, MangoKey::F5)
+                            || (key_event.modifiers.ctrl
+                                && matches!(&key_event.key, MangoKey::Char('r') | MangoKey::Char('R')))
+                        {
+                            win_state.browser.reload();
+                            win_state.window.request_redraw();
+                            return;
+                        }
+
+                        // 7. Alt+Left: Go Back
+                        if key_event.modifiers.alt && matches!(&key_event.key, MangoKey::ArrowLeft) {
+                            win_state.browser.go_back();
+                            win_state.window.request_redraw();
+                            return;
+                        }
+
+                        // 8. Alt+Right: Go Forward
+                        if key_event.modifiers.alt && matches!(&key_event.key, MangoKey::ArrowRight) {
+                            win_state.browser.go_forward();
+                            win_state.window.request_redraw();
+                            return;
+                        }
+
+                        // 9. F11: Fullscreen Toggle
+                        if key_event.key == MangoKey::F11 {
+                            let is_full = win_state.window.fullscreen().is_some();
+                            if is_full {
+                                win_state.window.set_fullscreen(None);
+                            } else {
+                                win_state.window.set_fullscreen(Some(
+                                    winit::window::Fullscreen::Borderless(None),
+                                ));
+                            }
+                            win_state.browser.toggle_fullscreen();
+                            win_state.window.request_redraw();
+                            return;
+                        }
+
+                        // Forward to browser chrome
+                        win_state.browser.handle_key_event(&key_event);
+                        win_state.window.request_redraw();
                     }
                 }
             }
 
             WindowEvent::CursorMoved { position, .. } => {
-                if let Some(browser) = &mut self.browser
-                    && browser.handle_mouse_move(position.x as f32, position.y as f32)
-                    && let Some(window) = &self.window
+                if let Some(win_state) = self.windows.get_mut(&window_id)
+                    && win_state
+                        .browser
+                        .handle_mouse_move(position.x as f32, position.y as f32)
                 {
-                    window.request_redraw();
+                    win_state.window.request_redraw();
                 }
             }
 
             WindowEvent::MouseInput { state, button, .. } => {
-                if let Some(browser) = &mut self.browser {
+                if let Some(win_state) = self.windows.get_mut(&window_id) {
                     let key_state = KeyState::from(state);
                     let btn = mango_platform::input::MouseButton::from(button);
-                    browser.handle_mouse_click(btn, key_state);
-                    if let Some(window) = &self.window {
-                        window.request_redraw();
-                    }
+                    win_state.browser.handle_mouse_click(btn, key_state);
+                    win_state.window.request_redraw();
                 }
             }
 
-            // ── Touch events (G-15) ─────────────────────────────────────────
-            // Translate touch contacts into the equivalent mouse events so the
-            // full browser pipeline (hit-testing, links, form controls, scroll)
-            // works on touch-screen devices without any separate touch-path code.
             WindowEvent::Touch(touch) => {
                 use winit::event::TouchPhase;
-                if let Some(browser) = &mut self.browser {
+                if let Some(win_state) = self.windows.get_mut(&window_id) {
                     let x = touch.location.x as f32;
                     let y = touch.location.y as f32;
                     match touch.phase {
                         TouchPhase::Started => {
-                            // Move the cursor to the touch point first so hover
-                            // state is updated, then fire a left-button press.
-                            browser.handle_mouse_move(x, y);
-                            browser.handle_mouse_click(
+                            win_state.browser.handle_mouse_move(x, y);
+                            win_state.browser.handle_mouse_click(
                                 mango_platform::input::MouseButton::Left,
                                 KeyState::Pressed,
                             );
                         }
                         TouchPhase::Moved => {
-                            // Translate drag motion into scroll delta.
-                            let dy = (y - browser.mouse_y()) / 45.0;
-                            browser.handle_scroll(-dy);
-                            browser.handle_mouse_move(x, y);
+                            let dy = (y - win_state.browser.mouse_y()) / 45.0;
+                            win_state.browser.handle_scroll(-dy);
+                            win_state.browser.handle_mouse_move(x, y);
                         }
                         TouchPhase::Ended | TouchPhase::Cancelled => {
-                            browser.handle_mouse_click(
+                            win_state.browser.handle_mouse_click(
                                 mango_platform::input::MouseButton::Left,
                                 KeyState::Released,
                             );
                         }
                     }
-                    if let Some(window) = &self.window {
-                        window.request_redraw();
-                    }
+                    win_state.window.request_redraw();
                 }
             }
 
@@ -403,11 +443,8 @@ impl ApplicationHandler for MangoApp {
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
         log::info!("Exiting Mango application...");
-        if let Some(browser) = &self.browser {
-            browser.persist_profile();
+        for (_, state) in self.windows.drain() {
+            state.browser.persist_profile();
         }
-        self.surface = None;
-        self.browser = None;
-        self.window = None;
     }
 }

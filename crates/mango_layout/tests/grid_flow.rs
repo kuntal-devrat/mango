@@ -2,7 +2,7 @@
 
 use mango_core::Rect;
 use mango_css::parser::parse_stylesheet;
-use mango_css::values::{Display, GridTrackSize, Length};
+use mango_css::values::{Display, GridPlacement, GridTrackSize, Length};
 use mango_html::parse_html;
 use mango_layout::box_tree::build_box_tree;
 use mango_layout::dimensions::Dimensions;
@@ -289,3 +289,74 @@ fn test_subgrid_track_resolution() {
     assert_eq!(container.children[0].dimensions.content.width(), 250.0);
     assert_eq!(container.children[1].dimensions.content.width(), 150.0);
 }
+
+#[test]
+fn test_nested_subgrid_parent_track_inheritance() {
+    // 1. Parent grid: 500px wide, 3 explicit columns [100px, 150px, 250px]
+    let mut parent =
+        mango_layout::box_tree::LayoutBox::new(mango_layout::box_model::BoxType::BlockNode, None);
+    let mut p_style = mango_css::ComputedStyle::default();
+    p_style.display = Display::Grid;
+    p_style.width = Length::Px(500.0);
+    p_style.grid_template_columns = vec![
+        GridTrackSize::Length(Length::Px(100.0)),
+        GridTrackSize::Length(Length::Px(150.0)),
+        GridTrackSize::Length(Length::Px(250.0)),
+    ];
+    parent.style = Some(p_style.into());
+
+    // Item 1: occupies col 1 (0..1) -> 100px
+    let mut item1 =
+        mango_layout::box_tree::LayoutBox::new(mango_layout::box_model::BoxType::BlockNode, None);
+    let mut i1_style = mango_css::ComputedStyle::default();
+    i1_style.grid_column_start = GridPlacement::Line(1);
+    i1_style.grid_column_end = GridPlacement::Line(2);
+    item1.style = Some(i1_style.into());
+
+    // Item 2: Subgrid spanning cols 2 and 3 (lines 2..4, so col indices 1 and 2, tracks [150px, 250px])
+    let mut subgrid =
+        mango_layout::box_tree::LayoutBox::new(mango_layout::box_model::BoxType::BlockNode, None);
+    let mut sg_style = mango_css::ComputedStyle::default();
+    sg_style.display = Display::Grid;
+    sg_style.grid_column_start = GridPlacement::Line(2);
+    sg_style.grid_column_end = GridPlacement::Line(4);
+    sg_style.grid_template_columns = vec![GridTrackSize::Subgrid];
+    subgrid.style = Some(sg_style.into());
+
+    // Inside subgrid: child A in col 1, child B in col 2
+    let mut child_a =
+        mango_layout::box_tree::LayoutBox::new(mango_layout::box_model::BoxType::BlockNode, None);
+    let mut a_style = mango_css::ComputedStyle::default();
+    a_style.grid_column_start = GridPlacement::Line(1);
+    a_style.grid_column_end = GridPlacement::Line(2);
+    child_a.style = Some(a_style.into());
+
+    let mut child_b =
+        mango_layout::box_tree::LayoutBox::new(mango_layout::box_model::BoxType::BlockNode, None);
+    let mut b_style = mango_css::ComputedStyle::default();
+    b_style.grid_column_start = GridPlacement::Line(2);
+    b_style.grid_column_end = GridPlacement::Line(3);
+    child_b.style = Some(b_style.into());
+
+    subgrid.children.push(child_a);
+    subgrid.children.push(child_b);
+
+    parent.children.push(item1);
+    parent.children.push(subgrid);
+
+    let cb = Dimensions::new(Rect::new(0.0, 0.0, 500.0, 400.0));
+    let mut float_ctx = FloatContext::new();
+    layout_grid(&mut parent, &cb, &mut float_ctx);
+
+    // Parent item1 width = 100px
+    assert_eq!(parent.children[0].dimensions.content.width(), 100.0);
+    // Subgrid container span width = 150 + 250 = 400px
+    assert_eq!(parent.children[1].dimensions.content.width(), 400.0);
+    // Subgrid child A inherits track 1 = 150px
+    assert_eq!(parent.children[1].children[0].dimensions.content.width(), 150.0);
+    // Subgrid child B inherits track 2 = 250px
+    assert_eq!(parent.children[1].children[1].dimensions.content.width(), 250.0);
+}
+
+
+

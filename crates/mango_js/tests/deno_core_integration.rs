@@ -1,4 +1,4 @@
-use deno_core::{extension, op2, JsRuntime, RuntimeOptions};
+use deno_core::{JsRuntime, RuntimeOptions, extension, op2};
 
 #[op2]
 #[string]
@@ -30,7 +30,9 @@ fn test_deno_core_types() {
         ..Default::default()
     });
 
-    let res = runtime.execute_script("test.js", "
+    let res = runtime.execute_script(
+        "test.js",
+        "
         const s = Deno.core.ops.op_test_string('world');
         if (s !== 'hello world') throw new Error('string mismatch: ' + s);
         const v = Deno.core.ops.op_test_vec(['a', 'b']);
@@ -39,7 +41,8 @@ fn test_deno_core_types() {
         if (o !== null) throw new Error('opt null mismatch');
         const o2 = Deno.core.ops.op_test_opt('foo');
         if (o2 !== 'foo') throw new Error('opt val mismatch');
-    ");
+    ",
+    );
     assert!(res.is_ok(), "test failed: {:?}", res);
     let global_val = runtime.execute_script("eval_test", "40 + 2").unwrap();
     let context_global = runtime.main_context();
@@ -59,15 +62,80 @@ fn test_deno_core_module() {
         globalThis.testVar = 42;
         export const x = 10;
     ";
-    let mod_id = pollster::block_on(runtime.load_main_es_module_from_code(&url, code.to_string())).unwrap();
+    let mod_id =
+        pollster::block_on(runtime.load_main_es_module_from_code(&url, code.to_string())).unwrap();
     let eval_res = runtime.mod_evaluate(mod_id);
     pollster::block_on(eval_res).unwrap();
-    
-    let global_val = runtime.execute_script("check", "globalThis.testVar").unwrap();
+
+    let global_val = runtime
+        .execute_script("check", "globalThis.testVar")
+        .unwrap();
     let context_global = runtime.main_context();
     deno_core::v8::scope!(scope, runtime.v8_isolate());
     let context_local = deno_core::v8::Local::new(scope, context_global);
     let scope = &mut deno_core::v8::ContextScope::new(scope, context_local);
     let local = deno_core::v8::Local::new(scope, global_val);
     assert_eq!(local.to_rust_string_lossy(scope), "42");
+}
+
+struct IsolateScopeGuard(*mut deno_core::v8::Isolate);
+impl IsolateScopeGuard {
+    fn new(isolate: &mut deno_core::v8::Isolate) -> Self {
+        unsafe { isolate.enter(); }
+        Self(isolate as *mut _)
+    }
+}
+impl Drop for IsolateScopeGuard {
+    fn drop(&mut self) {
+        unsafe { (*self.0).exit(); }
+    }
+}
+
+struct WrappedRuntime(JsRuntime);
+impl WrappedRuntime {
+    fn new() -> Self {
+        let mut rt = JsRuntime::new(RuntimeOptions::default());
+        unsafe { rt.v8_isolate().exit(); }
+        Self(rt)
+    }
+    fn eval(&mut self, code: &str) -> String {
+        let _guard = IsolateScopeGuard::new(self.0.v8_isolate());
+        let val = self.0.execute_script("test", code.to_string()).unwrap();
+        let context = self.0.main_context();
+        deno_core::v8::scope!(scope, self.0.v8_isolate());
+        let context = deno_core::v8::Local::new(scope, context);
+        let scope = &mut deno_core::v8::ContextScope::new(scope, context);
+        let local = deno_core::v8::Local::new(scope, val);
+        local.to_rust_string_lossy(scope)
+    }
+}
+impl Drop for WrappedRuntime {
+    fn drop(&mut self) {
+        unsafe { self.0.v8_isolate().enter(); }
+    }
+}
+
+#[test]
+fn test_arbitrary_runtimes_drop_order() {
+    let mut rt1 = WrappedRuntime::new();
+    let mut rt2 = WrappedRuntime::new();
+    let mut rt3 = WrappedRuntime::new();
+
+    assert_eq!(rt1.eval("1 + 1"), "2");
+    assert_eq!(rt2.eval("2 + 2"), "4");
+    assert_eq!(rt3.eval("3 + 3"), "6");
+
+    // Drop rt2 first!
+    drop(rt2);
+
+    assert_eq!(rt1.eval("10 + 10"), "20");
+    assert_eq!(rt3.eval("30 + 30"), "60");
+
+    // Drop rt1 next!
+    drop(rt1);
+
+    assert_eq!(rt3.eval("100 + 100"), "200");
+
+    // Drop rt3 last!
+    drop(rt3);
 }

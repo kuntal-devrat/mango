@@ -1,15 +1,13 @@
-//! Image prefetching, decoding channel, and per-frame queue draining (OPT-009).
+//! Image prefetching, decoding channel, and per-frame queue draining.
 
-use mango_net::Url;
-use mango_render::{
-    cache_image, decode_data_uri, decode_image_bytes, get_cached_image,
-};
-use crate::chrome_ui::IMAGE_PREFETCH_PER_FRAME;
 use super::BrowserChrome;
-use super::types::{assert_not_on_ui_thread, fetch_with_timeout, SUBRESOURCE_FETCH_TIMEOUT};
+use super::types::{SUBRESOURCE_FETCH_TIMEOUT, assert_not_on_ui_thread, fetch_with_timeout};
+use crate::chrome_ui::IMAGE_PREFETCH_PER_FRAME;
+use mango_net::Url;
+use mango_render::{cache_image, decode_data_uri, decode_image_bytes, get_cached_image};
 
 /// Maximum number of queued image fetches retained in memory to prevent
-/// unbounded backlog growth on malicious/image-heavy pages (H-10).
+/// unbounded backlog growth on malicious/image-heavy pages.
 pub const MAX_PENDING_IMAGE_FETCHES: usize = 256;
 
 impl BrowserChrome {
@@ -135,7 +133,7 @@ impl BrowserChrome {
         }
     }
 
-    /// True while background image prefetch work remains (OPT-009).
+    /// True while background image prefetch work remains.
     pub fn has_pending_image_fetches(&self) -> bool {
         self.image_rx.is_some() || !self.pending_image_fetches.is_empty()
     }

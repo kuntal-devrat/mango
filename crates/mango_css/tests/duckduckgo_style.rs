@@ -121,3 +121,58 @@ fn test_ddg_actual_header_logo_style() {
         Some("/assets/logo_header.v109.svg")
     );
 }
+
+#[test]
+fn test_github_dark_theme_attributes() {
+    let html = r#"<html lang="en" data-color-mode="dark" data-dark-theme="dark" data-color-mode="light" data-light-theme="light" data-dark-theme="dark"><head></head><body></body></html>"#;
+    let doc = parse_html(html);
+    let root = doc.root();
+    let html_id = doc.find_element_by_tag(root, "html").unwrap();
+    let body_id = doc.find_element_by_tag(root, "body").unwrap();
+
+    let css = r#"
+        [data-color-mode=dark][data-dark-theme=dark] {
+            --bgColor-default: #0d1117;
+        }
+        [data-color-mode=light][data-light-theme=light] {
+            --bgColor-default: #ffffff;
+        }
+        body {
+            background-color: var(--bgColor-default);
+        }
+    "#;
+    let sheet = CssParser::parse_stylesheet(css);
+    let html_style = compute_style(html_id, &doc, &[&sheet], None);
+    let body_style = compute_style(body_id, &doc, &[&sheet], Some(&html_style));
+
+    assert_eq!(
+        body_style.background_color,
+        Color::rgb(13, 17, 23),
+        "GitHub body should inherit dark background color"
+    );
+}
+
+#[test]
+fn test_wikipedia_lang_list_style() {
+    let html = r#"<html lang="en" class="js-enabled"><body id="www-wikipedia-org" class=" jsl10n-visible"><main><div class="lang-list-container"></div></main></body></html>"#;
+    let doc = parse_html(html);
+    let root = doc.root();
+    let div_id = doc.find_element_by_tag(root, "div").unwrap();
+
+    let css = r#"
+        .lang-list-container {
+            overflow: hidden;
+            max-height: 0px;
+        }
+        .js-enabled .lang-list-container {
+            visibility: hidden;
+        }
+        .lang-list-active .lang-list-container, .no-js .lang-list-container {
+            visibility: visible;
+            max-height: 10000px;
+        }
+    "#;
+    let sheet = CssParser::parse_stylesheet(css);
+    let style = compute_style(div_id, &doc, &[&sheet], None);
+    assert_eq!(style.max_height, mango_css::values::Length::Px(0.0));
+}

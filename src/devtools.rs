@@ -1,4 +1,4 @@
-//! # Developer Tools & Element Inspector (GAP-022)
+//! # Developer Tools & Element Inspector
 //!
 //! Provides a built-in DevTools panel with:
 //! - **Elements Inspector**: Interactive DOM tree view, attribute inspector, and computed CSS box metrics.
@@ -1078,7 +1078,7 @@ fn count_tag(doc: &Document, root: NodeId, tag: &str) -> usize {
 }
 
 // ---------------------------------------------------------------------------
-// Chrome DevTools Protocol (CDP) JSON-RPC 2.0 Dispatcher (GAP-023)
+// Chrome DevTools Protocol (CDP) JSON-RPC 2.0 Dispatcher
 // ---------------------------------------------------------------------------
 
 /// Parses a simple JSON-RPC 2.0 request: id, method, and string key-value params.
@@ -1107,26 +1107,14 @@ fn parse_json_rpc(input: &str) -> Option<(u64, String, HashMap<String, String>)>
     };
 
     // Extract method: "method": "DOM.getDocument"
-    let method = if let Some(pos) = trimmed.find("\"method\"") {
-        let after = &trimmed[pos + 8..];
-        if let Some(colon) = after.find(':') {
-            let val_str = after[colon + 1..].trim();
-            if let Some(first_quote) = val_str.find('"') {
-                let rest = &val_str[first_quote + 1..];
-                if let Some(second_quote) = rest.find('"') {
-                    rest[..second_quote].to_string()
-                } else {
-                    return None;
-                }
-            } else {
-                return None;
-            }
-        } else {
-            return None;
-        }
-    } else {
-        return None;
-    };
+    let pos = trimmed.find("\"method\"")?;
+    let after = &trimmed[pos + 8..];
+    let colon = after.find(':')?;
+    let val_str = after[colon + 1..].trim();
+    let first_quote = val_str.find('"')?;
+    let rest = &val_str[first_quote + 1..];
+    let second_quote = rest.find('"')?;
+    let method = rest[..second_quote].to_string();
 
     let mut params = HashMap::new();
     if let Some(pos) = trimmed.find("\"params\"") {

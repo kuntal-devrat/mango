@@ -1,10 +1,10 @@
-use deno_core::{op2, OpState};
-use mango_html::dom::{NodeData, NodeId, QuirksMode};
 use crate::dom_bindings::{
-    adopt_children, clone_subtree, collect_elements_by_kind, collect_matching_elements,
-    find_element_by_id_recursive, find_first_matching_element, jar_lock, query_selector_simple,
-    CookieStore, DomDirtyFlag, LayoutBounds, SharedDocument,
+    CookieStore, DomDirtyFlag, LayoutBounds, SharedDocument, adopt_children, clone_subtree,
+    collect_elements_by_kind, collect_matching_elements, find_element_by_id_recursive,
+    find_first_matching_element, jar_lock, query_selector_simple,
 };
+use deno_core::{OpState, op2};
+use mango_html::dom::{Document, NodeData, NodeId, QuirksMode};
 
 // ── Cookies ──────────────────────────────────────────────────────────────────
 
@@ -51,7 +51,7 @@ pub fn op_mango_create_element(state: &mut OpState, #[string] tag_name: String) 
         None => return 0,
     };
     let mut d = doc.borrow_mut();
-    d.create_element(&tag_name, Vec::new()).raw() as u32
+    d.create_element(&tag_name, Vec::new()).raw()
 }
 
 #[op2(fast)]
@@ -61,7 +61,7 @@ pub fn op_mango_create_text_node(state: &mut OpState, #[string] text: String) ->
         None => return 0,
     };
     let mut d = doc.borrow_mut();
-    d.create_text(&text).raw() as u32
+    d.create_text(&text).raw()
 }
 
 #[op2(fast)]
@@ -71,7 +71,7 @@ pub fn op_mango_create_comment(state: &mut OpState, #[string] comment: String) -
         None => return 0,
     };
     let mut d = doc.borrow_mut();
-    d.create_comment(&comment).raw() as u32
+    d.create_comment(&comment).raw()
 }
 
 #[op2(fast)]
@@ -81,17 +81,17 @@ pub fn op_mango_create_fragment(state: &mut OpState) -> u32 {
         None => return 0,
     };
     let mut d = doc.borrow_mut();
-    d.create_fragment().raw() as u32
+    d.create_fragment().raw()
 }
 
 #[op2(fast)]
-pub fn op_mango_attach_shadow(state: &mut OpState, node_id: u32, #[string] _mode: String) -> u32 {
+pub fn op_mango_attach_shadow(state: &mut OpState, node_id: u32, #[string] mode: String) -> u32 {
     let doc = match state.try_borrow::<SharedDocument>() {
         Some(d) => d.clone(),
         None => return 0,
     };
     let mut d = doc.borrow_mut();
-    if let Some(sr_id) = d.attach_shadow(NodeId::from_raw(node_id)) {
+    if let Some(sr_id) = d.attach_shadow_with_options(NodeId::from_raw(node_id), &mode, false, false) {
         if let Some(dirty) = state.try_borrow::<DomDirtyFlag>() {
             *dirty.borrow_mut() = true;
         }
@@ -102,6 +102,31 @@ pub fn op_mango_attach_shadow(state: &mut OpState, node_id: u32, #[string] _mode
 }
 
 #[op2(fast)]
+pub fn op_mango_get_shadow_root(state: &mut OpState, node_id: u32) -> u32 {
+    let doc = match state.try_borrow::<SharedDocument>() {
+        Some(d) => d.clone(),
+        None => return 0,
+    };
+    let d = doc.borrow();
+    d.get_shadow_root(NodeId::from_raw(node_id))
+        .map(|id| id.raw())
+        .unwrap_or(0)
+}
+
+#[op2]
+#[string]
+pub fn op_mango_get_shadow_root_mode(state: &mut OpState, node_id: u32) -> String {
+    let doc = match state.try_borrow::<SharedDocument>() {
+        Some(d) => d.clone(),
+        None => return String::new(),
+    };
+    let d = doc.borrow();
+    d.get_shadow_root_mode(NodeId::from_raw(node_id))
+        .unwrap_or("")
+        .to_string()
+}
+
+#[op2(fast)]
 pub fn op_mango_clone_node(state: &mut OpState, node_id: u32, deep: bool) -> u32 {
     let doc = match state.try_borrow::<SharedDocument>() {
         Some(d) => d.clone(),
@@ -109,7 +134,7 @@ pub fn op_mango_clone_node(state: &mut OpState, node_id: u32, deep: bool) -> u32
     };
     let mut d = doc.borrow_mut();
     clone_subtree(&mut d, NodeId::from_raw(node_id), deep)
-        .map(|id| id.raw() as u32)
+        .map(|id| id.raw())
         .unwrap_or(0)
 }
 
@@ -121,7 +146,9 @@ pub fn op_mango_get_element_by_id(state: &mut OpState, #[string] id: String) -> 
         return 0;
     };
     let d = doc.borrow();
-    find_element_by_id_recursive(&d, d.root(), &id).map(|id| id.raw()).unwrap_or(0)
+    find_element_by_id_recursive(&d, d.root(), &id)
+        .map(|id| id.raw())
+        .unwrap_or(0)
 }
 
 #[op2(fast)]
@@ -144,7 +171,9 @@ pub fn op_mango_query_selector(
     {
         return found.raw();
     }
-    query_selector_simple(&d, root, &selector).map(|id| id.raw()).unwrap_or(0)
+    query_selector_simple(&d, root, &selector)
+        .map(|id| id.raw())
+        .unwrap_or(0)
 }
 
 #[op2]
@@ -183,7 +212,7 @@ pub fn op_mango_get_document_elements(state: &mut OpState, #[string] tag: String
     let d = doc.borrow();
     let mut out = Vec::new();
     collect_elements_by_kind(&d, d.root(), &tag, &mut out);
-    out.into_iter().map(|id| id.raw() as u32).collect()
+    out.into_iter().map(|id| id.raw()).collect()
 }
 
 // ── DOM Mutation Ops ─────────────────────────────────────────────────────────
@@ -255,15 +284,20 @@ pub fn op_mango_replace_child(
         None => return 0,
     };
     let mut d = doc.borrow_mut();
-    d.replace_child(
+    let res = d.replace_child(
         NodeId::from_raw(parent),
         NodeId::from_raw(new_child),
         NodeId::from_raw(old_child),
     );
-    if let Some(dirty) = state.try_borrow::<DomDirtyFlag>() {
-        *dirty.borrow_mut() = true;
+    match res {
+        Ok(ret) => {
+            if let Some(dirty) = state.try_borrow::<DomDirtyFlag>() {
+                *dirty.borrow_mut() = true;
+            }
+            ret.raw()
+        }
+        Err(_) => 0,
     }
-    old_child
 }
 
 // ── DOM Text & HTML Ops ──────────────────────────────────────────────────────
@@ -306,7 +340,17 @@ pub fn op_mango_get_inner_html(state: &mut OpState, node_id: u32) -> String {
         None => return String::new(),
     };
     let d = doc.borrow();
-    d.serialize_children(NodeId::from_raw(node_id))
+    let target = NodeId::from_raw(node_id);
+    let target_src = if let Some(NodeData::Element(el)) = d.get(target).map(|n| &n.data) {
+        if el.tag_name.eq_ignore_ascii_case("template") {
+            d.template_contents(target).unwrap_or(target)
+        } else {
+            target
+        }
+    } else {
+        target
+    };
+    d.serialize_children(target_src)
 }
 
 #[op2(fast)]
@@ -317,8 +361,17 @@ pub fn op_mango_set_inner_html(state: &mut OpState, node_id: u32, #[string] html
     };
     let mut d = doc.borrow_mut();
     let target = NodeId::from_raw(node_id);
+    let target_dest = if let Some(NodeData::Element(el)) = d.get(target).map(|n| &n.data) {
+        if el.tag_name.eq_ignore_ascii_case("template") {
+            d.get_or_create_template_contents(target)
+        } else {
+            target
+        }
+    } else {
+        target
+    };
 
-    let children: Vec<NodeId> = d.children(target).map(|n| n.id).collect();
+    let children: Vec<NodeId> = d.children(target_dest).map(|n| n.id).collect();
     for c in children {
         d.remove_child_and_recycle(c);
     }
@@ -326,7 +379,7 @@ pub fn op_mango_set_inner_html(state: &mut OpState, node_id: u32, #[string] html
     if !html.is_empty() {
         let fragment = mango_html::parse_html(&format!("<html><body>{html}</body></html>"));
         if let Some(body) = fragment.find_element_by_tag(fragment.root(), "body") {
-            adopt_children(&fragment, body, &mut d, target);
+            adopt_children(&fragment, body, &mut d, target_dest);
         }
     }
 
@@ -375,7 +428,7 @@ pub fn op_mango_get_template_content(state: &mut OpState, node_id: u32) -> u32 {
     };
     let d = doc.borrow();
     d.template_contents(NodeId::from_raw(node_id))
-        .map(|id| id.raw() as u32)
+        .map(|id| id.raw())
         .unwrap_or(0)
 }
 
@@ -390,10 +443,11 @@ pub fn op_mango_get_attribute(
 ) -> Option<String> {
     let doc = state.try_borrow::<SharedDocument>()?;
     let d = doc.borrow();
-    d.get(NodeId::from_raw(node_id)).and_then(|n| match &n.data {
-        NodeData::Element(el) => el.get_attribute(&name).map(|s| s.to_string()),
-        _ => None,
-    })
+    d.get(NodeId::from_raw(node_id))
+        .and_then(|n| match &n.data {
+            NodeData::Element(el) => el.get_attribute(&name).map(|s| s.to_string()),
+            _ => None,
+        })
 }
 
 #[op2(fast)]
@@ -532,11 +586,12 @@ pub fn op_mango_get_node_name(state: &mut OpState, node_id: u32) -> String {
 pub fn op_mango_get_node_value(state: &mut OpState, node_id: u32) -> Option<String> {
     let doc = state.try_borrow::<SharedDocument>()?;
     let d = doc.borrow();
-    d.get(NodeId::from_raw(node_id)).and_then(|n| match &n.data {
-        NodeData::Text(t) => Some(t.clone()),
-        NodeData::Comment(c) => Some(c.clone()),
-        _ => None,
-    })
+    d.get(NodeId::from_raw(node_id))
+        .and_then(|n| match &n.data {
+            NodeData::Text(t) => Some(t.clone()),
+            NodeData::Comment(c) => Some(c.clone()),
+            _ => None,
+        })
 }
 
 #[op2(fast)]
@@ -570,12 +625,25 @@ pub fn op_mango_get_parent(state: &mut OpState, node_id: u32) -> u32 {
         .and_then(|p| {
             let p_node = d.get(p)?;
             if matches!(p_node.data, NodeData::Element(_)) {
-                Some(p.raw() as u32)
+                Some(p.raw())
             } else {
                 None
             }
         })
         .unwrap_or(0)
+}
+
+#[op2(fast)]
+pub fn op_mango_get_parent_node(state: &mut OpState, node_id: u32) -> i32 {
+    let doc = match state.try_borrow::<SharedDocument>() {
+        Some(d) => d,
+        None => return -1,
+    };
+    let d = doc.borrow();
+    match d.get(NodeId::from_raw(node_id)).and_then(|n| n.parent) {
+        Some(p) => p.raw() as i32,
+        None => -1,
+    }
 }
 
 #[op2]
@@ -589,7 +657,7 @@ pub fn op_mango_get_children(state: &mut OpState, node_id: u32) -> Vec<u32> {
     d.children(NodeId::from_raw(node_id))
         .filter_map(|c| {
             if matches!(c.data, NodeData::Element(_)) {
-                Some(c.id.raw() as u32)
+                Some(c.id.raw())
             } else {
                 None
             }
@@ -606,7 +674,7 @@ pub fn op_mango_get_child_node_ids(state: &mut OpState, node_id: u32) -> Vec<u32
     };
     let d = doc.borrow();
     d.children(NodeId::from_raw(node_id))
-        .map(|c| c.id.raw() as u32)
+        .map(|c| c.id.raw())
         .collect()
 }
 
@@ -619,7 +687,7 @@ pub fn op_mango_get_first_element_child(state: &mut OpState, node_id: u32) -> u3
     let d = doc.borrow();
     d.children(NodeId::from_raw(node_id))
         .find(|c| matches!(c.data, NodeData::Element(_)))
-        .map(|c| c.id.raw() as u32)
+        .map(|c| c.id.raw())
         .unwrap_or(0)
 }
 
@@ -633,7 +701,7 @@ pub fn op_mango_get_last_element_child(state: &mut OpState, node_id: u32) -> u32
     d.children(NodeId::from_raw(node_id))
         .filter(|c| matches!(c.data, NodeData::Element(_)))
         .last()
-        .map(|c| c.id.raw() as u32)
+        .map(|c| c.id.raw())
         .unwrap_or(0)
 }
 
@@ -652,7 +720,7 @@ pub fn op_mango_get_next_element_sibling(state: &mut OpState, node_id: u32) -> u
         for c in d.children(parent) {
             if passed {
                 if matches!(c.data, NodeData::Element(_)) {
-                    return c.id.raw() as u32;
+                    return c.id.raw();
                 }
             } else if c.id.matches(nid) {
                 passed = true;
@@ -679,7 +747,7 @@ pub fn op_mango_get_previous_element_sibling(state: &mut OpState, node_id: u32) 
                 return prev;
             }
             if matches!(c.data, NodeData::Element(_)) {
-                prev = c.id.raw() as u32;
+                prev = c.id.raw();
             }
         }
     }
@@ -695,7 +763,7 @@ pub fn op_mango_get_first_child(state: &mut OpState, node_id: u32) -> u32 {
     let d = doc.borrow();
     d.get(NodeId::from_raw(node_id))
         .and_then(|n| n.first_child)
-        .map(|c| c.raw() as u32)
+        .map(|c| c.raw())
         .unwrap_or(0)
 }
 
@@ -708,7 +776,7 @@ pub fn op_mango_get_last_child(state: &mut OpState, node_id: u32) -> u32 {
     let d = doc.borrow();
     d.get(NodeId::from_raw(node_id))
         .and_then(|n| n.last_child)
-        .map(|c| c.raw() as u32)
+        .map(|c| c.raw())
         .unwrap_or(0)
 }
 
@@ -721,7 +789,7 @@ pub fn op_mango_get_next_sibling(state: &mut OpState, node_id: u32) -> u32 {
     let d = doc.borrow();
     d.get(NodeId::from_raw(node_id))
         .and_then(|n| n.next_sibling)
-        .map(|c| c.raw() as u32)
+        .map(|c| c.raw())
         .unwrap_or(0)
 }
 
@@ -734,7 +802,7 @@ pub fn op_mango_get_previous_sibling(state: &mut OpState, node_id: u32) -> u32 {
     let d = doc.borrow();
     d.get(NodeId::from_raw(node_id))
         .and_then(|n| n.prev_sibling)
-        .map(|c| c.raw() as u32)
+        .map(|c| c.raw())
         .unwrap_or(0)
 }
 
@@ -792,10 +860,11 @@ pub fn op_mango_get_dataset_value(
             attr_name.push(ch);
         }
     }
-    d.get(NodeId::from_raw(node_id)).and_then(|n| match &n.data {
-        NodeData::Element(el) => el.get_attribute(&attr_name).map(|s| s.to_string()),
-        _ => None,
-    })
+    d.get(NodeId::from_raw(node_id))
+        .and_then(|n| match &n.data {
+            NodeData::Element(el) => el.get_attribute(&attr_name).map(|s| s.to_string()),
+            _ => None,
+        })
 }
 
 #[op2(fast)]
@@ -834,11 +903,7 @@ pub fn op_mango_set_dataset_value(
 }
 
 #[op2(fast)]
-pub fn op_mango_remove_dataset_value(
-    state: &mut OpState,
-    node_id: u32,
-    #[string] key: String,
-) {
+pub fn op_mango_remove_dataset_value(state: &mut OpState, node_id: u32, #[string] key: String) {
     let doc = match state.try_borrow::<SharedDocument>() {
         Some(d) => d.clone(),
         None => return,
@@ -954,7 +1019,7 @@ pub fn op_mango_element_closest(
             if matches!(d.get(id).map(|n| &n.data), Some(NodeData::Element(_)))
                 && selectors.matches(id, &d)
             {
-                return id.raw() as u32;
+                return id.raw();
             }
             curr = d.get(id).and_then(|n| n.parent);
         }
@@ -1026,7 +1091,11 @@ pub fn op_mango_canvas_resize(state: &mut OpState, node_id: u32, width: u32, hei
 }
 
 #[op2(fast)]
-pub fn op_mango_canvas_set_fill_style(_state: &mut OpState, node_id: u32, #[string] color_str: String) {
+pub fn op_mango_canvas_set_fill_style(
+    _state: &mut OpState,
+    node_id: u32,
+    #[string] color_str: String,
+) {
     let color = mango_render::color::parse_color(&color_str).unwrap_or(mango_core::Color::BLACK);
     mango_render::with_canvas_mut(node_id as usize, 300, 150, |c| {
         c.set_fill_style(color);
@@ -1034,7 +1103,11 @@ pub fn op_mango_canvas_set_fill_style(_state: &mut OpState, node_id: u32, #[stri
 }
 
 #[op2(fast)]
-pub fn op_mango_canvas_set_stroke_style(_state: &mut OpState, node_id: u32, #[string] color_str: String) {
+pub fn op_mango_canvas_set_stroke_style(
+    _state: &mut OpState,
+    node_id: u32,
+    #[string] color_str: String,
+) {
     let color = mango_render::color::parse_color(&color_str).unwrap_or(mango_core::Color::BLACK);
     mango_render::with_canvas_mut(node_id as usize, 300, 150, |c| {
         c.set_stroke_style(color);
@@ -1091,14 +1164,25 @@ pub fn op_mango_canvas_set_text_align(_state: &mut OpState, node_id: u32, #[stri
 }
 
 #[op2(fast)]
-pub fn op_mango_canvas_set_text_baseline(_state: &mut OpState, node_id: u32, #[string] baseline: String) {
+pub fn op_mango_canvas_set_text_baseline(
+    _state: &mut OpState,
+    node_id: u32,
+    #[string] baseline: String,
+) {
     mango_render::with_canvas_mut(node_id as usize, 300, 150, |c| {
         c.set_text_baseline(&baseline);
     });
 }
 
 #[op2(fast)]
-pub fn op_mango_canvas_fill_rect(state: &mut OpState, node_id: u32, x: f32, y: f32, w: f32, h: f32) {
+pub fn op_mango_canvas_fill_rect(
+    state: &mut OpState,
+    node_id: u32,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+) {
     mango_render::with_canvas_mut(node_id as usize, 300, 150, |c| {
         c.fill_rect(x, y, w, h);
     });
@@ -1108,7 +1192,14 @@ pub fn op_mango_canvas_fill_rect(state: &mut OpState, node_id: u32, x: f32, y: f
 }
 
 #[op2(fast)]
-pub fn op_mango_canvas_stroke_rect(state: &mut OpState, node_id: u32, x: f32, y: f32, w: f32, h: f32) {
+pub fn op_mango_canvas_stroke_rect(
+    state: &mut OpState,
+    node_id: u32,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+) {
     mango_render::with_canvas_mut(node_id as usize, 300, 150, |c| {
         c.stroke_rect(x, y, w, h);
     });
@@ -1118,7 +1209,14 @@ pub fn op_mango_canvas_stroke_rect(state: &mut OpState, node_id: u32, x: f32, y:
 }
 
 #[op2(fast)]
-pub fn op_mango_canvas_clear_rect(state: &mut OpState, node_id: u32, x: f32, y: f32, w: f32, h: f32) {
+pub fn op_mango_canvas_clear_rect(
+    state: &mut OpState,
+    node_id: u32,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+) {
     mango_render::with_canvas_mut(node_id as usize, 300, 150, |c| {
         c.clear_rect(x, y, w, h);
     });
@@ -1224,8 +1322,13 @@ pub fn op_mango_canvas_stroke_text(
 }
 
 #[op2(fast)]
-pub fn op_mango_canvas_measure_text(_state: &mut OpState, node_id: u32, #[string] text: String) -> f32 {
-    mango_render::with_canvas_mut(node_id as usize, 300, 150, |c| c.measure_text(&text)).unwrap_or(0.0)
+pub fn op_mango_canvas_measure_text(
+    _state: &mut OpState,
+    node_id: u32,
+    #[string] text: String,
+) -> f32 {
+    mango_render::with_canvas_mut(node_id as usize, 300, 150, |c| c.measure_text(&text))
+        .unwrap_or(0.0)
 }
 
 #[op2(fast)]
@@ -1293,9 +1396,7 @@ pub fn op_mango_canvas_put_image_data(
     src_width: u32,
 ) {
     mango_render::with_canvas_mut(node_id as usize, 300, 150, |c| {
-        c.put_image_data_with_stride(
-            &data, src_width, dx, dy, dirty_x, dirty_y, dirty_w, dirty_h,
-        );
+        c.put_image_data_with_stride(&data, src_width, dx, dy, dirty_x, dirty_y, dirty_w, dirty_h);
     });
     if let Some(dirty) = state.try_borrow::<DomDirtyFlag>() {
         *dirty.borrow_mut() = true;
@@ -1305,8 +1406,21 @@ pub fn op_mango_canvas_put_image_data(
 #[op2]
 #[string]
 pub fn op_mango_canvas_to_data_url(_state: &mut OpState, node_id: u32) -> String {
-    mango_render::with_canvas_mut(node_id as usize, 300, 150, |c| {
-        c.to_data_url("image/png")
-    })
-    .unwrap_or_default()
+    mango_render::with_canvas_mut(node_id as usize, 300, 150, |c| c.to_data_url("image/png"))
+        .unwrap_or_default()
 }
+
+#[op2(fast)]
+pub fn op_mango_compare_document_position(state: &mut OpState, node_a: u32, node_b: u32) -> u16 {
+    let doc = match state.try_borrow::<SharedDocument>() {
+        Some(d) => d,
+        None => {
+            return Document::DOCUMENT_POSITION_DISCONNECTED
+                | Document::DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC
+                | 4;
+        }
+    };
+    let d = doc.borrow();
+    d.compare_document_position(NodeId::from_raw(node_a), NodeId::from_raw(node_b))
+}
+

@@ -2,6 +2,20 @@
 
 use mango_html::dom::{Document, NodeData, NodeId};
 
+thread_local! {
+    static CURRENT_SCOPE_ROOT: std::cell::Cell<Option<NodeId>> = const { std::cell::Cell::new(None) };
+}
+
+/// Sets the active scoping root NodeId for evaluating `:scope` pseudo-class.
+pub fn set_current_scope_root(root: Option<NodeId>) {
+    CURRENT_SCOPE_ROOT.with(|c| c.set(root));
+}
+
+/// Retrieves the active scoping root NodeId if one is currently set.
+pub fn current_scope_root() -> Option<NodeId> {
+    CURRENT_SCOPE_ROOT.with(|c| c.get())
+}
+
 /// Attribute matching operators.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AttributeOperator {
@@ -226,6 +240,13 @@ impl SimpleSelector {
                     }
                     "visited" => false,
                     "root" => el.tag_name.eq_ignore_ascii_case("html"),
+                    "scope" => {
+                        if let Some(scope_id) = current_scope_root() {
+                            node_id == scope_id
+                        } else {
+                            el.tag_name.eq_ignore_ascii_case("html")
+                        }
+                    }
                     "empty" => !doc.children(node_id).any(|child| match &child.data {
                         NodeData::Element(_) => true,
                         NodeData::Text(t) => !t.trim().is_empty(),
@@ -314,7 +335,7 @@ impl SimpleSelector {
                             false
                         }
                     }
-                    // Form validity pseudo-classes (Phase 1.3 form validation API & Selectors 4)
+                    // Form validity pseudo-classes (W3C HTML5 Form Validation & Selectors 4)
                     "required" => {
                         let tag = el.tag_name.to_ascii_lowercase();
                         matches!(tag.as_str(), "input" | "select" | "textarea")
@@ -431,6 +452,11 @@ impl SimpleSelector {
                     }
                     "hover" => el.is_hovered(),
                     "active" => el.is_active(),
+                    "popover-open" => {
+                        el.get_attribute("popover").is_some()
+                            && (el.get_attribute("data-mango-popover-open") == Some("true")
+                                || el.get_attribute(":popover-open") == Some("true"))
+                    }
                     s if s.starts_with("nth-child(") && s.ends_with(')') => {
                         let arg = s[10..s.len() - 1].trim();
                         parse_and_match_nth_child(arg, node_id, doc, false)
@@ -485,8 +511,10 @@ impl SimpleSelector {
                         || (s.starts_with("where(") && s.ends_with(')')) =>
                     {
                         let prefix_len = if s.starts_with("is(") { 3 } else { 6 };
-                        let inner = &s[prefix_len..s.len() - 1];
-                        if let Some(list) = get_or_parse_complex_selector(inner) {
+                        let inner = s[prefix_len..s.len() - 1].trim();
+                        if inner.is_empty() {
+                            false
+                        } else if let Some(list) = get_or_parse_complex_selector(inner) {
                             list.matches(node_id, doc)
                         } else {
                             inner
@@ -495,8 +523,10 @@ impl SimpleSelector {
                         }
                     }
                     s if s.starts_with("not(") && s.ends_with(')') => {
-                        let inner = &s[4..s.len() - 1];
-                        if let Some(list) = get_or_parse_complex_selector(inner) {
+                        let inner = s[4..s.len() - 1].trim();
+                        if inner.is_empty() {
+                            false
+                        } else if let Some(list) = get_or_parse_complex_selector(inner) {
                             !list.matches(node_id, doc)
                         } else {
                             !inner
@@ -505,8 +535,10 @@ impl SimpleSelector {
                         }
                     }
                     s if s.starts_with("has(") && s.ends_with(')') => {
-                        let inner = &s[4..s.len() - 1];
-                        if let Some(list) = get_or_parse_complex_selector(inner) {
+                        let inner = s[4..s.len() - 1].trim();
+                        if inner.is_empty() {
+                            false
+                        } else if let Some(list) = get_or_parse_complex_selector(inner) {
                             matches_has(node_id, &list.selectors, doc)
                         } else {
                             false
@@ -519,7 +551,7 @@ impl SimpleSelector {
     }
 }
 
-fn get_or_parse_complex_selector(inner: &str) -> Option<SelectorList> {
+pub(crate) fn get_or_parse_complex_selector(inner: &str) -> Option<SelectorList> {
     use std::sync::{OnceLock, RwLock};
     static CACHE: OnceLock<RwLock<std::collections::HashMap<String, Option<SelectorList>>>> =
         OnceLock::new();
@@ -665,7 +697,7 @@ fn parse_and_match_nth_child(arg: &str, node_id: NodeId, doc: &Document, from_la
         (arg.trim(), None)
     };
 
-    let selector_list = sel_filter.and_then(crate::parser::parse_selectors);
+    let selector_list = sel_filter.and_then(get_or_parse_complex_selector);
 
     if let Some(list) = &selector_list
         && !list.matches(node_id, doc)
@@ -1035,7 +1067,10 @@ fn matches_simple_pattern(
     doc: &Document,
 ) -> bool {
     let p = pattern.trim();
-    if p.is_empty() || p == "*" {
+    if p.is_empty() {
+        return false;
+    }
+    if p == "*" {
         return true;
     }
     if let Some(class) = p.strip_prefix('.') {

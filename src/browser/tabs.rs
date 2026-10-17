@@ -1,8 +1,8 @@
 //! Tab management, lifecycle, and WebContents state preservation.
 
 use super::BrowserChrome;
-use crate::tab::Tab;
 use super::welcome::welcome_page_html;
+use crate::tab::Tab;
 
 impl BrowserChrome {
     #[allow(dead_code)]
@@ -18,6 +18,11 @@ impl BrowserChrome {
     #[allow(dead_code)]
     pub fn tab_count(&self) -> usize {
         self.tabs.len()
+    }
+
+    #[allow(dead_code)]
+    pub fn active_tab_index(&self) -> usize {
+        self.active_tab_idx
     }
 
     #[allow(dead_code)]
@@ -49,6 +54,7 @@ impl BrowserChrome {
                 image_rx: self.image_rx.take(),
                 has_active_animations: self.anim_state.is_animating(),
                 canvas_bg: self.canvas_bg,
+                engine: None,
             });
         }
     }
@@ -100,6 +106,27 @@ impl BrowserChrome {
         self.scroll_y = 0.0;
         self.scroll_y_f64 = 0.0;
         self.load_html_internal(welcome_page_html(), "about:welcome".to_string(), false);
+    }
+
+    /// Creates a new active tab and navigates to the specified URL (e.g. for target="_blank" links).
+    pub fn new_tab_and_navigate(&mut self, url: &str) {
+        self.save_active_tab_state();
+        let new_tab = Tab::with_url_and_title(url, "Loading...");
+        self.tabs.push(new_tab);
+        self.active_tab_idx = self.tabs.len() - 1;
+        self.address_text = url.to_string();
+        self.cursor_pos = self.address_text.len();
+        self.scroll_y = 0.0;
+        self.scroll_y_f64 = 0.0;
+        self.navigate(url);
+    }
+
+    /// Creates a new background tab without switching focus (e.g. for middle-click on links).
+    pub fn new_background_tab(&mut self, url: &str) {
+        let new_tab = Tab::with_url_and_title(url, url);
+        self.tabs.push(new_tab);
+        self.page_dirty = true;
+        self.status_text = format!("Opened tab in background: {}", url);
     }
 
     /// Closes the specified tab.

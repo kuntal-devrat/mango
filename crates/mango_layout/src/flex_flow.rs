@@ -373,7 +373,12 @@ pub fn layout_flex(
     container.dimensions.content.size.width = content_width;
 
     // Position container in parent
-    let (container_x, container_y) = if container.dimensions.content.origin != Point::ZERO {
+    let is_pos = container
+        .style
+        .as_ref()
+        .map(|s| matches!(s.position, Position::Absolute | Position::Fixed))
+        .unwrap_or(false);
+    let (container_x, container_y) = if is_pos || container.dimensions.content.origin != Point::ZERO {
         (
             container.dimensions.content.origin.x,
             container.dimensions.content.origin.y,
@@ -1057,6 +1062,26 @@ pub fn layout_flex(
                     min_w
                 };
                 cross_size = cross_size.max(min_content_w);
+            } else if child_style.overflow_x == Overflow::Visible {
+                let auto_min = match &child.box_type {
+                    BoxType::ReplacedElement { intrinsic_width, .. }
+                    | BoxType::IFrame { intrinsic_width, .. }
+                    | BoxType::Video { intrinsic_width, .. }
+                    | BoxType::Audio { intrinsic_width, .. }
+                    | BoxType::Canvas { intrinsic_width, .. } => *intrinsic_width,
+                    _ => {
+                        let mut memo = std::collections::HashMap::new();
+                        let (min_w, _) = crate::table_flow::measure_box_intrinsic_widths(
+                            child,
+                            c_fs,
+                            mango_render::FontWeight::Regular,
+                            mango_render::FontFamily::SansSerif,
+                            &mut memo,
+                        );
+                        (min_w - pad_cross - border_cross - margin_cross).max(0.0)
+                    }
+                };
+                cross_size = cross_size.max(auto_min);
             }
         }
 
@@ -1183,15 +1208,23 @@ pub fn layout_flex(
                         intrinsic_width, ..
                     } => *intrinsic_width,
                     _ => {
-                        let mut memo = std::collections::HashMap::new();
-                        let (min_w, _) = crate::table_flow::measure_box_intrinsic_widths(
-                            child,
-                            c_fs,
-                            mango_render::FontWeight::Regular,
-                            mango_render::FontFamily::SansSerif,
-                            &mut memo,
-                        );
-                        (min_w - pad_main - border_main - margin_main).max(0.0)
+                        if child.children.is_empty() && child.text().is_none() {
+                            0.0
+                        } else {
+                            let mut memo = std::collections::HashMap::new();
+                            let mut sum_min = 0.0f32;
+                            for c in &child.children {
+                                let (cw, _) = crate::table_flow::measure_box_intrinsic_widths(
+                                    c,
+                                    c_fs,
+                                    mango_render::FontWeight::Regular,
+                                    mango_render::FontFamily::SansSerif,
+                                    &mut memo,
+                                );
+                                sum_min = sum_min.max(cw);
+                            }
+                            sum_min
+                        }
                     }
                 };
                 min_main = auto_min.min(max_main);
@@ -1242,12 +1275,16 @@ pub fn layout_flex(
                         intrinsic_height, ..
                     } => *intrinsic_height,
                     _ => {
-                        let mut child_clone = child.clone();
-                        child_clone.dimensions.content.size.width = cross_size;
-                        let item_cb = Dimensions::new(Rect::new(0.0, 0.0, cross_size, 0.0));
-                        let mut item_float_ctx = FloatContext::new();
-                        layout_flex_item(&mut child_clone, &item_cb, &mut item_float_ctx, c_fs);
-                        child_clone.dimensions.content.size.height
+                        if child.children.is_empty() && child.text().is_none() {
+                            0.0
+                        } else {
+                            let mut child_clone = child.clone();
+                            child_clone.dimensions.content.size.width = cross_size;
+                            let item_cb = Dimensions::new(Rect::new(0.0, 0.0, cross_size, 0.0));
+                            let mut item_float_ctx = FloatContext::new();
+                            layout_flex_item(&mut child_clone, &item_cb, &mut item_float_ctx, c_fs);
+                            child_clone.dimensions.content.size.height
+                        }
                     }
                 };
                 min_main = auto_min.min(max_main);

@@ -1,4 +1,4 @@
-//! Immutable layout snapshots (ARCH-003).
+//! Immutable layout snapshots.
 //!
 //! Enforces type-level immutability for the layout tree:
 //! - Layout consumes an immutable borrow `&StyledNode` (the styled DOM tree).
@@ -22,7 +22,7 @@ use crate::display_list::{
 use crate::float::FloatContext;
 use crate::style_tree::StyledNode;
 
-/// A frozen, read-only layout tree snapshot for a given viewport (ARCH-003).
+/// A frozen, read-only layout tree snapshot for a given viewport.
 ///
 /// Immutability guarantees that layout results cannot be mutated in place,
 /// preventing the entire class of "layout thrashing" bugs.
@@ -95,6 +95,19 @@ impl LayoutSnapshot {
             Some(&maps),
             viewport,
         ))
+    }
+
+    /// Creates an immutable layout snapshot from an existing root layout box.
+    pub fn from_layout_box(root_box: &LayoutBox, viewport: Size) -> Self {
+        let display_list = build_display_list(root_box);
+        let mut box_rects = HashMap::new();
+        crate::collect_box_rects(root_box, &mut box_rects);
+        Self {
+            root_box: root_box.clone(),
+            viewport,
+            display_list,
+            box_rects,
+        }
     }
 
     /// Returns an immutable reference to the root layout box.
@@ -189,6 +202,11 @@ impl LayoutSnapshot {
     /// Performs hit-testing against hyperlinks in the layout tree.
     pub fn hit_test_link(&self, point: Point) -> Option<&str> {
         self.root_box.hit_test_link(point)
+    }
+
+    /// Performs hit-testing against hyperlinks returning target URL and link frame.
+    pub fn hit_test_link_full(&self, point: Point) -> Option<(&str, Option<&str>)> {
+        self.root_box.hit_test_link_full(point)
     }
 
     /// Performs hit-testing against interactive form controls in the layout tree.

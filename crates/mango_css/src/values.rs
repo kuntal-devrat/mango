@@ -55,6 +55,16 @@ impl CalcLength {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct MathId(pub u32);
 
+/// Rounding strategy for CSS `round()` function.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum RoundStrategy {
+    #[default]
+    Nearest,
+    Up,
+    Down,
+    ToZero,
+}
+
 /// An algebraic or mathematical expression tree in CSS math functions.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MathExpr {
@@ -80,6 +90,40 @@ pub enum MathExpr {
         val: Box<MathExpr>,
         max: Box<MathExpr>,
     },
+    /// Rounding: `round(strategy?, val, step)`.
+    Round {
+        strategy: RoundStrategy,
+        val: Box<MathExpr>,
+        step: Box<MathExpr>,
+    },
+    /// Modulo: `mod(a, b)` (result has same sign as divisor).
+    Mod(Box<MathExpr>, Box<MathExpr>),
+    /// Remainder: `rem(a, b)` (result has same sign as dividend).
+    Rem(Box<MathExpr>, Box<MathExpr>),
+    /// Absolute value: `abs(a)`.
+    Abs(Box<MathExpr>),
+    /// Sign function: `sign(a)`.
+    Sign(Box<MathExpr>),
+    /// Sine: `sin(a)`.
+    Sin(Box<MathExpr>),
+    /// Cosine: `cos(a)`.
+    Cos(Box<MathExpr>),
+    /// Tangent: `tan(a)`.
+    Tan(Box<MathExpr>),
+    /// Inverse sine: `asin(a)`.
+    Asin(Box<MathExpr>),
+    /// Inverse cosine: `acos(a)`.
+    Acos(Box<MathExpr>),
+    /// Inverse tangent: `atan(a)`.
+    Atan(Box<MathExpr>),
+    /// Two-argument inverse tangent: `atan2(y, x)`.
+    Atan2(Box<MathExpr>, Box<MathExpr>),
+    /// Square root: `sqrt(a)`.
+    Sqrt(Box<MathExpr>),
+    /// Power: `pow(base, exp)`.
+    Pow(Box<MathExpr>, Box<MathExpr>),
+    /// Hypotenuse: `hypot(a, b, ...)`.
+    Hypot(Vec<MathExpr>),
 }
 
 impl Eq for MathExpr {}
@@ -134,6 +178,75 @@ impl std::hash::Hash for MathExpr {
                 min.hash(state);
                 val.hash(state);
                 max.hash(state);
+            }
+            MathExpr::Round { strategy, val, step } => {
+                9u8.hash(state);
+                strategy.hash(state);
+                val.hash(state);
+                step.hash(state);
+            }
+            MathExpr::Mod(a, b) => {
+                10u8.hash(state);
+                a.hash(state);
+                b.hash(state);
+            }
+            MathExpr::Rem(a, b) => {
+                11u8.hash(state);
+                a.hash(state);
+                b.hash(state);
+            }
+            MathExpr::Abs(a) => {
+                12u8.hash(state);
+                a.hash(state);
+            }
+            MathExpr::Sign(a) => {
+                13u8.hash(state);
+                a.hash(state);
+            }
+            MathExpr::Sin(a) => {
+                14u8.hash(state);
+                a.hash(state);
+            }
+            MathExpr::Cos(a) => {
+                15u8.hash(state);
+                a.hash(state);
+            }
+            MathExpr::Tan(a) => {
+                16u8.hash(state);
+                a.hash(state);
+            }
+            MathExpr::Asin(a) => {
+                17u8.hash(state);
+                a.hash(state);
+            }
+            MathExpr::Acos(a) => {
+                18u8.hash(state);
+                a.hash(state);
+            }
+            MathExpr::Atan(a) => {
+                19u8.hash(state);
+                a.hash(state);
+            }
+            MathExpr::Atan2(y, x) => {
+                20u8.hash(state);
+                y.hash(state);
+                x.hash(state);
+            }
+            MathExpr::Sqrt(a) => {
+                21u8.hash(state);
+                a.hash(state);
+            }
+            MathExpr::Pow(base, exp) => {
+                22u8.hash(state);
+                base.hash(state);
+                exp.hash(state);
+            }
+            MathExpr::Hypot(list) => {
+                23u8.hash(state);
+                list.len().hash(state);
+                for e in list {
+                    e.hash(state);
+                }
             }
         }
     }
@@ -279,6 +392,91 @@ impl MathExpr {
                 );
                 v.max(min_v).min(max_v)
             }
+            MathExpr::Round { strategy, val, step } => {
+                let v = val.to_px_with_viewports(font_size, root_font_size, container_size, viewport_width, viewport_height);
+                let s = step.to_px_with_viewports(font_size, root_font_size, container_size, viewport_width, viewport_height);
+                if s.abs() < 1e-6 {
+                    v
+                } else {
+                    match strategy {
+                        RoundStrategy::Nearest => (v / s).round() * s,
+                        RoundStrategy::Up => (v / s).ceil() * s,
+                        RoundStrategy::Down => (v / s).floor() * s,
+                        RoundStrategy::ToZero => (v / s).trunc() * s,
+                    }
+                }
+            }
+            MathExpr::Mod(a, b) => {
+                let av = a.to_px_with_viewports(font_size, root_font_size, container_size, viewport_width, viewport_height);
+                let bv = b.to_px_with_viewports(font_size, root_font_size, container_size, viewport_width, viewport_height);
+                if bv.abs() < 1e-6 {
+                    0.0
+                } else {
+                    av - bv * (av / bv).floor()
+                }
+            }
+            MathExpr::Rem(a, b) => {
+                let av = a.to_px_with_viewports(font_size, root_font_size, container_size, viewport_width, viewport_height);
+                let bv = b.to_px_with_viewports(font_size, root_font_size, container_size, viewport_width, viewport_height);
+                if bv.abs() < 1e-6 {
+                    0.0
+                } else {
+                    av % bv
+                }
+            }
+            MathExpr::Abs(a) => {
+                a.to_px_with_viewports(font_size, root_font_size, container_size, viewport_width, viewport_height).abs()
+            }
+            MathExpr::Sign(a) => {
+                let v = a.to_px_with_viewports(font_size, root_font_size, container_size, viewport_width, viewport_height);
+                if v > 0.0 { 1.0 } else if v < 0.0 { -1.0 } else { 0.0 }
+            }
+            MathExpr::Sin(a) => {
+                let v = a.to_px_with_viewports(font_size, root_font_size, container_size, viewport_width, viewport_height);
+                v.sin()
+            }
+            MathExpr::Cos(a) => {
+                let v = a.to_px_with_viewports(font_size, root_font_size, container_size, viewport_width, viewport_height);
+                v.cos()
+            }
+            MathExpr::Tan(a) => {
+                let v = a.to_px_with_viewports(font_size, root_font_size, container_size, viewport_width, viewport_height);
+                v.tan()
+            }
+            MathExpr::Asin(a) => {
+                let v = a.to_px_with_viewports(font_size, root_font_size, container_size, viewport_width, viewport_height);
+                v.asin()
+            }
+            MathExpr::Acos(a) => {
+                let v = a.to_px_with_viewports(font_size, root_font_size, container_size, viewport_width, viewport_height);
+                v.acos()
+            }
+            MathExpr::Atan(a) => {
+                let v = a.to_px_with_viewports(font_size, root_font_size, container_size, viewport_width, viewport_height);
+                v.atan()
+            }
+            MathExpr::Atan2(y, x) => {
+                let yv = y.to_px_with_viewports(font_size, root_font_size, container_size, viewport_width, viewport_height);
+                let xv = x.to_px_with_viewports(font_size, root_font_size, container_size, viewport_width, viewport_height);
+                yv.atan2(xv)
+            }
+            MathExpr::Sqrt(a) => {
+                let v = a.to_px_with_viewports(font_size, root_font_size, container_size, viewport_width, viewport_height);
+                if v >= 0.0 { v.sqrt() } else { 0.0 }
+            }
+            MathExpr::Pow(base, exp) => {
+                let b = base.to_px_with_viewports(font_size, root_font_size, container_size, viewport_width, viewport_height);
+                let e = exp.to_px_with_viewports(font_size, root_font_size, container_size, viewport_width, viewport_height);
+                b.powf(e)
+            }
+            MathExpr::Hypot(list) => {
+                let mut sum_sq = 0.0f32;
+                for item in list {
+                    let v = item.to_px_with_viewports(font_size, root_font_size, container_size, viewport_width, viewport_height);
+                    sum_sq += v * v;
+                }
+                sum_sq.sqrt()
+            }
         }
     }
 
@@ -318,6 +516,63 @@ impl MathExpr {
                 let v = val.try_fold_px()?;
                 let max_v = max.try_fold_px()?;
                 Some(v.max(min_v).min(max_v))
+            }
+            MathExpr::Round { strategy, val, step } => {
+                let v = val.try_fold_px()?;
+                let s = step.try_fold_px()?;
+                if s.abs() < 1e-6 {
+                    Some(v)
+                } else {
+                    Some(match strategy {
+                        RoundStrategy::Nearest => (v / s).round() * s,
+                        RoundStrategy::Up => (v / s).ceil() * s,
+                        RoundStrategy::Down => (v / s).floor() * s,
+                        RoundStrategy::ToZero => (v / s).trunc() * s,
+                    })
+                }
+            }
+            MathExpr::Mod(a, b) => {
+                let av = a.try_fold_px()?;
+                let bv = b.try_fold_px()?;
+                if bv.abs() < 1e-6 {
+                    Some(0.0)
+                } else {
+                    Some(av - bv * (av / bv).floor())
+                }
+            }
+            MathExpr::Rem(a, b) => {
+                let av = a.try_fold_px()?;
+                let bv = b.try_fold_px()?;
+                if bv.abs() < 1e-6 {
+                    Some(0.0)
+                } else {
+                    Some(av % bv)
+                }
+            }
+            MathExpr::Abs(a) => Some(a.try_fold_px()?.abs()),
+            MathExpr::Sign(a) => {
+                let v = a.try_fold_px()?;
+                Some(if v > 0.0 { 1.0 } else if v < 0.0 { -1.0 } else { 0.0 })
+            }
+            MathExpr::Sin(a) => Some(a.try_fold_px()?.sin()),
+            MathExpr::Cos(a) => Some(a.try_fold_px()?.cos()),
+            MathExpr::Tan(a) => Some(a.try_fold_px()?.tan()),
+            MathExpr::Asin(a) => Some(a.try_fold_px()?.asin()),
+            MathExpr::Acos(a) => Some(a.try_fold_px()?.acos()),
+            MathExpr::Atan(a) => Some(a.try_fold_px()?.atan()),
+            MathExpr::Atan2(y, x) => Some(y.try_fold_px()?.atan2(x.try_fold_px()?)),
+            MathExpr::Sqrt(a) => {
+                let v = a.try_fold_px()?;
+                Some(if v >= 0.0 { v.sqrt() } else { 0.0 })
+            }
+            MathExpr::Pow(base, exp) => Some(base.try_fold_px()?.powf(exp.try_fold_px()?)),
+            MathExpr::Hypot(list) => {
+                let mut sum_sq = 0.0f32;
+                for item in list {
+                    let v = item.try_fold_px()?;
+                    sum_sq += v * v;
+                }
+                Some(sum_sq.sqrt())
             }
         }
     }
@@ -500,6 +755,57 @@ pub fn make_math_length(expr: MathExpr) -> Length {
     }
 }
 
+/// The side of an anchor box to align to in `anchor()` expressions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum AnchorSide {
+    #[default]
+    Top,
+    Bottom,
+    Left,
+    Right,
+    Center,
+    Start,
+    End,
+}
+
+impl AnchorSide {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "top" => Some(AnchorSide::Top),
+            "bottom" => Some(AnchorSide::Bottom),
+            "left" => Some(AnchorSide::Left),
+            "right" => Some(AnchorSide::Right),
+            "center" => Some(AnchorSide::Center),
+            "start" | "self-start" => Some(AnchorSide::Start),
+            "end" | "self-end" => Some(AnchorSide::End),
+            _ => None,
+        }
+    }
+}
+
+thread_local! {
+    static ANCHOR_NAMES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+pub fn intern_anchor_name(name: &str) -> u32 {
+    ANCHOR_NAMES.with(|names| {
+        let mut list = names.borrow_mut();
+        if let Some(pos) = list.iter().position(|n| n == name) {
+            pos as u32
+        } else {
+            let id = list.len() as u32;
+            list.push(name.to_string());
+            id
+        }
+    })
+}
+
+pub fn get_interned_anchor_name(id: u32) -> Option<String> {
+    ANCHOR_NAMES.with(|names| {
+        names.borrow().get(id as usize).cloned()
+    })
+}
+
 /// A CSS length or dimension value.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum Length {
@@ -519,6 +825,18 @@ pub enum Length {
     Vmin(f32),
     /// Relative to 1% of viewport maximum dimension (max(vw, vh)).
     Vmax(f32),
+    /// Relative to 1% of query container width.
+    Cqw(f32),
+    /// Relative to 1% of query container height.
+    Cqh(f32),
+    /// Relative to 1% of query container inline size.
+    Cqi(f32),
+    /// Relative to 1% of query container block size.
+    Cqb(f32),
+    /// Relative to smaller of query container inline/block size.
+    Cqmin(f32),
+    /// Relative to larger of query container inline/block size.
+    Cqmax(f32),
     /// A computed mathematical length resulting from a `calc(...)` expression.
     Calc(CalcLength),
     /// A dynamic mathematical expression (min, max, clamp, or non-linear calc).
@@ -531,6 +849,12 @@ pub enum Length {
     MaxContent,
     /// Keyword: fit-content.
     FitContent,
+    /// CSS Anchor Positioning `anchor()` expression (e.g. `anchor(bottom)` or `anchor(--anchor top)`).
+    Anchor {
+        name_id: Option<u32>,
+        side: AnchorSide,
+        offset: f32,
+    },
     /// Automatic sizing by the layout engine.
     #[default]
     Auto,
@@ -573,19 +897,49 @@ impl std::hash::Hash for Length {
                 7u8.hash(state);
                 v.to_bits().hash(state);
             }
-            Length::Calc(c) => {
+            Length::Cqw(v) => {
                 8u8.hash(state);
+                v.to_bits().hash(state);
+            }
+            Length::Cqh(v) => {
+                9u8.hash(state);
+                v.to_bits().hash(state);
+            }
+            Length::Cqi(v) => {
+                10u8.hash(state);
+                v.to_bits().hash(state);
+            }
+            Length::Cqb(v) => {
+                11u8.hash(state);
+                v.to_bits().hash(state);
+            }
+            Length::Cqmin(v) => {
+                12u8.hash(state);
+                v.to_bits().hash(state);
+            }
+            Length::Cqmax(v) => {
+                13u8.hash(state);
+                v.to_bits().hash(state);
+            }
+            Length::Calc(c) => {
+                14u8.hash(state);
                 c.hash(state);
             }
             Length::Math(id) => {
-                9u8.hash(state);
+                15u8.hash(state);
                 id.hash(state);
             }
-            Length::Content => 10u8.hash(state),
-            Length::MinContent => 11u8.hash(state),
-            Length::MaxContent => 12u8.hash(state),
-            Length::FitContent => 13u8.hash(state),
-            Length::Auto => 14u8.hash(state),
+            Length::Content => 16u8.hash(state),
+            Length::MinContent => 17u8.hash(state),
+            Length::MaxContent => 18u8.hash(state),
+            Length::FitContent => 19u8.hash(state),
+            Length::Anchor { name_id, side, offset } => {
+                20u8.hash(state);
+                name_id.hash(state);
+                side.hash(state);
+                offset.to_bits().hash(state);
+            }
+            Length::Auto => 21u8.hash(state),
         }
     }
 }
@@ -609,7 +963,7 @@ pub fn get_current_viewport() -> (f32, f32) {
 impl Length {
     pub const ZERO: Length = Length::Px(0.0);
 
-    /// Parses a CSS length string (e.g. `12px`, `1.5em`, `2rem`, `50%`, `auto`, `min(...)`, `clamp(...)`).
+    /// Parses a CSS length string (e.g. `12px`, `1.5em`, `2rem`, `50%`, `auto`, `anchor(...)`, `min(...)`, `clamp(...)`).
     pub fn parse(s: &str) -> Option<Self> {
         let trimmed = s.trim();
         let lower = trimmed.to_ascii_lowercase();
@@ -617,8 +971,54 @@ impl Length {
             || lower.starts_with("min(")
             || lower.starts_with("max(")
             || lower.starts_with("clamp(")
+            || lower.starts_with("round(")
+            || lower.starts_with("mod(")
+            || lower.starts_with("rem(")
+            || lower.starts_with("abs(")
+            || lower.starts_with("sign(")
+            || lower.starts_with("sin(")
+            || lower.starts_with("cos(")
+            || lower.starts_with("tan(")
+            || lower.starts_with("asin(")
+            || lower.starts_with("acos(")
+            || lower.starts_with("atan(")
+            || lower.starts_with("atan2(")
+            || lower.starts_with("sqrt(")
+            || lower.starts_with("pow(")
+            || lower.starts_with("hypot(")
         {
             return crate::parser::parse_math_length_from_str(trimmed);
+        }
+        if lower.starts_with("anchor(") && lower.ends_with(')') {
+            let inner = trimmed[7..trimmed.len() - 1].trim();
+            let mut parts = inner.split(',');
+            let anchor_spec = parts.next().unwrap_or("").trim();
+            let fallback_str = parts.next().map(|s| s.trim());
+            let offset = fallback_str
+                .and_then(|f| f.strip_suffix("px"))
+                .and_then(|n| n.trim().parse::<f32>().ok())
+                .unwrap_or(0.0);
+
+            let tokens: Vec<&str> = anchor_spec.split_whitespace().collect();
+            if tokens.len() == 1 {
+                if let Some(side) = AnchorSide::parse(tokens[0]) {
+                    return Some(Length::Anchor {
+                        name_id: None,
+                        side,
+                        offset,
+                    });
+                }
+            } else if tokens.len() >= 2 {
+                let name = tokens[0];
+                if let Some(side) = AnchorSide::parse(tokens[1]) {
+                    let id = intern_anchor_name(name);
+                    return Some(Length::Anchor {
+                        name_id: Some(id),
+                        side,
+                        offset,
+                    });
+                }
+            }
         }
         if trimmed.eq_ignore_ascii_case("auto") {
             return Some(Length::Auto);
@@ -654,6 +1054,18 @@ impl Length {
             num.trim().parse::<f32>().ok().map(Length::Vw)
         } else if let Some(num) = trimmed.strip_suffix("vh") {
             num.trim().parse::<f32>().ok().map(Length::Vh)
+        } else if let Some(num) = trimmed.strip_suffix("cqmin") {
+            num.trim().parse::<f32>().ok().map(Length::Cqmin)
+        } else if let Some(num) = trimmed.strip_suffix("cqmax") {
+            num.trim().parse::<f32>().ok().map(Length::Cqmax)
+        } else if let Some(num) = trimmed.strip_suffix("cqw") {
+            num.trim().parse::<f32>().ok().map(Length::Cqw)
+        } else if let Some(num) = trimmed.strip_suffix("cqh") {
+            num.trim().parse::<f32>().ok().map(Length::Cqh)
+        } else if let Some(num) = trimmed.strip_suffix("cqi") {
+            num.trim().parse::<f32>().ok().map(Length::Cqi)
+        } else if let Some(num) = trimmed.strip_suffix("cqb") {
+            num.trim().parse::<f32>().ok().map(Length::Cqb)
         } else if let Some(num) = trimmed.strip_suffix("pt") {
             num.trim()
                 .parse::<f32>()
@@ -730,6 +1142,18 @@ impl Length {
             Length::Vh(vh) => (vh / 100.0) * viewport_height,
             Length::Vmin(vmin) => (vmin / 100.0) * viewport_width.min(viewport_height),
             Length::Vmax(vmax) => (vmax / 100.0) * viewport_width.max(viewport_height),
+            Length::Cqw(cqw) => (cqw / 100.0) * container_size,
+            Length::Cqh(cqh) => (cqh / 100.0) * if viewport_height > 0.0 { viewport_height } else { container_size },
+            Length::Cqi(cqi) => (cqi / 100.0) * container_size,
+            Length::Cqb(cqb) => (cqb / 100.0) * if viewport_height > 0.0 { viewport_height } else { container_size },
+            Length::Cqmin(cqmin) => {
+                let h = if viewport_height > 0.0 { viewport_height } else { container_size };
+                (cqmin / 100.0) * container_size.min(h)
+            }
+            Length::Cqmax(cqmax) => {
+                let h = if viewport_height > 0.0 { viewport_height } else { container_size };
+                (cqmax / 100.0) * container_size.max(h)
+            }
             Length::Calc(calc) => {
                 calc.px
                     + (calc.percent / 100.0) * container_size
@@ -746,6 +1170,7 @@ impl Length {
                 viewport_width,
                 viewport_height,
             ),
+            Length::Anchor { offset, .. } => offset,
             Length::Auto
             | Length::Content
             | Length::MinContent
@@ -852,6 +1277,50 @@ pub enum TextAlign {
     Right,
     Center,
     Justify,
+}
+
+/// CSS `text-wrap` property values (CSS Text 4 §7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TextWrap {
+    #[default]
+    Wrap,
+    Nowrap,
+    Balance,
+    Pretty,
+}
+
+impl TextWrap {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "wrap" => Some(Self::Wrap),
+            "nowrap" => Some(Self::Nowrap),
+            "balance" => Some(Self::Balance),
+            "pretty" => Some(Self::Pretty),
+            _ => None,
+        }
+    }
+}
+
+/// CSS `scroll-timeline-axis` / `view-timeline-axis` property values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScrollTimelineAxis {
+    #[default]
+    Block,
+    Inline,
+    X,
+    Y,
+}
+
+impl ScrollTimelineAxis {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "block" => Some(Self::Block),
+            "inline" => Some(Self::Inline),
+            "x" => Some(Self::X),
+            "y" => Some(Self::Y),
+            _ => None,
+        }
+    }
 }
 
 /// CSS `border-style` property values.
@@ -1041,6 +1510,29 @@ pub enum JustifyContent {
     SpaceBetween,
     SpaceAround,
     SpaceEvenly,
+}
+
+/// CSS `justify-items` property values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum JustifyItems {
+    #[default]
+    Stretch,
+    FlexStart,
+    FlexEnd,
+    Center,
+    Baseline,
+}
+
+/// CSS `justify-self` property values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum JustifySelf {
+    #[default]
+    Auto,
+    Stretch,
+    FlexStart,
+    FlexEnd,
+    Center,
+    Baseline,
 }
 
 /// CSS `align-items` property values.
@@ -1693,6 +2185,8 @@ pub struct ColorStop {
     pub end_position: Option<f32>,
     /// True when the color stop specified `currentColor`.
     pub is_current_color: bool,
+    /// Custom property variable name (e.g. `--brand-color-canvas-default`) to resolve at computed style time.
+    pub var_name: Option<String>,
 }
 
 impl ColorStop {
@@ -1702,6 +2196,7 @@ impl ColorStop {
             position,
             end_position,
             is_current_color: false,
+            var_name: None,
         }
     }
 }
@@ -1752,6 +2247,36 @@ impl Gradient {
         for stop in stops {
             if stop.is_current_color {
                 stop.color = current_color;
+            }
+        }
+    }
+
+    /// Resolves any `var(--*)` stops in this gradient using custom properties.
+    pub fn resolve_var_colors(&mut self, custom_props: &std::collections::HashMap<String, Value>) {
+        let stops = match self {
+            Gradient::Linear { stops, .. }
+            | Gradient::Radial { stops, .. }
+            | Gradient::Conic { stops, .. } => stops,
+        };
+        for stop in stops {
+            if let Some(ref var_name) = stop.var_name {
+                let val_opt = custom_props.get(var_name).or_else(|| {
+                    custom_props
+                        .iter()
+                        .find(|(k, _)| k.eq_ignore_ascii_case(var_name))
+                        .map(|(_, v)| v)
+                });
+                if let Some(val) = val_opt {
+                    match val {
+                        Value::Color(c) => stop.color = *c,
+                        Value::Keyword(s) | Value::String(s) => {
+                            if let Some(c) = Value::parse_color(s) {
+                                stop.color = c;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
             }
         }
     }
@@ -2024,6 +2549,7 @@ pub struct Animation {
     pub direction: AnimationDirection,
     pub fill_mode: AnimationFillMode,
     pub play_state: AnimationPlayState,
+    pub timeline: Option<String>,
 }
 
 impl Default for Animation {
@@ -2037,6 +2563,7 @@ impl Default for Animation {
             direction: AnimationDirection::Normal,
             fill_mode: AnimationFillMode::None,
             play_state: AnimationPlayState::Running,
+            timeline: None,
         }
     }
 }
@@ -2201,6 +2728,92 @@ pub enum Contain {
     Size,
     Style,
     InlineSize,
+    Compound {
+        size: bool,
+        inline_size: bool,
+        layout: bool,
+        style: bool,
+        paint: bool,
+    },
+}
+
+impl Contain {
+    pub fn parse(s: &str) -> Option<Self> {
+        let trimmed = s.trim().to_ascii_lowercase();
+        match trimmed.as_str() {
+            "none" => Some(Self::None),
+            "strict" => Some(Self::Strict),
+            "content" => Some(Self::Content),
+            "paint" => Some(Self::Paint),
+            "layout" => Some(Self::Layout),
+            "size" => Some(Self::Size),
+            "style" => Some(Self::Style),
+            "inline-size" => Some(Self::InlineSize),
+            _ => {
+                let mut size = false;
+                let mut inline_size = false;
+                let mut layout = false;
+                let mut style = false;
+                let mut paint = false;
+                let mut count = 0;
+                for part in trimmed.split_whitespace() {
+                    match part {
+                        "size" => { size = true; count += 1; }
+                        "inline-size" => { inline_size = true; count += 1; }
+                        "layout" => { layout = true; count += 1; }
+                        "style" => { style = true; count += 1; }
+                        "paint" => { paint = true; count += 1; }
+                        _ => return None,
+                    }
+                }
+                if count > 0 {
+                    Some(Self::Compound { size, inline_size, layout, style, paint })
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    pub fn contains_size(&self) -> bool {
+        match self {
+            Contain::Size | Contain::Strict => true,
+            Contain::Compound { size, .. } => *size,
+            _ => false,
+        }
+    }
+
+    pub fn contains_inline_size(&self) -> bool {
+        match self {
+            Contain::InlineSize | Contain::Size | Contain::Strict => true,
+            Contain::Compound { size, inline_size, .. } => *size || *inline_size,
+            _ => false,
+        }
+    }
+
+    pub fn contains_layout(&self) -> bool {
+        match self {
+            Contain::Layout | Contain::Content | Contain::Strict => true,
+            Contain::Compound { layout, .. } => *layout,
+            _ => false,
+        }
+    }
+
+    pub fn contains_paint(&self) -> bool {
+        match self {
+            Contain::Paint | Contain::Content | Contain::Strict => true,
+            Contain::Compound { paint, .. } => *paint,
+            _ => false,
+        }
+    }
+
+    pub fn contains_style(&self) -> bool {
+        match self {
+            Contain::Style | Contain::Content | Contain::Strict => true,
+            Contain::Compound { style, .. } => *style,
+            _ => false,
+        }
+    }
 }
 
 /// CSS `content-visibility` property values.
@@ -2292,6 +2905,8 @@ pub enum Value {
     FlexDirection(FlexDirection),
     FlexWrap(FlexWrap),
     JustifyContent(JustifyContent),
+    JustifyItems(JustifyItems),
+    JustifySelf(JustifySelf),
     AlignItems(AlignItems),
     AlignSelf(AlignSelf),
     AlignContent(AlignContent),
@@ -2839,6 +3454,34 @@ pub fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (u8, u8, u8) {
     )
 }
 
+/// Converts sRGB bytes `(r, g, b)` to HSL coordinates `(h_deg, s_01, l_01)`.
+pub fn srgb_to_hsl(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
+    let r_f = r as f32 / 255.0;
+    let g_f = g as f32 / 255.0;
+    let b_f = b as f32 / 255.0;
+    let max = r_f.max(g_f).max(b_f);
+    let min = r_f.min(g_f).min(b_f);
+    let delta = max - min;
+    let l = (max + min) / 2.0;
+    if delta == 0.0 {
+        return (0.0, 0.0, l);
+    }
+    let s = if l < 0.5 {
+        delta / (max + min)
+    } else {
+        delta / (2.0 - max - min)
+    };
+    let mut h = if max == r_f {
+        (g_f - b_f) / delta + (if g_f < b_f { 6.0 } else { 0.0 })
+    } else if max == g_f {
+        (b_f - r_f) / delta + 2.0
+    } else {
+        (r_f - g_f) / delta + 4.0
+    };
+    h *= 60.0;
+    (h, s, l)
+}
+
 /// Converts HWB values to RGB (0..255).
 ///
 /// `h` is a hue angle in degrees, `w`/`b` are whiteness/blackness in `0.0..=1.0`.
@@ -2923,6 +3566,57 @@ pub fn display_p3_to_srgb(r: f32, g: f32, b: f32) -> (u8, u8, u8) {
     let r_srgb_lin = 1.224_940_2 * r_lin - 0.224_940_18 * g_lin + 0.0 * b_lin;
     let g_srgb_lin = -0.042056916 * r_lin + 1.042_056_9 * g_lin + 0.0 * b_lin;
     let b_srgb_lin = -0.019637554 * r_lin - 0.078_636_04 * g_lin + 1.098_273_6 * b_lin;
+
+    let r_out = (linear_to_srgb(r_srgb_lin).clamp(0.0, 1.0) * 255.0).round() as u8;
+    let g_out = (linear_to_srgb(g_srgb_lin).clamp(0.0, 1.0) * 255.0).round() as u8;
+    let b_out = (linear_to_srgb(b_srgb_lin).clamp(0.0, 1.0) * 255.0).round() as u8;
+
+    (r_out, g_out, b_out)
+}
+
+/// Converts Rec. 2020 coordinates `(r, g, b)` (in `0.0..=1.0`) to sRGB `(r, g, b)` bytes.
+pub fn rec2020_to_srgb(r: f32, g: f32, b: f32) -> (u8, u8, u8) {
+    let r_lin = r.clamp(0.0, 1.0);
+    let g_lin = g.clamp(0.0, 1.0);
+    let b_lin = b.clamp(0.0, 1.0);
+
+    let r_srgb_lin = 1.660_491 * r_lin - 0.587_641_1 * g_lin - 0.072_849_9 * b_lin;
+    let g_srgb_lin = -0.124_550_5 * r_lin + 1.132_899_9 * g_lin - 0.008_349_4 * b_lin;
+    let b_srgb_lin = -0.018_150_8 * r_lin - 0.100_578_9 * g_lin + 1.118_729_7 * b_lin;
+
+    let r_out = (linear_to_srgb(r_srgb_lin).clamp(0.0, 1.0) * 255.0).round() as u8;
+    let g_out = (linear_to_srgb(g_srgb_lin).clamp(0.0, 1.0) * 255.0).round() as u8;
+    let b_out = (linear_to_srgb(b_srgb_lin).clamp(0.0, 1.0) * 255.0).round() as u8;
+
+    (r_out, g_out, b_out)
+}
+
+/// Converts Adobe 1998 RGB coordinates `(r, g, b)` (in `0.0..=1.0`) to sRGB `(r, g, b)` bytes.
+pub fn a98_rgb_to_srgb(r: f32, g: f32, b: f32) -> (u8, u8, u8) {
+    let r_lin = r.clamp(0.0, 1.0).powf(2.199_218_8);
+    let g_lin = g.clamp(0.0, 1.0).powf(2.199_218_8);
+    let b_lin = b.clamp(0.0, 1.0).powf(2.199_218_8);
+
+    let r_srgb_lin = 1.398_283_1 * r_lin - 0.398_283_1 * g_lin;
+    let g_srgb_lin = g_lin;
+    let b_srgb_lin = -0.042_928_3 * g_lin + 1.042_928_3 * b_lin;
+
+    let r_out = (linear_to_srgb(r_srgb_lin).clamp(0.0, 1.0) * 255.0).round() as u8;
+    let g_out = (linear_to_srgb(g_srgb_lin).clamp(0.0, 1.0) * 255.0).round() as u8;
+    let b_out = (linear_to_srgb(b_srgb_lin).clamp(0.0, 1.0) * 255.0).round() as u8;
+
+    (r_out, g_out, b_out)
+}
+
+/// Converts ProPhoto RGB coordinates `(r, g, b)` (in `0.0..=1.0`) to sRGB `(r, g, b)` bytes.
+pub fn prophoto_rgb_to_srgb(r: f32, g: f32, b: f32) -> (u8, u8, u8) {
+    let r_lin = r.clamp(0.0, 1.0).powf(1.8);
+    let g_lin = g.clamp(0.0, 1.0).powf(1.8);
+    let b_lin = b.clamp(0.0, 1.0).powf(1.8);
+
+    let r_srgb_lin = 2.034_080_5 * r_lin - 0.727_215 * g_lin - 0.306_865_5 * b_lin;
+    let g_srgb_lin = -0.228_822_6 * r_lin + 1.231_728_6 * g_lin - 0.002_906 * b_lin;
+    let b_srgb_lin = -0.008_565_3 * r_lin - 0.153_273_5 * g_lin + 1.161_838_8 * b_lin;
 
     let r_out = (linear_to_srgb(r_srgb_lin).clamp(0.0, 1.0) * 255.0).round() as u8;
     let g_out = (linear_to_srgb(g_srgb_lin).clamp(0.0, 1.0) * 255.0).round() as u8;
@@ -3118,6 +3812,262 @@ fn parse_color_mix_inner(inner: &str) -> Option<Color> {
     }
 }
 
+fn evaluate_channel_expr(expr: &str, vars: &[(&str, f32)]) -> Option<f32> {
+    let mut s = expr.trim().to_ascii_lowercase();
+    if let Some(inner) = s.strip_prefix("calc(").and_then(|x| x.strip_suffix(')')) {
+        s = inner.trim().to_string();
+    }
+    for &(var, val) in vars {
+        if s == var {
+            return Some(val);
+        }
+        if s.contains(var) {
+            s = s.replace(var, &val.to_string());
+        }
+    }
+    if let Some((left, right)) = s.split_once('+') {
+        let l = evaluate_channel_expr(left, vars)?;
+        let r = evaluate_channel_expr(right, vars)?;
+        return Some(l + r);
+    }
+    if let Some((left, right)) = s.split_once('-') {
+        if !left.trim().is_empty() {
+            let l = evaluate_channel_expr(left, vars)?;
+            let r = evaluate_channel_expr(right, vars)?;
+            return Some(l - r);
+        }
+    }
+    if let Some((left, right)) = s.split_once('*') {
+        let l = evaluate_channel_expr(left, vars)?;
+        let r = evaluate_channel_expr(right, vars)?;
+        return Some(l * r);
+    }
+    if let Some((left, right)) = s.split_once('/') {
+        let l = evaluate_channel_expr(left, vars)?;
+        let r = evaluate_channel_expr(right, vars)?;
+        if r != 0.0 {
+            return Some(l / r);
+        }
+    }
+    if let Some(pct) = s.strip_suffix('%') {
+        pct.trim().parse::<f32>().ok()
+    } else if let Some(deg) = s.strip_suffix("deg") {
+        deg.trim().parse::<f32>().ok()
+    } else {
+        s.trim().parse::<f32>().ok()
+    }
+}
+
+fn split_channels_respecting_parens(s: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0;
+    let mut start = 0;
+    let bytes = s.as_bytes();
+    let is_comma = s.contains(',');
+
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'(' {
+            depth += 1;
+        } else if b == b')' {
+            if depth > 0 {
+                depth -= 1;
+            }
+        } else if depth == 0 {
+            if is_comma {
+                if b == b',' {
+                    let part = s[start..i].trim();
+                    if !part.is_empty() {
+                        parts.push(part);
+                    }
+                    start = i + 1;
+                }
+            } else if b.is_ascii_whitespace() {
+                let part = s[start..i].trim();
+                if !part.is_empty() {
+                    parts.push(part);
+                }
+                start = i + 1;
+            }
+        }
+    }
+    let last = s[start..].trim();
+    if !last.is_empty() {
+        parts.push(last);
+    }
+    parts
+}
+
+fn parse_relative_color(fn_name: &str, inner: &str) -> Option<Color> {
+    let after_from = inner.strip_prefix("from ")?.trim();
+    let (origin_str, rest) = if let Some(_) = after_from.find('(') {
+        let first_word = after_from.split_whitespace().next()?;
+        if first_word.contains('(') {
+            let mut depth = 0;
+            let mut close_idx = 0;
+            for (i, ch) in after_from.char_indices() {
+                if ch == '(' {
+                    depth += 1;
+                } else if ch == ')' {
+                    depth -= 1;
+                    if depth == 0 {
+                        close_idx = i;
+                        break;
+                    }
+                }
+            }
+            if close_idx > 0 {
+                (&after_from[..=close_idx], after_from[close_idx + 1..].trim())
+            } else {
+                return None;
+            }
+        } else {
+            let (first, remainder) = after_from.split_once(char::is_whitespace)?;
+            (first.trim(), remainder.trim())
+        }
+    } else {
+        let (first, remainder) = after_from.split_once(char::is_whitespace)?;
+        (first.trim(), remainder.trim())
+    };
+
+    let origin = Value::parse_color(origin_str)?;
+    let (channels_part, alpha_part) = if let Some((c_s, a_s)) = rest.split_once('/') {
+        (c_s.trim(), Some(a_s.trim()))
+    } else {
+        (rest.trim(), None)
+    };
+
+    let parts = split_channels_respecting_parens(channels_part);
+    if parts.len() < 3 {
+        return None;
+    }
+
+    let parse_alpha = |expr: &str, vars: &[(&str, f32)]| -> Option<u8> {
+        let val = evaluate_channel_expr(expr, vars)?;
+        let val = if expr.trim().ends_with('%') || val > 1.0 {
+            val / 100.0
+        } else {
+            val
+        };
+        Some((val.clamp(0.0, 1.0) * 255.0).round() as u8)
+    };
+
+    match fn_name {
+        "rgb" | "rgba" => {
+            let vars = [
+                ("r", origin.r as f32),
+                ("g", origin.g as f32),
+                ("b", origin.b as f32),
+                ("alpha", origin.a as f32 / 255.0),
+            ];
+            let parse_rgb_chan = |expr: &str| -> Option<u8> {
+                let val = evaluate_channel_expr(expr, &vars)?;
+                let val = if expr.trim().ends_with('%') {
+                    (val / 100.0) * 255.0
+                } else {
+                    val
+                };
+                Some(val.clamp(0.0, 255.0).round() as u8)
+            };
+            let r = parse_rgb_chan(parts[0])?;
+            let g = parse_rgb_chan(parts[1])?;
+            let b = parse_rgb_chan(parts[2])?;
+            let a = if let Some(a_s) = alpha_part {
+                parse_alpha(a_s, &vars)?
+            } else {
+                origin.a
+            };
+            Some(Color::rgba(r, g, b, a))
+        }
+        "hsl" | "hsla" => {
+            let (orig_h, orig_s, orig_l) = srgb_to_hsl(origin.r, origin.g, origin.b);
+            let vars = [
+                ("h", orig_h),
+                ("s", orig_s * 100.0),
+                ("l", orig_l * 100.0),
+                ("alpha", origin.a as f32 / 255.0),
+            ];
+            let parse_hsl_chan = |expr: &str| -> Option<f32> {
+                let val = evaluate_channel_expr(expr, &vars)?;
+                let normalized = if expr.trim().ends_with('%') || val > 1.0 {
+                    val / 100.0
+                } else {
+                    val
+                };
+                Some(normalized.clamp(0.0, 1.0))
+            };
+            let h = evaluate_channel_expr(parts[0], &vars)?;
+            let s = parse_hsl_chan(parts[1])?;
+            let l = parse_hsl_chan(parts[2])?;
+            let a = if let Some(a_s) = alpha_part {
+                parse_alpha(a_s, &vars)?
+            } else {
+                origin.a
+            };
+            let (r, g, b) = hsl_to_rgb(h, s, l);
+            Some(Color::rgba(r, g, b, a))
+        }
+        "oklab" => {
+            let (orig_l, orig_a, orig_b) = srgb_to_oklab(origin.r, origin.g, origin.b);
+            let vars = [
+                ("l", orig_l),
+                ("a", orig_a),
+                ("b", orig_b),
+                ("alpha", origin.a as f32 / 255.0),
+            ];
+            let parse_ok_l = |expr: &str| -> Option<f32> {
+                let val = evaluate_channel_expr(expr, &vars)?;
+                let normalized = if expr.trim().ends_with('%') || val > 1.0 {
+                    val / 100.0
+                } else {
+                    val
+                };
+                Some(normalized.clamp(0.0, 1.0))
+            };
+            let l = parse_ok_l(parts[0])?;
+            let a_val = evaluate_channel_expr(parts[1], &vars)?;
+            let b_val = evaluate_channel_expr(parts[2], &vars)?;
+            let a = if let Some(a_s) = alpha_part {
+                parse_alpha(a_s, &vars)?
+            } else {
+                origin.a
+            };
+            let (r, g, b) = oklab_to_srgb(l, a_val, b_val);
+            Some(Color::rgba(r, g, b, a))
+        }
+        "oklch" => {
+            let (orig_l, orig_a, orig_b) = srgb_to_oklab(origin.r, origin.g, origin.b);
+            let (orig_l, orig_c, orig_h) = oklab_to_oklch(orig_l, orig_a, orig_b);
+            let vars = [
+                ("l", orig_l),
+                ("c", orig_c),
+                ("h", orig_h),
+                ("alpha", origin.a as f32 / 255.0),
+            ];
+            let parse_ok_l = |expr: &str| -> Option<f32> {
+                let val = evaluate_channel_expr(expr, &vars)?;
+                let normalized = if expr.trim().ends_with('%') || val > 1.0 {
+                    val / 100.0
+                } else {
+                    val
+                };
+                Some(normalized.clamp(0.0, 1.0))
+            };
+            let l = parse_ok_l(parts[0])?;
+            let c = evaluate_channel_expr(parts[1], &vars)?;
+            let h = evaluate_channel_expr(parts[2], &vars)?;
+            let a = if let Some(a_s) = alpha_part {
+                parse_alpha(a_s, &vars)?
+            } else {
+                origin.a
+            };
+            let (ok_l, ok_a, ok_b) = oklch_to_oklab(l, c, h);
+            let (r, g, b) = oklab_to_srgb(ok_l, ok_a, ok_b);
+            Some(Color::rgba(r, g, b, a))
+        }
+        _ => None,
+    }
+}
+
 impl Value {
     /// Attempts to parse a color from a hex string, named color, `rgb()`/`rgba()`,
     /// `hsl()`/`hsla()`, `hwb()`, `lab()`, `lch()`, `light-dark()`, `color()`,
@@ -3170,6 +4120,11 @@ impl Value {
             .or_else(|| lower.strip_prefix("rgba("))
             .and_then(|s| s.strip_suffix(')'))
         {
+            if inner.trim_start().starts_with("from ") {
+                if let Some(col) = parse_relative_color("rgb", inner.trim_start()) {
+                    return Some(col);
+                }
+            }
             let (rgb_part, alpha_part) = if let Some((rgb_s, a_s)) = inner.split_once('/') {
                 (rgb_s.trim(), Some(a_s.trim()))
             } else {
@@ -3228,6 +4183,11 @@ impl Value {
             .or_else(|| lower.strip_prefix("hsla("))
             .and_then(|s| s.strip_suffix(')'))
         {
+            if inner.trim_start().starts_with("from ") {
+                if let Some(col) = parse_relative_color("hsl", inner.trim_start()) {
+                    return Some(col);
+                }
+            }
             let (hsl_part, alpha_part) = if let Some((hsl_s, a_s)) = inner.split_once('/') {
                 (hsl_s.trim(), Some(a_s.trim()))
             } else {
@@ -3557,6 +4517,15 @@ impl Value {
                     if space == "display-p3" {
                         let (r, g, b) = display_p3_to_srgb(c1, c2, c3);
                         return Some(Color::rgba(r, g, b, a));
+                    } else if space == "rec2020" {
+                        let (r, g, b) = rec2020_to_srgb(c1, c2, c3);
+                        return Some(Color::rgba(r, g, b, a));
+                    } else if space == "a98-rgb" {
+                        let (r, g, b) = a98_rgb_to_srgb(c1, c2, c3);
+                        return Some(Color::rgba(r, g, b, a));
+                    } else if space == "prophoto-rgb" {
+                        let (r, g, b) = prophoto_rgb_to_srgb(c1, c2, c3);
+                        return Some(Color::rgba(r, g, b, a));
                     } else if space == "srgb" {
                         let r = (c1.clamp(0.0, 1.0) * 255.0).round() as u8;
                         let g = (c2.clamp(0.0, 1.0) * 255.0).round() as u8;
@@ -3577,6 +4546,11 @@ impl Value {
             .strip_prefix("oklab(")
             .and_then(|s| s.strip_suffix(')'))
         {
+            if inner.trim_start().starts_with("from ") {
+                if let Some(col) = parse_relative_color("oklab", inner.trim_start()) {
+                    return Some(col);
+                }
+            }
             let (lab_part, alpha_part) = if let Some((lab_s, a_s)) = inner.split_once('/') {
                 (lab_s.trim(), Some(a_s.trim()))
             } else {
@@ -3646,6 +4620,11 @@ impl Value {
             .strip_prefix("oklch(")
             .and_then(|s| s.strip_suffix(')'))
         {
+            if inner.trim_start().starts_with("from ") {
+                if let Some(col) = parse_relative_color("oklch", inner.trim_start()) {
+                    return Some(col);
+                }
+            }
             let (lch_part, alpha_part) = if let Some((lch_s, a_s)) = inner.split_once('/') {
                 (lch_s.trim(), Some(a_s.trim()))
             } else {
@@ -4101,6 +5080,7 @@ mod tests {
                     position: Some(0.0),
                     end_position: None,
                     is_current_color: true,
+                    var_name: None,
                 },
                 ColorStop::new(Color::WHITE, Some(1.0), None),
             ],
@@ -4164,5 +5144,45 @@ mod tests {
         );
         assert!(matches!(Length::parse("2ch"), Some(Length::Em(em)) if (em - 1.0).abs() < 0.01));
         assert!(matches!(Length::parse("2ex"), Some(Length::Em(em)) if (em - 1.0).abs() < 0.01));
+    }
+
+    #[test]
+    fn test_relative_color_syntax_and_wide_gamut() {
+        // 1. Wide gamut color spaces: rec2020, a98-rgb, prophoto-rgb
+        let rec = Value::parse_color("color(rec2020 0.9 0.1 0.1)").unwrap();
+        assert!(rec.r > 200);
+
+        let a98 = Value::parse_color("color(a98-rgb 0.1 0.9 0.1)").unwrap();
+        assert!(a98.g > 200);
+
+        let pro = Value::parse_color("color(prophoto-rgb 0.1 0.1 0.9)").unwrap();
+        assert!(pro.b > 200);
+
+        // 2. Relative Color Syntax (RCS)
+        // rgb from red
+        let r_rcs = Value::parse_color("rgb(from red r g b)").unwrap();
+        assert_eq!(r_rcs, Color::rgb(255, 0, 0));
+
+        // rgb from with alpha
+        let r_alpha = Value::parse_color("rgb(from #00ff00 r g b / 0.5)").unwrap();
+        assert_eq!(r_alpha, Color::rgba(0, 255, 0, 128));
+
+        // hsl from blue
+        let hsl_rcs = Value::parse_color("hsl(from blue h s l)").unwrap();
+        assert_eq!(hsl_rcs, Color::rgb(0, 0, 255));
+
+        // oklch from green
+        let oklch_rcs = Value::parse_color("oklch(from #00ff00 l c h)").unwrap();
+        assert!(oklch_rcs.g > 200);
+
+        // oklab from red
+        let oklab_rcs = Value::parse_color("oklab(from red l a b)").unwrap();
+        assert!(oklab_rcs.r > 200);
+
+        // 3. TextWrap parsing
+        assert_eq!(TextWrap::parse("balance"), Some(TextWrap::Balance));
+        assert_eq!(TextWrap::parse("pretty"), Some(TextWrap::Pretty));
+        assert_eq!(TextWrap::parse("nowrap"), Some(TextWrap::Nowrap));
+        assert_eq!(TextWrap::parse("wrap"), Some(TextWrap::Wrap));
     }
 }

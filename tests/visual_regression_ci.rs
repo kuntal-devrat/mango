@@ -1,4 +1,4 @@
-//! Visual Regression CI Gates & Pixel Reftests (Phase 6.2).
+//! Visual Regression CI Gates & Pixel Reftests.
 //!
 //! Validates:
 //! - DuckDuckGo Lite: Maintain < 1.0% diff (>99.0% parity).

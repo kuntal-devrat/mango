@@ -2,13 +2,13 @@
 //!
 //! This module owns the browser's UI layout and coordinates with `mango_layout`
 //! to render HTML documents dynamically in the content area, as well as integrating
-//! the `mango_js` Boa-powered JavaScript engine for interactive DOM manipulation and timers.
+//! the `mango_js` V8-powered JavaScript engine for interactive DOM manipulation and timers.
 
 use std::collections::{HashMap, HashSet};
 
 use mango_core::Color;
-use mango_css::computed::ComputedStyle;
 use mango_css::Stylesheet;
+use mango_css::computed::ComputedStyle;
 use mango_html::dom::Document;
 use mango_js::JsRuntime;
 use mango_net::{ResourceLoader, Url};
@@ -32,15 +32,16 @@ pub mod welcome;
 #[cfg(test)]
 mod tests;
 
+pub use forms::*;
+pub use navigation::{
+    prepare_document_pipeline, prepare_document_pipeline_cancellable,
+    prepare_document_pipeline_from_doc,
+};
+pub use profile::*;
 pub use types::*;
 pub use welcome::*;
-pub use forms::*;
-pub use profile::*;
-pub use navigation::{
-    prepare_document_pipeline, prepare_document_pipeline_cancellable, prepare_document_pipeline_from_doc,
-};
 
-// Subsystem module re-exports (OPT-001)
+// Subsystem module re-exports
 pub use crate::chrome_ui::*;
 pub use crate::context_menu::*;
 pub use crate::form_handler::*;
@@ -76,7 +77,7 @@ pub struct BrowserChrome {
     pub(crate) active_tab_idx: usize,
     /// Raw HTML content currently loaded in the active tab.
     pub(crate) current_html: String,
-    /// OPT-003: Cached parsed HTML Document of `current_html` to prevent redundant re-parsing.
+    /// Cached parsed HTML Document of `current_html` to prevent redundant re-parsing.
     pub(crate) cached_document: Option<Document>,
     /// Base URL of current page, if loaded over the network.
     pub(crate) base_url: Option<Url>,
@@ -86,7 +87,7 @@ pub struct BrowserChrome {
     pub(crate) loader: ResourceLoader,
     /// Vertical scroll offset in the content area (f32 for rendering/layout interoperability).
     pub(crate) scroll_y: f32,
-    /// High-precision 64-bit vertical scroll offset to prevent precision loss on long pages (M-10).
+    /// High-precision 64-bit vertical scroll offset to prevent precision loss on long pages.
     pub(crate) scroll_y_f64: f64,
     /// Browser configuration.
     #[allow(dead_code)]
@@ -103,6 +104,8 @@ pub struct BrowserChrome {
     pub(crate) select_dropdown: Option<SelectDropdown>,
     /// Active popup picker overlay (color/date/time/file), if open.
     pub(crate) picker: Option<PickerOverlay>,
+    /// Active HTML5 constraint validation bubble overlay, if open.
+    pub(crate) validation_bubble: Option<ValidationBubble>,
     /// Node id of a range slider currently being dragged.
     pub(crate) range_dragging: Option<mango_html::dom::NodeId>,
     /// Slider value captured when the current drag started.
@@ -119,9 +122,8 @@ pub struct BrowserChrome {
     pub(crate) cached_scrollable_height: f32,
     /// Tracks whether the page layout/display list has changed and needs upload to page_layer.
     pub(crate) page_dirty: bool,
-    /// OPT-005: Display list cache with dirty-tracking and scroll-invalidation.
-    pub(crate) display_list_cache:
-        std::sync::Mutex<mango_layout::display_list::DisplayListCache>,
+    /// Display list cache with dirty-tracking and scroll-invalidation.
+    pub(crate) display_list_cache: std::sync::Mutex<mango_layout::display_list::DisplayListCache>,
     /// Background color of the content canvas.
     pub(crate) canvas_bg: Color,
     /// Whether the user is dragging the scrollbar thumb.
@@ -130,7 +132,7 @@ pub struct BrowserChrome {
     pub(crate) drag_start_mouse_y: f32,
     /// Scroll offset when scrollbar drag started.
     pub(crate) drag_start_scroll_y: f32,
-    /// CSS transition + keyframes animation runtime (GAP-004/GAP-006).
+    /// CSS transition and keyframes animation runtime state.
     pub(crate) anim_state: mango_css::AnimationState,
     /// Base (pre-animation) computed styles per DOM node, captured at layout time.
     pub(crate) style_snapshot: HashMap<u32, ComputedStyle>,
@@ -146,9 +148,9 @@ pub struct BrowserChrome {
     pub(crate) pending_image_fetches: Vec<String>,
     /// Base URL that `pending_image_fetches` entries resolve against.
     pub(crate) image_fetch_base: Option<Url>,
-    /// Built-in Developer Tools & Element Inspector (GAP-022).
+    /// Built-in Developer Tools & Element Inspector.
     pub devtools: crate::devtools::DevTools,
-    /// Browser extension & add-on manager (GAP-023).
+    /// Browser extension & add-on manager.
     pub extension_manager: crate::extensions::ExtensionManager,
     /// DOM nodes currently marked as hovered (:hover).
     pub(crate) hovered_dom_nodes: HashSet<mango_html::dom::NodeId>,
@@ -156,7 +158,7 @@ pub struct BrowserChrome {
     pub(crate) active_dom_nodes: HashSet<mango_html::dom::NodeId>,
     /// Active smooth scrolling animation controller.
     pub smooth_scroll: Option<crate::scroll::SmoothScrollAnimation>,
-    /// Dedicated actor handle for concurrent background navigation and pipeline preparation (Phase 2).
+    /// Dedicated actor handle for concurrent background navigation and pipeline preparation.
     pub nav_actor: crate::navigation_actor::NavigationActorHandle,
     /// Whether network navigations should proceed asynchronously.
     pub async_navigation: bool,
@@ -212,7 +214,7 @@ impl BrowserChrome {
             mouse_x: 0.0,
             mouse_y: 0.0,
             hovered_target: None,
-            status_text: "Ready — Phase 7 Modern Web Engine Active".to_string(),
+            status_text: "Ready".to_string(),
             page_title: initial_title,
             tabs: vec![default_tab],
             active_tab_idx: 0,
@@ -229,6 +231,7 @@ impl BrowserChrome {
             context_menu: None,
             select_dropdown: None,
             picker: None,
+            validation_bubble: None,
             range_dragging: None,
             range_drag_start_value: None,
             focused_initial_value: None,
@@ -293,7 +296,7 @@ impl BrowserChrome {
         self.mouse_y
     }
 
-    /// Returns the currently active HTML document (from JS runtime snapshot or parsed cache) (OPT-003).
+    /// Returns the currently active HTML document (from JS runtime snapshot or parsed cache).
     ///
     /// This deep-clones the DOM. Prefer [`BrowserChrome::document_view`] on hot paths.
     #[allow(dead_code)]
@@ -321,7 +324,7 @@ impl BrowserChrome {
         self.scroll_y
     }
 
-    /// Returns the active high-precision vertical scroll offset (M-10).
+    /// Returns the active high-precision vertical scroll offset.
     pub fn scroll_y_f64(&self) -> f64 {
         self.scroll_y_f64
     }
@@ -331,10 +334,14 @@ impl BrowserChrome {
         self.set_scroll_y_f64(y as f64);
     }
 
-    /// Sets the vertical scroll offset with 64-bit precision (M-10).
+    /// Sets the vertical scroll offset with 64-bit precision.
     pub fn set_scroll_y_f64(&mut self, y: f64) {
         self.scroll_y_f64 = y.max(0.0);
         self.scroll_y = self.scroll_y_f64 as f32;
+        if let Some(tab) = self.tabs.get_mut(self.active_tab_idx) {
+            tab.scroll_y = self.scroll_y;
+            tab.scroll_y_f64 = self.scroll_y_f64;
+        }
     }
 
     /// Adjusts the vertical scroll offset by delta.
@@ -342,17 +349,25 @@ impl BrowserChrome {
         self.scroll_by_f64(dy as f64);
     }
 
-    /// Adjusts the vertical scroll offset by 64-bit delta (M-10).
+    /// Adjusts the vertical scroll offset by 64-bit delta.
     pub fn scroll_by_f64(&mut self, dy: f64) {
         self.scroll_y_f64 = (self.scroll_y_f64 + dy).max(0.0);
         self.scroll_y = self.scroll_y_f64 as f32;
+        if let Some(tab) = self.tabs.get_mut(self.active_tab_idx) {
+            tab.scroll_y = self.scroll_y;
+            tab.scroll_y_f64 = self.scroll_y_f64;
+        }
+    }
+
+    /// Returns the current active validation bubble, if any.
+    pub fn validation_bubble(&self) -> Option<&ValidationBubble> {
+        self.validation_bubble.as_ref()
     }
 
     /// Returns the current status bar text.
     pub fn status_text(&self) -> &str {
         &self.status_text
     }
-
 }
 
 impl Drop for BrowserChrome {

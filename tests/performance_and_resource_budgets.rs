@@ -1,4 +1,4 @@
-//! Performance & Resource Budgets Tests (Phase 6.3).
+//! Performance & Resource Budgets Tests.
 //!
 //! Validates:
 //! - Cold Start: binary launches, parses, and produces first frame in < 100ms.

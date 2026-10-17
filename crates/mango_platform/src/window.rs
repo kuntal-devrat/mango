@@ -148,6 +148,24 @@ impl WindowSurface {
             }
         }
     }
+
+    /// Presents a display list directly to the screen (matching the headless renderer output 1:1).
+    pub fn present_display_list(
+        &mut self,
+        dl: &mango_render::display_list::DisplayList,
+        bg_color: Color,
+    ) -> Result<(), String> {
+        match self {
+            Self::Gpu(gpu) => gpu.render_display_list(dl, bg_color),
+            Self::Software { pixel_buffer, .. } => {
+                pixel_buffer.draw(|buffer, w, h| {
+                    buffer.fill(bg_color.to_rgb_u32());
+                    mango_render::painter::paint(dl, buffer, w, h);
+                });
+                Ok(())
+            }
+        }
+    }
 }
 
 /// Creates the Mango browser window with default settings.

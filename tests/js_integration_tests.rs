@@ -1,4 +1,4 @@
-//! Integration tests for Mango's JavaScript runtime (powered by Boa) and DOM bindings.
+//! Integration tests for Mango's JavaScript runtime and DOM bindings.
 
 use mango_html::parse_html;
 use mango_js::JsRuntime;
@@ -37,7 +37,7 @@ fn test_js_dom_manipulation_get_element() {
     let script = r#"
         var h1 = document.getElementById("heading");
         console.log("Initial heading:", h1.textContent);
-        h1.textContent = "Modified by Boa JavaScript!";
+        h1.textContent = "Modified by JavaScript engine!";
 
         var desc = document.getElementById("desc");
         desc.textContent = "Updated description!";
@@ -55,7 +55,7 @@ fn test_js_dom_manipulation_get_element() {
     let h1_node = updated_doc.find_element_by_tag(root, "h1").unwrap();
     assert_eq!(
         updated_doc.text_content(h1_node),
-        "Modified by Boa JavaScript!"
+        "Modified by JavaScript engine!"
     );
 
     let p_node = updated_doc.find_element_by_tag(root, "p").unwrap();

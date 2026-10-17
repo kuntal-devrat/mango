@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>CSS Grid Test: grid item column span</title>
+    <link rel="author" title="W3C">
+    <link rel="help" href="https://drafts.csswg.org/css-grid-1/#line-placement">
+    <link rel="match" href="grid-placement-span-001-ref.html">
+    <style>
+        body { margin: 0; padding: 0; }
+        .container {
+            display: grid;
+            grid-template-columns: 100px 100px;
+            grid-template-rows: 50px 50px;
+            width: 200px;
+            height: 100px;
+            background: red;
+        }
+        .header {
+            grid-column: span 2;
+            height: 50px;
+            background: green;
+        }
+        .cell1 {
+            height: 50px;
+            background: green;
+        }
+        .cell2 {
+            height: 50px;
+            background: green;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header"></div>
+        <div class="cell1"></div>
+        <div class="cell2"></div>
+    </div>
+</body>
+</html>

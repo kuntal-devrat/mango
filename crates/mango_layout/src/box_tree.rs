@@ -26,6 +26,8 @@ pub struct LayoutBox {
     pub children: Vec<LayoutBox>,
     /// Hyperlink URL target if this box or an ancestor is an `<a>` element.
     pub link_target: Option<String>,
+    /// Target browsing context or frame (e.g. "_blank", "_parent", "_top", or frame name).
+    pub link_frame: Option<String>,
     /// DOM node identifier, if backed by a DOM element.
     pub node_id: Option<NodeId>,
     /// Element tag name (e.g. "div", "input", "table"), if backed by an element.
@@ -34,13 +36,13 @@ pub struct LayoutBox {
     pub attributes: Vec<(String, String)>,
     /// Image map active hit-testing areas if this box is an <img> or <object> with usemap.
     pub map_areas: Vec<MapArea>,
-    /// Dirty flag for display list invalidation (OPT-005).
+    /// Dirty flag for display list invalidation.
     pub is_dirty: bool,
-    /// Unflattened original child boxes preserved for idempotent relayout (GAP-003).
+    /// Unflattened original child boxes preserved for idempotent relayout.
     pub raw_children: Option<Vec<LayoutBox>>,
-    /// Horizontal scroll offset for scrollable containers (PRD 8.1).
+    /// Horizontal scroll offset for scrollable containers.
     pub scroll_offset_x: f32,
-    /// Vertical scroll offset for scrollable containers (PRD 8.1).
+    /// Vertical scroll offset for scrollable containers.
     pub scroll_offset_y: f32,
     /// Whether this box establishes an independent formatting context (e.g. flex or grid item).
     pub is_independent_formatting_context: bool,
@@ -234,6 +236,7 @@ impl LayoutBox {
             style,
             children: Vec::new(),
             link_target: None,
+            link_frame: None,
             node_id: None,
             tag_name: None,
             attributes: Vec::new(),
@@ -254,7 +257,7 @@ impl LayoutBox {
         self.style = Some(style.into());
     }
 
-    /// Marks this box and all descendants as dirty for display list invalidation (OPT-005).
+    /// Marks this box and all descendants as dirty for display list invalidation.
     pub fn mark_dirty(&mut self) {
         self.is_dirty = true;
         for child in &mut self.children {
@@ -262,7 +265,7 @@ impl LayoutBox {
         }
     }
 
-    /// Marks this box and all descendants as clean after display list generation (OPT-005).
+    /// Marks this box and all descendants as clean after display list generation.
     pub fn mark_clean(&mut self) {
         self.is_dirty = false;
         for child in &mut self.children {
@@ -548,6 +551,7 @@ impl LayoutBox {
             style,
             children: Vec::new(),
             link_target: None,
+            link_frame: None,
             node_id: None,
             tag_name: None,
             attributes: Vec::new(),
@@ -604,8 +608,8 @@ impl LayoutBox {
         None
     }
 
-    /// Hit-tests a point against this layout box and its descendants, returning the target link URL if clicked.
-    pub fn hit_test_link(&self, point: mango_core::Point) -> Option<&str> {
+    /// Hit-tests a point against this layout box and its descendants, returning `(url, target_frame)`.
+    pub fn hit_test_link_full(&self, point: mango_core::Point) -> Option<(&str, Option<&str>)> {
         if self.is_scroll_container() {
             if self.dimensions.padding_box().contains(point) {
                 for child in self.children.iter().rev() {
@@ -621,7 +625,7 @@ impl LayoutBox {
                             point.y + self.scroll_offset_y,
                         )
                     };
-                    if let Some(target) = child.hit_test_link(child_pt) {
+                    if let Some(target) = child.hit_test_link_full(child_pt) {
                         return Some(target);
                     }
                 }
@@ -629,7 +633,7 @@ impl LayoutBox {
         } else {
             // Check children in reverse order (top-most in stacking order)
             for child in self.children.iter().rev() {
-                if let Some(target) = child.hit_test_link(point) {
+                if let Some(target) = child.hit_test_link_full(point) {
                     return Some(target);
                 }
             }
@@ -643,13 +647,20 @@ impl LayoutBox {
                     if area.shape.contains_point(rel_x, rel_y)
                         && let Some(ref href) = area.href
                     {
-                        return Some(href.as_str());
+                        return Some((href.as_str(), None));
                     }
                 }
             }
-            return self.link_target.as_deref();
+            if let Some(ref target) = self.link_target {
+                return Some((target.as_str(), self.link_frame.as_deref()));
+            }
         }
         None
+    }
+
+    /// Hit-tests a point against this layout box and its descendants, returning the target link URL if clicked.
+    pub fn hit_test_link(&self, point: mango_core::Point) -> Option<&str> {
+        self.hit_test_link_full(point).map(|(href, _)| href)
     }
 
     /// Hit-tests a point against this layout box and its descendants for interactive form elements.
@@ -1245,21 +1256,29 @@ pub fn build_box_tree_with_maps(
             .find(|(k, _)| k.eq_ignore_ascii_case("href"))
     {
         let href_str = href.clone();
+        let frame_str = styled_node
+            .attributes
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("target"))
+            .map(|(_, target)| target.clone());
+
         root_box.link_target = Some(href_str.clone());
+        root_box.link_frame = frame_str.clone();
         for child in &mut root_box.children {
-            propagate_link_target(child, &href_str);
+            propagate_link_target(child, &href_str, frame_str.as_deref());
         }
     }
 
     root_box
 }
 
-fn propagate_link_target(box_node: &mut LayoutBox, href: &str) {
+fn propagate_link_target(box_node: &mut LayoutBox, href: &str, frame: Option<&str>) {
     if box_node.link_target.is_none() {
         box_node.link_target = Some(href.to_string());
+        box_node.link_frame = frame.map(|s| s.to_string());
     }
     for child in &mut box_node.children {
-        propagate_link_target(child, href);
+        propagate_link_target(child, href, frame);
     }
 }
 
@@ -1298,7 +1317,7 @@ pub fn parse_srcset_candidates(srcset: &str) -> Vec<&str> {
     list
 }
 
-/// Robust, whitespace-tolerant HTML/SVG dimension attribute parser (OPT-002).
+/// Robust, whitespace-tolerant HTML/SVG dimension attribute parser.
 /// Parses pixel strings like `"300"`, `"300px"`, `"  300 PX "` into non-negative floats.
 #[inline]
 pub(crate) fn parse_dimension_attr(val: &str) -> Option<f32> {
@@ -1362,7 +1381,7 @@ fn build_replaced_element_with_maps(
         None
     };
 
-    // 1. First priority (GAP-019): check <picture> / <source> responsive image candidates
+    // 1. First priority: check <picture> / <source> responsive image candidates
     let mut decoded = None;
     if let Some(pic_sources) = get_attr("_mango_picture_sources") {
         let (vp_w, vp_h) = mango_css::get_current_viewport();
@@ -2949,5 +2968,33 @@ mod tests {
         let xml = serialize_svg_styled_node(&svg_node);
         assert!(xml.contains("data-label=\"test &lt;tag&gt; &amp; &quot;quotes&quot;\""));
         assert!(xml.contains("<text>A &lt; B &amp; C &gt; D</text>"));
+    }
+
+    #[test]
+    fn test_link_target_and_frame_propagation() {
+        let mut link_node = StyledNode::new(None, ComputedStyle::default());
+        link_node.tag_name = Some("a".to_string());
+        link_node.attributes.push(("href".to_string(), "https://example.com/popup".to_string()));
+        link_node.attributes.push(("target".to_string(), "_blank".to_string()));
+
+        let mut child_node = StyledNode::new(None, ComputedStyle::default());
+        child_node.tag_name = Some("span".to_string());
+        link_node.children.push(child_node);
+
+        let mut box_tree = build_box_tree(&link_node);
+        box_tree.dimensions.content = mango_core::Rect::new(10.0, 10.0, 100.0, 30.0);
+        if let Some(child_box) = box_tree.children.first_mut() {
+            child_box.dimensions.content = mango_core::Rect::new(15.0, 15.0, 50.0, 20.0);
+        }
+
+        let hit = box_tree.hit_test_link_full(mango_core::Point::new(20.0, 20.0));
+        assert!(hit.is_some());
+        let (href, frame) = hit.unwrap();
+        assert_eq!(href, "https://example.com/popup");
+        assert_eq!(frame, Some("_blank"));
+
+        // hit_test_link backwards compatibility
+        let simple_hit = box_tree.hit_test_link(mango_core::Point::new(20.0, 20.0));
+        assert_eq!(simple_hit, Some("https://example.com/popup"));
     }
 }

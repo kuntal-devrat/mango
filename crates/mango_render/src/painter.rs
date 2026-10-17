@@ -4,8 +4,7 @@
 //! buffer owned by `mango_platform`. The painter executes each command
 //! in order, writing pixels into the buffer.
 //!
-//! ## Phase 2b Changes
-//! - Removed `scroll_y` parameter — scroll offset is now handled entirely by `browser.rs`.
+//! - Scroll offset is handled by the layout and compositor systems.
 //! - Text rendering delegates to `FontManager` for anti-aliased TrueType glyphs.
 //! - Added `DrawImage` support for decoded image blitting.
 

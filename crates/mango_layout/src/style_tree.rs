@@ -68,17 +68,22 @@ pub fn extract_style_elements(doc: &Document) -> Vec<Stylesheet> {
 
 fn collect_styles_recursive(doc: &Document, node_id: NodeId, out: &mut Vec<Stylesheet>) {
     for child in doc.children(node_id) {
-        if let NodeData::Element(el) = &child.data
-            && el.tag_name.eq_ignore_ascii_case("style")
-        {
-            let css_text = doc.text_content(child.id);
-            if !css_text.trim().is_empty() {
-                out.push(parse_stylesheet(&css_text));
+        if let NodeData::Element(el) = &child.data {
+            if el.tag_name.eq_ignore_ascii_case("noscript") {
+                // When scripting is enabled, styles inside <noscript> must not be applied.
+                continue;
+            }
+            if el.tag_name.eq_ignore_ascii_case("style") {
+                let css_text = doc.text_content(child.id);
+                if !css_text.trim().is_empty() {
+                    out.push(parse_stylesheet(&css_text));
+                }
             }
         }
         collect_styles_recursive(doc, child.id, out);
     }
 }
+
 
 /// Scans the entire DOM for all `<svg>` elements (including hidden or defs) and registers their symbols.
 fn scan_and_register_global_svg_symbols(doc: &Document) {
@@ -523,7 +528,7 @@ fn build_styled_node(
                 }
             }
 
-            // If the element has an attached shadow root (GAP-012/GAP-013),
+            // If the element has an attached shadow root,
             // render the shadow tree's children, projecting light DOM children into <slot> elements.
             let effective_children: Vec<mango_html::NodeId> = if let Some(sr_id) = el.shadow_root {
                 let mut res = Vec::new();
@@ -670,7 +675,7 @@ fn build_styled_node(
                     ));
                 }
 
-                // Capture parent <picture> <source> elements for responsive image resolution (GAP-019)
+                // Capture parent <picture> <source> elements for responsive image resolution
                 if el.tag_name.eq_ignore_ascii_case("img")
                     && let Some(parent_id) = node.parent
                     && let Some(parent_node) = doc.get(parent_id)
@@ -1349,7 +1354,7 @@ mod tests {
 
 use std::collections::HashSet;
 
-/// Incremental style invalidator tracking dirty DOM nodes (ARCH-002).
+/// Incremental style invalidator tracking dirty DOM nodes.
 ///
 /// Instead of recalculating style for all $N$ nodes in the document on every change,
 /// `StyleInvalidator` tracks which DOM nodes mutated (via attribute changes or class toggles)
@@ -1397,7 +1402,7 @@ impl StyleInvalidator {
         self.dirty_nodes.is_empty()
     }
 
-    /// Updates only the dirty nodes in an existing style tree in-place (ARCH-002).
+    /// Updates only the dirty nodes in an existing style tree in-place.
     ///
     /// Returns the number of nodes whose styles were recalculated.
     pub fn invalidate_and_update(

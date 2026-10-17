@@ -1,6 +1,6 @@
 //! # mango_engine
 //!
-//! Core browser engine orchestrating Document → StyleTree → LayoutTree → DisplayList (ARCH-001).
+//! Core browser engine orchestrating Document → StyleTree → LayoutTree → DisplayList.
 //!
 //! Exposes a clean, high-level `Engine` API that encapsulates the complete rendering
 //! pipeline and decouples browser chrome / UI from layout and rendering execution:
@@ -33,6 +33,12 @@ use mango_css::parser::{Stylesheet, parse_stylesheet};
 use mango_events::{DispatchResult, Event, EventDispatcher, ListenerOptions, TargetId};
 use mango_html::dom::{Document, NodeData, NodeId};
 use mango_html::parse_html;
+pub mod site_isolation;
+pub use site_isolation::{
+    FrameTreeNode, ProcessId, ProcessPool, ProcessStatus, RendererProcess, SandboxPolicy,
+    SiteInstance, SiteInstanceId,
+};
+
 pub use mango_layout::box_tree::FormControlHit;
 use mango_layout::{DisplayListCache, LayoutSnapshot, StyleInvalidator, StyledNode};
 use mango_render::display_list::{DisplayList, DisplayListDiff};
@@ -58,7 +64,7 @@ impl Default for EngineConfig {
     }
 }
 
-/// The core Mango browser engine (ARCH-001).
+/// The core Mango browser engine.
 ///
 /// Encapsulates all subsystems (DOM, CSS cascade, layout, events, display list)
 /// behind a clean, decoupled interface. Browser Chrome instances interact with
@@ -121,7 +127,7 @@ impl Engine {
     // ─────────────────────────────────────────────────────────────────────────
 
     /// Loads HTML markup and author CSS into the engine, executing the full pipeline:
-    /// Parse HTML → Parse CSS → Cascade StyleTree → Layout Snapshot → DisplayList (ARCH-001).
+    /// Parse HTML → Parse CSS → Cascade StyleTree → Layout Snapshot → DisplayList.
     pub fn load(&mut self, html: &str, css: &str) -> DisplayList {
         let doc = parse_html(html);
         let mut sheets = Vec::new();
@@ -361,6 +367,39 @@ impl Engine {
             .and_then(|s| s.hit_test_link(adjusted).map(|s| s.to_string()))
     }
 
+    /// Performs hit-testing at a point in viewport coordinates for links with frame target.
+    pub fn hit_test_link_full(&self, point: Point) -> Option<(String, Option<String>)> {
+        let adjusted = Point::new(point.x, point.y + self.scroll_y);
+        self.layout_snapshot
+            .as_ref()
+            .and_then(|s| s.hit_test_link_full(adjusted).map(|(href, frame)| {
+                (href.to_string(), frame.map(|f| f.to_string()))
+            }))
+    }
+
+    /// Creates a BFCache frozen snapshot of the current layout state for instant back/forward navigation.
+    pub fn create_bfcache_snapshot(&self) -> Option<Box<LayoutSnapshot>> {
+        self.layout_snapshot.clone().map(Box::new)
+    }
+
+    /// Restores a frozen BFCache snapshot into the engine for zero-latency back/forward restoration.
+    pub fn restore_bfcache_snapshot(
+        &mut self,
+        snapshot: Box<LayoutSnapshot>,
+        scroll_y: f32,
+    ) -> DisplayList {
+        self.scroll_y = scroll_y;
+        let raw_dl = if scroll_y == 0.0 {
+            snapshot.display_list().clone()
+        } else {
+            snapshot.display_list_with_scroll(scroll_y)
+        };
+        self.display_list = raw_dl.clone();
+        self.layout_snapshot = Some(*snapshot);
+        self.display_list_cache.invalidate(None);
+        self.display_list.clone()
+    }
+
     /// Performs hit-testing at a point for interactive form controls.
     pub fn hit_test_form_control(&self, point: Point) -> Option<FormControlHit> {
         let adjusted = Point::new(point.x, point.y + self.scroll_y);
@@ -385,7 +424,7 @@ impl Engine {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Incremental Mutation & Recalculation (ARCH-002 & ARCH-004)
+    // Incremental Mutation & Recalculation
     // ─────────────────────────────────────────────────────────────────────────
 
     /// Mutates the DOM via a closure, then applies incremental style invalidation
@@ -437,7 +476,7 @@ impl Engine {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Event System Delegation (ARCH-006)
+    // Event System Delegation
     // ─────────────────────────────────────────────────────────────────────────
 
     /// Registers a W3C DOM event listener on a target ID.
@@ -461,13 +500,13 @@ impl Engine {
     }
 
     /// Dispatches an event through the target propagation path with capture,
-    /// at-target, and bubbling phases (ARCH-006).
+    /// at-target, and bubbling phases.
     pub fn dispatch_event(&mut self, event: Event, target_path: &[TargetId]) -> DispatchResult {
         self.event_dispatcher.dispatch(event, target_path)
     }
 
     /// Dispatches a DOM event to a target NodeId by computing the ancestor chain from
-    /// Document root down to `target_node`, running through capture, at-target, and bubble phases (ARCH-006).
+    /// Document root down to `target_node`, running through capture, at-target, and bubble phases.
     pub fn dispatch_dom_event(&mut self, event: Event, target_node: NodeId) -> DispatchResult {
         let mut path = Vec::new();
         let mut curr = Some(target_node);
@@ -604,5 +643,38 @@ mod tests {
 
         assert!(!result.default_prevented);
         assert!(clicked.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_engine_bfcache_and_link_full() {
+        let mut engine = Engine::new();
+        let dl = engine.load(
+            r#"<html><body><a href="https://example.com" target="_blank" style="display:block; width:200px; height:50px;">Link</a></body></html>"#,
+            "",
+        );
+        assert!(!dl.is_empty());
+
+        let link_hit = engine.hit_test_link_full(Point::new(20.0, 20.0));
+        assert!(link_hit.is_some());
+        let (url, frame) = link_hit.unwrap();
+        assert_eq!(url, "https://example.com");
+        assert_eq!(frame, Some("_blank".to_string()));
+
+        // Create BFCache snapshot
+        let snapshot = engine.create_bfcache_snapshot();
+        assert!(snapshot.is_some());
+        let snapshot = snapshot.unwrap();
+
+        // Mutate engine state
+        engine.load("<html><body><h1>New Page</h1></body></html>", "");
+        assert_eq!(engine.title().as_deref(), None);
+
+        // Restore BFCache snapshot
+        let restored_dl = engine.restore_bfcache_snapshot(snapshot, 0.0);
+        assert!(!restored_dl.is_empty());
+
+        let restored_link = engine.hit_test_link_full(Point::new(20.0, 20.0));
+        assert!(restored_link.is_some());
+        assert_eq!(restored_link.unwrap().0, "https://example.com");
     }
 }

@@ -20,7 +20,7 @@ pub const MAX_WS_PAYLOAD: usize = 16 * 1024 * 1024;
 /// Maximum handshake header bytes.
 const MAX_HANDSHAKE_BYTES: usize = 64 * 1024;
 
-// ── Unified Read+Write trait for plain TCP and TLS streams (G-03) ─────────────
+// ── Unified Read+Write trait for plain TCP and TLS streams ────────────────────
 
 /// A trait combining `Read + Write + Send` so `run_websocket_client` can hold
 /// either a plain `TcpStream` or a TLS-wrapped stream behind the same pointer.
@@ -54,10 +54,10 @@ fn make_tls_stream(tcp: TcpStream, hostname: &str) -> Result<impl Read + Write +
 /// Generates 16 cryptographically random bytes for the handshake nonce using the OS CSPRNG.
 pub fn random_bytes_16() -> [u8; 16] {
     let mut out = [0u8; 16];
-    getrandom::getrandom(&mut out).expect("Failed to generate cryptographically secure random bytes");
+    getrandom::getrandom(&mut out)
+        .expect("Failed to generate cryptographically secure random bytes");
     out
 }
-
 
 /// Generates a random 4-byte masking key per frame (RFC 6455 §5.3).
 pub fn random_mask() -> [u8; 4] {
@@ -226,6 +226,29 @@ pub fn encode_client_frame(opcode: Opcode, payload: &[u8], mask: [u8; 4]) -> Vec
         frame.push(byte ^ mask[i % 4]);
     }
 
+    frame
+}
+
+/// Encodes an RFC 6455 server frame (unmasked, per RFC 6455 §5.1).
+pub fn encode_server_frame(opcode: Opcode, payload: &[u8]) -> Vec<u8> {
+    let mut frame = Vec::new();
+    // Byte 0: FIN = 1 | RSV = 0 | Opcode
+    frame.push(0x80 | (opcode as u8));
+
+    // Byte 1: Mask = 0 | Payload Len
+    let len = payload.len();
+    if len <= 125 {
+        frame.push(len as u8);
+    } else if len <= 65535 {
+        frame.push(126);
+        frame.extend_from_slice(&(len as u16).to_be_bytes());
+    } else {
+        frame.push(127);
+        frame.extend_from_slice(&(len as u64).to_be_bytes());
+    }
+
+    // Unmasked payload
+    frame.extend_from_slice(payload);
     frame
 }
 
@@ -602,7 +625,7 @@ fn run_websocket_client<F>(
     let _ = tcp_stream.set_read_timeout(Some(Duration::from_millis(100)));
 
     // For wss:// wrap the TCP stream in a rustls TLS session.
-    // We use a Box<dyn ReadWrite> to unify the plain and TLS paths. (G-03 fix)
+    // We use a Box<dyn ReadWrite> to unify the plain and TLS paths.
     let mut stream: Box<dyn ReadWrite> = if use_tls {
         match make_tls_stream(tcp_stream, &host_owned) {
             Ok(s) => Box::new(s),

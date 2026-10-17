@@ -14,6 +14,7 @@ const MAX_DNS_CACHE_ENTRIES: usize = 512;
 /// Default timeout for a single DNS lookup (prevents UI hangs on dead DNS).
 pub const DNS_LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
 
+#[derive(Clone)]
 struct InflightSignal {
     sync_notify: std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
     async_notify: std::sync::Arc<tokio::sync::Notify>,
@@ -22,7 +23,10 @@ struct InflightSignal {
 impl InflightSignal {
     fn new() -> Self {
         Self {
-            sync_notify: std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new())),
+            sync_notify: std::sync::Arc::new((
+                std::sync::Mutex::new(false),
+                std::sync::Condvar::new(),
+            )),
             async_notify: std::sync::Arc::new(tokio::sync::Notify::new()),
         }
     }
@@ -33,6 +37,23 @@ impl InflightSignal {
             self.sync_notify.1.notify_all();
         }
         self.async_notify.notify_waiters();
+    }
+}
+
+/// RAII cleanup guard for in-flight DNS requests that ensures waiting threads are
+/// notified and cleaned up even in the event of error or panic.
+struct InflightGuard<'a> {
+    inflight: &'a std::sync::Mutex<HashMap<String, InflightSignal>>,
+    key: String,
+    signal: InflightSignal,
+}
+
+impl<'a> Drop for InflightGuard<'a> {
+    fn drop(&mut self) {
+        if let Ok(mut map) = self.inflight.lock() {
+            map.remove(&self.key);
+        }
+        self.signal.notify_all();
     }
 }
 
@@ -80,12 +101,10 @@ impl DnsCache {
                 guard.retain(|_, (_, ts)| ts.elapsed() < ttl);
             }
             if guard.len() >= MAX_DNS_CACHE_ENTRIES {
-                // Batch-evict the oldest 10% of entries to avoid O(n) scan on every insert (M-06)
+                // Batch-evict the oldest 10% of entries to avoid O(n) scan on every insert.
                 let to_evict = (MAX_DNS_CACHE_ENTRIES / 10).max(1);
-                let mut entries_by_age: Vec<(String, Instant)> = guard
-                    .iter()
-                    .map(|(k, (_, ts))| (k.clone(), *ts))
-                    .collect();
+                let mut entries_by_age: Vec<(String, Instant)> =
+                    guard.iter().map(|(k, (_, ts))| (k.clone(), *ts)).collect();
                 entries_by_age.sort_by_key(|(_, ts)| *ts);
                 for (k, _) in entries_by_age.into_iter().take(to_evict) {
                     guard.remove(&k);
@@ -95,69 +114,14 @@ impl DnsCache {
         }
     }
 
-    /// Resolves a hostname and port into socket addresses synchronously, utilizing cached entries if fresh.
-    pub fn resolve(&self, host: &str, port: u16) -> Result<Vec<SocketAddr>, String> {
-        let cache_key = format!("{host}:{port}");
-
-        if let Some(addrs) = self.get_cached(&cache_key) {
-            return Ok(addrs);
-        }
-
-        // Perform system DNS resolution
-        let host_port = format!("{host}:{port}");
-        let addrs: Vec<SocketAddr> = host_port
-            .to_socket_addrs()
-            .map_err(|e| format!("DNS resolution failed for '{host}': {e}"))?
-            .collect();
-
-        if addrs.is_empty() {
-            return Err(format!("No IP addresses found for host '{host}'"));
-        }
-
-        self.store_cached(cache_key, addrs.clone());
-        Ok(addrs)
-    }
-
-    /// Asynchronously resolves a hostname and port without blocking the executor thread (OPT-3.3.2).
-    pub async fn resolve_async(&self, host: &str, port: u16) -> Result<Vec<SocketAddr>, String> {
-        let cache_key = format!("{host}:{port}");
-
-        if let Some(addrs) = self.get_cached(&cache_key) {
-            return Ok(addrs);
-        }
-
-        let host_port = cache_key.clone();
-        let host_name = host.to_string();
-        let addrs: Vec<SocketAddr> = tokio::task::spawn_blocking(move || {
-            host_port
-                .to_socket_addrs()
-                .map(|iter| iter.collect::<Vec<_>>())
-                .map_err(|e| format!("DNS resolution failed for '{host_name}': {e}"))
-        })
-        .await
-        .map_err(|e| format!("DNS resolution thread task panicked: {e}"))??;
-
-        if addrs.is_empty() {
-            return Err(format!("No IP addresses found for host '{host}'"));
-        }
-
-        self.store_cached(cache_key, addrs.clone());
-        Ok(addrs)
-    }
-
-    /// Resolves a hostname with a timeout limit to prevent indefinite hangs.
-    pub fn resolve_timeout(
+    /// Raw blocking resolution running in a dedicated OS thread with timeout.
+    fn resolve_raw_timeout(
         &self,
         host: &str,
         port: u16,
         timeout: Duration,
     ) -> Result<Vec<SocketAddr>, String> {
         let cache_key = format!("{host}:{port}");
-
-        if let Some(addrs) = self.get_cached(&cache_key) {
-            return Ok(addrs);
-        }
-
         let (tx, rx) = std::sync::mpsc::channel();
         let host_port = cache_key.clone();
         let host_name = host.to_string();
@@ -192,6 +156,48 @@ impl DnsCache {
         Ok(addrs)
     }
 
+    /// Raw non-blocking resolution running in a tokio blocking thread pool.
+    async fn resolve_async_raw(&self, host: &str, port: u16) -> Result<Vec<SocketAddr>, String> {
+        let cache_key = format!("{host}:{port}");
+        let host_port = cache_key.clone();
+        let host_name = host.to_string();
+        let addrs: Vec<SocketAddr> = tokio::task::spawn_blocking(move || {
+            host_port
+                .to_socket_addrs()
+                .map(|iter| iter.collect::<Vec<_>>())
+                .map_err(|e| format!("DNS resolution failed for '{host_name}': {e}"))
+        })
+        .await
+        .map_err(|e| format!("DNS resolution thread task panicked: {e}"))??;
+
+        if addrs.is_empty() {
+            return Err(format!("No IP addresses found for host '{host}'"));
+        }
+
+        self.store_cached(cache_key, addrs.clone());
+        Ok(addrs)
+    }
+
+    /// Resolves a hostname and port into socket addresses synchronously with singleflight deduplication.
+    pub fn resolve(&self, host: &str, port: u16) -> Result<Vec<SocketAddr>, String> {
+        self.resolve_singleflight(host, port, DNS_LOOKUP_TIMEOUT)
+    }
+
+    /// Asynchronously resolves a hostname and port with singleflight deduplication.
+    pub async fn resolve_async(&self, host: &str, port: u16) -> Result<Vec<SocketAddr>, String> {
+        self.resolve_async_timeout(host, port, DNS_LOOKUP_TIMEOUT).await
+    }
+
+    /// Resolves a hostname with a timeout limit and singleflight deduplication.
+    pub fn resolve_timeout(
+        &self,
+        host: &str,
+        port: u16,
+        timeout: Duration,
+    ) -> Result<Vec<SocketAddr>, String> {
+        self.resolve_singleflight(host, port, timeout)
+    }
+
     /// Clears all entries from the DNS cache.
     pub fn clear(&self) {
         if let Ok(mut guard) = self.entries.write() {
@@ -213,18 +219,19 @@ impl DnsCache {
             return Ok(addrs);
         }
 
-        let signal_opt = {
+        let (signal, is_leader) = {
             let mut inflight = self.inflight.lock().map_err(|e| e.to_string())?;
             if let Some(existing) = inflight.get(&cache_key) {
-                Some(existing.sync_notify.clone())
+                (existing.clone(), false)
             } else {
-                inflight.insert(cache_key.clone(), InflightSignal::new());
-                None
+                let sig = InflightSignal::new();
+                inflight.insert(cache_key.clone(), sig.clone());
+                (sig, true)
             }
         };
 
-        if let Some(sync_notify) = signal_opt {
-            let (lock, cvar) = &*sync_notify;
+        if !is_leader {
+            let (lock, cvar) = &*signal.sync_notify;
             let mut done = lock.lock().map_err(|e| e.to_string())?;
             let deadline = Instant::now() + timeout;
             while !*done {
@@ -236,8 +243,9 @@ impl DnsCache {
                     ));
                 }
                 let remaining = deadline - now;
-                let (new_guard, timeout_result) =
-                    cvar.wait_timeout(done, remaining).map_err(|e| e.to_string())?;
+                let (new_guard, timeout_result) = cvar
+                    .wait_timeout(done, remaining)
+                    .map_err(|e| e.to_string())?;
                 done = new_guard;
                 if timeout_result.timed_out() && !*done {
                     return Err(format!(
@@ -246,24 +254,22 @@ impl DnsCache {
                     ));
                 }
             }
-            return self.get_cached(&cache_key).ok_or_else(|| {
-                format!("DNS resolution failed for '{host}' in primary resolver")
-            });
+            return self
+                .get_cached(&cache_key)
+                .ok_or_else(|| format!("DNS resolution failed for '{host}' in primary resolver"));
         }
 
-        let res = self.resolve_timeout(host, port, timeout);
-        let signal = {
-            let inflight = self.inflight.lock().ok();
-            inflight.and_then(|mut s| s.remove(&cache_key))
+        let _guard = InflightGuard {
+            inflight: &self.inflight,
+            key: cache_key.clone(),
+            signal,
         };
-        if let Some(sig) = signal {
-            sig.notify_all();
-        }
-        res
+
+        self.resolve_raw_timeout(host, port, timeout)
     }
 
     /// Async singleflight resolve with timeout. Never blocks the executor:
-    /// the blocking lookup runs via [`Self::resolve_async`] and concurrent
+    /// the blocking lookup runs via [`Self::resolve_async_raw`] and concurrent
     /// callers for the same host coalesce onto the cached result.
     pub async fn resolve_async_timeout(
         &self,
@@ -276,46 +282,40 @@ impl DnsCache {
             return Ok(addrs);
         }
 
-        let signal_opt = {
+        let (signal, is_leader) = {
             let mut inflight = self.inflight.lock().map_err(|e| e.to_string())?;
             if let Some(existing) = inflight.get(&cache_key) {
-                Some(existing.async_notify.clone())
+                (existing.clone(), false)
             } else {
-                inflight.insert(cache_key.clone(), InflightSignal::new());
-                None
+                let sig = InflightSignal::new();
+                inflight.insert(cache_key.clone(), sig.clone());
+                (sig, true)
             }
         };
 
-        if let Some(async_notify) = signal_opt {
-            let wait_fut = async_notify.notified();
-            tokio::time::timeout(timeout, wait_fut)
-                .await
-                .map_err(|_| {
-                    format!(
-                        "DNS singleflight wait timed out after {:?} for '{host}'",
-                        timeout
-                    )
-                })?;
-            return self.get_cached(&cache_key).ok_or_else(|| {
-                format!("DNS resolution failed for '{host}' in primary resolver")
-            });
+        if !is_leader {
+            let wait_fut = signal.async_notify.notified();
+            tokio::time::timeout(timeout, wait_fut).await.map_err(|_| {
+                format!(
+                    "DNS singleflight wait timed out after {:?} for '{host}'",
+                    timeout
+                )
+            })?;
+            return self
+                .get_cached(&cache_key)
+                .ok_or_else(|| format!("DNS resolution failed for '{host}' in primary resolver"));
         }
 
-        let host_owned = host.to_string();
-        let fut = self.resolve_async(&host_owned, port);
-        let res = tokio::time::timeout(timeout, fut)
+        let _guard = InflightGuard {
+            inflight: &self.inflight,
+            key: cache_key.clone(),
+            signal,
+        };
+
+        let fut = self.resolve_async_raw(host, port);
+        tokio::time::timeout(timeout, fut)
             .await
             .map_err(|_| format!("DNS resolution timed out after {:?} for '{host}'", timeout))?
-            .map_err(|e| e.to_string());
-
-        let signal = {
-            let inflight = self.inflight.lock().ok();
-            inflight.and_then(|mut s| s.remove(&cache_key))
-        };
-        if let Some(sig) = signal {
-            sig.notify_all();
-        }
-        res
     }
 
     /// Async resolve with the default lookup timeout plus singleflight.
@@ -324,8 +324,7 @@ impl DnsCache {
         host: &str,
         port: u16,
     ) -> Result<Vec<SocketAddr>, String> {
-        self.resolve_async_timeout(host, port, DNS_LOOKUP_TIMEOUT)
-            .await
+        self.resolve_async_timeout(host, port, DNS_LOOKUP_TIMEOUT).await
     }
 }
 
@@ -373,5 +372,31 @@ mod tests {
             .resolve_timeout("localhost", 80, Duration::from_secs(2))
             .unwrap();
         assert!(!addrs.is_empty());
+    }
+
+    #[test]
+    fn test_singleflight_concurrent_deduplication() {
+        use std::sync::Arc;
+        let cache = Arc::new(DnsCache::new());
+        let mut handles = Vec::new();
+
+        for _ in 0..10 {
+            let c = Arc::clone(&cache);
+            handles.push(std::thread::spawn(move || {
+                c.resolve("localhost", 80).expect("resolve localhost failed")
+            }));
+        }
+
+        let mut all_results = Vec::new();
+        for h in handles {
+            all_results.push(h.join().expect("thread panicked"));
+        }
+
+        assert_eq!(all_results.len(), 10);
+        let first = &all_results[0];
+        assert!(!first.is_empty());
+        for res in &all_results[1..] {
+            assert_eq!(res, first);
+        }
     }
 }

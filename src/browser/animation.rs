@@ -1,7 +1,7 @@
 //! CSS animation, transition, JS timer ticking, and smooth scrolling dispatch.
 
-use mango_core::Size;
 use super::BrowserChrome;
+use mango_core::Size;
 
 impl BrowserChrome {
     /// Advances active CSS transitions and `@keyframes` animations, and steps smooth scrolling.
@@ -84,6 +84,17 @@ impl BrowserChrome {
                 self.navigate(&redirect);
                 return true;
             }
+            if let Some(open_req) = rt.take_pending_open_window() {
+                let nav_url = if let Some(base) = &self.base_url {
+                    base.resolve(&open_req.url)
+                        .map(|u| u.to_string())
+                        .unwrap_or(open_req.url)
+                } else {
+                    open_req.url
+                };
+                self.new_tab_and_navigate(&nav_url);
+                return true;
+            }
             mutated
         } else {
             return false;
@@ -118,7 +129,7 @@ impl BrowserChrome {
         self.scroll_smooth_to_f64(target_y as f64, duration);
     }
 
-    /// Triggers smooth scrolling to `target_y` with 64-bit precision over the specified duration (M-10).
+    /// Triggers smooth scrolling to `target_y` with 64-bit precision over the specified duration.
     pub fn scroll_smooth_to_f64(&mut self, target_y: f64, duration: Option<std::time::Duration>) {
         let max_s = self.max_scroll() as f64;
         let dur = duration.unwrap_or(std::time::Duration::from_millis(300));

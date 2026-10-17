@@ -49,7 +49,7 @@ pub fn build_display_list_with_scroll_xy(
     list
 }
 
-/// A cached display list record with dirty-tracking and scroll offsets (OPT-005).
+/// A cached display list record with dirty-tracking and scroll offsets.
 #[derive(Debug, Clone, Default)]
 pub struct DisplayListCache {
     cached_scroll_x: Option<f32>,
@@ -63,7 +63,7 @@ impl DisplayListCache {
         Self::default()
     }
 
-    /// Returns the cached display list if valid, or builds and caches it (OPT-005).
+    /// Returns the cached display list if valid, or builds and caches it.
     pub fn get_or_build(&mut self, root: &LayoutBox, scroll_y: f32) -> DisplayList {
         self.get_or_build_xy(root, 0.0, scroll_y)
     }
@@ -91,7 +91,7 @@ impl DisplayListCache {
         list
     }
 
-    /// Invalidate the display list cache with an optional dirty region (OPT-005).
+    /// Invalidate the display list cache with an optional dirty region.
     pub fn invalidate(&mut self, region: Option<Rect>) {
         self.cached_list = None;
         if let Some(r) = region {
@@ -114,7 +114,7 @@ impl DisplayListCache {
         self.cached_list.is_some()
     }
 
-    /// Updates the cached display list with a newly built one and computes the diff (ARCH-004).
+    /// Updates the cached display list with a newly built one and computes the diff.
     ///
     /// If an old display list was cached, this returns a `DisplayListDiff` with the minimal
     /// changed commands and consolidated damage rect. Otherwise, it treats the entire new list
@@ -435,15 +435,23 @@ fn render_layout_box_inner(
                 }
             }
 
-            // Modal dialog backdrop: dimming overlay covering viewport
-            if box_node.tag_name.as_deref() == Some("dialog")
+            // Modal dialog / popover backdrop: dimming overlay covering viewport
+            let is_modal_dialog = box_node.tag_name.as_deref() == Some("dialog")
                 && box_node.get_attribute("open").is_some()
-                && box_node.get_attribute("data-mango-modal") == Some("true")
-            {
+                && box_node.get_attribute("data-mango-modal") == Some("true");
+            let is_auto_popover = (box_node.get_attribute("data-mango-popover-open") == Some("true")
+                || box_node.get_attribute(":popover-open") == Some("true"))
+                && box_node.get_attribute("popover") != Some("manual");
+
+            if is_modal_dialog || is_auto_popover {
                 let backdrop_rect = Rect::new(0.0, 0.0, 100_000.0, 100_000.0);
                 list.push(DisplayCommand::FillRect {
                     rect: backdrop_rect,
-                    color: Color::rgba(0, 0, 0, 102), // 0.4 dimming backdrop
+                    color: if is_modal_dialog {
+                        Color::rgba(0, 0, 0, 102) // 0.4 dimming backdrop
+                    } else {
+                        Color::rgba(0, 0, 0, 25) // subtle backdrop for popover
+                    },
                 });
             }
 
@@ -2033,7 +2041,7 @@ fn render_form_control(
                     }
                 }
                 "range" => {
-                    // Slider track + filled portion + draggable thumb (GAP-024).
+                    // Slider track + filled portion + draggable thumb
                     let min_v: f32 = box_node
                         .get_attribute("min")
                         .and_then(|v| v.parse().ok())
@@ -2095,7 +2103,7 @@ fn render_form_control(
                     });
                 }
                 "color" => {
-                    // Color swatch + hex label; clicking opens the palette picker (GAP-024).
+                    // Color swatch + hex label; clicking opens the palette picker.
                     let raw = box_node.get_attribute("value").unwrap_or("#000000");
                     let swatch_color =
                         mango_css::values::Value::parse_color(raw).unwrap_or(Color::rgb(0, 0, 0));
@@ -2138,7 +2146,7 @@ fn render_form_control(
                     ));
                 }
                 "file" => {
-                    // "Choose file..." button + selected filename (GAP-024).
+                    // "Choose file..." button + selected filename.
                     let filename = box_node
                         .get_attribute("data-mango-filename")
                         .map(|s| s.to_string())
@@ -2700,9 +2708,18 @@ enum PaintLayer {
     ZeroOrAutoZ,
     /// Positioned children with positive z-index (CSS 2.1 App E layer 7)
     PositiveZ(i32),
+    /// Top-layer elements (modal dialogs and open popovers) rendered above all normal z-index stacking contexts
+    TopLayer(u32),
 }
 
 fn paint_layer_of(box_node: &LayoutBox) -> PaintLayer {
+    let is_top_layer = (box_node.tag_name.as_deref() == Some("dialog")
+        && box_node.get_attribute("open").is_some())
+        || box_node.get_attribute("data-mango-popover-open") == Some("true")
+        || box_node.get_attribute(":popover-open") == Some("true");
+    if is_top_layer {
+        return PaintLayer::TopLayer(1);
+    }
     if let Some(s) = &box_node.style {
         let creates_stacking_context = s.position != mango_css::values::Position::Static
             || s.opacity < 1.0
@@ -3452,6 +3469,7 @@ mod tests {
                     position: Some(0.0),
                     end_position: None,
                     is_current_color: true,
+                    var_name: None,
                 },
                 mango_css::values::ColorStop::new(Color::TRANSPARENT, Some(1.0), None),
             ],
@@ -4307,6 +4325,41 @@ mod tests {
         assert!(cache.is_cached());
         assert_eq!(cache.dirty_regions().len(), 0);
         assert_eq!(dl1.len(), dl3.len());
+    }
+
+    #[test]
+    fn test_display_list_cache_update_and_diff() {
+        let mut cache = DisplayListCache::new();
+        let mut dl1 = DisplayList::new();
+        dl1.push(DisplayCommand::FillRect {
+            rect: Rect::new(0.0, 0.0, 100.0, 100.0),
+            color: Color::RED,
+        });
+        dl1.push(DisplayCommand::FillRect {
+            rect: Rect::new(0.0, 100.0, 100.0, 100.0),
+            color: Color::BLUE,
+        });
+
+        // Initial diff with empty cache
+        let diff1 = cache.update_and_diff(dl1.clone(), 0.0);
+        assert!(!diff1.is_identical);
+        assert!(cache.is_cached());
+
+        // Identical update: no dirty rects
+        let diff2 = cache.update_and_diff(dl1.clone(), 0.0);
+        assert!(diff2.is_identical);
+        assert_eq!(diff2.damage_rect(), None);
+
+        // Modified update: only changed command is damaged
+        let mut dl2 = dl1.clone();
+        dl2.push(DisplayCommand::FillRect {
+            rect: Rect::new(50.0, 50.0, 20.0, 20.0),
+            color: Color::GREEN,
+        });
+        let diff3 = cache.update_and_diff(dl2, 0.0);
+        assert!(!diff3.is_identical);
+        assert_eq!(diff3.damage_rect(), Some(Rect::new(50.0, 50.0, 20.0, 20.0)));
+        assert!(cache.dirty_regions().contains(&Rect::new(50.0, 50.0, 20.0, 20.0)));
     }
 
     #[test]

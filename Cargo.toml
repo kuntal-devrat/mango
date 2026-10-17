@@ -11,10 +11,11 @@ members = [
     "crates/mango_platform",
     "crates/mango_events",
     "crates/mango_engine",
+    "crates/mango_ipc",
 ]
 
 [workspace.package]
-version = "0.2.2"
+version = "0.2.3"
 edition = "2024"
 authors = ["Mango Contributors"]
 license = "MIT"
@@ -32,6 +33,7 @@ mango_js = { path = "crates/mango_js" }
 mango_platform = { path = "crates/mango_platform" }
 mango_events = { path = "crates/mango_events" }
 mango_engine = { path = "crates/mango_engine" }
+mango_ipc = { path = "crates/mango_ipc" }
 
 # External dependencies (pinned versions)
 winit = "0.30"
@@ -44,14 +46,13 @@ log = "0.4"
 env_logger = "0.11"
 ureq = { version = "3.4", default-features = false, features = ["rustls", "gzip", "brotli"] }
 arboard = "3.4"
-boa_engine = "0.22"
-boa_gc = "0.22"
 wuff = "0.2.9"
 lgpu = "0.1.2"
 naga = { version = "30", default-features = false, features = ["wgsl-in", "spv-out"] }
 bytemuck = { version = "1.25", features = ["derive"] }
 pollster = "1.0"
 serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
 rayon = "1.10"
 deno_core = "0.412.0"
 getrandom = "0.2"
@@ -77,6 +78,14 @@ path = "src/main.rs"
 name = "headless"
 path = "src/bin/headless.rs"
 
+[[bin]]
+name = "wpt-runner"
+path = "src/bin/wpt_runner.rs"
+
+[[bin]]
+name = "wpt-reftest-runner"
+path = "src/bin/wpt_reftest_runner.rs"
+
 [dependencies]
 mango_core.workspace = true
 mango_html.workspace = true
@@ -88,6 +97,7 @@ mango_net.workspace = true
 mango_js.workspace = true
 mango_events.workspace = true
 mango_engine.workspace = true
+mango_ipc.workspace = true
 image.workspace = true
 log.workspace = true
 env_logger.workspace = true
@@ -95,6 +105,9 @@ winit.workspace = true
 arboard.workspace = true
 fontdue.workspace = true
 rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
 
 [profile.release]
 opt-level = "z"     # Optimize for size

@@ -17,8 +17,15 @@ use tiny_skia::{
 use crate::image_decode::DecodedImage;
 
 /// Bounded memory cache for rendered SVG pixmaps.
+struct SvgCacheEntry {
+    image: DecodedImage,
+    last_accessed: std::sync::atomic::AtomicU64,
+}
+
+static SVG_ACCESS_TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 struct BoundedSvgRenderStore<K: std::hash::Hash + Eq + Clone> {
-    entries: HashMap<K, DecodedImage>,
+    entries: HashMap<K, SvgCacheEntry>,
     total_bytes: usize,
     max_bytes: usize,
 }
@@ -39,26 +46,44 @@ impl<K: std::hash::Hash + Eq + Clone> BoundedSvgRenderStore<K> {
         }
 
         if let Some(old) = self.entries.remove(&key) {
-            self.total_bytes = self.total_bytes.saturating_sub(old.pixels.len() * 4);
+            self.total_bytes = self.total_bytes.saturating_sub(old.image.pixels.len() * 4);
         }
 
         while (self.total_bytes + entry_bytes > self.max_bytes || self.entries.len() >= 512)
             && !self.entries.is_empty()
         {
-            let Some(k) = self.entries.keys().next().cloned() else {
+            let oldest_key = self
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.last_accessed.load(std::sync::atomic::Ordering::Relaxed))
+                .map(|(k, _)| k.clone());
+
+            let Some(k) = oldest_key else {
                 break;
             };
             if let Some(removed) = self.entries.remove(&k) {
-                self.total_bytes = self.total_bytes.saturating_sub(removed.pixels.len() * 4);
+                self.total_bytes = self.total_bytes.saturating_sub(removed.image.pixels.len() * 4);
             }
         }
 
         self.total_bytes += entry_bytes;
-        self.entries.insert(key, img);
+        let tick = SVG_ACCESS_TICK.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.entries.insert(
+            key,
+            SvgCacheEntry {
+                image: img,
+                last_accessed: std::sync::atomic::AtomicU64::new(tick),
+            },
+        );
     }
 
     fn get(&self, key: &K) -> Option<&DecodedImage> {
-        self.entries.get(key)
+        let entry = self.entries.get(key)?;
+        entry.last_accessed.store(
+            SVG_ACCESS_TICK.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        Some(&entry.image)
     }
 
     #[allow(dead_code)]
@@ -81,7 +106,7 @@ fn svg_render_cache() -> &'static RwLock<BoundedSvgRenderStore<(String, u32, u32
 }
 
 /// Render an SVG XML string into a [`DecodedImage`] of `(target_w, target_h)` pixels.
-/// Caches both parsed SVG DOMs and rendered pixmaps to avoid re-parsing on every paint (OPT-008).
+/// Caches both parsed SVG DOMs and rendered pixmaps to avoid re-parsing on every paint.
 ///
 /// When `currentColor` is used in SVG attributes (`fill="currentColor"` or `stroke="currentColor"`),
 /// it resolves to the provided `current_color`.
@@ -98,14 +123,14 @@ pub fn render_svg(
     let color_key = current_color.to_argb_u32();
     let cache_key = (svg_xml.to_string(), target_w, target_h, color_key);
 
-    // 1. Check rendered pixmap cache (OPT-008)
+    // 1. Check rendered pixmap cache
     if let Ok(cache) = svg_render_cache().read()
         && let Some(img) = cache.get(&cache_key)
     {
         return Some(img.clone());
     }
 
-    // 2. Check parsed SVG DOM cache (OPT-008)
+    // 2. Check parsed SVG DOM cache
     let doc: std::sync::Arc<SvgDocument> = {
         let parsed_opt = if let Ok(cache) = svg_doc_cache().read() {
             cache.get(svg_xml).cloned()

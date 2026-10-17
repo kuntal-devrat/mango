@@ -15,8 +15,14 @@ pub struct Declaration {
 
 impl Declaration {
     pub fn new(name: impl Into<String>, value: Value, important: bool) -> Self {
+        let name_str = name.into();
+        let name = if name_str.starts_with("--") {
+            name_str
+        } else {
+            name_str.to_ascii_lowercase()
+        };
         Self {
-            name: name.into().to_ascii_lowercase(),
+            name,
             value,
             important,
         }
@@ -123,6 +129,9 @@ impl Declaration {
             "column-rule" => expand_column_rule_shorthand(&self.value, important),
             "text-emphasis" => expand_text_emphasis_shorthand(&self.value, important),
             "container" => expand_container_shorthand(&self.value, important),
+            "contain-intrinsic-size" => {
+                expand_contain_intrinsic_size_shorthand(&self.value, important)
+            }
 
             _ => vec![self.clone()],
         }
@@ -197,6 +206,24 @@ fn expand_container_shorthand(value: &Value, important: bool) -> Vec<Declaration
             }
         }
         _ => vec![Declaration::new("container", value.clone(), important)],
+    }
+}
+
+/// Expands `contain-intrinsic-size` into `contain-intrinsic-width` and `contain-intrinsic-height`.
+fn expand_contain_intrinsic_size_shorthand(value: &Value, important: bool) -> Vec<Declaration> {
+    match value {
+        Value::List(items) if items.len() >= 2 => {
+            vec![
+                Declaration::new("contain-intrinsic-width", items[0].clone(), important),
+                Declaration::new("contain-intrinsic-height", items[1].clone(), important),
+            ]
+        }
+        single => {
+            vec![
+                Declaration::new("contain-intrinsic-width", single.clone(), important),
+                Declaration::new("contain-intrinsic-height", single.clone(), important),
+            ]
+        }
     }
 }
 

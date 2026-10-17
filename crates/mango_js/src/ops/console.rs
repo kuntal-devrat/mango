@@ -1,5 +1,5 @@
-use deno_core::{op2, OpState};
 use crate::console::{ConsoleBuffer, ConsoleLevel, ConsoleMessage};
+use deno_core::{OpState, op2};
 
 #[op2(fast)]
 pub fn op_mango_console(state: &mut OpState, level: u32, #[string] text: String) {

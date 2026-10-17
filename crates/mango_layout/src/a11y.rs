@@ -1,4 +1,4 @@
-//! # Accessibility (A11y) Tree & ARIA Engine (GAP-020)
+//! # Accessibility (A11y) Tree & ARIA Engine
 //!
 //! Converts DOM elements and layout boxes into an accessible tree conforming to
 //! W3C WAI-ARIA 1.2 and the HTML Accessibility API Mappings (AAM).

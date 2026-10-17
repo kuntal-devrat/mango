@@ -1,4 +1,4 @@
-//! # HTTP/2 Protocol Engine (GAP-014)
+//! # HTTP/2 Protocol Engine
 //!
 //! Implements the HTTP/2 binary framing layer and multiplexing session model conforming to
 //! RFC 7540 and RFC 9113.
@@ -192,12 +192,44 @@ impl Http2Frame {
         Self::new(FrameType::WindowUpdate, 0x0, stream_id, payload)
     }
 
+    /// Creates a PRIORITY frame (RFC 7540 §6.3 / RFC 9113).
+    pub fn priority(stream_id: u32, priority: StreamPriority) -> Self {
+        let mut payload = [0u8; 5];
+        let dep = (priority.parent_stream_id & 0x7FFF_FFFF)
+            | if priority.exclusive {
+                0x8000_0000
+            } else {
+                0
+            };
+        payload[..4].copy_from_slice(&dep.to_be_bytes());
+        payload[4] = priority.weight.saturating_sub(1);
+        Self::new(FrameType::Priority, 0x0, stream_id, payload.to_vec())
+    }
+
     /// Serializes the entire frame into a byte vector.
     pub fn serialize(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(9 + self.payload.len());
         bytes.extend_from_slice(&self.header.serialize());
         bytes.extend_from_slice(&self.payload);
         bytes
+    }
+}
+
+/// Stream prioritization parameters (RFC 7540 §5.3 / RFC 9113).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StreamPriority {
+    pub parent_stream_id: u32,
+    pub weight: u8,
+    pub exclusive: bool,
+}
+
+impl Default for StreamPriority {
+    fn default() -> Self {
+        Self {
+            parent_stream_id: 0,
+            weight: 16,
+            exclusive: false,
+        }
     }
 }
 
@@ -219,6 +251,7 @@ pub struct Http2Stream {
     pub id: u32,
     pub state: StreamState,
     pub window_size: i32,
+    pub priority: StreamPriority,
     pub request_headers: HashMap<String, String>,
     pub response_headers: HashMap<String, String>,
     pub response_body: Vec<u8>,
@@ -230,6 +263,7 @@ impl Http2Stream {
             id,
             state: StreamState::Idle,
             window_size: initial_window,
+            priority: StreamPriority::default(),
             request_headers: HashMap::new(),
             response_headers: HashMap::new(),
             response_body: Vec::new(),
@@ -245,6 +279,8 @@ pub struct Http2Session {
     pub initial_window_size: i32,
     pub connection_window_size: i32,
     pub streams: HashMap<u32, Http2Stream>,
+    pub hpack_encoder: crate::hpack::HpackEncoder,
+    pub hpack_decoder: crate::hpack::HpackDecoder,
     pub preface_sent: bool,
 }
 
@@ -263,6 +299,8 @@ impl Http2Session {
             initial_window_size: 65535,
             connection_window_size: 65535,
             streams: HashMap::new(),
+            hpack_encoder: crate::hpack::HpackEncoder::new(),
+            hpack_decoder: crate::hpack::HpackDecoder::new(),
             preface_sent: false,
         }
     }
@@ -290,6 +328,31 @@ impl Http2Session {
         stream.state = StreamState::Open;
         self.streams.insert(stream_id, stream);
         stream_id
+    }
+
+    /// Creates a HEADERS frame with HPACK compressed header block (RFC 7540 §6.2 / RFC 7541).
+    pub fn create_headers_frame(
+        &mut self,
+        stream_id: u32,
+        headers: &[(&str, &str)],
+        end_stream: bool,
+    ) -> Http2Frame {
+        let fields: Vec<crate::hpack::HeaderField> = headers
+            .iter()
+            .map(|(k, v)| crate::hpack::HeaderField::new(*k, *v))
+            .collect();
+        let payload = self.hpack_encoder.encode(&fields);
+        let mut flags = 0x4; // END_HEADERS
+        if end_stream {
+            flags |= 0x1; // END_STREAM
+        }
+        Http2Frame::new(FrameType::Headers, flags, stream_id, payload)
+    }
+
+    /// Decodes an HPACK compressed header block (RFC 7541).
+    pub fn decode_headers_payload(&mut self, payload: &[u8]) -> Result<Vec<(String, String)>, String> {
+        let fields = self.hpack_decoder.decode(payload)?;
+        Ok(fields.into_iter().map(|f| (f.name, f.value)).collect())
     }
 
     /// Handles an incoming HTTP/2 frame from the server.
@@ -354,11 +417,79 @@ impl Http2Session {
                 Ok(None)
             }
             FrameType::Headers => {
-                if let Some(stream) = self.streams.get_mut(&frame.header.stream_id)
-                    && frame.header.flags & 0x1 != 0
-                {
-                    // END_STREAM flag received
-                    stream.state = StreamState::HalfClosedRemote;
+                let mut payload = &frame.payload[..];
+                // RFC 7540 §6.2: Check PADDED flag (0x08)
+                let pad_len = if frame.header.flags & 0x08 != 0 {
+                    if payload.is_empty() {
+                        return Err("Invalid HEADERS frame: missing Pad Length".to_string());
+                    }
+                    let p = payload[0] as usize;
+                    payload = &payload[1..];
+                    p
+                } else {
+                    0
+                };
+
+                // RFC 7540 §6.2: Check PRIORITY flag (0x20)
+                let mut stream_prio = None;
+                if frame.header.flags & 0x20 != 0 {
+                    if payload.len() < 5 {
+                        return Err("Invalid HEADERS frame: missing Priority data".to_string());
+                    }
+                    let dep_raw = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+                    let exclusive = (dep_raw & 0x8000_0000) != 0;
+                    let parent_stream_id = dep_raw & 0x7FFF_FFFF;
+                    let weight = payload[4].saturating_add(1);
+                    stream_prio = Some(StreamPriority {
+                        parent_stream_id,
+                        weight,
+                        exclusive,
+                    });
+                    payload = &payload[5..];
+                }
+
+                // Strip trailing padding bytes
+                if pad_len > 0 {
+                    if payload.len() < pad_len {
+                        return Err("Invalid HEADERS frame: padding exceeds payload length".to_string());
+                    }
+                    payload = &payload[..payload.len() - pad_len];
+                }
+
+                if let Some(stream) = self.streams.get_mut(&frame.header.stream_id) {
+                    if let Some(prio) = stream_prio {
+                        stream.priority = prio;
+                    }
+                    if let Ok(fields) = self.hpack_decoder.decode(payload) {
+                        for field in fields {
+                            stream.response_headers.insert(field.name, field.value);
+                        }
+                    }
+                    if frame.header.flags & 0x1 != 0 {
+                        // END_STREAM flag received
+                        stream.state = StreamState::HalfClosedRemote;
+                    }
+                }
+                Ok(None)
+            }
+            FrameType::Priority => {
+                if frame.payload.len() >= 5 {
+                    let dep_raw = u32::from_be_bytes([
+                        frame.payload[0],
+                        frame.payload[1],
+                        frame.payload[2],
+                        frame.payload[3],
+                    ]);
+                    let exclusive = (dep_raw & 0x8000_0000) != 0;
+                    let parent_stream_id = dep_raw & 0x7FFF_FFFF;
+                    let weight = frame.payload[4].saturating_add(1);
+                    if let Some(stream) = self.streams.get_mut(&frame.header.stream_id) {
+                        stream.priority = StreamPriority {
+                            parent_stream_id,
+                            weight,
+                            exclusive,
+                        };
+                    }
                 }
                 Ok(None)
             }
@@ -391,7 +522,7 @@ impl Http2Session {
 }
 
 // ---------------------------------------------------------------------------
-// HTTP/2 Connection Pool (GAP-014)
+// HTTP/2 Connection Pool
 // ---------------------------------------------------------------------------
 
 use std::sync::{Arc, Mutex};
@@ -440,7 +571,7 @@ impl Http2ConnectionPool {
 }
 
 // ---------------------------------------------------------------------------
-// HTTP/3 & Alt-Svc Support (RFC 7838 / RFC 9114 / GAP-015)
+// HTTP/3 & Alt-Svc Support (RFC 7838 / RFC 9114)
 // ---------------------------------------------------------------------------
 
 /// An Alternative Service record indicating available HTTP protocols (e.g., HTTP/3 over QUIC).

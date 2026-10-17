@@ -46,7 +46,7 @@ impl ResourceLoader {
     /// Creates a `ResourceLoader` backed by a caller-owned cookie jar.
     ///
     /// Passing a shared jar lets the browser persist cookies across restarts
-    /// (GAP-016) and expose the same jar to `document.cookie`.
+    /// and expose the same jar to `document.cookie`.
     pub fn with_cookie_jar(jar: Arc<std::sync::Mutex<crate::cookies::CookieJar>>) -> Self {
         Self {
             client: HttpClient::with_cookie_jar(jar),
@@ -65,8 +65,7 @@ impl ResourceLoader {
     /// BOM → `Content-Type; charset=` → `<meta charset>` prescan → UTF-8.
     ///
     /// Stylesheets, scripts, and documents all follow the same rules as HTML
-    /// (PRD Phase 1.4 — `<meta charset>` detection, BOM sniffing, and
-    /// Content-Type charset handling).
+    /// (`<meta charset>` detection, BOM sniffing, and Content-Type charset handling).
     fn decode_text(body: &[u8], content_type: Option<&str>) -> String {
         let encoding = crate::encoding::detect_encoding(body, content_type);
         crate::encoding::decode_with(body, encoding)

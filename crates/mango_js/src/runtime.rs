@@ -1,6 +1,6 @@
 //! Central JavaScript runtime for the Mango browser.
 //!
-//! Wraps a Boa `Context` with registered DOM bindings, console, and Web APIs.
+//! Wraps a Google V8 isolate (`deno_core::JsRuntime`) with registered DOM bindings, console, and Web APIs.
 //! The browser creates one `JsRuntime` per page load and uses it to execute
 //! inline `<script>` tags and handle timer callbacks.
 
@@ -34,6 +34,30 @@ impl EventModifiers {
     };
 }
 
+/// RAII guard ensuring the V8 isolate is entered for the duration of a JS operation,
+/// and exited when idle so multiple isolates on the same thread (e.g. browser tabs)
+/// can be entered, dropped, or garbage-collected in any arbitrary order.
+pub(crate) struct IsolateScopeGuard(*mut deno_core::v8::Isolate);
+
+impl IsolateScopeGuard {
+    #[inline]
+    pub(crate) fn enter(isolate: &mut deno_core::v8::Isolate) -> Self {
+        unsafe {
+            isolate.enter();
+        }
+        Self(isolate as *mut _)
+    }
+}
+
+impl Drop for IsolateScopeGuard {
+    #[inline]
+    fn drop(&mut self) {
+        unsafe {
+            (*self.0).exit();
+        }
+    }
+}
+
 /// The Mango JavaScript runtime — one per page.
 pub struct JsRuntime {
     runtime: deno_core::JsRuntime,
@@ -43,6 +67,7 @@ pub struct JsRuntime {
     dom_dirty: DomDirtyFlag,
     status_text: SharedStatusText,
     pending_nav: web_apis::SharedPendingNav,
+    pending_open: web_apis::SharedPendingOpenWindow,
     /// Shared localStorage backing store — the browser may persist this to disk.
     pub local_storage: SharedLocalStorage,
     /// Shared sessionStorage backing store — tab-scoped, in-memory.
@@ -50,7 +75,7 @@ pub struct JsRuntime {
     /// Layout geometry published by the browser for measurement APIs.
     layout_bounds: dom_bindings::LayoutBounds,
     /// Shared cookie jar backing `document.cookie` — owned by the browser so
-    /// it can be persisted to the profile (GAP-016).
+    /// it can be persisted to the profile.
     cookie_jar: dom_bindings::CookieStore,
     /// Set of DOM nodes currently in the `:hover` chain (target and its ancestors).
     hovered_nodes: std::collections::HashSet<mango_html::dom::NodeId>,
@@ -60,6 +85,12 @@ pub struct JsRuntime {
     pub worker_manager: crate::worker::WorkerManager,
     /// Thread-safe manager for WebSockets.
     pub ws_manager: mango_net::WebSocketManager,
+    /// Thread-safe broker for BroadcastChannel instances.
+    pub broadcast_channel_hub: crate::broadcast_channel::BroadcastChannelHub,
+    /// Thread-safe manager for SharedWorker instances.
+    pub shared_worker_hub: crate::shared_worker::SharedWorkerHub,
+    /// Thread-safe coordinator for Web Locks API.
+    pub web_locks_engine: crate::web_locks::WebLocksEngine,
 }
 
 static TOKIO_RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
@@ -87,9 +118,21 @@ pub fn ensure_tokio_runtime() {
     }
 }
 
+impl Drop for JsRuntime {
+    fn drop(&mut self) {
+        unsafe {
+            self.runtime.v8_isolate().enter();
+        }
+    }
+}
 
 impl JsRuntime {
-    /// Creates a new JS runtime with a fresh Boa context, registers all
+    #[inline]
+    fn enter_isolate(&mut self) -> IsolateScopeGuard {
+        IsolateScopeGuard::enter(self.runtime.v8_isolate())
+    }
+
+    /// Creates a new JS runtime with a fresh V8 runtime, registers all
     /// DOM bindings, console, and Web API globals.
     pub fn new(document: Document, viewport_width: f32, viewport_height: f32) -> Self {
         Self::new_with_url(document, viewport_width, viewport_height, "about:blank")
@@ -113,8 +156,7 @@ impl JsRuntime {
 
     /// Creates a new JS runtime with a shared localStorage backing store.
     ///
-    /// Pass a pre-populated map to restore localStorage across page loads
-    /// (GAP-017 — localStorage persistence).
+    /// Pass a pre-populated map to restore localStorage across page loads.
     pub fn new_with_url_and_storage(
         document: Document,
         viewport_width: f32,
@@ -156,8 +198,6 @@ impl JsRuntime {
         )
     }
 
-
-
     /// Creates a new JS runtime with shared localStorage, tab-scoped sessionStorage, and cookie jar.
     pub fn new_with_url_storage_session_and_cookies(
         document: Document,
@@ -176,10 +216,14 @@ impl JsRuntime {
         let console_buffer = console::new_console_buffer();
         let status_text: SharedStatusText = Rc::new(RefCell::new(String::new()));
         let pending_nav: web_apis::SharedPendingNav = Rc::new(RefCell::new(None));
+        let pending_open: web_apis::SharedPendingOpenWindow = Rc::new(RefCell::new(None));
         let layout_bounds: dom_bindings::LayoutBounds =
             Rc::new(RefCell::new(std::collections::HashMap::new()));
         let worker_manager = crate::worker::WorkerManager::new();
         let ws_manager = mango_net::WebSocketManager::new();
+        let broadcast_channel_hub = crate::broadcast_channel::BroadcastChannelHub::new();
+        let shared_worker_hub = crate::shared_worker::SharedWorkerHub::new();
+        let web_locks_engine = crate::web_locks::WebLocksEngine::new();
 
         let mut runtime = deno_core::JsRuntime::new(deno_core::RuntimeOptions {
             extensions: vec![crate::ops::init_extension()],
@@ -195,12 +239,16 @@ impl JsRuntime {
             state.put(console_buffer.clone());
             state.put(status_text.clone());
             state.put(pending_nav.clone());
+            state.put(pending_open.clone());
             state.put(crate::ops::web::OpLocalStorage(local_storage.clone()));
             state.put(crate::ops::web::OpSessionStorage(session_storage.clone()));
             state.put(layout_bounds.clone());
             state.put(cookie_jar.clone());
             state.put(worker_manager.clone());
             state.put(ws_manager.clone());
+            state.put(broadcast_channel_hub.clone());
+            state.put(shared_worker_hub.clone());
+            state.put(web_locks_engine.clone());
             state.put(crate::ops::dom::PageUrl(page_url.to_string()));
         }
 
@@ -230,6 +278,10 @@ impl JsRuntime {
             ),
         );
 
+        unsafe {
+            runtime.v8_isolate().exit();
+        }
+
         Self {
             runtime,
             event_loop,
@@ -238,6 +290,7 @@ impl JsRuntime {
             dom_dirty,
             status_text,
             pending_nav,
+            pending_open,
             local_storage,
             session_storage,
             layout_bounds,
@@ -246,6 +299,9 @@ impl JsRuntime {
             active_nodes: std::collections::HashSet::new(),
             worker_manager,
             ws_manager,
+            broadcast_channel_hub,
+            shared_worker_hub,
+            web_locks_engine,
         }
     }
 
@@ -259,16 +315,34 @@ impl JsRuntime {
         self.ws_manager.clone()
     }
 
+    /// Returns the BroadcastChannel hub handle.
+    pub fn broadcast_channel_hub(&self) -> crate::broadcast_channel::BroadcastChannelHub {
+        self.broadcast_channel_hub.clone()
+    }
+
+    /// Returns the SharedWorker hub handle.
+    pub fn shared_worker_hub(&self) -> crate::shared_worker::SharedWorkerHub {
+        self.shared_worker_hub.clone()
+    }
+
+    /// Returns the WebLocks engine handle.
+    pub fn web_locks_engine(&self) -> crate::web_locks::WebLocksEngine {
+        self.web_locks_engine.clone()
+    }
+
     /// Executes an ES Module script and resolves any top-level exports or promises.
     pub fn execute_module(&mut self, source: &str) -> Result<(), String> {
+        let _guard = self.enter_isolate();
         let prev_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {}));
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let url = deno_core::url::Url::parse("mango://inline_module.js")
                 .map_err(|e| format!("URL parse error: {e}"))?;
             let mod_id = pollster::block_on(
-                self.runtime.load_main_es_module_from_code(&url, source.to_string())
-            ).map_err(|e| format!("Module load error: {e}"))?;
+                self.runtime
+                    .load_main_es_module_from_code(&url, source.to_string()),
+            )
+            .map_err(|e| format!("Module load error: {e}"))?;
             let eval_res = self.runtime.mod_evaluate(mod_id);
             pollster::block_on(eval_res).map_err(|e| format!("Module eval error: {e}"))?;
             Ok::<(), String>(())
@@ -310,8 +384,36 @@ impl JsRuntime {
         *self.layout_bounds.borrow_mut() = bounds;
     }
 
+    /// Sets cross-origin isolation status directly on the runtime.
+    pub fn set_cross_origin_isolated(&mut self, isolated: bool) {
+        let _ = self.execute_script(&format!("globalThis.__setCrossOriginIsolated({isolated});"));
+    }
+
+    /// Configures Cross-Origin-Opener-Policy (COOP) and Cross-Origin-Embedder-Policy (COEP)
+    /// headers, updating `crossOriginIsolated` per the HTML specification.
+    pub fn set_cross_origin_isolation_headers(&mut self, coop: &str, coep: &str) {
+        let _ = self.execute_script(&format!(
+            "globalThis.__setCrossOriginIsolationHeaders('{coop}', '{coep}');"
+        ));
+    }
+
+    /// Returns whether the JavaScript environment is currently cross-origin isolated.
+    pub fn is_cross_origin_isolated(&mut self) -> bool {
+        let _guard = self.enter_isolate();
+        let val = self.runtime.execute_script("<coi>", "globalThis.crossOriginIsolated");
+        match val {
+            Ok(global) => {
+                deno_core::v8::scope!(scope, self.runtime.v8_isolate());
+                let local = deno_core::v8::Local::new(scope, global);
+                local.is_true()
+            }
+            Err(_) => false,
+        }
+    }
+
     /// Executes a JavaScript source string (e.g., inline `<script>` content).
     pub fn execute_script(&mut self, source: &str) -> Result<(), String> {
+        let _guard = self.enter_isolate();
         let prev_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {}));
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -348,6 +450,7 @@ impl JsRuntime {
 
     /// Evaluates a JavaScript expression and returns its string result.
     pub fn eval(&mut self, source: &str) -> Result<String, String> {
+        let _guard = self.enter_isolate();
         let prev_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {}));
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -388,6 +491,7 @@ impl JsRuntime {
 
     /// Processes any expired timers and drains promise microtasks. Returns `true` if the DOM was mutated.
     pub fn tick(&mut self) -> bool {
+        let _guard = self.enter_isolate();
         let prev_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {}));
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -413,6 +517,7 @@ impl JsRuntime {
 
     /// Drains any queued Promise microtasks, MutationObserver callbacks, or deferred jobs.
     pub fn run_jobs(&mut self) {
+        let _guard = self.enter_isolate();
         deno_core::v8::scope!(scope, self.runtime.v8_isolate());
         scope.perform_microtask_checkpoint();
     }
@@ -442,14 +547,17 @@ impl JsRuntime {
 
     /// Requests a V8 low memory notification garbage collection cycle.
     pub fn gc(&mut self) {
+        let _guard = self.enter_isolate();
         self.runtime.v8_isolate().low_memory_notification();
     }
 
     fn eval_bool_script(&mut self, script: &str) -> Result<bool, String> {
+        let _guard = self.enter_isolate();
         let prev_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {}));
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.runtime.execute_script("<dispatch>", script.to_string())
+            self.runtime
+                .execute_script("<dispatch>", script.to_string())
         }));
         std::panic::set_hook(prev_hook);
 
@@ -513,6 +621,11 @@ impl JsRuntime {
     /// Takes any pending navigation URL requested by `location.href = ...`.
     pub fn take_pending_navigation(&mut self) -> Option<String> {
         self.pending_nav.borrow_mut().take()
+    }
+
+    /// Takes any pending window open request triggered by `window.open(url, target, features)`.
+    pub fn take_pending_open_window(&mut self) -> Option<web_apis::PendingWindowOpen> {
+        self.pending_open.borrow_mut().take()
     }
 
     /// Clears all timers (called on page navigation).
@@ -953,12 +1066,6 @@ impl JsRuntime {
     }
 }
 
-impl Drop for JsRuntime {
-    fn drop(&mut self) {
-        boa_gc::force_collect();
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -969,13 +1076,13 @@ mod tests {
         let doc = parse_html("<html><body></body></html>");
         let mut rt = JsRuntime::new(doc, 800.0, 600.0);
 
-        let result = rt.execute_script("console.log('Hello from Boa JS!', 42);");
+        let result = rt.execute_script("console.log('Hello from JS engine!', 42);");
         assert!(result.is_ok());
 
         let messages = rt.drain_console_messages();
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].level, console::ConsoleLevel::Log);
-        assert_eq!(messages[0].text, "Hello from Boa JS! 42");
+        assert_eq!(messages[0].text, "Hello from JS engine! 42");
     }
 
     #[test]
@@ -1103,6 +1210,48 @@ mod tests {
         "#;
         if let Err(e) = rt.execute_script(script) {
             panic!("Document test failed: {}", e);
+        }
+    }
+
+    #[test]
+    fn test_view_transitions_api() {
+        let doc = parse_html("<html><body><div id='content'>old</div></body></html>");
+        let mut rt = JsRuntime::new(doc, 800.0, 600.0);
+
+        let script = r#"
+            if (typeof document.startViewTransition !== 'function') {
+                throw new Error("document.startViewTransition should be a function");
+            }
+            if (typeof ViewTransition !== 'function') {
+                throw new Error("ViewTransition should be a global constructor");
+            }
+
+            var callbackCalled = false;
+            var vt = document.startViewTransition(function() {
+                callbackCalled = true;
+                document.getElementById('content').textContent = 'new';
+                return "done";
+            });
+
+            if (!(vt.ready instanceof Promise)) throw new Error("vt.ready should be a Promise");
+            if (!(vt.finished instanceof Promise)) throw new Error("vt.finished should be a Promise");
+            if (!(vt.updateCallbackDone instanceof Promise)) throw new Error("vt.updateCallbackDone should be a Promise");
+
+            // Level 2: types Set
+            if (!(vt.types instanceof Set)) throw new Error("vt.types should be a Set");
+            vt.types.add('slide-left');
+            vt.types.add('fade');
+            if (!vt.types.has('slide-left') || !vt.types.has('fade')) {
+                throw new Error("vt.types should store added types");
+            }
+
+            if (typeof vt.skipTransition !== 'function') {
+                throw new Error("vt.skipTransition should be a function");
+            }
+            vt.skipTransition();
+        "#;
+        if let Err(e) = rt.execute_script(script) {
+            panic!("View Transitions test failed: {}", e);
         }
     }
 
@@ -1551,20 +1700,76 @@ mod tests {
             var assigned = slot.assignedNodes();
             if (!Array.isArray(assigned)) throw new Error("assignedNodes not array");
 
-            // 4. CustomElementRegistry
+            // 4. CustomElementRegistry Lifecycle
             var connectedCalls = 0;
+            var disconnectedCalls = 0;
+            var attrChanges = [];
+
             function MyElement() {
                 HTMLElement.call(this);
             }
             MyElement.prototype = Object.create(HTMLElement.prototype);
+            MyElement.observedAttributes = ["data-count", "data-name"];
             MyElement.prototype.connectedCallback = function() {
                 connectedCalls++;
             };
+            MyElement.prototype.disconnectedCallback = function() {
+                disconnectedCalls++;
+            };
+            MyElement.prototype.attributeChangedCallback = function(name, oldVal, newVal) {
+                attrChanges.push({ name: name, oldVal: oldVal, newVal: newVal });
+            };
+
+            // CustomElement validation
+            var caught = false;
+            try {
+                customElements.define("invalidname", MyElement);
+            } catch(e) {
+                caught = true;
+            }
+            if (!caught) throw new Error("customElements.define should reject tag without hyphen");
 
             customElements.define("my-element", MyElement);
             if (customElements.get("my-element") !== MyElement) throw new Error("customElements.get failed");
             var myEl = document.createElement("my-element");
             if (!(myEl instanceof MyElement)) throw new Error("myEl not instance of MyElement");
+
+            // Append to body -> connectedCallback
+            document.body.appendChild(myEl);
+            if (connectedCalls !== 1) throw new Error("connectedCallback should have been called once on appendChild, got: " + connectedCalls);
+
+            // setAttribute -> attributeChangedCallback
+            myEl.setAttribute("data-count", "42");
+            if (attrChanges.length !== 1 || attrChanges[0].name !== "data-count" || attrChanges[0].newVal !== "42") {
+                throw new Error("attributeChangedCallback failed on setAttribute: " + JSON.stringify(attrChanges));
+            }
+
+            // removeAttribute -> attributeChangedCallback with null newVal
+            myEl.removeAttribute("data-count");
+            if (attrChanges.length !== 2 || attrChanges[1].name !== "data-count" || attrChanges[1].newVal !== null) {
+                throw new Error("attributeChangedCallback failed on removeAttribute: " + JSON.stringify(attrChanges));
+            }
+
+            // removeChild -> disconnectedCallback
+            document.body.removeChild(myEl);
+            if (disconnectedCalls !== 1) throw new Error("disconnectedCallback should have been called once on removeChild, got: " + disconnectedCalls);
+
+            // 5. Constructable Stylesheets & adoptedStyleSheets
+            if (typeof CSSStyleSheet !== "function") throw new Error("CSSStyleSheet constructor missing");
+            var sheet = new CSSStyleSheet();
+            sheet.replaceSync(".custom { color: purple; }");
+            if (sheet.cssRules.length !== 1) throw new Error("sheet.cssRules length mismatch");
+            if (sheet.cssRules[0].selectorText !== ".custom") throw new Error("sheet selectorText mismatch");
+
+            document.adoptedStyleSheets = [sheet];
+            if (document.adoptedStyleSheets.length !== 1 || document.adoptedStyleSheets[0] !== sheet) {
+                throw new Error("document.adoptedStyleSheets mismatch");
+            }
+
+            shadow.adoptedStyleSheets = [sheet];
+            if (shadow.adoptedStyleSheets.length !== 1 || shadow.adoptedStyleSheets[0] !== sheet) {
+                throw new Error("shadow.adoptedStyleSheets mismatch");
+            }
         "#;
 
         if let Err(e) = rt.execute_script(script) {
@@ -2333,7 +2538,7 @@ mod tests {
             panic!("test_core_js_engine failed: {}", e);
         }
 
-        // Verify that Boa microtasks drained synchronously via execute_script's context.run_jobs()
+        // Verify that engine microtasks drained synchronously via execute_script's context.run_jobs()
         let check_script = r#"
             if (!promiseRan) throw new Error("Promise microtask did not drain");
             if (!microtaskRan) throw new Error("queueMicrotask did not drain");
@@ -3866,7 +4071,7 @@ mod tests {
     }
 
     #[test]
-    fn test_phase4_8_1_web_idl_hierarchy() {
+    fn test_web_idl_hierarchy() {
         let doc = parse_html("<html><body><div id='d'></div><p id='p'></p></body></html>");
         let mut rt = JsRuntime::new(doc, 800.0, 600.0);
 
@@ -3942,7 +4147,7 @@ mod tests {
     }
 
     #[test]
-    fn test_phase4_8_1_threaded_web_workers() {
+    fn test_threaded_web_workers() {
         let doc = parse_html("<html><body></body></html>");
         let mut rt = JsRuntime::new(doc, 800.0, 600.0);
 
@@ -3982,7 +4187,7 @@ mod tests {
     }
 
     #[test]
-    fn test_phase4_8_1_websocket_live() {
+    fn test_websocket_live() {
         use std::io::{Read, Write};
         use std::net::TcpListener;
 
@@ -4074,7 +4279,7 @@ mod tests {
     }
 
     #[test]
-    fn test_phase4_8_1_es_modules() {
+    fn test_es_modules() {
         let doc = parse_html("<html><body></body></html>");
         let mut rt = JsRuntime::new(doc, 800.0, 600.0);
 
@@ -4099,7 +4304,7 @@ mod tests {
     }
 
     #[test]
-    fn test_phase4_8_3_html_dom_parity() {
+    fn test_html_dom_parity() {
         let html = r#"
             <html>
                 <body>
@@ -4250,4 +4455,358 @@ mod tests {
             .expect("eval audio and offscreen canvas test");
         assert_eq!(res, "ok");
     }
+
+    #[test]
+    fn test_window_open_returns_window_proxy() {
+        let doc = Document::new();
+        let mut rt = JsRuntime::new(doc, 1024.0, 768.0);
+        let script = r#"
+            (function() {
+                if (typeof window.open !== 'function') throw new Error("window.open is not a function");
+                if (typeof open !== 'function') throw new Error("open is not a function");
+
+                var popup = window.open("https://example.com/login", "_blank", "width=500,height=600");
+                if (!popup) throw new Error("window.open returned null");
+                if (popup.closed !== false) throw new Error("popup.closed must be false initially");
+                if (typeof popup.focus !== 'function') throw new Error("popup.focus is not a function");
+                if (typeof popup.close !== 'function') throw new Error("popup.close is not a function");
+                if (typeof popup.postMessage !== 'function') throw new Error("popup.postMessage is not a function");
+                if (popup.opener !== window) throw new Error("popup.opener must be window");
+
+                globalThis.receivedMessage = null;
+                popup.addEventListener("message", function(e) {
+                    globalThis.receivedMessage = e.data;
+                });
+                popup.postMessage("hello from opener", "*");
+                popup.focus();
+
+                globalThis.popupRef = popup;
+                return "ok";
+            })()
+        "#;
+        let res = rt.eval(script).expect("eval window.open test");
+        assert_eq!(res, "ok");
+
+        // Verify pending open window was captured
+        let pending = rt.take_pending_open_window();
+        assert!(pending.is_some());
+        let open_req = pending.unwrap();
+        assert_eq!(open_req.url, "https://example.com/login");
+        assert_eq!(open_req.target, "_blank");
+        assert_eq!(open_req.features, "width=500,height=600");
+
+        // Tick event loop to deliver the microtask postMessage
+        rt.tick();
+        let msg = rt.eval("globalThis.receivedMessage").expect("eval receivedMessage");
+        assert_eq!(msg, "hello from opener");
+
+        // Now close the popup and verify closed is true
+        let close_res = rt.eval(r#"
+            (function() {
+                var p = globalThis.popupRef;
+                p.close();
+                return p.closed ? "closed" : "open";
+            })()
+        "#).expect("close popup");
+        assert_eq!(close_res, "closed");
+    }
+
+    #[test]
+    fn test_compare_document_position() {
+        let mut doc = Document::new();
+        let body = doc.create_element("body", Vec::new());
+        let parent = doc.create_element("div", vec![("id".to_string(), "parent".to_string())]);
+        let child1 = doc.create_element("span", vec![("id".to_string(), "child1".to_string())]);
+        let child2 = doc.create_element("p", vec![("id".to_string(), "child2".to_string())]);
+        doc.append_child(body, parent);
+        doc.append_child(parent, child1);
+        doc.append_child(parent, child2);
+        let root = doc.root();
+        doc.append_child(root, body);
+
+        let mut rt = JsRuntime::new(doc, 1024.0, 768.0);
+        let script = r#"
+            (function() {
+                var parent = document.getElementById("parent");
+                var child1 = document.getElementById("child1");
+                var child2 = document.getElementById("child2");
+
+                if (!parent || !child1 || !child2) throw new Error("Elements not found");
+
+                // Self comparison
+                if (parent.compareDocumentPosition(parent) !== 0) {
+                    throw new Error("Self comparison must return 0");
+                }
+
+                // Parent to child: child is contained by parent and follows parent (16 | 4 = 20)
+                var p_to_c1 = parent.compareDocumentPosition(child1);
+                var expected_contained_by = Node.DOCUMENT_POSITION_CONTAINED_BY | Node.DOCUMENT_POSITION_FOLLOWING;
+                if (p_to_c1 !== expected_contained_by) {
+                    throw new Error("parent -> child1 expected " + expected_contained_by + " (20), got " + p_to_c1);
+                }
+
+                // Child to parent: parent contains child and precedes child (8 | 2 = 10)
+                var c1_to_p = child1.compareDocumentPosition(parent);
+                var expected_contains = Node.DOCUMENT_POSITION_CONTAINS | Node.DOCUMENT_POSITION_PRECEDING;
+                if (c1_to_p !== expected_contains) {
+                    throw new Error("child1 -> parent expected " + expected_contains + " (10), got " + c1_to_p);
+                }
+
+                // Sibling order: child1 comes before child2, so child2 follows child1 (4)
+                var c1_to_c2 = child1.compareDocumentPosition(child2);
+                if (c1_to_c2 !== Node.DOCUMENT_POSITION_FOLLOWING) {
+                    throw new Error("child1 -> child2 expected FOLLOWING (4), got " + c1_to_c2);
+                }
+
+                // Sibling order reverse: child1 precedes child2 (2)
+                var c2_to_c1 = child2.compareDocumentPosition(child1);
+                if (c2_to_c1 !== Node.DOCUMENT_POSITION_PRECEDING) {
+                    throw new Error("child2 -> child1 expected PRECEDING (2), got " + c2_to_c1);
+                }
+
+                // Disconnected node
+                var disconnected = document.createElement("div");
+                var disc_pos = parent.compareDocumentPosition(disconnected);
+                if ((disc_pos & Node.DOCUMENT_POSITION_DISCONNECTED) === 0) {
+                    throw new Error("disconnected node must have DISCONNECTED bit set");
+                }
+                if ((disc_pos & Node.DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC) === 0) {
+                    throw new Error("disconnected node must have IMPLEMENTATION_SPECIFIC bit set");
+                }
+
+                return "ok";
+            })()
+        "#;
+        let res = rt.eval(script).expect("eval compareDocumentPosition test");
+        assert_eq!(res, "ok");
+    }
+
+    #[test]
+    fn test_event_subclass_prototype_constructors() {
+        let doc = Document::new();
+        let mut rt = JsRuntime::new(doc, 1024.0, 768.0);
+        let script = r#"
+            (function() {
+                var classes = [
+                    [Event, new Event("test")],
+                    [UIEvent, new UIEvent("test")],
+                    [MouseEvent, new MouseEvent("click")],
+                    [PointerEvent, new PointerEvent("pointerdown")],
+                    [KeyboardEvent, new KeyboardEvent("keydown")],
+                    [FocusEvent, new FocusEvent("focus")],
+                    [InputEvent, new InputEvent("input")],
+                    [WheelEvent, new WheelEvent("wheel")],
+                    [DragEvent, new DragEvent("drag")],
+                    [TouchEvent, new TouchEvent("touchstart")],
+                    [CustomEvent, new CustomEvent("custom")],
+                    [HashChangeEvent, new HashChangeEvent("hashchange")],
+                    [PopStateEvent, new PopStateEvent("popstate")],
+                    [ErrorEvent, new ErrorEvent("error")],
+                    [StorageEvent, new StorageEvent("storage")],
+                    [TransitionEvent, new TransitionEvent("transitionend")],
+                    [AnimationEvent, new AnimationEvent("animationend")],
+                    [SubmitEvent, new SubmitEvent("submit")],
+                    [FormDataEvent, new FormDataEvent("formdata")],
+                    [PageTransitionEvent, new PageTransitionEvent("pagehide")],
+                    [MessageEvent, new MessageEvent("message")],
+                    [CloseEvent, new CloseEvent("close")]
+                ];
+
+                for (var i = 0; i < classes.length; i++) {
+                    var ctor = classes[i][0];
+                    var inst = classes[i][1];
+                    if (ctor.prototype.constructor !== ctor) {
+                        throw new Error(ctor.name + ".prototype.constructor !== " + ctor.name);
+                    }
+                    if (inst.constructor !== ctor) {
+                        throw new Error("instance of " + ctor.name + ".constructor !== " + ctor.name);
+                    }
+                    if (!(inst instanceof Event)) {
+                        throw new Error(ctor.name + " must be instanceof Event");
+                    }
+                }
+
+                return "ok";
+            })()
+        "#;
+        let res = rt.eval(script).expect("eval event constructor test");
+        assert_eq!(res, "ok");
+    }
+
+    #[test]
+    fn test_input_accessor_descriptors() {
+        let doc = mango_html::dom::Document::new();
+        let mut rt = JsRuntime::new(doc, 1024.0, 768.0);
+
+        let script = r#"
+            (function() {
+                var valueDesc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+                if (!valueDesc) throw new Error("HTMLInputElement.prototype.value descriptor missing");
+                if (typeof valueDesc.get !== 'function') throw new Error("value get not function");
+                if (typeof valueDesc.set !== 'function') throw new Error("value set not function");
+
+                var checkedDesc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked');
+                if (!checkedDesc) throw new Error("HTMLInputElement.prototype.checked descriptor missing");
+                if (typeof checkedDesc.get !== 'function') throw new Error("checked get not function");
+                if (typeof checkedDesc.set !== 'function') throw new Error("checked set not function");
+
+                var textDesc = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+                if (!textDesc || typeof textDesc.get !== 'function' || typeof textDesc.set !== 'function') {
+                    throw new Error("HTMLTextAreaElement.prototype.value descriptor invalid");
+                }
+
+                var selectDesc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
+                if (!selectDesc || typeof selectDesc.get !== 'function' || typeof selectDesc.set !== 'function') {
+                    throw new Error("HTMLSelectElement.prototype.value descriptor invalid");
+                }
+
+                // Verify input element interaction via prototype descriptor (React controlled input tracker pattern)
+                var input = document.createElement("input");
+                valueDesc.set.call(input, "foo");
+                if (input.value !== "foo") throw new Error("input.value after descriptor.set expected 'foo', got: " + input.value);
+                if (valueDesc.get.call(input) !== "foo") throw new Error("descriptor.get.call expected 'foo'");
+
+                checkedDesc.set.call(input, true);
+                if (input.checked !== true) throw new Error("input.checked after descriptor.set expected true");
+                if (checkedDesc.get.call(input) !== true) throw new Error("checkedDesc.get.call expected true");
+
+                // Simulate React 18 controlled component inputValueTracker hook
+                var trackedValue = input.value;
+                Object.defineProperty(input, 'value', {
+                    configurable: true,
+                    get: function() {
+                        return valueDesc.get.call(this);
+                    },
+                    set: function(val) {
+                        trackedValue = val;
+                        valueDesc.set.call(this, val);
+                    }
+                });
+
+                input.value = "react-controlled";
+                if (input.value !== "react-controlled") throw new Error("React simulated value mismatch");
+                if (trackedValue !== "react-controlled") throw new Error("React tracker value not updated");
+
+                return "ok";
+            })()
+        "#;
+        let res = rt.eval(script).expect("eval input accessor descriptor test");
+        assert_eq!(res, "ok");
+    }
+
+    #[test]
+    fn test_react_spa_platform_primitives() {
+        let doc = parse_html("<!DOCTYPE html><html><body><div id='root'></div></body></html>");
+        let mut rt = JsRuntime::new(doc, 1024.0, 768.0);
+
+        let script = r##"
+            (function() {
+                // 1. Node Environment shims
+                if (typeof process === 'undefined' || !process.env || process.env.NODE_ENV !== 'production') {
+                    throw new Error("process.env.NODE_ENV !== 'production'");
+                }
+                if (typeof global === 'undefined' || global !== globalThis) {
+                    throw new Error("global !== globalThis");
+                }
+
+                // 2. Document ownerDocument and getRootNode
+                if (document.ownerDocument !== null) {
+                    throw new Error("document.ownerDocument must be null");
+                }
+                if (document.getRootNode() !== document) {
+                    throw new Error("document.getRootNode() must return document");
+                }
+
+                var root = document.getElementById('root');
+                if (!root) throw new Error("root element not found");
+                if (root.ownerDocument !== document) {
+                    throw new Error("root.ownerDocument must be document");
+                }
+                if (root.getRootNode() !== document) {
+                    throw new Error("root.getRootNode() must be document");
+                }
+                if (!root.isConnected) {
+                    throw new Error("root.isConnected must be true");
+                }
+
+                var detached = document.createElement('div');
+                if (detached.ownerDocument !== document) {
+                    throw new Error("detached.ownerDocument must be document");
+                }
+                if (detached.getRootNode() !== detached) {
+                    throw new Error("detached.getRootNode() must be detached element itself");
+                }
+                if (detached.isConnected) {
+                    throw new Error("detached.isConnected must be false");
+                }
+
+                // 3. Comment hydration markers
+                var comment = document.createComment("");
+                if (comment.nodeType !== 8) {
+                    throw new Error("comment.nodeType must be 8");
+                }
+                if (comment.nodeName !== "#comment") {
+                    throw new Error("comment.nodeName must be #comment");
+                }
+                comment.data = "react-mount-point-unstable";
+                if (comment.data !== "react-mount-point-unstable") {
+                    throw new Error("comment.data mismatch: " + comment.data);
+                }
+                if (comment.ownerDocument !== document) {
+                    throw new Error("comment.ownerDocument must be document");
+                }
+                root.appendChild(comment);
+                if (!comment.isConnected) {
+                    throw new Error("attached comment must have isConnected true");
+                }
+
+                // 4. MessageChannel & MessagePort
+                if (typeof MessageChannel !== 'function' || typeof MessagePort !== 'function') {
+                    throw new Error("MessageChannel / MessagePort not defined");
+                }
+                globalThis.channel = new MessageChannel();
+                globalThis.port1Received = null;
+                globalThis.channel.port1.onmessage = function(ev) {
+                    globalThis.port1Received = ev.data;
+                };
+                globalThis.channel.port2.postMessage({ type: 'schedule-work', deadline: 16 });
+
+                // 5. composedPath
+                var btn = document.createElement('button');
+                var detachedPath = null;
+                btn.addEventListener('click', function(e) {
+                    detachedPath = e.composedPath();
+                });
+                btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+                if (!detachedPath || detachedPath.length !== 1 || detachedPath[0] !== btn) {
+                    throw new Error("detached composedPath must contain only the detached node");
+                }
+
+                root.appendChild(btn);
+                var attachedPath = null;
+                btn.addEventListener('click', function(e) {
+                    attachedPath = e.composedPath();
+                });
+                btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+                if (!attachedPath || attachedPath.indexOf(document) === -1 || attachedPath.indexOf(window) === -1) {
+                    throw new Error("attached composedPath must bubble up to document and window");
+                }
+
+                return "ok";
+            })()
+        "##;
+
+        let res = rt.eval(script).expect("eval react spa platform primitives");
+        assert_eq!(res, "ok");
+
+        // Drain event loop / microtasks to let MessagePort deliver message
+        rt.run_jobs();
+        let check_channel = rt.eval("(function() { return (typeof channel !== 'undefined' && port1Received && port1Received.type === 'schedule-work') ? 'channel-ok' : 'pending'; })()");
+        // Verify port communication delivered
+        assert_eq!(check_channel.unwrap(), "channel-ok");
+    }
 }
+
+
+
+

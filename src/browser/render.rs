@@ -1,18 +1,18 @@
 //! Page layout, styling, display list construction, and rendering.
 
-use std::collections::HashMap;
+use super::BrowserChrome;
+use super::forms::truncate_label;
+use super::types::DocumentView;
+use crate::chrome_ui::*;
+use crate::form_handler::*;
 use mango_core::{Color, Rect, Size};
-use mango_css::computed::ComputedStyle;
 use mango_css::Stylesheet;
+use mango_css::computed::ComputedStyle;
 use mango_html::parse_html;
 use mango_layout::layout_document;
 use mango_render::display_list::{BorderWidths, DisplayCommand, DisplayList};
 use mango_render::{FontFamily, FontWeight};
-use crate::chrome_ui::*;
-use crate::form_handler::*;
-use super::BrowserChrome;
-use super::forms::truncate_label;
-use super::types::DocumentView;
+use std::collections::HashMap;
 
 pub(crate) fn canvas_background_color(root: &mango_layout::box_tree::LayoutBox) -> Color {
     if let Some(style) = &root.style {
@@ -29,7 +29,6 @@ pub(crate) fn canvas_background_color(root: &mango_layout::box_tree::LayoutBox) 
     }
     CONTENT_BG
 }
-
 
 impl BrowserChrome {
     /// Borrows the currently active DOM without cloning it.
@@ -187,7 +186,6 @@ impl BrowserChrome {
         self.page_dirty = true;
     }
 
-
     /// Returns the true scrollable document height scanning all layout boxes.
     pub fn scrollable_height(&self) -> f32 {
         if self.cached_scrollable_height > 0.0 {
@@ -204,7 +202,6 @@ impl BrowserChrome {
         (doc_h - content_h).max(0.0)
     }
 
-
     /// Builds the complete display list for the browser window.
     pub fn build_display_list(&self, (width, height): (u32, u32)) -> DisplayList {
         let mut dl = DisplayList::new();
@@ -220,7 +217,7 @@ impl BrowserChrome {
             color: self.canvas_bg,
         });
 
-        // Translate & clip page commands (OPT-005 display list cache)
+        // Translate & clip page commands via display list cache
         let page_dl = if let Some(root) = &self.root_box {
             self.display_list_cache
                 .lock()
@@ -263,12 +260,7 @@ impl BrowserChrome {
                         && translated_y <= content_y + content_h
                     {
                         dl.push(DisplayCommand::FillRoundedRect {
-                            rect: Rect::new(
-                                rect.x(),
-                                translated_y,
-                                rect.width(),
-                                rect.height(),
-                            ),
+                            rect: Rect::new(rect.x(), translated_y, rect.width(), rect.height()),
                             color,
                             radii,
                         });
@@ -285,12 +277,7 @@ impl BrowserChrome {
                         && translated_y <= content_y + content_h
                     {
                         dl.push(DisplayCommand::DrawBorder {
-                            rect: Rect::new(
-                                rect.x(),
-                                translated_y,
-                                rect.width(),
-                                rect.height(),
-                            ),
+                            rect: Rect::new(rect.x(), translated_y, rect.width(), rect.height()),
                             color,
                             widths,
                             radii,
@@ -1697,7 +1684,16 @@ impl BrowserChrome {
             }
         }
 
-        // ── DEVTOOLS & INSPECTOR PANEL (GAP-022) ──
+        // ══════════════════════════════════════════════════════════════════════
+        // ── PART 6B: HTML5 CONSTRAINT VALIDATION BUBBLE OVERLAY              ──
+        // ══════════════════════════════════════════════════════════════════════
+        if let Some(bubble) = &self.validation_bubble {
+            for cmd in bubble.render() {
+                dl.push(cmd);
+            }
+        }
+
+        // ── DEVTOOLS & INSPECTOR PANEL ──
         if self.devtools.is_open {
             // Borrowed view: the inspector repaints every frame while it is open.
             let doc = self.document_view();
@@ -1827,5 +1823,4 @@ impl BrowserChrome {
 
         dl
     }
-
 }

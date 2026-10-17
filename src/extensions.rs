@@ -1,4 +1,4 @@
-//! # Browser Extension & Add-on API (GAP-023)
+//! # Browser Extension & Add-on API
 //!
 //! Provides a Manifest V2/V3 extension system supporting:
 //! - Manifest parsing (`manifest.json` with permissions, content scripts, metadata)
@@ -166,7 +166,7 @@ impl ExtensionManifest {
 }
 
 /// Wraps content script code in an isolated world IIFE so it doesn't pollute
-/// the page's global variables and provides an isolated `chrome` / `browser` namespace (ARCH-007).
+/// the page's global variables and provides an isolated `chrome` / `browser` namespace.
 pub fn wrap_isolated_script(js_code: &str, ext_id: &str) -> String {
     format!(
         "(() => {{\n  // Mango Isolated World sandbox: {}\n  const chrome = {{ runtime: {{ id: {:?} }} }};\n  const browser = chrome;\n  try {{\n{}\n  }} catch(e) {{\n    console.error('[Extension {} Error]:', e);\n  }}\n}})();",
@@ -256,7 +256,7 @@ impl ExtensionManager {
                 continue;
             }
 
-            // Verify host permissions before allowing script execution on this URL (ARCH-007)
+            // Verify host permissions before allowing script execution on this URL
             if !ext.manifest.has_host_permission(url) {
                 continue;
             }
@@ -272,7 +272,7 @@ impl ExtensionManager {
                         css_scripts.push(css.clone());
                     }
                     for js in &cs.js_code {
-                        // Inject in an isolated world sandbox (ARCH-007)
+                        // Inject in an isolated world sandbox
                         js_scripts.push(wrap_isolated_script(js, &ext.id));
                     }
                 }

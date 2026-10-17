@@ -3,7 +3,7 @@
 /// Pre-populates Wikipedia Vector 2022 appearance controls (Text size, Width, Color)
 /// if the server HTML contains an empty `#vector-appearance` container.
 pub fn preprocess_wikipedia_appearance_html(html: &mut String, url: &str) {
-    // Only apply Wikipedia appearance preprocessing to legitimate Wikipedia origins (H-09)
+    // Only apply Wikipedia appearance preprocessing to legitimate Wikipedia origins.
     let is_wikipedia = mango_net::Url::parse(url)
         .ok()
         .and_then(|u| u.host)
@@ -441,7 +441,7 @@ pub fn tables_test_html() -> String {
                 </tr>
                 <tr>
                     <td>JavaScript Engine</td>
-                    <td>Boa Engine + Web API Polyfills</td>
+                    <td>Google V8 (deno_core) + Web API Polyfills</td>
                     <td>100% Passed</td>
                 </tr>
                 <tr>

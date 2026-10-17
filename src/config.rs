@@ -171,4 +171,3 @@ mod tests {
         assert_eq!(cfg2.default_font_size, 144.0);
     }
 }
-

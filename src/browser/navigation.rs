@@ -1,26 +1,23 @@
 //! URL navigation, document loading, subresource pipelines, and page lifecycle.
 
-use std::collections::HashMap;
-use mango_css::{parse_stylesheet, Stylesheet};
+use mango_css::{Stylesheet, parse_stylesheet};
 use mango_html::dom::{Document, NodeData, NodeId};
 use mango_html::parse_html;
 use mango_js::JsRuntime;
 use mango_net::{FetchedDocument, ResourceLoader, Url};
 use mango_render::display_list::DisplayList;
-use mango_render::{
-    cache_image, decode_data_uri, font_manager, get_cached_image, FontWeight,
-};
+use mango_render::{FontWeight, cache_image, decode_data_uri, font_manager, get_cached_image};
+use std::collections::HashMap;
 
-use crate::chrome_ui::*;
-use crate::navigation::*;
 use super::BrowserChrome;
 use super::forms::find_element_by_id;
 use super::types::{
-    assert_not_on_ui_thread, fetch_with_timeout, PreparedDocument, ScriptToRun,
-    MAX_CONCURRENT_FETCHES, SUBRESOURCE_FETCH_TIMEOUT, SYNC_NAVIGATION_TIMEOUT,
+    MAX_CONCURRENT_FETCHES, PreparedDocument, SUBRESOURCE_FETCH_TIMEOUT, SYNC_NAVIGATION_TIMEOUT,
+    ScriptToRun, assert_not_on_ui_thread, fetch_with_timeout,
 };
 use super::welcome::{preprocess_wikipedia_appearance_html, resolve_navigation_input};
-
+use crate::chrome_ui::*;
+use crate::navigation::*;
 
 /// Prepares a fetched document on a background worker thread: parsing HTML, prefetching
 /// external stylesheets, web fonts, and scripts, so the main UI thread never blocks on I/O.
@@ -54,6 +51,7 @@ pub fn prepare_document_pipeline_from_doc(
         mango_net::encoding::Encoding::Utf8,
         Vec::new(),
         should_cancel,
+        true,
     )
 }
 
@@ -71,7 +69,7 @@ pub fn prepare_document_pipeline_cancellable(
     let final_url = doc_result.url.clone();
     preprocess_wikipedia_appearance_html(&mut doc_result.html, &final_url.as_str());
 
-    // Speculative Preload Scanner & Incremental Parser (GAP-002, PRD 10.3, Phase 3.1)
+    // Speculative Preload Scanner & Incremental Parser
     let mut inc_parser = mango_html::IncrementalParser::new();
     let early_hints = inc_parser.feed_str(&doc_result.html);
 
@@ -89,9 +87,11 @@ pub fn prepare_document_pipeline_cancellable(
         doc_result.encoding,
         early_hints,
         should_cancel,
+        false,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn prepare_document_pipeline_internal(
     loader: &ResourceLoader,
     doc: mango_html::Document,
@@ -102,6 +102,7 @@ fn prepare_document_pipeline_internal(
     encoding: mango_net::encoding::Encoding,
     early_hints: Vec<mango_html::PreloadHint>,
     should_cancel: &dyn Fn() -> bool,
+    is_progressive: bool,
 ) -> PreparedDocument {
     let preload_scan = loader.scan_and_preload(&html, &final_url, None);
 
@@ -151,11 +152,17 @@ fn prepare_document_pipeline_internal(
         );
     }
 
-    if !should_cancel() {
-        load_web_fonts(loader, Some(&final_url), &cached_stylesheets);
-    }
-    if !should_cancel() {
-        load_web_fonts(loader, Some(&final_url), &inline_sheets);
+    if !is_progressive && !should_cancel() {
+        load_web_fonts_async(
+            loader.clone(),
+            Some(final_url.clone()),
+            cached_stylesheets.clone(),
+        );
+        load_web_fonts_async(
+            loader.clone(),
+            Some(final_url.clone()),
+            inline_sheets.clone(),
+        );
     }
 
     let mut raw_scripts = Vec::new();
@@ -178,12 +185,15 @@ fn prepare_document_pipeline_internal(
         }
     }
 
-    const MAX_PRELOAD_SCRIPTS: usize = 128;
+    const MAX_PRELOAD_SCRIPTS: usize = 24;
+    const SCRIPT_FETCH_TIMEOUT: std::time::Duration = SUBRESOURCE_FETCH_TIMEOUT;
     let mut to_fetch: Vec<(usize, String)> = Vec::new();
-    for (idx, s) in raw_scripts.iter().enumerate() {
-        if let ScriptToRun::External { src, .. } = s {
-            if to_fetch.len() < MAX_PRELOAD_SCRIPTS {
-                to_fetch.push((idx, src.clone()));
+    if !is_progressive {
+        for (idx, s) in raw_scripts.iter().enumerate() {
+            if let ScriptToRun::External { src, .. } = s {
+                if to_fetch.len() < MAX_PRELOAD_SCRIPTS {
+                    to_fetch.push((idx, src.clone()));
+                }
             }
         }
     }
@@ -211,27 +221,11 @@ fn prepare_document_pipeline_internal(
                 if let Err(e) = std::thread::Builder::new()
                     .name("mango-script-fetch".to_string())
                     .spawn(move || {
-                        if src.trim_start().starts_with("data:") {
-                            let res = loader.fetch_script(&base, &src);
-                            let _ = tx.send((idx, res));
-                            return;
+                        let res = loader.fetch_script(&base, &src);
+                        if let Err(ref err) = res {
+                            log::warn!("Background fetch_script error for {src}: {err}");
                         }
-                        match fetch_with_timeout(
-                            {
-                                let loader = loader.clone();
-                                let base = base.clone();
-                                let src = src.clone();
-                                move || loader.fetch_script(&base, &src)
-                            },
-                            SUBRESOURCE_FETCH_TIMEOUT,
-                        ) {
-                            Ok(res) => {
-                                let _ = tx.send((idx, res));
-                            }
-                            Err(msg) => {
-                                log::warn!("Script fetch timed out for {src}: {msg}");
-                            }
-                        }
+                        let _ = tx.send((idx, res));
                     })
                 {
                     log::warn!("Failed to spawn script fetch thread: {e}");
@@ -242,14 +236,14 @@ fn prepare_document_pipeline_internal(
                 if should_cancel() {
                     break;
                 }
-                match rx.recv_timeout(SUBRESOURCE_FETCH_TIMEOUT + std::time::Duration::from_secs(2))
+                match rx.recv_timeout(SCRIPT_FETCH_TIMEOUT + std::time::Duration::from_millis(500))
                 {
                     Ok((idx, res)) => {
+                        log::info!("Fetched script {idx} (ok: {})", res.is_ok());
                         fetched_scripts.insert(idx, res);
                     }
-                    Err(_) => {
-                        // Per-item timeout: stop waiting for this batch and
-                        // move on; stragglers are dropped with the channel.
+                    Err(err) => {
+                        log::warn!("rx.recv_timeout failed: {err}");
                         break;
                     }
                 }
@@ -1005,7 +999,7 @@ fn collect_image_sources(doc: &Document, node_id: NodeId, sources: &mut Vec<Stri
             }
         }
 
-        // 1b. If <source> (e.g. inside <picture>), collect srcset URLs for prefetching (GAP-019)
+        // 1b. If <source> (e.g. inside <picture>), collect srcset URLs for prefetching
         if elem.tag_name.eq_ignore_ascii_case("source") {
             if let Some(srcset) = elem.get_attribute("srcset") {
                 for candidate in srcset.split(',') {
@@ -1116,7 +1110,6 @@ fn extract_title(doc: &Document) -> Option<String> {
     if text.is_empty() { None } else { Some(text) }
 }
 
-
 impl BrowserChrome {
     /// Navigates the browser to the specified URL or input string.
     pub fn navigate(&mut self, url: &str) {
@@ -1125,30 +1118,107 @@ impl BrowserChrome {
         self.navigate_to_address(true);
     }
 
-    /// Navigates back in history if possible.
+    /// Navigates back in history if possible, restoring from BFCache when available.
     pub fn go_back(&mut self) {
-        if let Some(tab) = self.tabs.get_mut(self.active_tab_idx)
-            && let Some((url, scroll_pos)) = tab.go_back_f64()
-        {
-            self.address_text = url.clone();
+        let nav_info = if let Some(tab) = self.tabs.get_mut(self.active_tab_idx) {
+            if let Some(ref root) = self.root_box {
+                let (w, h) = (
+                    self.width as f32,
+                    (self.height.saturating_sub(HEADER_HEIGHT as u32)) as f32,
+                );
+                let snapshot = mango_layout::LayoutSnapshot::from_layout_box(
+                    root,
+                    mango_core::Size::new(w, h),
+                );
+                tab.store_bfcache_snapshot(Box::new(snapshot));
+            }
+
+            if let Some((url, scroll_pos)) = tab.go_back_f64() {
+                let title = tab.title.clone();
+                let snapshot = tab.current_bfcache_snapshot().cloned();
+                Some((url, title, scroll_pos, snapshot))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some((url, title, scroll_pos, snapshot)) = nav_info {
+            self.address_text = url;
+            self.page_title = title;
             self.cursor_pos = self.address_text.len();
             self.set_scroll_y_f64(scroll_pos);
+
+            if let Some(snapshot) = snapshot {
+                let dl = if self.scroll_y == 0.0 {
+                    snapshot.display_list().clone()
+                } else {
+                    snapshot.display_list_with_scroll(self.scroll_y)
+                };
+                self.page_display_list = dl;
+                self.root_box = Some(snapshot.root_box().clone());
+                self.cached_scrollable_height =
+                    crate::scroll::compute_scrollable_height(self.root_box.as_ref());
+                self.page_dirty = true;
+                self.status_text = format!("Restored from BFCache: {}", self.page_title);
+                return;
+            }
+
             self.navigate_to_address(false);
         }
     }
 
-    /// Navigates forward in history if possible.
+    /// Navigates forward in history if possible, restoring from BFCache when available.
     pub fn go_forward(&mut self) {
-        if let Some(tab) = self.tabs.get_mut(self.active_tab_idx)
-            && let Some((url, scroll_pos)) = tab.go_forward_f64()
-        {
-            self.address_text = url.clone();
+        let nav_info = if let Some(tab) = self.tabs.get_mut(self.active_tab_idx) {
+            if let Some(ref root) = self.root_box {
+                let (w, h) = (
+                    self.width as f32,
+                    (self.height.saturating_sub(HEADER_HEIGHT as u32)) as f32,
+                );
+                let snapshot = mango_layout::LayoutSnapshot::from_layout_box(
+                    root,
+                    mango_core::Size::new(w, h),
+                );
+                tab.store_bfcache_snapshot(Box::new(snapshot));
+            }
+
+            if let Some((url, scroll_pos)) = tab.go_forward_f64() {
+                let title = tab.title.clone();
+                let snapshot = tab.current_bfcache_snapshot().cloned();
+                Some((url, title, scroll_pos, snapshot))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some((url, title, scroll_pos, snapshot)) = nav_info {
+            self.address_text = url;
+            self.page_title = title;
             self.cursor_pos = self.address_text.len();
             self.set_scroll_y_f64(scroll_pos);
+
+            if let Some(snapshot) = snapshot {
+                let dl = if self.scroll_y == 0.0 {
+                    snapshot.display_list().clone()
+                } else {
+                    snapshot.display_list_with_scroll(self.scroll_y)
+                };
+                self.page_display_list = dl;
+                self.root_box = Some(snapshot.root_box().clone());
+                self.cached_scrollable_height =
+                    crate::scroll::compute_scrollable_height(self.root_box.as_ref());
+                self.page_dirty = true;
+                self.status_text = format!("Restored from BFCache: {}", self.page_title);
+                return;
+            }
+
             self.navigate_to_address(false);
         }
     }
-
 
     /// Public method to load HTML into the active tab.
     #[allow(dead_code)]
@@ -1215,6 +1285,7 @@ impl BrowserChrome {
         self.context_menu = None;
         self.select_dropdown = None;
         self.picker = None;
+        self.validation_bubble = None;
         self.range_dragging = None;
         self.range_drag_start_value = None;
         self.focused_control = None;
@@ -1226,24 +1297,38 @@ impl BrowserChrome {
         } else {
             self.page_title = url.clone();
         }
-        self.cached_document = None;
-        self.root_box = None;
-        self.page_display_list = DisplayList::new();
-        self.display_list_cache.lock().unwrap().clear();
-        self.layer_tree.clear_page_tiles();
-        mango_render::prune_image_caches();
-        mango_js::JsRuntime::force_gc();
-
         if let Some(tab) = self.tabs.get_mut(self.active_tab_idx) {
             if push_history {
+                if let Some(ref root) = self.root_box {
+                    let (w, h) = (
+                        self.width as f32,
+                        (self.height.saturating_sub(HEADER_HEIGHT as u32)) as f32,
+                    );
+                    let snapshot = mango_layout::LayoutSnapshot::from_layout_box(
+                        root,
+                        mango_core::Size::new(w, h),
+                    );
+                    tab.store_bfcache_snapshot(Box::new(snapshot));
+                }
                 tab.push_history(url.clone(), self.page_title.clone());
+                self.scroll_y = 0.0;
+                self.scroll_y_f64 = 0.0;
             } else {
                 tab.url = url.clone();
                 tab.set_title(self.page_title.clone());
             }
         }
 
-        // ── Phase 5: Initialize JavaScript Runtime ──
+        self.cached_document = None;
+        self.root_box = None;
+        self.page_display_list = DisplayList::new();
+        self.display_list_cache.lock().unwrap().clear();
+        self.layer_tree.clear_page_tiles();
+        mango_render::prune_image_caches();
+        mango_render::prune_web_fonts();
+        mango_js::JsRuntime::force_gc();
+
+        // ── Initialize JavaScript Runtime ──
         self.js_runtime = None;
         let w = self.width as f32;
         let content_h = (self.height as f32 - HEADER_HEIGHT - STATUS_BAR_HEIGHT - 1.0).max(10.0);
@@ -1300,7 +1385,7 @@ impl BrowserChrome {
             );
         }
 
-        // Inject extension stylesheets (GAP-023)
+        // Inject extension stylesheets
         let (ext_css, ext_js) = self
             .extension_manager
             .get_content_scripts_for_url(&url, crate::extensions::RunAt::DocumentEnd);
@@ -1309,9 +1394,9 @@ impl BrowserChrome {
             self.cached_stylesheets.push(sheet);
         }
 
-        // Reset the animation runtime and load the page's @keyframes definitions
-        // (GAP-004/GAP-006). Author sheets win over embedded ones, matching the
-        // cascade order used for style resolution.
+        // Reset the animation runtime and load the page's @keyframes definitions.
+        // Author sheets win over embedded ones, matching the cascade order used
+        // for style resolution.
         self.anim_state = mango_css::AnimationState::new();
         self.style_snapshot.clear();
         self.hovered_dom_nodes.clear();
@@ -1385,10 +1470,14 @@ impl BrowserChrome {
         let run_script = |s: ScriptToRun, rt: &mut mango_js::JsRuntime, ext_cnt: &mut usize| match s
         {
             ScriptToRun::Inline(code) => {
-                let _ = rt.execute_script(&code);
+                if let Err(e) = rt.execute_script(&code) {
+                    log::warn!("Inline script error: {e}");
+                }
             }
-            ScriptToRun::Preloaded { code, .. } => {
-                let _ = rt.execute_script(&code);
+            ScriptToRun::Preloaded { code, src, .. } => {
+                if let Err(e) = rt.execute_script(&code) {
+                    log::warn!("Preloaded script error ({src}): {e}");
+                }
             }
             ScriptToRun::External { src, .. } => {
                 const MAX_EXTERNAL_SCRIPTS: usize = 128;
@@ -1405,7 +1494,9 @@ impl BrowserChrome {
                 if let Some(cached) = self.loader.cache().get(&key) {
                     let script_code = String::from_utf8_lossy(&cached.body).into_owned();
                     *ext_cnt += 1;
-                    let _ = rt.execute_script(&script_code);
+                    if let Err(e) = rt.execute_script(&script_code) {
+                        log::warn!("External script error ({src}): {e}");
+                    }
                 } else {
                     log::warn!(
                         "Skipping uncached external script on UI thread (preloaded on background): {}",
@@ -1425,17 +1516,17 @@ impl BrowserChrome {
             run_script(s, &mut js_rt, &mut external_count);
         }
 
-        // 3. Run extension content scripts (GAP-023)
+        // 3. Run extension content scripts
         for js_code in ext_js {
             let _ = js_rt.execute_script(&js_code);
         }
 
-        // 4. Run defer scripts in document order (HTML-004)
+        // 4. Run defer scripts in document order
         for s in defer_scripts {
             run_script(s, &mut js_rt, &mut external_count);
         }
 
-        // 5. Dispatch DOMContentLoaded and window load events (ENG-005)
+        // 5. Dispatch DOMContentLoaded and window load events
         let _ = js_rt.dispatch_dom_content_loaded();
         let _ = js_rt.dispatch_load();
 
@@ -1447,7 +1538,7 @@ impl BrowserChrome {
 
         self.js_runtime = Some(js_rt);
 
-        // ── Phase 8: Autofocus on interactive form control if specified ──
+        // ── Autofocus on interactive form control if specified ──
         if !self.address_focused {
             fn find_autofocus(doc: &Document, nid: NodeId) -> Option<NodeId> {
                 if let Some(node) = doc.get(nid) {
@@ -1497,7 +1588,7 @@ impl BrowserChrome {
         // Post-script relayout: only run if the JS runtime's DOM dirty bit was
         // set during script execution.  The pre-layout already ran above at line
         // ~1080; a second unconditional full layout wastes ~50ms on every page
-        // load for pages with no script-driven DOM mutations. (B-06 fix)
+        // load for pages with no script-driven DOM mutations.
         let needs_post_layout = self.js_runtime.as_ref().is_some_and(|rt| rt.is_dom_dirty());
         if needs_post_layout {
             self.relayout();
@@ -1509,15 +1600,26 @@ impl BrowserChrome {
         {
             self.navigate(&redirect);
         }
+
+        // If a script requested opening a window/tab (window.open)
+        if let Some(open_req) = self
+            .js_runtime
+            .as_mut()
+            .and_then(|rt| rt.take_pending_open_window())
+        {
+            let nav_url = if let Some(base) = &self.base_url {
+                base.resolve(&open_req.url)
+                    .map(|u| u.to_string())
+                    .unwrap_or(open_req.url)
+            } else {
+                open_req.url
+            };
+            self.new_tab_and_navigate(&nav_url);
+        }
     }
 
     /// Ticks the JavaScript event loop (executing setTimeout/setInterval).
-    /// Returns `true` if the DOM was mutated or timers fired, necessitating a redraw.
-    ///
-    /// Only re-lays-out when the JS dirty bit reports a DOM mutation that can
-    /// affect style/layout. Console output, alerts, and timer bookkeeping alone
-    /// never trigger a relayout.
-
+    /// Navigates the current browser tab to the address in `self.address_text`.
     pub(crate) fn navigate_to_address(&mut self, push_history: bool) {
         self.is_all_selected = false;
         let mut input = self.address_text.trim().to_string();
@@ -1642,7 +1744,7 @@ impl BrowserChrome {
         // delivered through `tick_navigation()` (desktop event loop) or the
         // bounded `wait_for_navigation()` bridge (tests/headless). No
         // synchronous `fetch_document` ever runs on the UI thread here.
-        self.nav_actor.navigate(parsed_url, push_history);
+        self.nav_actor.navigate(self.active_tab_idx, parsed_url, push_history);
         if !self.async_navigation {
             self.wait_for_navigation();
         }
@@ -1699,33 +1801,104 @@ impl BrowserChrome {
         }
         match batch.into_iter().nth(idx).expect("best index valid") {
             crate::navigation_actor::NavResult::DocumentReady {
-                prep, push_history, ..
+                tab_id,
+                prep,
+                push_history,
+                ..
             } => {
                 self.is_loading = false;
-                self.apply_prepared_document(prep, push_history);
-                self.persist_cookies();
-                true
+                if tab_id == self.active_tab_idx {
+                    self.apply_prepared_document(prep, push_history);
+                    self.persist_cookies();
+                    true
+                } else if let Some(tab) = self.tabs.get_mut(tab_id) {
+                    let final_url = prep.url.clone();
+                    let page_title = extract_title(&prep.doc).unwrap_or_else(|| final_url.to_string());
+                    tab.url = final_url.to_string();
+                    tab.title = page_title.clone();
+                    if push_history {
+                        tab.push_history(final_url.to_string(), page_title);
+                    }
+                    tab.contents = Some(crate::tab::TabWebContents {
+                        current_html: prep.html,
+                        cached_document: Some(prep.doc),
+                        base_url: Some(final_url),
+                        cached_stylesheets: prep.cached_stylesheets,
+                        root_box: None,
+                        js_runtime: None,
+                        style_snapshot: HashMap::new(),
+                        focused_control: None,
+                        page_display_list: DisplayList::new(),
+                        display_list_cache: mango_layout::display_list::DisplayListCache::new(),
+                        image_rx: None,
+                        has_active_animations: false,
+                        canvas_bg: mango_core::Color::WHITE,
+                        engine: None,
+                    });
+                    self.persist_cookies();
+                    false
+                } else {
+                    false
+                }
             }
-            crate::navigation_actor::NavResult::ProgressiveReady { prep, .. } => {
-                self.apply_prepared_document(prep, false);
-                self.page_dirty = true;
-                true
+            crate::navigation_actor::NavResult::ProgressiveReady {
+                tab_id,
+                prep,
+                ..
+            } => {
+                if tab_id == self.active_tab_idx {
+                    self.apply_prepared_document(prep, false);
+                    self.page_dirty = true;
+                    true
+                } else {
+                    false
+                }
             }
             crate::navigation_actor::NavResult::Error {
+                tab_id,
                 url,
                 message,
                 push_history,
                 ..
             } => {
                 self.is_loading = false;
-                let err_html = error_page_html(&url.as_str(), &message);
-                self.base_url = None;
-                self.cached_stylesheets.clear();
-                self.status_text = format!("Error: {}", message);
-                self.load_html_internal(err_html, url.to_string(), push_history);
-                self.address_focused = false;
-                self.persist_cookies();
-                true
+                let target = url.to_string();
+                let err_html = error_page_html(&target, &message);
+                if tab_id == self.active_tab_idx {
+                    self.base_url = None;
+                    self.cached_stylesheets.clear();
+                    self.status_text = format!("Error: {message}");
+                    self.load_html_internal(err_html, target, push_history);
+                    self.address_focused = false;
+                    self.persist_cookies();
+                    true
+                } else if let Some(tab) = self.tabs.get_mut(tab_id) {
+                    tab.url = target.clone();
+                    tab.title = format!("Error: {message}");
+                    if push_history {
+                        tab.push_history(target, tab.title.clone());
+                    }
+                    tab.contents = Some(crate::tab::TabWebContents {
+                        current_html: err_html,
+                        cached_document: None,
+                        base_url: None,
+                        cached_stylesheets: Vec::new(),
+                        root_box: None,
+                        js_runtime: None,
+                        style_snapshot: HashMap::new(),
+                        focused_control: None,
+                        page_display_list: DisplayList::new(),
+                        display_list_cache: mango_layout::display_list::DisplayListCache::new(),
+                        image_rx: None,
+                        has_active_animations: false,
+                        canvas_bg: mango_core::Color::WHITE,
+                        engine: None,
+                    });
+                    self.persist_cookies();
+                    false
+                } else {
+                    false
+                }
             }
         }
     }
@@ -1756,21 +1929,22 @@ impl BrowserChrome {
                 return;
             }
             // First drain anything already delivered without blocking.
-            if self.tick_navigation() {
+            if self.tick_navigation() && !self.is_loading {
                 return;
             }
             match self
                 .nav_actor
                 .recv_timeout(remaining.min(std::time::Duration::from_millis(200)))
             {
-                Ok(crate::navigation_actor::NavResult::ProgressiveReady { prep, epoch }) => {
-                    if epoch == self.nav_actor.active_epoch() {
+                Ok(crate::navigation_actor::NavResult::ProgressiveReady { tab_id, prep, epoch }) => {
+                    if epoch == self.nav_actor.active_epoch() && tab_id == self.active_tab_idx {
                         self.apply_prepared_document(prep, false);
                         self.page_dirty = true;
                     }
                     continue;
                 }
                 Ok(crate::navigation_actor::NavResult::DocumentReady {
+                    tab_id,
                     prep,
                     push_history,
                     epoch,
@@ -1779,11 +1953,14 @@ impl BrowserChrome {
                         continue;
                     }
                     self.is_loading = false;
-                    self.apply_prepared_document(prep, push_history);
+                    if tab_id == self.active_tab_idx {
+                        self.apply_prepared_document(prep, push_history);
+                    }
                     self.persist_cookies();
                     return;
                 }
                 Ok(crate::navigation_actor::NavResult::Error {
+                    tab_id,
                     url,
                     message,
                     push_history,
@@ -1794,11 +1971,13 @@ impl BrowserChrome {
                     }
                     self.is_loading = false;
                     let err_html = error_page_html(&url.as_str(), &message);
-                    self.base_url = None;
-                    self.cached_stylesheets.clear();
-                    self.status_text = format!("Error: {}", message);
-                    self.load_html_internal(err_html, url.to_string(), push_history);
-                    self.address_focused = false;
+                    if tab_id == self.active_tab_idx {
+                        self.base_url = None;
+                        self.cached_stylesheets.clear();
+                        self.status_text = format!("Error: {}", message);
+                        self.load_html_internal(err_html, url.to_string(), push_history);
+                        self.address_focused = false;
+                    }
                     self.persist_cookies();
                     return;
                 }
@@ -1825,13 +2004,14 @@ impl BrowserChrome {
         self.page_display_list = DisplayList::new();
         self.root_box = None;
         mango_render::prune_image_caches();
+        mango_render::prune_web_fonts();
         mango_render::clear_global_svg_symbols();
 
         // Web fonts are already fetched and registered on the background worker
         // thread in prepare_document_pipeline. Calling load_web_fonts here on the
         // main UI thread would block the UI with redundant network / lock work.
 
-        // Queue images with epoch guarding, dedup, and memory-bounded cap (H-10).
+        // Queue images with epoch guarding, dedup, and memory-bounded cap.
         self.queue_image_backlog(prep.image_sources, final_url.clone());
 
         self.status_text = format!(
@@ -1869,10 +2049,8 @@ impl BrowserChrome {
         self.apply_prepared_document(prep, push_history);
     }
 
-
     /// Returns true if a navigation or page load is currently in progress.
     pub fn is_loading(&self) -> bool {
         self.is_loading
     }
-
 }

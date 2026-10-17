@@ -1,4 +1,4 @@
-//! Dedicated Navigation Actor for Mango Browser (Phase 2).
+//! Dedicated Navigation Actor for Mango Browser.
 //!
 //! Decouples network fetching, HTML parsing, and resource pipeline preparation
 //! onto background worker threads, communicating with the UI thread via message
@@ -30,12 +30,14 @@ pub const NAV_FETCH_TIMEOUT: Duration = Duration::from_secs(60);
 pub enum NavCommand {
     /// Start navigating to a new URL.
     Navigate {
+        tab_id: usize,
         url: Url,
         push_history: bool,
         epoch: u64,
     },
     /// Submit form data via POST.
     Post {
+        tab_id: usize,
         url: Url,
         body: Vec<u8>,
         content_type: String,
@@ -52,14 +54,20 @@ pub enum NavCommand {
 pub enum NavResult {
     /// Document pipeline finished successfully on the background actor.
     DocumentReady {
+        tab_id: usize,
         prep: PreparedDocument,
         push_history: bool,
         epoch: u64,
     },
     /// Progressive first contentful paint (early snapshot while downloading).
-    ProgressiveReady { prep: PreparedDocument, epoch: u64 },
+    ProgressiveReady {
+        tab_id: usize,
+        prep: PreparedDocument,
+        epoch: u64,
+    },
     /// Navigation failed with a network or protocol error.
     Error {
+        tab_id: usize,
         url: Url,
         message: String,
         push_history: bool,
@@ -71,6 +79,8 @@ pub enum NavResult {
 pub struct NavigationActorHandle {
     cmd_tx: Sender<NavCommand>,
     result_rx: Receiver<NavResult>,
+    #[allow(dead_code)]
+    result_tx: Sender<NavResult>,
     current_epoch: Arc<AtomicU64>,
     _workers: Vec<JoinHandle<()>>,
 }
@@ -105,6 +115,7 @@ impl NavigationActorHandle {
         Self {
             cmd_tx,
             result_rx,
+            result_tx,
             current_epoch,
             _workers: workers,
         }
@@ -118,7 +129,7 @@ impl NavigationActorHandle {
     ) {
         loop {
             // Receive the next command with bounded timeout so the Mutex is not
-            // held indefinitely, preventing worker starvation across the pool (H-06).
+            // held indefinitely, preventing worker starvation across the pool.
             let cmd = {
                 let Ok(guard) = shared_rx.lock() else {
                     break;
@@ -139,6 +150,7 @@ impl NavigationActorHandle {
                     // commands are discarded by their epoch check below.
                 }
                 NavCommand::Navigate {
+                    tab_id,
                     url,
                     push_history,
                     epoch,
@@ -202,7 +214,11 @@ impl NavigationActorHandle {
                                                 );
                                             if cancel_flag_cb.load(Ordering::SeqCst) == epoch {
                                                 let _ = result_tx_cb.send(
-                                                    NavResult::ProgressiveReady { prep, epoch },
+                                                    NavResult::ProgressiveReady {
+                                                        tab_id,
+                                                        prep,
+                                                        epoch,
+                                                    },
                                                 );
                                             }
                                         } else {
@@ -227,6 +243,7 @@ impl NavigationActorHandle {
                             );
                             if epoch_flag.load(Ordering::SeqCst) == epoch {
                                 let _ = result_tx.send(NavResult::DocumentReady {
+                                    tab_id,
                                     prep,
                                     push_history,
                                     epoch,
@@ -236,6 +253,7 @@ impl NavigationActorHandle {
                         Ok(Err(e)) => {
                             if epoch_flag.load(Ordering::SeqCst) == epoch {
                                 let _ = result_tx.send(NavResult::Error {
+                                    tab_id,
                                     url,
                                     message: e.to_string(),
                                     push_history,
@@ -246,6 +264,7 @@ impl NavigationActorHandle {
                         Err(timeout_msg) => {
                             if epoch_flag.load(Ordering::SeqCst) == epoch {
                                 let _ = result_tx.send(NavResult::Error {
+                                    tab_id,
                                     url,
                                     message: timeout_msg,
                                     push_history,
@@ -256,6 +275,7 @@ impl NavigationActorHandle {
                     }
                 }
                 NavCommand::Post {
+                    tab_id,
                     url,
                     body,
                     content_type,
@@ -288,6 +308,7 @@ impl NavigationActorHandle {
                             );
                             if epoch_flag.load(Ordering::SeqCst) == epoch {
                                 let _ = result_tx.send(NavResult::DocumentReady {
+                                    tab_id,
                                     prep,
                                     push_history,
                                     epoch,
@@ -297,6 +318,7 @@ impl NavigationActorHandle {
                         Ok(Err(e)) => {
                             if epoch_flag.load(Ordering::SeqCst) == epoch {
                                 let _ = result_tx.send(NavResult::Error {
+                                    tab_id,
                                     url,
                                     message: e.to_string(),
                                     push_history,
@@ -307,6 +329,7 @@ impl NavigationActorHandle {
                         Err(timeout_msg) => {
                             if epoch_flag.load(Ordering::SeqCst) == epoch {
                                 let _ = result_tx.send(NavResult::Error {
+                                    tab_id,
                                     url,
                                     message: timeout_msg,
                                     push_history,
@@ -321,9 +344,10 @@ impl NavigationActorHandle {
     }
 
     /// Requests navigation to a new URL.
-    pub fn navigate(&self, url: Url, push_history: bool) {
+    pub fn navigate(&self, tab_id: usize, url: Url, push_history: bool) {
         let epoch = self.current_epoch.fetch_add(1, Ordering::SeqCst) + 1;
         let _ = self.cmd_tx.send(NavCommand::Navigate {
+            tab_id,
             url,
             push_history,
             epoch,
@@ -331,9 +355,10 @@ impl NavigationActorHandle {
     }
 
     /// Requests a form POST navigation.
-    pub fn post(&self, url: Url, body: Vec<u8>, content_type: String, push_history: bool) {
+    pub fn post(&self, tab_id: usize, url: Url, body: Vec<u8>, content_type: String, push_history: bool) {
         let epoch = self.current_epoch.fetch_add(1, Ordering::SeqCst) + 1;
         let _ = self.cmd_tx.send(NavCommand::Post {
+            tab_id,
             url,
             body,
             content_type,
@@ -350,7 +375,7 @@ impl NavigationActorHandle {
     /// Note: we discard the return value of `fetch_add` (the *old* epoch) and
     /// do NOT add 1 — the post-increment value is what in-flight workers already
     /// stored in their `epoch` field, so simply making the global counter
-    /// different is sufficient to invalidate them. (B-04 fix)
+    /// different is sufficient to invalidate them.
     pub fn cancel(&self) {
         self.current_epoch.fetch_add(1, Ordering::SeqCst);
         let _ = self.cmd_tx.send(NavCommand::Cancel);
@@ -374,6 +399,12 @@ impl NavigationActorHandle {
     /// Returns the current active epoch.
     pub fn active_epoch(&self) -> u64 {
         self.current_epoch.load(Ordering::SeqCst)
+    }
+
+    /// Injects a navigation result directly into the result channel for testing.
+    #[cfg(test)]
+    pub fn inject_result_for_test(&self, res: NavResult) {
+        let _ = self.result_tx.send(res);
     }
 
     /// Gracefully signals all navigation workers to terminate and awaits their completion.
@@ -437,7 +468,7 @@ mod tests {
         // Navigate to a data: HTML URL
         let url =
             Url::parse("data:text/html,<html><body><h1>Actor Test</h1></body></html>").unwrap();
-        actor.navigate(url.clone(), true);
+        actor.navigate(0, url.clone(), true);
 
         // Wait for result
         loop {
@@ -449,6 +480,7 @@ mod tests {
                     prep,
                     push_history,
                     epoch,
+                    ..
                 } => {
                     assert!(push_history);
                     assert_eq!(epoch, actor.active_epoch());
@@ -471,8 +503,8 @@ mod tests {
         let url2 = Url::parse("data:text/html,<html><body><h1>Page 2</h1></body></html>").unwrap();
 
         // Dispatch page 1 then immediately supersede with page 2
-        actor.navigate(url1, true);
-        actor.navigate(url2, true);
+        actor.navigate(0, url1, true);
+        actor.navigate(0, url2, true);
 
         // Receive result(s) until the latest epoch arrives; stale Page 1
         // results (if any) are discarded.

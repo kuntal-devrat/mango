@@ -146,11 +146,19 @@ pub fn layout_block(
     }
 
     // 3. Lay out child boxes
-    if establishes_bfc(box_node) {
-        let mut bfc_float_ctx = FloatContext::new();
-        layout_block_children(box_node, &mut bfc_float_ctx);
-    } else {
-        layout_block_children(box_node, float_ctx);
+    let skip_children = box_node
+        .style
+        .as_ref()
+        .map(|s| s.content_visibility == mango_css::values::ContentVisibility::Hidden)
+        .unwrap_or(false);
+
+    if !skip_children {
+        if establishes_bfc(box_node) {
+            let mut bfc_float_ctx = FloatContext::new();
+            layout_block_children(box_node, &mut bfc_float_ctx);
+        } else {
+            layout_block_children(box_node, float_ctx);
+        }
     }
 
     // 4. Calculate final height
@@ -276,7 +284,21 @@ fn calculate_block_width(box_node: &mut LayoutBox, containing_block: &Dimensions
             ));
 
     let tentative_width = if is_width_auto {
-        if let crate::box_model::BoxType::ReplacedElement {
+        if (style.contain.contains_size() || style.contain.contains_inline_size())
+            && style.contain_intrinsic_width.is_some()
+        {
+            let raw_iw = style.contain_intrinsic_width.unwrap().to_px_with_viewport(
+                font_size,
+                root_font_size,
+                container_width,
+                container_height,
+            );
+            if style.box_sizing == BoxSizing::BorderBox {
+                (raw_iw - total_non_content_h).max(0.0)
+            } else {
+                raw_iw.max(0.0)
+            }
+        } else if let crate::box_model::BoxType::ReplacedElement {
             intrinsic_width,
             intrinsic_height,
             ..
@@ -1288,6 +1310,7 @@ fn has_floats_recursive(box_node: &LayoutBox) -> bool {
 fn extract_floats_from_children(
     children: &mut Vec<LayoutBox>,
     parent_link: Option<&str>,
+    parent_frame: Option<&str>,
 ) -> Vec<LayoutBox> {
     let mut extracted_floats = Vec::new();
     let mut retained_children = Vec::new();
@@ -1297,11 +1320,14 @@ fn extract_floats_from_children(
         if is_float {
             if child.link_target.is_none() {
                 child.link_target = parent_link.map(|s| s.to_string());
+                child.link_frame = parent_frame.map(|s| s.to_string());
             }
             extracted_floats.push(child);
         } else if child.is_inline() && has_floats_recursive(&child) {
             let child_link = child.link_target.as_deref().or(parent_link);
-            let inner_floats = extract_floats_from_children(&mut child.children, child_link);
+            let child_frame = child.link_frame.as_deref().or(parent_frame);
+            let inner_floats =
+                extract_floats_from_children(&mut child.children, child_link, child_frame);
             extracted_floats.extend(inner_floats);
             retained_children.push(child);
         } else {
@@ -1328,13 +1354,17 @@ fn collapsed_margin_top_for_box(layout_box: &LayoutBox, container_dims: &Dimensi
     let my_margin_top = if layout_box.dimensions.margin.top != 0.0 {
         layout_box.dimensions.margin.top
     } else {
-        style.margin_top.to_px_with_viewport(font_size, root_font_size, cb_w, cb_h)
+        style
+            .margin_top
+            .to_px_with_viewport(font_size, root_font_size, cb_w, cb_h)
     };
 
     let pad_top = if layout_box.dimensions.padding.top != 0.0 {
         layout_box.dimensions.padding.top
     } else {
-        style.padding_top.to_px_with_viewport(font_size, root_font_size, cb_w, cb_h)
+        style
+            .padding_top
+            .to_px_with_viewport(font_size, root_font_size, cb_w, cb_h)
     };
     let border_top = if layout_box.dimensions.border.top != 0.0 {
         layout_box.dimensions.border.top
@@ -1347,7 +1377,11 @@ fn collapsed_margin_top_for_box(layout_box: &LayoutBox, container_dims: &Dimensi
     }
 
     for child in &layout_box.children {
-        let child_pos = child.style.as_ref().map(|s| s.position).unwrap_or(Position::Static);
+        let child_pos = child
+            .style
+            .as_ref()
+            .map(|s| s.position)
+            .unwrap_or(Position::Static);
         if matches!(child_pos, Position::Absolute | Position::Fixed) {
             continue;
         }
@@ -1380,8 +1414,12 @@ fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut FloatContext)
         if has_any_floats {
             let container_dims = box_node.dimensions;
             let parent_link = box_node.link_target.clone();
-            let mut floats =
-                extract_floats_from_children(&mut box_node.children, parent_link.as_deref());
+            let parent_frame = box_node.link_frame.clone();
+            let mut floats = extract_floats_from_children(
+                &mut box_node.children,
+                parent_link.as_deref(),
+                parent_frame.as_deref(),
+            );
 
             let mut float_bottom = container_dims.content.y();
             for float_child in &mut floats {
@@ -1995,8 +2033,43 @@ fn layout_single_float(
     }
 }
 
+thread_local! {
+    static ANCHOR_REGISTRY: std::cell::RefCell<std::collections::HashMap<String, mango_core::Rect>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Registers an element's border box under its anchor-name ident.
+pub fn register_anchor(name: &str, rect: mango_core::Rect) {
+    ANCHOR_REGISTRY.with(|reg| {
+        reg.borrow_mut().insert(name.to_string(), rect);
+    });
+}
+
+/// Looks up an anchor box rectangle by name.
+pub fn get_anchor(name: &str) -> Option<mango_core::Rect> {
+    ANCHOR_REGISTRY.with(|reg| reg.borrow().get(name).copied())
+}
+
+/// Clears all registered anchors in the current thread.
+pub fn clear_anchors() {
+    ANCHOR_REGISTRY.with(|reg| reg.borrow_mut().clear());
+}
+
+/// Recursively registers any box with `anchor_name` in the subtree.
+pub fn collect_anchors(box_node: &LayoutBox) {
+    if let Some(style) = &box_node.style {
+        if let Some(ref name) = style.anchor_name {
+            register_anchor(name, box_node.dimensions.border_box());
+        }
+    }
+    for child in &box_node.children {
+        collect_anchors(child);
+    }
+}
+
 /// Positions out-of-flow absolute and fixed children against the containing box's padding box.
 pub fn layout_positioned_children(box_node: &mut LayoutBox, float_ctx: &mut FloatContext) {
+    collect_anchors(box_node);
     let container_dims = box_node.dimensions;
     for child in box_node.children.iter_mut() {
         let child_pos = child
@@ -2065,16 +2138,8 @@ fn layout_positioned_element(
     };
 
     calculate_block_width(box_node, cb);
-    if style.display == Display::Table || box_node.tag_name.as_deref() == Some("table") {
-        crate::table_flow::layout_table(box_node, cb, float_ctx);
-    } else if matches!(style.display, Display::Flex | Display::InlineFlex) {
-        crate::flex_flow::layout_flex(box_node, cb, float_ctx);
-    } else if style.display == Display::Grid || style.display == Display::InlineGrid {
-        crate::grid_flow::layout_grid(box_node, cb, float_ctx);
-    } else {
-        layout_block_children(box_node, float_ctx);
+    if style.height != Length::Auto {
         calculate_block_height(box_node, cb);
-        center_button_children(box_node);
     }
 
     let pad_box = if style.position == Position::Fixed {
@@ -2085,6 +2150,63 @@ fn layout_positioned_element(
 
     let pad_w = pad_box.width();
     let pad_h = pad_box.height();
+
+    let resolve_anchor_coord =
+        |len: &Length, is_x: bool, default_anchor: Option<&String>| -> Option<f32> {
+            if let Length::Anchor { name_id, side, offset } = len {
+                let name = name_id
+                    .and_then(mango_css::values::get_interned_anchor_name)
+                    .or_else(|| default_anchor.cloned())?;
+                let rect = get_anchor(&name)?;
+                let coord = match side {
+                    mango_css::values::AnchorSide::Left
+                    | mango_css::values::AnchorSide::Start => rect.left(),
+                    mango_css::values::AnchorSide::Right
+                    | mango_css::values::AnchorSide::End => rect.right(),
+                    mango_css::values::AnchorSide::Center => {
+                        if is_x {
+                            rect.origin.x + rect.width() * 0.5
+                        } else {
+                            rect.origin.y + rect.height() * 0.5
+                        }
+                    }
+                    mango_css::values::AnchorSide::Top => rect.top(),
+                    mango_css::values::AnchorSide::Bottom => rect.bottom(),
+                };
+                Some(coord + offset)
+            } else {
+                None
+            }
+        };
+
+    let calc_left_px = |l: &Length| -> f32 {
+        if let Some(target_x) = resolve_anchor_coord(l, true, style.position_anchor.as_ref()) {
+            target_x - pad_box.x()
+        } else {
+            l.to_px_with_viewport(font_size, 16.0, pad_w, pad_h)
+        }
+    };
+    let calc_right_px = |l: &Length| -> f32 {
+        if let Some(target_x) = resolve_anchor_coord(l, true, style.position_anchor.as_ref()) {
+            pad_box.right() - target_x
+        } else {
+            l.to_px_with_viewport(font_size, 16.0, pad_w, pad_h)
+        }
+    };
+    let calc_top_px = |l: &Length| -> f32 {
+        if let Some(target_y) = resolve_anchor_coord(l, false, style.position_anchor.as_ref()) {
+            target_y - pad_box.y()
+        } else {
+            l.to_px_with_viewport(font_size, 16.0, pad_h, pad_h)
+        }
+    };
+    let calc_bottom_px = |l: &Length| -> f32 {
+        if let Some(target_y) = resolve_anchor_coord(l, false, style.position_anchor.as_ref()) {
+            pad_box.bottom() - target_y
+        } else {
+            l.to_px_with_viewport(font_size, 16.0, pad_h, pad_h)
+        }
+    };
 
     // 1. Horizontal positioning (CSS 2.1 § 10.3.7)
     let is_left_auto = style.left == Length::Auto;
@@ -2113,12 +2235,8 @@ fn layout_positioned_element(
             + box_node.dimensions.padding.right
             + box_node.dimensions.border.left
             + box_node.dimensions.border.right;
-        let left_px = style
-            .left
-            .to_px_with_viewport(font_size, 16.0, pad_w, pad_h);
-        let right_px = style
-            .right
-            .to_px_with_viewport(font_size, 16.0, pad_w, pad_h);
+        let left_px = calc_left_px(&style.left);
+        let right_px = calc_right_px(&style.right);
         let tentative_w =
             (pad_w - left_px - right_px - margin_l - margin_r - non_content_h).max(0.0);
         let mut clamped_w = tentative_w;
@@ -2175,10 +2293,8 @@ fn layout_positioned_element(
             + box_node.dimensions.padding.bottom
             + box_node.dimensions.border.top
             + box_node.dimensions.border.bottom;
-        let top_px = style.top.to_px_with_viewport(font_size, 16.0, pad_h, pad_h);
-        let bottom_px = style
-            .bottom
-            .to_px_with_viewport(font_size, 16.0, pad_h, pad_h);
+        let top_px = calc_top_px(&style.top);
+        let bottom_px = calc_bottom_px(&style.bottom);
         let tentative_h =
             (pad_h - top_px - bottom_px - margin_t - margin_b - non_content_v).max(0.0);
         let mut clamped_h = tentative_h;
@@ -2211,12 +2327,8 @@ fn layout_positioned_element(
     let border_box_h = box_node.dimensions.border_box().height();
 
     let border_box_x = if !is_left_auto && !is_right_auto {
-        let left_px = style
-            .left
-            .to_px_with_viewport(font_size, 16.0, pad_w, pad_h);
-        let right_px = style
-            .right
-            .to_px_with_viewport(font_size, 16.0, pad_w, pad_h);
+        let left_px = calc_left_px(&style.left);
+        let right_px = calc_right_px(&style.right);
         if is_margin_l_auto && is_margin_r_auto {
             let free_space = pad_w - left_px - right_px - border_box_w;
             let m = (free_space / 2.0).max(0.0);
@@ -2239,16 +2351,12 @@ fn layout_positioned_element(
             pad_box.x() + left_px + margin_l
         }
     } else if !is_left_auto {
-        let left_px = style
-            .left
-            .to_px_with_viewport(font_size, 16.0, pad_w, pad_h);
+        let left_px = calc_left_px(&style.left);
         box_node.dimensions.margin.left = margin_l;
         box_node.dimensions.margin.right = margin_r;
         pad_box.x() + left_px + margin_l
     } else if !is_right_auto {
-        let right_px = style
-            .right
-            .to_px_with_viewport(font_size, 16.0, pad_w, pad_h);
+        let right_px = calc_right_px(&style.right);
         box_node.dimensions.margin.left = margin_l;
         box_node.dimensions.margin.right = margin_r;
         pad_box.right() - right_px - margin_r - border_box_w
@@ -2264,11 +2372,12 @@ fn layout_positioned_element(
         base_x + margin_l
     };
 
+    let is_bottom_anchored_auto_height =
+        is_top_auto && !is_bottom_auto && style.height == Length::Auto;
+
     let border_box_y = if !is_top_auto && !is_bottom_auto {
-        let top_px = style.top.to_px_with_viewport(font_size, 16.0, pad_h, pad_h);
-        let bottom_px = style
-            .bottom
-            .to_px_with_viewport(font_size, 16.0, pad_h, pad_h);
+        let top_px = calc_top_px(&style.top);
+        let bottom_px = calc_bottom_px(&style.bottom);
         if is_margin_t_auto && is_margin_b_auto {
             let free_space = pad_h - top_px - bottom_px - border_box_h;
             let m = (free_space / 2.0).max(0.0);
@@ -2291,17 +2400,24 @@ fn layout_positioned_element(
             pad_box.y() + top_px + margin_t
         }
     } else if !is_top_auto {
-        let top_px = style.top.to_px_with_viewport(font_size, 16.0, pad_h, pad_h);
+        let top_px = calc_top_px(&style.top);
         box_node.dimensions.margin.top = margin_t;
         box_node.dimensions.margin.bottom = margin_b;
         pad_box.y() + top_px + margin_t
     } else if !is_bottom_auto {
-        let bottom_px = style
-            .bottom
-            .to_px_with_viewport(font_size, 16.0, pad_h, pad_h);
+        let bottom_px = calc_bottom_px(&style.bottom);
         box_node.dimensions.margin.top = margin_t;
         box_node.dimensions.margin.bottom = margin_b;
-        pad_box.bottom() - bottom_px - margin_b - border_box_h
+        if is_bottom_anchored_auto_height {
+            let base_y = if static_y >= containing_block.content.y() {
+                static_y
+            } else {
+                containing_block.content.y()
+            };
+            base_y + margin_t
+        } else {
+            pad_box.bottom() - bottom_px - margin_b - border_box_h
+        }
     } else {
         box_node.dimensions.margin.top = margin_t;
         box_node.dimensions.margin.bottom = margin_b;
@@ -2314,18 +2430,110 @@ fn layout_positioned_element(
         base_y + margin_t
     };
 
-    // Calculate content box origin from border box origin
+    let mut final_box_x = border_box_x;
+    let mut final_box_y = border_box_y;
+
+    // CSS Anchor Positioning & @position-try fallbacks
+    let overflows = final_box_y + border_box_h > pad_box.bottom()
+        || final_box_y < pad_box.top()
+        || final_box_x + border_box_w > pad_box.right()
+        || final_box_x < pad_box.x();
+
+    if overflows && !style.position_try_fallbacks.is_empty() {
+        for fallback in &style.position_try_fallbacks {
+            let fb_clean = fallback.trim();
+            if fb_clean.eq_ignore_ascii_case("flip-block") {
+                if let Length::Anchor { name_id, side, offset } = style.top {
+                    let flipped_side = match side {
+                        mango_css::values::AnchorSide::Bottom => mango_css::values::AnchorSide::Top,
+                        mango_css::values::AnchorSide::Top => mango_css::values::AnchorSide::Bottom,
+                        s => s,
+                    };
+                    if let Some(target_y) = resolve_anchor_coord(
+                        &Length::Anchor { name_id, side: flipped_side, offset },
+                        false,
+                        style.position_anchor.as_ref(),
+                    ) {
+                        let test_y = if side == mango_css::values::AnchorSide::Bottom {
+                            target_y - margin_b - border_box_h
+                        } else {
+                            target_y + margin_t
+                        };
+                        if test_y >= pad_box.top() && test_y + border_box_h <= pad_box.bottom() {
+                            final_box_y = test_y;
+                            break;
+                        }
+                    }
+                }
+            } else if fb_clean.eq_ignore_ascii_case("flip-inline") {
+                if let Length::Anchor { name_id, side, offset } = style.left {
+                    let flipped_side = match side {
+                        mango_css::values::AnchorSide::Right => mango_css::values::AnchorSide::Left,
+                        mango_css::values::AnchorSide::Left => mango_css::values::AnchorSide::Right,
+                        s => s,
+                    };
+                    if let Some(target_x) = resolve_anchor_coord(
+                        &Length::Anchor { name_id, side: flipped_side, offset },
+                        true,
+                        style.position_anchor.as_ref(),
+                    ) {
+                        let test_x = if side == mango_css::values::AnchorSide::Right {
+                            target_x - margin_r - border_box_w
+                        } else {
+                            target_x + margin_l
+                        };
+                        if test_x >= pad_box.x() && test_x + border_box_w <= pad_box.right() {
+                            final_box_x = test_x;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Set content box origin from border box origin before laying out children
     let content_x =
-        border_box_x + box_node.dimensions.border.left + box_node.dimensions.padding.left;
-    let content_y = border_box_y + box_node.dimensions.border.top + box_node.dimensions.padding.top;
-
-    let dx = content_x - box_node.dimensions.content.x();
-    let dy = content_y - box_node.dimensions.content.y();
+        final_box_x + box_node.dimensions.border.left + box_node.dimensions.padding.left;
+    let content_y = final_box_y + box_node.dimensions.border.top + box_node.dimensions.padding.top;
     box_node.dimensions.content.origin = Point::new(content_x, content_y);
-    shift_descendants(box_node, dx, dy);
 
-    // Recursively position out-of-flow positioned children inside this positioned box
-    layout_positioned_children(box_node, float_ctx);
+    let is_flex_or_grid = matches!(
+        style.display,
+        Display::Flex | Display::InlineFlex | Display::Grid | Display::InlineGrid
+    );
+
+    if style.display == Display::Table || box_node.tag_name.as_deref() == Some("table") {
+        crate::table_flow::layout_table(box_node, cb, float_ctx);
+    } else if matches!(style.display, Display::Flex | Display::InlineFlex) {
+        crate::flex_flow::layout_flex(box_node, cb, float_ctx);
+    } else if style.display == Display::Grid || style.display == Display::InlineGrid {
+        crate::grid_flow::layout_grid(box_node, cb, float_ctx);
+    } else {
+        layout_block_children(box_node, float_ctx);
+        calculate_block_height(box_node, cb);
+        center_button_children(box_node);
+    }
+
+    if is_bottom_anchored_auto_height {
+        let bottom_px = calc_bottom_px(&style.bottom);
+        let actual_border_box_h = box_node.dimensions.border_box().height();
+        let actual_box_y = pad_box.bottom() - bottom_px - margin_b - actual_border_box_h;
+        let actual_content_y =
+            actual_box_y + box_node.dimensions.border.top + box_node.dimensions.padding.top;
+        let dy = actual_content_y - box_node.dimensions.content.y();
+        box_node.dimensions.content.origin.y = actual_content_y;
+        shift_descendants(box_node, 0.0, dy);
+    }
+
+    if let Some(name) = &style.anchor_name {
+        register_anchor(name, box_node.dimensions.border_box());
+    }
+
+    // Flex and Grid already lay out their out-of-flow positioned children at the end of their pass
+    if !is_flex_or_grid {
+        layout_positioned_children(box_node, float_ctx);
+    }
 }
 
 pub(crate) fn shift_descendants(box_node: &mut LayoutBox, dx: f32, dy: f32) {
@@ -2469,6 +2677,24 @@ fn calculate_block_height(box_node: &mut LayoutBox, containing_block: &Dimension
                 box_node.dimensions.content.size.height = h.max(0.0);
             }
         }
+    } else if style.contain.contains_size()
+        || style.content_visibility == mango_css::values::ContentVisibility::Hidden
+    {
+        if let Some(intrinsic_h) = style.contain_intrinsic_height {
+            let raw_ih = intrinsic_h.to_px_with_viewport(
+                font_size,
+                root_font_size,
+                container_h,
+                600.0,
+            );
+            if style.box_sizing == BoxSizing::BorderBox {
+                box_node.dimensions.content.size.height = (raw_ih - non_content_v).max(0.0);
+            } else {
+                box_node.dimensions.content.size.height = raw_ih.max(0.0);
+            }
+        } else {
+            box_node.dimensions.content.size.height = 0.0;
+        }
     } else if let Some(tag) = box_node.tag_name.as_deref() {
         match tag {
             "input" => {
@@ -2501,24 +2727,17 @@ fn calculate_block_height(box_node: &mut LayoutBox, containing_block: &Dimension
             }
             _ => {
                 if let Some(bottom) = in_flow_block_children_bottom(box_node) {
-                    box_node.dimensions.content.size.height = box_node
-                        .dimensions
-                        .content
-                        .size
-                        .height
-                        .max(bottom - box_node.dimensions.content.y());
+                    box_node.dimensions.content.size.height =
+                        (bottom - box_node.dimensions.content.y()).max(0.0);
                 }
             }
         }
     } else if let Some(bottom) = in_flow_block_children_bottom(box_node) {
         // Auto height from in-flow *block* children.
-        box_node.dimensions.content.size.height = box_node
-            .dimensions
-            .content
-            .size
-            .height
-            .max(bottom - box_node.dimensions.content.y());
+        box_node.dimensions.content.size.height =
+            (bottom - box_node.dimensions.content.y()).max(0.0);
     }
+
 
     // In CSS 2.1 §10.6.7: Auto heights for BFC roots must enclose all floating descendants
     if establishes_bfc(box_node) && style.height == Length::Auto {
@@ -3498,5 +3717,59 @@ mod tests {
         layout_block(&mut root, &containing_block, &mut float_ctx);
 
         assert_eq!(root.children[0].dimensions.content.width(), 300.0);
+    }
+
+    #[test]
+    fn test_anchor_positioning_and_fallbacks() {
+        clear_anchors();
+
+        // 1. Setup anchor element at (100, 200) with size (120, 40)
+        let mut anchor_box = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        anchor_box.dimensions.content = Rect::new(100.0, 200.0, 120.0, 40.0);
+        let mut anchor_style = ComputedStyle::default();
+        anchor_style.anchor_name = Some("--my-button".to_string());
+        anchor_box.style = Some(anchor_style.into());
+
+        register_anchor("--my-button", anchor_box.dimensions.border_box());
+
+        // 2. Setup positioned tooltip anchored below the button: top: anchor(bottom); left: anchor(left);
+        let mut tooltip_box = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        tooltip_box.dimensions.content = Rect::new(0.0, 0.0, 80.0, 30.0);
+        let mut tooltip_style = ComputedStyle::default();
+        tooltip_style.position = Position::Absolute;
+        tooltip_style.position_anchor = Some("--my-button".to_string());
+        tooltip_style.top = Length::parse("anchor(bottom)").expect("parse anchor(bottom)");
+        tooltip_style.left = Length::parse("anchor(left)").expect("parse anchor(left)");
+        tooltip_box.style = Some(tooltip_style.into());
+
+        let containing_block = Dimensions::new(Rect::new(0.0, 0.0, 800.0, 600.0));
+        let mut float_ctx = FloatContext::new();
+        layout_positioned_element(&mut tooltip_box, &containing_block, &mut float_ctx);
+
+        // Tooltip top should align with anchor bottom (200 + 40 = 240)
+        assert_eq!(tooltip_box.dimensions.content.y(), 240.0);
+        // Tooltip left should align with anchor left (100)
+        assert_eq!(tooltip_box.dimensions.content.x(), 100.0);
+
+        // 3. Test @position-try fallback flip-block when anchor is near the bottom of viewport
+        let mut bottom_anchor = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        bottom_anchor.dimensions.content = Rect::new(100.0, 560.0, 120.0, 30.0);
+        register_anchor("--bottom-btn", bottom_anchor.dimensions.border_box());
+
+        let mut flipping_tooltip = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+        flipping_tooltip.dimensions.content = Rect::new(0.0, 0.0, 100.0, 50.0);
+        let mut flip_style = ComputedStyle::default();
+        flip_style.position = Position::Absolute;
+        flip_style.position_anchor = Some("--bottom-btn".to_string());
+        flip_style.top = Length::parse("anchor(bottom)").unwrap();
+        // If bottom overflow occurs, flip-block should place it above the anchor (at 560 - 50 = 510)
+        flip_style.position_try_fallbacks = vec!["flip-block".to_string()];
+        flipping_tooltip.style = Some(flip_style.into());
+
+        layout_positioned_element(&mut flipping_tooltip, &containing_block, &mut float_ctx);
+
+        // Because bottom is at 590 and height is 50, placing below would end at 590 + 50 = 640 > 600.
+        // It must flip above the anchor: top = 560 - 50 = 510!
+        assert_eq!(flipping_tooltip.dimensions.content.y(), 510.0);
     }
 }

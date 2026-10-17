@@ -1,9 +1,9 @@
 //! HTML Form submission, validation, view-source, PDF export, and accessibility tree.
 
+use super::BrowserChrome;
+use crate::navigation::{html_escape, url_encode};
 use mango_html::dom::{Document, NodeData, NodeId};
 use mango_net::Url;
-use crate::navigation::{html_escape, url_encode};
-use super::BrowserChrome;
 
 /// Truncates a string to at most `max` characters with an ASCII ellipsis.
 pub fn truncate_label(s: &str, max: usize) -> String {
@@ -297,6 +297,7 @@ impl BrowserChrome {
                 self.is_loading = true;
                 self.address_focused = false;
                 self.nav_actor.post(
+                    self.active_tab_idx,
                     parsed_url,
                     query_str.into_bytes(),
                     "application/x-www-form-urlencoded".to_string(),
@@ -330,7 +331,7 @@ impl BrowserChrome {
         self.load_html(source_html, format!("view-source:{}", self.address_text));
     }
 
-    /// Exports the current page to a PDF document (GAP-021).
+    /// Exports the current page to a PDF document.
     pub fn print_to_pdf(
         &self,
         path: &std::path::Path,
@@ -340,7 +341,7 @@ impl BrowserChrome {
         mango_render::print_to_pdf(&self.page_display_list, path, &opts)
     }
 
-    /// Builds the accessibility tree for the currently loaded document (GAP-020).
+    /// Builds the accessibility tree for the currently loaded document.
     pub fn accessibility_tree(&self) -> mango_layout::a11y::A11yTree {
         let doc = self.document_view();
         mango_layout::a11y::A11yTree::build(&doc, self.root_box.as_ref())

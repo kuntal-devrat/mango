@@ -361,7 +361,7 @@ impl DisplayCommand {
     }
 }
 
-/// An operation to apply when patching a display list (ARCH-004).
+/// An operation to apply when patching a display list.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DiffOp {
     /// Command at index is unchanged.
@@ -375,7 +375,7 @@ pub enum DiffOp {
     Remove { index: usize },
 }
 
-/// The result of diffing two display lists (ARCH-004).
+/// The result of diffing two display lists.
 ///
 /// Contains the sequence of operations between an old and new display list,
 /// along with the consolidated damaged/dirty bounding rect to enable minimal repainting.
@@ -390,7 +390,7 @@ pub struct DisplayListDiff {
 }
 
 impl DisplayListDiff {
-    /// Computes the difference between `old_list` and `new_list` (ARCH-004).
+    /// Computes the difference between `old_list` and `new_list`.
     ///
     /// Identifies identical prefixes and suffixes to isolate the exact changed range,
     /// emits targeted operations, and calculates the minimal bounding box of
@@ -536,7 +536,7 @@ impl DisplayList {
         self.commands.clear();
     }
 
-    /// Computes the difference between this display list and another (ARCH-004).
+    /// Computes the difference between this display list and another.
     pub fn diff(&self, new_list: &DisplayList) -> DisplayListDiff {
         DisplayListDiff::diff(self, new_list)
     }

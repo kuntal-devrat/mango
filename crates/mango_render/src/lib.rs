@@ -3,7 +3,7 @@
 //! Display list generation and painting pipeline. Converts a layout tree
 //! into a flat list of draw commands, then rasterizes them to a pixel buffer.
 //!
-//! ## Phase 2b: Font & Image Rendering
+//! ## Font & Image Rendering
 //! - **`font`**: TrueType font loading and glyph rasterization via `fontdue`.
 //! - **`image_decode`**: PNG/JPEG/GIF/WebP image decoding via the `image` crate.
 
@@ -42,6 +42,7 @@ pub use damage::{DamageRegion, MAX_DAMAGE_RECTS};
 pub use display_list::{BorderWidths, DiffOp, DisplayCommand, DisplayList, DisplayListDiff};
 pub use font::{
     FontFamily, FontManager, FontStyle, FontWeight, TextDecoration, decode_font_bytes, font_manager,
+    prune_web_fonts,
 };
 pub use image_decode::{
     DecodedImage, cache_image, decode_data_uri, decode_image_bytes, get_cached_image,

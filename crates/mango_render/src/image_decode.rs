@@ -1,7 +1,6 @@
 //! Image decoding: data URI parsing and PNG/JPEG/GIF/WebP image decoding.
 //!
-//! Supports `data:image/*;base64,...` URIs for inline images. HTTP image
-//! fetching will be added in Phase 3 (Networking).
+//! Supports `data:image/*;base64,...` URIs and remote HTTP image streams.
 
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
@@ -11,8 +10,16 @@ use image::codecs::gif::GifDecoder;
 use image::{AnimationDecoder, GenericImageView};
 
 /// Thread-safe bounded memory cache for decoded image buffers.
+struct ImageCacheEntry {
+    image: DecodedImage,
+    last_accessed: std::sync::atomic::AtomicU64,
+}
+
+static IMAGE_ACCESS_TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// Thread-safe bounded memory cache for decoded image buffers with LRU eviction.
 struct BoundedImageStore<K: std::hash::Hash + Eq + Clone> {
-    entries: HashMap<K, DecodedImage>,
+    entries: HashMap<K, ImageCacheEntry>,
     total_bytes: usize,
     max_bytes: usize,
 }
@@ -33,22 +40,35 @@ impl<K: std::hash::Hash + Eq + Clone> BoundedImageStore<K> {
         }
 
         if let Some(old) = self.entries.remove(&key) {
-            self.total_bytes = self.total_bytes.saturating_sub(old.pixels.len() * 4);
+            self.total_bytes = self.total_bytes.saturating_sub(old.image.pixels.len() * 4);
         }
 
         while (self.total_bytes + entry_bytes > self.max_bytes || self.entries.len() >= 1024)
             && !self.entries.is_empty()
         {
-            let Some(k) = self.entries.keys().next().cloned() else {
+            let oldest_key = self
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.last_accessed.load(std::sync::atomic::Ordering::Relaxed))
+                .map(|(k, _)| k.clone());
+
+            let Some(k) = oldest_key else {
                 break;
             };
             if let Some(removed) = self.entries.remove(&k) {
-                self.total_bytes = self.total_bytes.saturating_sub(removed.pixels.len() * 4);
+                self.total_bytes = self.total_bytes.saturating_sub(removed.image.pixels.len() * 4);
             }
         }
 
         self.total_bytes += entry_bytes;
-        self.entries.insert(key, img);
+        let tick = IMAGE_ACCESS_TICK.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.entries.insert(
+            key,
+            ImageCacheEntry {
+                image: img,
+                last_accessed: std::sync::atomic::AtomicU64::new(tick),
+            },
+        );
     }
 
     fn get<Q>(&self, key: &Q) -> Option<&DecodedImage>
@@ -56,18 +76,23 @@ impl<K: std::hash::Hash + Eq + Clone> BoundedImageStore<K> {
         K: std::borrow::Borrow<Q>,
         Q: std::hash::Hash + Eq + ?Sized,
     {
-        self.entries.get(key)
+        let entry = self.entries.get(key)?;
+        entry.last_accessed.store(
+            IMAGE_ACCESS_TICK.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        Some(&entry.image)
     }
 
-    fn iter(&self) -> std::collections::hash_map::Iter<'_, K, DecodedImage> {
-        self.entries.iter()
+    fn iter(&self) -> impl Iterator<Item = (&K, &DecodedImage)> {
+        self.entries.iter().map(|(k, entry)| (k, &entry.image))
     }
 
     #[allow(dead_code)]
     fn remove(&mut self, key: &K) -> Option<DecodedImage> {
         if let Some(removed) = self.entries.remove(key) {
-            self.total_bytes = self.total_bytes.saturating_sub(removed.pixels.len() * 4);
-            Some(removed)
+            self.total_bytes = self.total_bytes.saturating_sub(removed.image.pixels.len() * 4);
+            Some(removed.image)
         } else {
             None
         }
@@ -138,7 +163,7 @@ pub fn get_or_resize_cached(
     scaled
 }
 
-/// Triggers asynchronous decoding of image bytes in a background worker thread (OPT-006).
+/// Triggers asynchronous decoding of image bytes in a background worker thread.
 /// Once decoded, the image is automatically inserted into the global image cache.
 pub fn decode_image_async(key: String, bytes: Vec<u8>) {
     if get_cached_image(&key).is_some() {
@@ -175,7 +200,7 @@ pub fn decode_image_async(key: String, bytes: Vec<u8>) {
 }
 
 /// Retrieves a decoded image from cache, or initiates background decoding
-/// while returning a placeholder image immediately to avoid blocking the main event loop (OPT-006).
+/// while returning a placeholder image immediately to avoid blocking the main event loop.
 pub fn get_or_decode_async(
     key: &str,
     bytes: &[u8],
@@ -1100,5 +1125,32 @@ mod tests {
         let frame = get_animated_frame(key, 120);
         assert!(frame.is_some());
         assert_eq!(frame.unwrap().pixels[0], 0xFF00FF00);
+    }
+
+    #[test]
+    fn test_bounded_image_store_lru_eviction() {
+        let make_img = |pixel: u32| DecodedImage {
+            width: 10,
+            height: 10,
+            pixels: vec![pixel; 100], // 100 * 4 = 400 bytes
+        };
+
+        // Budget for exactly two 400-byte images
+        let mut store = BoundedImageStore::new(800);
+
+        store.insert("img1".to_string(), make_img(1));
+        store.insert("img2".to_string(), make_img(2));
+        assert_eq!(store.total_bytes, 800);
+
+        // Access img1 so it becomes more recently used than img2
+        assert!(store.get(&"img1".to_string()).is_some());
+
+        // Insert img3 - must evict the least recently used item (img2)
+        store.insert("img3".to_string(), make_img(3));
+        assert_eq!(store.total_bytes, 800);
+
+        assert!(store.get(&"img2".to_string()).is_none(), "img2 should have been evicted by LRU");
+        assert!(store.get(&"img1".to_string()).is_some(), "img1 should remain in cache");
+        assert!(store.get(&"img3".to_string()).is_some(), "img3 should be in cache");
     }
 }

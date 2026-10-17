@@ -11,8 +11,10 @@ pub struct HistoryEntry {
     pub title: String,
     /// Scroll position when navigated away.
     pub scroll_y: f32,
-    /// High-precision 64-bit scroll position (M-10).
+    /// High-precision 64-bit scroll position.
     pub scroll_y_f64: f64,
+    /// BFCache frozen engine layout snapshot for zero-latency instant back/forward navigation.
+    pub bfcache_snapshot: Option<Box<mango_layout::LayoutSnapshot>>,
 }
 
 /// Per-tab web contents state (DOM tree, JS runtime, stylesheets, layout, scroll, and form state).
@@ -30,6 +32,7 @@ pub struct TabWebContents {
     pub image_rx: Option<std::sync::mpsc::Receiver<String>>,
     pub has_active_animations: bool,
     pub canvas_bg: mango_core::Color,
+    pub engine: Option<mango_engine::Engine>,
 }
 
 /// A single browser tab with navigation history and isolated web contents.
@@ -40,7 +43,7 @@ pub struct Tab {
     pub title: String,
     /// Scroll position (vertical).
     pub scroll_y: f32,
-    /// High-precision 64-bit vertical scroll position (M-10).
+    /// High-precision 64-bit vertical scroll position.
     pub scroll_y_f64: f64,
     /// History stack.
     history: Vec<HistoryEntry>,
@@ -65,6 +68,7 @@ impl Tab {
             title: t.clone(),
             scroll_y: 0.0,
             scroll_y_f64: 0.0,
+            bfcache_snapshot: None,
         };
         Self {
             url: u,
@@ -78,6 +82,18 @@ impl Tab {
                 std::collections::HashMap::new(),
             )),
         }
+    }
+
+    /// Stores a frozen BFCache layout snapshot on the current history entry.
+    pub fn store_bfcache_snapshot(&mut self, snapshot: Box<mango_layout::LayoutSnapshot>) {
+        if let Some(entry) = self.history.get_mut(self.history_idx) {
+            entry.bfcache_snapshot = Some(snapshot);
+        }
+    }
+
+    /// Returns the frozen BFCache snapshot of the current history entry if available.
+    pub fn current_bfcache_snapshot(&self) -> Option<&Box<mango_layout::LayoutSnapshot>> {
+        self.history.get(self.history_idx).and_then(|e| e.bfcache_snapshot.as_ref())
     }
 
     /// Pushes a new URL into navigation history, truncating any forward history.
@@ -106,6 +122,7 @@ impl Tab {
             title: t,
             scroll_y: 0.0,
             scroll_y_f64: 0.0,
+            bfcache_snapshot: None,
         });
         self.history_idx = self.history.len().saturating_sub(1);
     }
@@ -125,7 +142,7 @@ impl Tab {
         self.go_back_f64().map(|(u, s)| (u, s as f32))
     }
 
-    /// Navigates back in history with 64-bit precision scroll offset (M-10).
+    /// Navigates back in history with 64-bit precision scroll offset.
     pub fn go_back_f64(&mut self) -> Option<(String, f64)> {
         if self.can_go_back() {
             // Save current scroll pos
@@ -151,7 +168,7 @@ impl Tab {
         self.go_forward_f64().map(|(u, s)| (u, s as f32))
     }
 
-    /// Navigates forward in history with 64-bit precision scroll offset (M-10).
+    /// Navigates forward in history with 64-bit precision scroll offset.
     pub fn go_forward_f64(&mut self) -> Option<(String, f64)> {
         if self.can_go_forward() {
             if let Some(entry) = self.history.get_mut(self.history_idx) {

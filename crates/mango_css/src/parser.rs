@@ -35,10 +35,15 @@ pub enum Rule {
     Media(MediaRule),
     Container(ContainerRule),
     Layer(LayerRule),
+    Scope(ScopeRule),
     Import(String),
     FontFace(FontFaceRule),
     /// `@keyframes name { ... }` animation rule.
     Keyframes(KeyframesRule),
+    /// `@position-try --name { ... }` anchor fallback option rule.
+    PositionTry(PositionTryRule),
+    /// `@view-transition { navigation: auto; }` cross-document transition rule.
+    ViewTransition(ViewTransitionRule),
 }
 
 /// A single keyframe rule inside `@keyframes`.
@@ -93,6 +98,28 @@ pub struct ContainerRule {
 pub struct LayerRule {
     pub name: Option<String>,
     pub rules: Vec<StyleRule>,
+}
+
+/// An `@scope [(<scope-start>)] [to (<scope-end>)]` at-rule wrapping nested style rules.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScopeRule {
+    pub root: Option<SelectorList>,
+    pub limit: Option<SelectorList>,
+    pub rules: Vec<StyleRule>,
+}
+
+/// An `@position-try <dashed-ident>` at-rule for CSS Anchor Positioning fallbacks.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PositionTryRule {
+    pub name: String,
+    pub declarations: Vec<Declaration>,
+}
+
+/// An `@view-transition` at-rule for cross-document / single-page view transitions.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ViewTransitionRule {
+    pub navigation: String,
+    pub types: Vec<String>,
 }
 
 /// The CSS parser.
@@ -393,12 +420,21 @@ impl CssParser {
 
                 if kw.eq_ignore_ascii_case("layer") {
                     self.skip_whitespace_and_comments();
-                    let mut layer_name = None;
-                    if let Token::Ident(name) = self.peek().clone() {
-                        layer_name = Some(name);
+                    if *self.peek() == Token::OpenCurly {
                         self.advance();
-                        self.skip_whitespace_and_comments();
+                        let mut layer_rules = Vec::new();
+                        self.parse_nested_style_rules_into(&mut layer_rules, 0);
+                        if *self.peek() == Token::CloseCurly {
+                            self.advance();
+                        }
+                        rules.push(Rule::Layer(LayerRule {
+                            name: None,
+                            rules: layer_rules,
+                        }));
+                        continue;
                     }
+
+                    let mut preamble_tokens = Vec::new();
                     let mut has_block = false;
                     while *self.peek() != Token::Eof {
                         match self.peek() {
@@ -412,11 +448,23 @@ impl CssParser {
                                 break;
                             }
                             _ => {
-                                self.advance();
+                                preamble_tokens.push(self.advance());
                             }
                         }
                     }
+
+                    let mut preamble_str = String::new();
+                    for t in &preamble_tokens {
+                        preamble_str.push_str(&self.token_to_string(t));
+                    }
+                    let preamble_str = preamble_str.trim();
+
                     if has_block {
+                        let layer_name = if preamble_str.is_empty() {
+                            None
+                        } else {
+                            Some(preamble_str.to_string())
+                        };
                         let mut layer_rules = Vec::new();
                         self.parse_nested_style_rules_into(&mut layer_rules, 0);
                         if *self.peek() == Token::CloseCurly {
@@ -426,6 +474,177 @@ impl CssParser {
                             name: layer_name,
                             rules: layer_rules,
                         }));
+                    } else {
+                        // Statement syntax: @layer base, components, utilities;
+                        for part in preamble_str.split(',') {
+                            let name = part.trim();
+                            if !name.is_empty() {
+                                rules.push(Rule::Layer(LayerRule {
+                                    name: Some(name.to_string()),
+                                    rules: Vec::new(),
+                                }));
+                            }
+                        }
+                    }
+                    continue;
+                }
+
+                if kw.eq_ignore_ascii_case("scope") {
+                    self.skip_whitespace_and_comments();
+                    let mut root = None;
+                    let mut limit = None;
+
+                    // 1. Optional root selector: (root)
+                    if *self.peek() == Token::OpenParen {
+                        self.advance();
+                        let mut root_tokens = Vec::new();
+                        let mut depth = 1;
+                        while *self.peek() != Token::Eof && depth > 0 {
+                            match self.peek() {
+                                Token::OpenParen => {
+                                    depth += 1;
+                                    root_tokens.push(self.advance());
+                                }
+                                Token::CloseParen => {
+                                    depth -= 1;
+                                    if depth > 0 {
+                                        root_tokens.push(self.advance());
+                                    } else {
+                                        self.advance();
+                                        break;
+                                    }
+                                }
+                                _ => {
+                                    root_tokens.push(self.advance());
+                                }
+                            }
+                        }
+                        let mut root_parser = CssParser::new(root_tokens);
+                        root = root_parser.parse_selector_list();
+                    }
+
+                    self.skip_whitespace_and_comments();
+
+                    // 2. Optional limit selector: to (limit)
+                    if let Token::Ident(to_kw) = self.peek().clone() {
+                        if to_kw.eq_ignore_ascii_case("to") {
+                            self.advance();
+                            self.skip_whitespace_and_comments();
+                            if *self.peek() == Token::OpenParen {
+                                self.advance();
+                                let mut limit_tokens = Vec::new();
+                                let mut depth = 1;
+                                while *self.peek() != Token::Eof && depth > 0 {
+                                    match self.peek() {
+                                        Token::OpenParen => {
+                                            depth += 1;
+                                            limit_tokens.push(self.advance());
+                                        }
+                                        Token::CloseParen => {
+                                            depth -= 1;
+                                            if depth > 0 {
+                                                limit_tokens.push(self.advance());
+                                            } else {
+                                                self.advance();
+                                                break;
+                                            }
+                                        }
+                                        _ => {
+                                            limit_tokens.push(self.advance());
+                                        }
+                                    }
+                                }
+                                let mut limit_parser = CssParser::new(limit_tokens);
+                                limit = limit_parser.parse_selector_list();
+                            }
+                        }
+                    }
+
+                    self.skip_whitespace_and_comments();
+
+                    // 3. Nested style rules block: { ... }
+                    if *self.peek() == Token::OpenCurly {
+                        self.advance();
+                        let mut scope_rules = Vec::new();
+                        self.parse_nested_style_rules_into(&mut scope_rules, 0);
+                        if *self.peek() == Token::CloseCurly {
+                            self.advance();
+                        }
+                        rules.push(Rule::Scope(ScopeRule {
+                            root,
+                            limit,
+                            rules: scope_rules,
+                        }));
+                    } else {
+                        self.skip_unknown_rule_or_block();
+                    }
+                    continue;
+                }
+
+                if kw.eq_ignore_ascii_case("position-try") {
+                    self.skip_whitespace_and_comments();
+                    let mut name = String::new();
+                    while *self.peek() != Token::Eof
+                        && *self.peek() != Token::OpenCurly
+                        && *self.peek() != Token::Semicolon
+                    {
+                        match self.advance() {
+                            Token::Ident(id) => name.push_str(&id),
+                            Token::Delim(c) => name.push(c),
+                            Token::Whitespace => {}
+                            _ => {}
+                        }
+                    }
+                    self.skip_whitespace_and_comments();
+                    if *self.peek() == Token::OpenCurly {
+                        self.advance();
+                        let decls = self.parse_declarations_until(Token::CloseCurly);
+                        if *self.peek() == Token::CloseCurly {
+                            self.advance();
+                        }
+                        rules.push(Rule::PositionTry(PositionTryRule {
+                            name: name.trim().to_string(),
+                            declarations: decls,
+                        }));
+                    } else {
+                        self.skip_unknown_rule_or_block();
+                    }
+                    continue;
+                }
+
+                if kw.eq_ignore_ascii_case("view-transition") {
+                    self.skip_whitespace_and_comments();
+                    if *self.peek() == Token::OpenCurly {
+                        self.advance();
+                        let decls = self.parse_declarations_until(Token::CloseCurly);
+                        if *self.peek() == Token::CloseCurly {
+                            self.advance();
+                        }
+                        let mut navigation = "none".to_string();
+                        let mut types = Vec::new();
+                        for d in decls {
+                            if d.name.eq_ignore_ascii_case("navigation") {
+                                if let Value::Keyword(k) | Value::String(k) = &d.value {
+                                    navigation = k.clone();
+                                }
+                            } else if d.name.eq_ignore_ascii_case("types") {
+                                if let Value::Keyword(k) | Value::String(k) = &d.value {
+                                    types.push(k.clone());
+                                } else if let Value::List(items) = &d.value {
+                                    for item in items {
+                                        if let Value::Keyword(k) | Value::String(k) = item {
+                                            types.push(k.clone());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        rules.push(Rule::ViewTransition(ViewTransitionRule {
+                            navigation,
+                            types,
+                        }));
+                    } else {
+                        self.skip_unknown_rule_or_block();
                     }
                     continue;
                 }
@@ -625,7 +844,7 @@ impl CssParser {
                             out_rules.extend(nested_support_rules);
                         }
                     }
-                } else if inner_kw.eq_ignore_ascii_case("layer") {
+                } else if inner_kw.eq_ignore_ascii_case("layer") || inner_kw.eq_ignore_ascii_case("scope") {
                     let mut has_block = false;
                     while *self.peek() != Token::Eof {
                         match self.peek() {
@@ -2589,7 +2808,28 @@ impl CssParser {
         let fn_name = match &tokens[idx] {
             Token::Ident(name) => {
                 let lower = name.to_ascii_lowercase();
-                if matches!(lower.as_str(), "calc" | "min" | "max" | "clamp") {
+                if matches!(
+                    lower.as_str(),
+                    "calc"
+                        | "min"
+                        | "max"
+                        | "clamp"
+                        | "round"
+                        | "mod"
+                        | "rem"
+                        | "abs"
+                        | "sign"
+                        | "sin"
+                        | "cos"
+                        | "tan"
+                        | "asin"
+                        | "acos"
+                        | "atan"
+                        | "atan2"
+                        | "sqrt"
+                        | "pow"
+                        | "hypot"
+                ) {
                     lower
                 } else {
                     return None;
@@ -2685,6 +2925,152 @@ impl CssParser {
                     val: Box::new(val),
                     max: Box::new(max),
                 })
+            }
+            "round" => {
+                let args = Self::split_comma_args(tokens);
+                let (strategy, val_idx, step_idx) = if args.len() == 3 {
+                    let strat = if let Some(Token::Ident(s)) = args[0].first() {
+                        match s.to_ascii_lowercase().as_str() {
+                            "up" => crate::values::RoundStrategy::Up,
+                            "down" => crate::values::RoundStrategy::Down,
+                            "to-zero" => crate::values::RoundStrategy::ToZero,
+                            _ => crate::values::RoundStrategy::Nearest,
+                        }
+                    } else {
+                        crate::values::RoundStrategy::Nearest
+                    };
+                    (strat, 1, 2)
+                } else if args.len() == 2 {
+                    (crate::values::RoundStrategy::Nearest, 0, 1)
+                } else {
+                    return None;
+                };
+                let val = Self::parse_calc_sum(&args[val_idx], depth + 1)?;
+                let step = Self::parse_calc_sum(&args[step_idx], depth + 1)?;
+                Some(MathExpr::Round {
+                    strategy,
+                    val: Box::new(val),
+                    step: Box::new(step),
+                })
+            }
+            "mod" => {
+                let args = Self::split_comma_args(tokens);
+                if args.len() != 2 {
+                    return None;
+                }
+                let a = Self::parse_calc_sum(&args[0], depth + 1)?;
+                let b = Self::parse_calc_sum(&args[1], depth + 1)?;
+                Some(MathExpr::Mod(Box::new(a), Box::new(b)))
+            }
+            "rem" => {
+                let args = Self::split_comma_args(tokens);
+                if args.len() != 2 {
+                    return None;
+                }
+                let a = Self::parse_calc_sum(&args[0], depth + 1)?;
+                let b = Self::parse_calc_sum(&args[1], depth + 1)?;
+                Some(MathExpr::Rem(Box::new(a), Box::new(b)))
+            }
+            "abs" => {
+                let args = Self::split_comma_args(tokens);
+                if args.len() != 1 {
+                    return None;
+                }
+                let a = Self::parse_calc_sum(&args[0], depth + 1)?;
+                Some(MathExpr::Abs(Box::new(a)))
+            }
+            "sign" => {
+                let args = Self::split_comma_args(tokens);
+                if args.len() != 1 {
+                    return None;
+                }
+                let a = Self::parse_calc_sum(&args[0], depth + 1)?;
+                Some(MathExpr::Sign(Box::new(a)))
+            }
+            "sin" => {
+                let args = Self::split_comma_args(tokens);
+                if args.len() != 1 {
+                    return None;
+                }
+                let a = Self::parse_calc_sum(&args[0], depth + 1)?;
+                Some(MathExpr::Sin(Box::new(a)))
+            }
+            "cos" => {
+                let args = Self::split_comma_args(tokens);
+                if args.len() != 1 {
+                    return None;
+                }
+                let a = Self::parse_calc_sum(&args[0], depth + 1)?;
+                Some(MathExpr::Cos(Box::new(a)))
+            }
+            "tan" => {
+                let args = Self::split_comma_args(tokens);
+                if args.len() != 1 {
+                    return None;
+                }
+                let a = Self::parse_calc_sum(&args[0], depth + 1)?;
+                Some(MathExpr::Tan(Box::new(a)))
+            }
+            "asin" => {
+                let args = Self::split_comma_args(tokens);
+                if args.len() != 1 {
+                    return None;
+                }
+                let a = Self::parse_calc_sum(&args[0], depth + 1)?;
+                Some(MathExpr::Asin(Box::new(a)))
+            }
+            "acos" => {
+                let args = Self::split_comma_args(tokens);
+                if args.len() != 1 {
+                    return None;
+                }
+                let a = Self::parse_calc_sum(&args[0], depth + 1)?;
+                Some(MathExpr::Acos(Box::new(a)))
+            }
+            "atan" => {
+                let args = Self::split_comma_args(tokens);
+                if args.len() != 1 {
+                    return None;
+                }
+                let a = Self::parse_calc_sum(&args[0], depth + 1)?;
+                Some(MathExpr::Atan(Box::new(a)))
+            }
+            "atan2" => {
+                let args = Self::split_comma_args(tokens);
+                if args.len() != 2 {
+                    return None;
+                }
+                let y = Self::parse_calc_sum(&args[0], depth + 1)?;
+                let x = Self::parse_calc_sum(&args[1], depth + 1)?;
+                Some(MathExpr::Atan2(Box::new(y), Box::new(x)))
+            }
+            "sqrt" => {
+                let args = Self::split_comma_args(tokens);
+                if args.len() != 1 {
+                    return None;
+                }
+                let a = Self::parse_calc_sum(&args[0], depth + 1)?;
+                Some(MathExpr::Sqrt(Box::new(a)))
+            }
+            "pow" => {
+                let args = Self::split_comma_args(tokens);
+                if args.len() != 2 {
+                    return None;
+                }
+                let base = Self::parse_calc_sum(&args[0], depth + 1)?;
+                let exp = Self::parse_calc_sum(&args[1], depth + 1)?;
+                Some(MathExpr::Pow(Box::new(base), Box::new(exp)))
+            }
+            "hypot" => {
+                let args = Self::split_comma_args(tokens);
+                if args.is_empty() {
+                    return None;
+                }
+                let mut exprs = Vec::with_capacity(args.len());
+                for arg in args {
+                    exprs.push(Self::parse_calc_sum(&arg, depth + 1)?);
+                }
+                Some(MathExpr::Hypot(exprs))
             }
             _ => None,
         }
@@ -2878,7 +3264,28 @@ impl CssParser {
             && let Token::Ident(fn_name) = tokens[0]
         {
             let lower = fn_name.to_ascii_lowercase();
-            if matches!(lower.as_str(), "calc" | "min" | "max" | "clamp") {
+            if matches!(
+                lower.as_str(),
+                "calc"
+                    | "min"
+                    | "max"
+                    | "clamp"
+                    | "round"
+                    | "mod"
+                    | "rem"
+                    | "abs"
+                    | "sign"
+                    | "sin"
+                    | "cos"
+                    | "tan"
+                    | "asin"
+                    | "acos"
+                    | "atan"
+                    | "atan2"
+                    | "sqrt"
+                    | "pow"
+                    | "hypot"
+            ) {
                 let mut paren_depth = 0;
                 let mut matches_outer = true;
                 for (i, tok) in tokens[1..].iter().enumerate() {
@@ -2926,7 +3333,15 @@ impl CssParser {
         if tokens.len() == 1 {
             match tokens[0] {
                 Token::Dimension { value, unit } => {
-                    let len = match unit.to_ascii_lowercase().as_str() {
+                    let u = unit.to_ascii_lowercase();
+                    match u.as_str() {
+                        "deg" => return Some(MathExpr::Number(value.to_radians())),
+                        "grad" => return Some(MathExpr::Number(*value * std::f32::consts::PI / 200.0)),
+                        "rad" => return Some(MathExpr::Number(*value)),
+                        "turn" => return Some(MathExpr::Number(*value * 2.0 * std::f32::consts::PI)),
+                        _ => {}
+                    }
+                    let len = match u.as_str() {
                         "px" => Length::Px(*value),
                         "em" => Length::Em(*value),
                         "rem" => Length::Rem(*value),
@@ -2934,6 +3349,12 @@ impl CssParser {
                         "vh" => Length::Vh(*value),
                         "vmin" => Length::Vmin(*value),
                         "vmax" => Length::Vmax(*value),
+                        "cqw" => Length::Cqw(*value),
+                        "cqh" => Length::Cqh(*value),
+                        "cqi" => Length::Cqi(*value),
+                        "cqb" => Length::Cqb(*value),
+                        "cqmin" => Length::Cqmin(*value),
+                        "cqmax" => Length::Cqmax(*value),
                         "pt" => Length::Px(*value * 4.0 / 3.0),
                         "pc" => Length::Px(*value * 16.0),
                         "in" => Length::Px(*value * 96.0),
@@ -3044,6 +3465,20 @@ impl CssParser {
             }
             if let Some(col) = Value::parse_color(&call_str) {
                 return Some(Value::Color(col));
+            }
+        }
+
+        // Check for anchor(...) function pattern
+        if let Token::Ident(fn_name) = filtered[0]
+            && fn_name.eq_ignore_ascii_case("anchor")
+            && filtered.last() == Some(&&Token::CloseParen)
+        {
+            let mut call_str = fn_name.clone();
+            for t in &filtered[1..] {
+                call_str.push_str(&self.token_to_string(t));
+            }
+            if let Some(l) = Length::parse(&call_str) {
+                return Some(Value::Length(l));
             }
         }
 
@@ -5180,6 +5615,8 @@ impl CssParser {
             Token::Colon => ":".to_string(),
             Token::Semicolon => ";".to_string(),
             Token::Comma => ",".to_string(),
+            Token::OpenBracket => "[".to_string(),
+            Token::CloseBracket => "]".to_string(),
             Token::OpenParen => "(".to_string(),
             Token::CloseParen => ")".to_string(),
             Token::Whitespace => " ".to_string(),
@@ -5470,10 +5907,22 @@ fn parse_color_stop(s: &str) -> Option<crate::values::ColorStop> {
 
     let color_part = s[..color_end].trim();
     let is_current_color = color_part.eq_ignore_ascii_case("currentcolor");
-    let color = if is_current_color {
-        mango_core::Color::BLACK
+    let (color, var_name) = if is_current_color {
+        (mango_core::Color::BLACK, None)
+    } else if color_part.starts_with("var(") && color_part.ends_with(')') {
+        let var_inner = color_part[4..color_part.len() - 1].trim();
+        let (name, fallback) = match var_inner.split_once(',') {
+            Some((n, fb)) => (n.trim(), Some(fb.trim())),
+            None => (var_inner, None),
+        };
+        let fallback_color = fallback
+            .and_then(Value::parse_color)
+            .unwrap_or(mango_core::Color::TRANSPARENT);
+        (fallback_color, Some(name.to_string()))
+    } else if let Some(c) = Value::parse_color(color_part) {
+        (c, None)
     } else {
-        Value::parse_color(color_part)?
+        return None;
     };
     let to_pos = |p: &str| -> Option<f32> {
         if let Some(pct_str) = p.strip_suffix('%') {
@@ -5492,6 +5941,7 @@ fn parse_color_stop(s: &str) -> Option<crate::values::ColorStop> {
         position,
         end_position,
         is_current_color,
+        var_name,
     })
 }
 

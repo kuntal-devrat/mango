@@ -9,23 +9,51 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 /// Parsed `Content-Security-Policy` (or `Content-Security-Policy-Report-Only`)
-/// header, restricted to the directives Mango enforces.
+/// header conforming to W3C CSP Level 3.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CspPolicy {
-    /// `default-src`, the fallback for unspecified directives.
+    /// `default-src`, the fallback for unspecified fetch directives.
     pub default_src: Vec<String>,
     /// `script-src` sources (falls back to `default-src`).
     pub script_src: Vec<String>,
+    /// `script-src-elem` sources (falls back to `script-src` -> `default-src`).
+    pub script_src_elem: Vec<String>,
+    /// `script-src-attr` sources (falls back to `script-src` -> `default-src`).
+    pub script_src_attr: Vec<String>,
     /// `style-src` sources (falls back to `default-src`).
     pub style_src: Vec<String>,
+    /// `style-src-elem` sources (falls back to `style-src` -> `default-src`).
+    pub style_src_elem: Vec<String>,
+    /// `style-src-attr` sources (falls back to `style-src` -> `default-src`).
+    pub style_src_attr: Vec<String>,
     /// `img-src` sources (falls back to `default-src`).
     pub img_src: Vec<String>,
     /// `font-src` sources (falls back to `default-src`).
     pub font_src: Vec<String>,
     /// `connect-src` sources for `fetch()`/XHR/WebSocket (falls back to `default-src`).
     pub connect_src: Vec<String>,
+    /// `object-src` sources for <object>, <embed>, <applet> (falls back to `default-src`).
+    pub object_src: Vec<String>,
+    /// `media-src` sources for <video>, <audio> (falls back to `default-src`).
+    pub media_src: Vec<String>,
+    /// `frame-src` sources for <iframe> and <frame> (falls back to `child-src` -> `default-src`).
+    pub frame_src: Vec<String>,
+    /// `child-src` sources for workers and frames (falls back to `default-src`).
+    pub child_src: Vec<String>,
+    /// `worker-src` sources for DedicatedWorker, SharedWorker, ServiceWorker (falls back to `child-src` -> `script-src` -> `default-src`).
+    pub worker_src: Vec<String>,
+    /// `manifest-src` sources for application manifests (falls back to `default-src`).
+    pub manifest_src: Vec<String>,
+    /// `base-uri` sources for <base href="..."> (does not fall back to `default-src`).
+    pub base_uri: Vec<String>,
+    /// `form-action` sources for <form action="..."> (does not fall back to `default-src`).
+    pub form_action: Vec<String>,
     /// `frame-ancestors` — whether this page may be framed.
     pub frame_ancestors: Vec<String>,
+    /// `report-uri` endpoints for violation reports.
+    pub report_uri: Vec<String>,
+    /// `report-to` Reporting API group name.
+    pub report_to: Option<String>,
     /// `upgrade-insecure-requests` present.
     pub upgrade_insecure_requests: bool,
     /// `block-all-mixed-content` present.
@@ -34,14 +62,26 @@ pub struct CspPolicy {
     pub report_only: bool,
 }
 
-/// The kind of resource a CSP check applies to.
+/// The kind of resource or execution context a CSP check applies to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResourceDirective {
     Script,
+    ScriptElem,
+    ScriptAttr,
     Style,
+    StyleElem,
+    StyleAttr,
     Image,
     Font,
     Connect,
+    Object,
+    Media,
+    Frame,
+    Child,
+    Worker,
+    Manifest,
+    BaseUri,
+    FormAction,
 }
 
 impl CspPolicy {
@@ -62,32 +102,26 @@ impl CspPolicy {
             let sources: Vec<String> = parts.map(|s| s.to_string()).collect();
             match name.to_ascii_lowercase().as_str() {
                 "default-src" => policy.default_src = sources,
-                "script-src" | "script-src-elem" => {
-                    if policy.script_src.is_empty() {
-                        policy.script_src = sources;
-                    }
-                }
-                "style-src" | "style-src-elem" => {
-                    if policy.style_src.is_empty() {
-                        policy.style_src = sources;
-                    }
-                }
-                "img-src" => {
-                    if policy.img_src.is_empty() {
-                        policy.img_src = sources;
-                    }
-                }
-                "font-src" => {
-                    if policy.font_src.is_empty() {
-                        policy.font_src = sources;
-                    }
-                }
-                "connect-src" => {
-                    if policy.connect_src.is_empty() {
-                        policy.connect_src = sources;
-                    }
-                }
+                "script-src" => policy.script_src = sources,
+                "script-src-elem" => policy.script_src_elem = sources,
+                "script-src-attr" => policy.script_src_attr = sources,
+                "style-src" => policy.style_src = sources,
+                "style-src-elem" => policy.style_src_elem = sources,
+                "style-src-attr" => policy.style_src_attr = sources,
+                "img-src" => policy.img_src = sources,
+                "font-src" => policy.font_src = sources,
+                "connect-src" => policy.connect_src = sources,
+                "object-src" => policy.object_src = sources,
+                "media-src" => policy.media_src = sources,
+                "frame-src" => policy.frame_src = sources,
+                "child-src" => policy.child_src = sources,
+                "worker-src" => policy.worker_src = sources,
+                "manifest-src" => policy.manifest_src = sources,
+                "base-uri" => policy.base_uri = sources,
+                "form-action" => policy.form_action = sources,
                 "frame-ancestors" => policy.frame_ancestors = sources,
+                "report-uri" => policy.report_uri = sources,
+                "report-to" => policy.report_to = sources.into_iter().next(),
                 "upgrade-insecure-requests" => policy.upgrade_insecure_requests = true,
                 "block-all-mixed-content" => policy.block_all_mixed_content = true,
                 _ => {}
@@ -96,19 +130,130 @@ impl CspPolicy {
         Some(policy)
     }
 
-    /// Returns the source list that governs the given directive kind.
+    /// Returns the source list that governs the given directive kind, observing CSP Level 3 fallback rules.
     pub fn sources_for(&self, directive: ResourceDirective) -> &[String] {
-        let specific = match directive {
-            ResourceDirective::Script => &self.script_src,
-            ResourceDirective::Style => &self.style_src,
-            ResourceDirective::Image => &self.img_src,
-            ResourceDirective::Font => &self.font_src,
-            ResourceDirective::Connect => &self.connect_src,
-        };
-        if specific.is_empty() {
-            &self.default_src
-        } else {
-            specific
+        match directive {
+            ResourceDirective::Script => {
+                if !self.script_src.is_empty() {
+                    &self.script_src
+                } else {
+                    &self.default_src
+                }
+            }
+            ResourceDirective::ScriptElem => {
+                if !self.script_src_elem.is_empty() {
+                    &self.script_src_elem
+                } else if !self.script_src.is_empty() {
+                    &self.script_src
+                } else {
+                    &self.default_src
+                }
+            }
+            ResourceDirective::ScriptAttr => {
+                if !self.script_src_attr.is_empty() {
+                    &self.script_src_attr
+                } else if !self.script_src.is_empty() {
+                    &self.script_src
+                } else {
+                    &self.default_src
+                }
+            }
+            ResourceDirective::Style => {
+                if !self.style_src.is_empty() {
+                    &self.style_src
+                } else {
+                    &self.default_src
+                }
+            }
+            ResourceDirective::StyleElem => {
+                if !self.style_src_elem.is_empty() {
+                    &self.style_src_elem
+                } else if !self.style_src.is_empty() {
+                    &self.style_src
+                } else {
+                    &self.default_src
+                }
+            }
+            ResourceDirective::StyleAttr => {
+                if !self.style_src_attr.is_empty() {
+                    &self.style_src_attr
+                } else if !self.style_src.is_empty() {
+                    &self.style_src
+                } else {
+                    &self.default_src
+                }
+            }
+            ResourceDirective::Image => {
+                if !self.img_src.is_empty() {
+                    &self.img_src
+                } else {
+                    &self.default_src
+                }
+            }
+            ResourceDirective::Font => {
+                if !self.font_src.is_empty() {
+                    &self.font_src
+                } else {
+                    &self.default_src
+                }
+            }
+            ResourceDirective::Connect => {
+                if !self.connect_src.is_empty() {
+                    &self.connect_src
+                } else {
+                    &self.default_src
+                }
+            }
+            ResourceDirective::Object => {
+                if !self.object_src.is_empty() {
+                    &self.object_src
+                } else {
+                    &self.default_src
+                }
+            }
+            ResourceDirective::Media => {
+                if !self.media_src.is_empty() {
+                    &self.media_src
+                } else {
+                    &self.default_src
+                }
+            }
+            ResourceDirective::Frame => {
+                if !self.frame_src.is_empty() {
+                    &self.frame_src
+                } else if !self.child_src.is_empty() {
+                    &self.child_src
+                } else {
+                    &self.default_src
+                }
+            }
+            ResourceDirective::Child => {
+                if !self.child_src.is_empty() {
+                    &self.child_src
+                } else {
+                    &self.default_src
+                }
+            }
+            ResourceDirective::Worker => {
+                if !self.worker_src.is_empty() {
+                    &self.worker_src
+                } else if !self.child_src.is_empty() {
+                    &self.child_src
+                } else if !self.script_src.is_empty() {
+                    &self.script_src
+                } else {
+                    &self.default_src
+                }
+            }
+            ResourceDirective::Manifest => {
+                if !self.manifest_src.is_empty() {
+                    &self.manifest_src
+                } else {
+                    &self.default_src
+                }
+            }
+            ResourceDirective::BaseUri => &self.base_uri,
+            ResourceDirective::FormAction => &self.form_action,
         }
     }
 
@@ -128,7 +273,10 @@ impl CspPolicy {
 
         // CSP spec: 'none' matches nothing and denies all requests.
         // It must be checked before evaluating permissive sources like `*`.
-        if sources.iter().any(|s| s.trim().eq_ignore_ascii_case("'none'")) {
+        if sources
+            .iter()
+            .any(|s| s.trim().eq_ignore_ascii_case("'none'"))
+        {
             return false;
         }
 
@@ -265,10 +413,22 @@ impl CspPolicy {
     pub fn is_empty(&self) -> bool {
         self.default_src.is_empty()
             && self.script_src.is_empty()
+            && self.script_src_elem.is_empty()
+            && self.script_src_attr.is_empty()
             && self.style_src.is_empty()
+            && self.style_src_elem.is_empty()
+            && self.style_src_attr.is_empty()
             && self.img_src.is_empty()
             && self.font_src.is_empty()
             && self.connect_src.is_empty()
+            && self.object_src.is_empty()
+            && self.media_src.is_empty()
+            && self.frame_src.is_empty()
+            && self.child_src.is_empty()
+            && self.worker_src.is_empty()
+            && self.manifest_src.is_empty()
+            && self.base_uri.is_empty()
+            && self.form_action.is_empty()
             && self.frame_ancestors.is_empty()
     }
 
@@ -276,6 +436,100 @@ impl CspPolicy {
     pub fn blocks_framing(&self) -> bool {
         self.frame_ancestors.iter().any(|s| s == "'none'")
     }
+
+    /// Checks if an inline script/style or resource is permitted by a nonce source (e.g. `'nonce-xyz'`).
+    pub fn allows_nonce(&self, directive: ResourceDirective, nonce: &str) -> bool {
+        let sources = self.sources_for(directive);
+        if sources.is_empty() && self.default_src.is_empty() {
+            return true;
+        }
+        let nonce_clean = nonce.trim();
+        if nonce_clean.is_empty() {
+            return false;
+        }
+        for source in sources {
+            let s = source.trim();
+            if let Some(rest) = s.strip_prefix("'nonce-").and_then(|r| r.strip_suffix('\'')) {
+                if rest == nonce_clean {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Checks if content digest matches an allowed cryptographic hash source (e.g. `'sha256-...'`).
+    pub fn allows_hash(&self, directive: ResourceDirective, algo: SriAlgorithm, hash_bytes: &[u8]) -> bool {
+        let sources = self.sources_for(directive);
+        if sources.is_empty() && self.default_src.is_empty() {
+            return true;
+        }
+        let b64 = crate::websocket::base64_encode(hash_bytes);
+        let prefix = match algo {
+            SriAlgorithm::Sha256 => "'sha256-",
+            SriAlgorithm::Sha384 => "'sha384-",
+            SriAlgorithm::Sha512 => "'sha512-",
+        };
+        for source in sources {
+            let s = source.trim();
+            if s.to_ascii_lowercase().starts_with(prefix) && s.ends_with('\'') {
+                let expected = &s[prefix.len()..s.len() - 1];
+                if expected == b64 {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Computes cryptographic hashes of `content` and returns true if any match an allowed hash directive.
+    pub fn allows_content_hash(&self, directive: ResourceDirective, content: &[u8]) -> bool {
+        self.allows_hash(directive, SriAlgorithm::Sha256, &sha256(content))
+            || self.allows_hash(directive, SriAlgorithm::Sha384, &sha384(content))
+            || self.allows_hash(directive, SriAlgorithm::Sha512, &sha512(content))
+    }
+}
+
+/// Content Security Policy violation report conforming to W3C CSP Level 3 / Reporting API.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CspViolationReport {
+    pub document_uri: String,
+    pub referrer: String,
+    pub blocked_uri: String,
+    pub effective_directive: String,
+    pub original_policy: String,
+    pub disposition: String,
+    pub status_code: u16,
+    pub sample: Option<String>,
+}
+
+impl CspViolationReport {
+    /// Serializes report into standard JSON payload format `{"csp-report": { ... }}`.
+    pub fn to_json(&self) -> String {
+        let sample_json = match &self.sample {
+            Some(s) => format!(",\"script-sample\":\"{}\"", escape_json_string(s)),
+            None => String::new(),
+        };
+        format!(
+            "{{\"csp-report\":{{\"document-uri\":\"{}\",\"referrer\":\"{}\",\"blocked-uri\":\"{}\",\"effective-directive\":\"{}\",\"original-policy\":\"{}\",\"disposition\":\"{}\",\"status-code\":{}{}}}}}",
+            escape_json_string(&self.document_uri),
+            escape_json_string(&self.referrer),
+            escape_json_string(&self.blocked_uri),
+            escape_json_string(&self.effective_directive),
+            escape_json_string(&self.original_policy),
+            escape_json_string(&self.disposition),
+            self.status_code,
+            sample_json,
+        )
+    }
+}
+
+fn escape_json_string(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
 }
 
 fn split_url(url: &str) -> (String, String) {
@@ -628,7 +882,7 @@ impl HstsDirective {
     }
 }
 
-/// Maximum number of stored HSTS host policies to prevent unbounded memory growth (H-12).
+/// Maximum number of stored HSTS host policies to prevent unbounded memory growth.
 pub const MAX_HSTS_ENTRIES: usize = 1024;
 
 /// An in-memory HSTS store (RFC 6797) with expiry.
@@ -667,8 +921,10 @@ impl HstsStore {
             return;
         }
 
-        // Automatic pruning of expired entries on write (H-12).
-        if self.entries.len() >= MAX_HSTS_ENTRIES || self.last_pruned.elapsed() >= Duration::from_secs(10) {
+        // Automatic pruning of expired entries on write.
+        if self.entries.len() >= MAX_HSTS_ENTRIES
+            || self.last_pruned.elapsed() >= Duration::from_secs(10)
+        {
             self.prune();
         }
 
@@ -738,8 +994,10 @@ impl HstsStore {
         let now = Instant::now();
         self.last_pruned = now;
         self.entries.retain(|_, (_, expires)| *expires > now);
-        let active: std::collections::HashSet<&str> = self.entries.keys().map(|s| s.as_str()).collect();
-        self.subdomains.retain(|host, _| active.contains(host.as_str()));
+        let active: std::collections::HashSet<&str> =
+            self.entries.keys().map(|s| s.as_str()).collect();
+        self.subdomains
+            .retain(|host, _| active.contains(host.as_str()));
     }
 }
 
@@ -755,7 +1013,6 @@ pub fn blocks_mixed_content(page_url: &str, resource_url: &str, _active: bool) -
         .starts_with("http://");
     page_is_https && resource_is_http
 }
-
 
 /// Upgrades an `http://` URL to `https://` (used for mixed-content upgrade and HSTS).
 pub fn upgrade_to_https(url: &str) -> String {
@@ -1048,6 +1305,43 @@ pub fn validate_cors_response(
     }
 
     Ok(exposed)
+}
+
+/// Request credentials mode (W3C Fetch specification).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RequestCredentials {
+    /// Exclude credentials (cookies, HTTP basic auth) from the request.
+    Omit,
+    /// Include credentials only if target is same-origin.
+    #[default]
+    SameOrigin,
+    /// Always include credentials, requiring Access-Control-Allow-Credentials: true on cross-origin.
+    Include,
+}
+
+impl RequestCredentials {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RequestCredentials::Omit => "omit",
+            RequestCredentials::SameOrigin => "same-origin",
+            RequestCredentials::Include => "include",
+        }
+    }
+}
+
+/// Evaluates CORS response headers using a high-level `RequestCredentials` mode.
+pub fn validate_cors_response_with_credentials(
+    response_headers: &HashMap<String, String>,
+    request_origin: &str,
+    target_origin: &str,
+    credentials: RequestCredentials,
+) -> Result<Vec<String>, CorsError> {
+    let sends_credentials = match credentials {
+        RequestCredentials::Omit => false,
+        RequestCredentials::SameOrigin => request_origin.eq_ignore_ascii_case(target_origin),
+        RequestCredentials::Include => true,
+    };
+    validate_cors_response(response_headers, request_origin, sends_credentials)
 }
 
 // ---------------------------------------------------------------------------
@@ -1344,7 +1638,7 @@ fn sha512_internal(data: &[u8], is_384: bool) -> [u8; 64] {
 }
 
 // ---------------------------------------------------------------------------
-// Subresource Integrity (SRI) Engine (W3C SRI Specification / GAP-020)
+// Subresource Integrity (SRI) Engine (W3C SRI Specification)
 // ---------------------------------------------------------------------------
 
 /// Supported cryptographic hash algorithms for Subresource Integrity.
@@ -1462,7 +1756,7 @@ pub fn verify_subresource_integrity(bytes: &[u8], integrity_attr: &str) -> Resul
 }
 
 // ---------------------------------------------------------------------------
-// Certificate Pinning (HPKP / SPKI Pinning / GAP-021)
+// Certificate Pinning (HPKP / SPKI Pinning)
 // ---------------------------------------------------------------------------
 
 /// Certificate Pinning management and verification.
@@ -1564,7 +1858,7 @@ impl CertificatePinSet {
 }
 
 // ---------------------------------------------------------------------------
-// Network Proxy Configuration & Resolution (GAP-022)
+// Network Proxy Configuration & Resolution
 // ---------------------------------------------------------------------------
 
 /// Network proxy configuration supporting HTTP/HTTPS/SOCKS5 proxies and bypass rules.
@@ -1711,7 +2005,9 @@ pub fn compute_referrer(
         return None;
     }
 
-    let is_same_origin = page_url.scheme.eq_ignore_ascii_case(&destination_url.scheme)
+    let is_same_origin = page_url
+        .scheme
+        .eq_ignore_ascii_case(&destination_url.scheme)
         && page_url.host == destination_url.host
         && page_url.port == destination_url.port;
 
@@ -2170,7 +2466,6 @@ mod tests {
         ));
     }
 
-
     #[test]
     fn test_upgrade_to_https() {
         assert_eq!(upgrade_to_https("http://a.test/x"), "https://a.test/x");
@@ -2437,17 +2732,29 @@ mod tests {
         // 2. StrictOriginWhenCrossOrigin (default)
         // Same-origin: stripped full URL (no userinfo, no frag)
         assert_eq!(
-            compute_referrer(&page_https, &same_dest, ReferrerPolicy::StrictOriginWhenCrossOrigin),
+            compute_referrer(
+                &page_https,
+                &same_dest,
+                ReferrerPolicy::StrictOriginWhenCrossOrigin
+            ),
             Some("https://example.com/dir/page.html?token=123".to_string())
         );
         // Cross-origin HTTPS: origin only
         assert_eq!(
-            compute_referrer(&page_https, &cross_https, ReferrerPolicy::StrictOriginWhenCrossOrigin),
+            compute_referrer(
+                &page_https,
+                &cross_https,
+                ReferrerPolicy::StrictOriginWhenCrossOrigin
+            ),
             Some("https://example.com/".to_string())
         );
         // Downgrade HTTPS -> HTTP: None
         assert_eq!(
-            compute_referrer(&page_https, &cross_http, ReferrerPolicy::StrictOriginWhenCrossOrigin),
+            compute_referrer(
+                &page_https,
+                &cross_http,
+                ReferrerPolicy::StrictOriginWhenCrossOrigin
+            ),
             None
         );
 
@@ -2499,4 +2806,3 @@ mod tests {
         assert_eq!(parsed, ReferrerPolicy::StrictOrigin);
     }
 }
-

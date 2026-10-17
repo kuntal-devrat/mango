@@ -14,6 +14,7 @@ extension!(
         web::op_mango_cancel_timer,
         web::op_mango_alert,
         web::op_mango_navigate,
+        web::op_mango_open_window,
         web::op_mango_random_bytes,
         web::op_mango_ls_get,
         web::op_mango_ls_set,
@@ -38,12 +39,25 @@ extension!(
         web::op_mango_ws_close,
         web::op_mango_fetch,
         web::op_mango_start_fetch,
+        // BroadcastChannel, SharedWorker & Web Locks
+        web::op_mango_broadcast_create,
+        web::op_mango_broadcast_post,
+        web::op_mango_broadcast_close,
+        web::op_mango_shared_worker_connect,
+        web::op_mango_shared_worker_post,
+        web::op_mango_shared_worker_close_port,
+        web::op_mango_locks_request,
+        web::op_mango_locks_release,
+        web::op_mango_locks_abort,
+        web::op_mango_locks_query,
         // DOM Creation & Mutation
         dom::op_mango_create_element,
         dom::op_mango_create_text_node,
         dom::op_mango_create_comment,
         dom::op_mango_create_fragment,
         dom::op_mango_attach_shadow,
+        dom::op_mango_get_shadow_root,
+        dom::op_mango_get_shadow_root_mode,
         dom::op_mango_clone_node,
         dom::op_mango_append_child,
         dom::op_mango_remove_child,
@@ -75,6 +89,7 @@ extension!(
         dom::op_mango_get_node_value,
         dom::op_mango_set_node_value,
         dom::op_mango_get_parent,
+        dom::op_mango_get_parent_node,
         dom::op_mango_get_children,
         dom::op_mango_get_child_node_ids,
         dom::op_mango_get_first_element_child,
@@ -95,6 +110,7 @@ extension!(
         dom::op_mango_get_dataset_keys,
         // Element Matches & Layout
         dom::op_mango_element_contains,
+        dom::op_mango_compare_document_position,
         dom::op_mango_element_matches,
         dom::op_mango_element_closest,
         dom::op_mango_get_element_rect,
@@ -146,12 +162,26 @@ pub fn init_extension() -> deno_core::Extension {
 
 pub const PRELUDE_JS: &str = r##"
 (function() {
+    if (!globalThis.global) {
+        globalThis.global = globalThis;
+    }
+    if (!globalThis.process) {
+        globalThis.process = {
+            env: { NODE_ENV: 'production' },
+            browser: true,
+            version: 'v18.0.0',
+            versions: { node: '18.0.0', v8: '10.0.0' },
+            nextTick: (typeof queueMicrotask === 'function') ? queueMicrotask : function(cb) { setTimeout(cb, 0); }
+        };
+    }
     const ops = Deno.core.ops;
     globalThis._origCE = (tag) => ops.op_mango_create_element(String(tag));
     globalThis._origCTN = (text) => ops.op_mango_create_text_node(String(text));
     globalThis._origCC = (comment) => ops.op_mango_create_comment(String(comment));
     globalThis._createFragment = () => ops.op_mango_create_fragment();
     globalThis._attachShadow = (id, mode) => { const r = ops.op_mango_attach_shadow(Number(id), String(mode)); return r > 0 ? r : null; };
+    globalThis._getShadowRoot = (id) => { const r = ops.op_mango_get_shadow_root(Number(id)); return r > 0 ? r : null; };
+    globalThis._getShadowRootMode = (id) => ops.op_mango_get_shadow_root_mode(Number(id));
     globalThis._insertBefore = (p, n, r) => ops.op_mango_insert_before(Number(p), Number(n), r != null ? Number(r) : 0);
     globalThis._replaceChild = (p, n, o) => ops.op_mango_replace_child(Number(p), Number(n), Number(o));
     globalThis._cloneNode = (id, deep) => { const r = ops.op_mango_clone_node(Number(id), !!deep); return r > 0 ? r : null; };
@@ -165,6 +195,7 @@ pub const PRELUDE_JS: &str = r##"
     globalThis._hasAttribute = (id, name) => ops.op_mango_has_attribute(Number(id), String(name));
     globalThis._getTagName = (id) => ops.op_mango_get_tag_name(Number(id));
     globalThis._getParent = (id) => { const r = ops.op_mango_get_parent(Number(id)); return r > 0 ? r : null; };
+    globalThis._getParentNode = (id) => ops.op_mango_get_parent_node(Number(id));
     globalThis._getChildren = (id) => ops.op_mango_get_children(Number(id));
     globalThis._getChildNodeIds = (id) => ops.op_mango_get_child_node_ids(Number(id));
     globalThis._getFirstElementChild = (id) => { const r = ops.op_mango_get_first_element_child(Number(id)); return r > 0 ? r : null; };
@@ -198,6 +229,7 @@ pub const PRELUDE_JS: &str = r##"
     globalThis._elementFromPoint = (x, y) => { const r = ops.op_mango_element_from_point(Number(x), Number(y)); return r > 0 ? r : null; };
     globalThis._elementsFromPoint = (x, y) => ops.op_mango_elements_from_point(Number(x), Number(y));
     globalThis._elementContains = (p, c) => ops.op_mango_element_contains(Number(p), Number(c));
+    globalThis._compareDocumentPosition = (a, b) => ops.op_mango_compare_document_position(Number(a), Number(b));
     globalThis._elementMatches = (id, sel) => ops.op_mango_element_matches(Number(id), String(sel));
     globalThis._elementClosest = (id, sel) => { const r = ops.op_mango_element_closest(Number(id), String(sel)); return r > 0 ? r : null; };
     globalThis._cookieGet = () => ops.op_mango_cookie_get();
@@ -303,7 +335,20 @@ pub const PRELUDE_JS: &str = r##"
     globalThis._mangoWsSend = (id, data) => ops.op_mango_ws_send(Number(id), String(data));
     globalThis._mangoWsClose = (id, code, reason) => ops.op_mango_ws_close(Number(id), Number(code), String(reason));
     globalThis._mangoNavigate = (url) => ops.op_mango_navigate(String(url));
+    globalThis._mangoOpenWindow = (url, target, features) => ops.op_mango_open_window(String(url || ''), String(target || ''), String(features || ''));
     globalThis.alert = (msg) => ops.op_mango_alert(String(msg));
+
+    // BroadcastChannel, SharedWorker & Web Locks
+    globalThis._mangoBroadcastCreate = (id, name) => ops.op_mango_broadcast_create(Number(id), String(name));
+    globalThis._mangoBroadcastPost = (id, name, msg) => ops.op_mango_broadcast_post(Number(id), String(name), String(msg));
+    globalThis._mangoBroadcastClose = (id, name) => ops.op_mango_broadcast_close(Number(id), String(name));
+    globalThis._mangoSharedWorkerConnect = (portId, url, name) => ops.op_mango_shared_worker_connect(Number(portId), String(url), String(name));
+    globalThis._mangoSharedWorkerPost = (portId, msg) => ops.op_mango_shared_worker_post(Number(portId), String(msg));
+    globalThis._mangoSharedWorkerClosePort = (portId) => ops.op_mango_shared_worker_close_port(Number(portId));
+    globalThis._mangoLocksRequest = (name, mode, ifAvail, steal, clientId) => ops.op_mango_locks_request(String(name), String(mode), !!ifAvail, !!steal, String(clientId));
+    globalThis._mangoLocksRelease = (name, grantId) => ops.op_mango_locks_release(String(name), Number(grantId));
+    globalThis._mangoLocksAbort = (name, reqId) => ops.op_mango_locks_abort(String(name), Number(reqId));
+    globalThis._mangoLocksQuery = () => ops.op_mango_locks_query();
 
     // Console
     const cLog = (t) => ops.op_mango_console(0, t);

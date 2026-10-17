@@ -65,6 +65,9 @@ pub struct ElementData {
     pub tag_atom: Option<InternedString>,
     pub attributes: Vec<(String, String)>,
     pub shadow_root: Option<NodeId>,
+    pub shadow_root_mode: Option<String>,
+    pub shadow_root_clonable: bool,
+    pub shadow_root_delegates_focus: bool,
     pub template_contents: Option<NodeId>,
     pub is_hovered: bool,
     pub is_active: bool,
@@ -77,13 +80,16 @@ impl ElementData {
             tag_atom: None,
             attributes,
             shadow_root: None,
+            shadow_root_mode: None,
+            shadow_root_clonable: false,
+            shadow_root_delegates_focus: false,
             template_contents: None,
             is_hovered: false,
             is_active: false,
         }
     }
 
-    /// Creates a new `ElementData` with an interned tag atom (OPT-002).
+    /// Creates a new `ElementData` with an interned tag atom.
     pub fn with_atom(
         tag_name: impl Into<String>,
         tag_atom: InternedString,
@@ -94,6 +100,9 @@ impl ElementData {
             tag_atom: Some(tag_atom),
             attributes,
             shadow_root: None,
+            shadow_root_mode: None,
+            shadow_root_clonable: false,
+            shadow_root_delegates_focus: false,
             template_contents: None,
             is_hovered: false,
             is_active: false,
@@ -199,17 +208,17 @@ pub struct Document {
     arena: Arena<Node>,
     root: NodeId,
     pub quirks_mode: QuirksMode,
-    /// String interner for deduplicating tag names and attribute names (OPT-002).
+    /// String interner for deduplicating tag names and attribute names.
     pub interner: StringInterner,
-    /// Set of DOM nodes marked dirty due to attribute/class/DOM mutations (ARCH-002).
+    /// Set of DOM nodes marked dirty due to attribute/class/DOM mutations.
     pub dirty_nodes: HashSet<NodeId>,
-    /// The document's character encoding (canonical name e.g. "UTF-8", "windows-1252") (PRD 5.4).
+    /// The document's character encoding (canonical name e.g. "UTF-8", "windows-1252").
     pub character_set: String,
     /// The document's MIME type (e.g. "text/html").
     pub content_type: String,
-    /// The document's active target fragment identifier for the :target selector (PRD 6.1).
+    /// The document's active target fragment identifier for the :target selector.
     pub target_id: Option<String>,
-    /// Monotonically increasing mutation version counter (OPT-005).
+    /// Monotonically increasing mutation version counter.
     pub version: u64,
 }
 
@@ -246,7 +255,7 @@ impl Document {
         self.target_id = target;
     }
 
-    /// Marks a DOM node as dirty for incremental style recalculation (ARCH-002).
+    /// Marks a DOM node as dirty for incremental style recalculation.
     pub fn mark_dirty(&mut self, node_id: NodeId) {
         self.dirty_nodes.insert(node_id);
         self.version = self.version.wrapping_add(1);
@@ -272,7 +281,7 @@ impl Document {
         self.dirty_nodes.clear();
     }
 
-    /// Sets an attribute on an element, automatically marking the node dirty (ARCH-002).
+    /// Sets an attribute on an element, automatically marking the node dirty.
     pub fn set_attribute(&mut self, node_id: NodeId, name: &str, value: &str) {
         if let Some(node) = self.arena.get_mut(node_id)
             && let NodeData::Element(elem) = &mut node.data
@@ -292,7 +301,7 @@ impl Document {
         }
     }
 
-    /// Removes an attribute from an element, marking the node dirty (ARCH-002).
+    /// Removes an attribute from an element, marking the node dirty.
     pub fn remove_attribute(&mut self, node_id: NodeId, name: &str) {
         if let Some(node) = self.arena.get_mut(node_id)
             && let NodeData::Element(elem) = &mut node.data
@@ -304,7 +313,7 @@ impl Document {
         }
     }
 
-    /// Adds a CSS class to an element if not already present, marking the node dirty (ARCH-002).
+    /// Adds a CSS class to an element if not already present, marking the node dirty.
     pub fn add_class(&mut self, node_id: NodeId, class_name: &str) {
         if let Some(node) = self.arena.get_mut(node_id)
             && let NodeData::Element(elem) = &mut node.data
@@ -332,7 +341,7 @@ impl Document {
         }
     }
 
-    /// Removes a CSS class from an element, marking the node dirty (ARCH-002).
+    /// Removes a CSS class from an element, marking the node dirty.
     pub fn remove_class(&mut self, node_id: NodeId, class_name: &str) {
         if let Some(node) = self.arena.get_mut(node_id)
             && let NodeData::Element(elem) = &mut node.data
@@ -355,7 +364,7 @@ impl Document {
         }
     }
 
-    /// Toggles a CSS class on an element, returning `true` if added, `false` if removed (ARCH-002).
+    /// Toggles a CSS class on an element, returning `true` if added, `false` if removed.
     pub fn toggle_class(&mut self, node_id: NodeId, class_name: &str) -> bool {
         let has = if let Some(node) = self.get(node_id) {
             if let NodeData::Element(elem) = &node.data {
@@ -376,12 +385,12 @@ impl Document {
         }
     }
 
-    /// Interns a string into the document's string interner (OPT-002).
+    /// Interns a string into the document's string interner.
     pub fn intern(&mut self, s: &str) -> InternedString {
         self.interner.intern(s)
     }
 
-    /// Resolves an interned handle back to its string slice (OPT-002).
+    /// Resolves an interned handle back to its string slice.
     pub fn resolve_atom(&self, atom: InternedString) -> &str {
         self.interner.resolve(atom)
     }
@@ -402,7 +411,7 @@ impl Document {
     }
 
     /// Creates an Element node in the document arena, automatically interning
-    /// its tag name and attribute keys into the document's interner (OPT-002).
+    /// its tag name and attribute keys into the document's interner.
     ///
     /// Tag names and attribute keys are stored lowercased per HTML spec
     /// (foreign SVG/MathML case adjustments are re-applied so `viewBox`,
@@ -536,6 +545,9 @@ impl Document {
                 tag_atom: Some(tag_atom),
                 attributes: lowered_attrs,
                 shadow_root: None,
+                shadow_root_mode: None,
+                shadow_root_clonable: false,
+                shadow_root_delegates_focus: false,
                 template_contents,
                 is_hovered: false,
                 is_active: false,
@@ -602,6 +614,17 @@ impl Document {
     /// Returns `None` (error) if the host already has a shadow root,
     /// is not an element, or is unknown — it never overwrites an existing root.
     pub fn attach_shadow(&mut self, host_id: NodeId) -> Option<NodeId> {
+        self.attach_shadow_with_options(host_id, "open", false, false)
+    }
+
+    /// Attaches a shadow root with mode ("open" | "closed") and options flags.
+    pub fn attach_shadow_with_options(
+        &mut self,
+        host_id: NodeId,
+        mode: &str,
+        clonable: bool,
+        delegates_focus: bool,
+    ) -> Option<NodeId> {
         // Check host exists and is an element without an existing shadow root.
         match self.get(host_id) {
             None => return None,
@@ -623,6 +646,9 @@ impl Document {
                 return None;
             }
             el.shadow_root = Some(shadow_fragment);
+            el.shadow_root_mode = Some(mode.to_ascii_lowercase());
+            el.shadow_root_clonable = clonable;
+            el.shadow_root_delegates_focus = delegates_focus;
             self.dirty_nodes.insert(host_id);
             self.version = self.version.wrapping_add(1);
             return Some(shadow_fragment);
@@ -652,6 +678,16 @@ impl Document {
             && let NodeData::Element(el) = &node.data
         {
             return el.shadow_root;
+        }
+        None
+    }
+
+    /// Returns the shadow root mode attached to an element node, if any.
+    pub fn get_shadow_root_mode(&self, host_id: NodeId) -> Option<&str> {
+        if let Some(node) = self.get(host_id)
+            && let NodeData::Element(el) = &node.data
+        {
+            return el.shadow_root_mode.as_deref();
         }
         None
     }
@@ -712,6 +748,109 @@ impl Document {
             cur = self.arena.get(p).and_then(|n| n.parent);
         }
         false
+    }
+
+    pub const DOCUMENT_POSITION_DISCONNECTED: u16 = 0x01;
+    pub const DOCUMENT_POSITION_PRECEDING: u16 = 0x02;
+    pub const DOCUMENT_POSITION_FOLLOWING: u16 = 0x04;
+    pub const DOCUMENT_POSITION_CONTAINS: u16 = 0x08;
+    pub const DOCUMENT_POSITION_CONTAINED_BY: u16 = 0x10;
+    pub const DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC: u16 = 0x20;
+
+    /// Compares the document position of two nodes in tree order per W3C DOM spec.
+    pub fn compare_document_position(&self, a: NodeId, b: NodeId) -> u16 {
+        if a.matches(b) {
+            return 0;
+        }
+
+        if self.arena.get(a).is_none() || self.arena.get(b).is_none() {
+            let order = if a.raw() < b.raw() {
+                Self::DOCUMENT_POSITION_FOLLOWING
+            } else {
+                Self::DOCUMENT_POSITION_PRECEDING
+            };
+            return Self::DOCUMENT_POSITION_DISCONNECTED
+                | Self::DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC
+                | order;
+        }
+
+        // Check if b is descendant of a (a contains b)
+        if self.is_ancestor(a, b) {
+            return Self::DOCUMENT_POSITION_CONTAINED_BY | Self::DOCUMENT_POSITION_FOLLOWING;
+        }
+
+        // Check if a is descendant of b (b contains a)
+        if self.is_ancestor(b, a) {
+            return Self::DOCUMENT_POSITION_CONTAINS | Self::DOCUMENT_POSITION_PRECEDING;
+        }
+
+        // Build ancestor chains from root to a and from root to b
+        let mut path_a = Vec::new();
+        let mut cur = Some(a);
+        while let Some(n) = cur {
+            path_a.push(n);
+            cur = self.arena.get(n).and_then(|node| node.parent);
+        }
+        path_a.reverse();
+
+        let mut path_b = Vec::new();
+        let mut cur = Some(b);
+        while let Some(n) = cur {
+            path_b.push(n);
+            cur = self.arena.get(n).and_then(|node| node.parent);
+        }
+        path_b.reverse();
+
+        // Disconnected subtrees
+        if path_a.is_empty() || path_b.is_empty() || !path_a[0].matches(path_b[0]) {
+            let order = if a.raw() < b.raw() {
+                Self::DOCUMENT_POSITION_FOLLOWING
+            } else {
+                Self::DOCUMENT_POSITION_PRECEDING
+            };
+            return Self::DOCUMENT_POSITION_DISCONNECTED
+                | Self::DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC
+                | order;
+        }
+
+        // Find lowest common ancestor
+        let min_len = path_a.len().min(path_b.len());
+        let mut diff_idx = min_len;
+        for i in 0..min_len {
+            if !path_a[i].matches(path_b[i]) {
+                diff_idx = i;
+                break;
+            }
+        }
+
+        if diff_idx == 0 {
+            let order = if a.raw() < b.raw() {
+                Self::DOCUMENT_POSITION_FOLLOWING
+            } else {
+                Self::DOCUMENT_POSITION_PRECEDING
+            };
+            return Self::DOCUMENT_POSITION_DISCONNECTED
+                | Self::DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC
+                | order;
+        }
+
+        let lca = path_a[diff_idx - 1];
+        let branch_a = path_a[diff_idx];
+        let branch_b = path_b[diff_idx];
+
+        // Traverse children of lca to see whether branch_a or branch_b appears first
+        for child in self.children(lca) {
+            if child.id.matches(branch_b) {
+                // b comes before a
+                return Self::DOCUMENT_POSITION_PRECEDING;
+            }
+            if child.id.matches(branch_a) {
+                // a comes before b, so b follows a
+                return Self::DOCUMENT_POSITION_FOLLOWING;
+            }
+        }
+
+        Self::DOCUMENT_POSITION_FOLLOWING
     }
 
     /// Appends a child node to a parent node.
@@ -902,33 +1041,33 @@ impl Document {
         parent: NodeId,
         new_child: NodeId,
         old_child: NodeId,
-    ) -> NodeId {
+    ) -> Result<NodeId, DomError> {
         let parent = match self.arena.get(parent) {
             Some(n) => n.id,
-            None => return old_child,
+            None => return Err(DomError::NotFoundError),
         };
         let new_child = match self.arena.get(new_child) {
             Some(n) => n.id,
-            None => return old_child,
+            None => return Err(DomError::NotFoundError),
         };
         let old_child = match self.arena.get(old_child) {
             Some(n) => n.id,
-            None => return old_child,
+            None => return Err(DomError::NotFoundError),
         };
         if new_child == old_child {
-            return old_child;
+            return Ok(old_child);
         }
         if let Some(old) = self.arena.get(old_child) {
             if old.parent != Some(parent) {
-                return old_child;
+                return Err(DomError::NotFoundError);
             }
         } else {
-            return old_child;
+            return Err(DomError::NotFoundError);
         }
 
-        let _ = self.insert_before(parent, new_child, old_child);
+        self.insert_before(parent, new_child, old_child)?;
         self.detach(old_child);
-        old_child
+        Ok(old_child)
     }
 
     /// Inserts a child node immediately after an existing reference child.
@@ -1042,7 +1181,7 @@ impl Document {
     }
 
     /// Detaches a node from its parent and recycles the arena slots for this node
-    /// and all its descendants back into the arena free-list (Phase 3).
+    /// and all its descendants back into the arena free-list.
     pub fn remove_child_and_recycle(&mut self, node: NodeId) {
         self.detach(node);
         self.recycle_subtree(node);
@@ -1459,7 +1598,7 @@ mod tests {
         doc.append_child(root, c);
 
         let new_node = doc.create_text("REPLACED");
-        let old = doc.replace_child(root, new_node, b);
+        let old = doc.replace_child(root, new_node, b).expect("replace_child should succeed");
         assert_eq!(old, b);
 
         let texts: Vec<String> = doc
@@ -1478,7 +1617,7 @@ mod tests {
         doc.append_child(frag, f1);
         doc.append_child(frag, f2);
 
-        doc.replace_child(root, frag, new_node);
+        doc.replace_child(root, frag, new_node).expect("replace with fragment should succeed");
         let texts_frag: Vec<String> = doc
             .children(root)
             .filter_map(|n| match &n.data {
@@ -1487,6 +1626,24 @@ mod tests {
             })
             .collect();
         assert_eq!(texts_frag, vec!["A", "F1", "F2", "C"]);
+    }
+
+    #[test]
+    fn test_replace_child_does_not_detach_old_on_hierarchy_error() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        let parent = doc.create_element("div", Vec::new());
+        doc.append_child(root, parent);
+        let child = doc.create_text("target_child");
+        doc.append_child(parent, child);
+
+        // Attempt to replace `child` with `parent` itself (cycle / invalid hierarchy)
+        let res = doc.replace_child(parent, parent, child);
+        assert!(res.is_err(), "Replacing child with its own parent should fail with hierarchy error");
+
+        // Verify `child` is NOT detached and still resides under `parent`
+        let children: Vec<NodeId> = doc.children(parent).map(|n| n.id).collect();
+        assert_eq!(children, vec![child], "Child must remain intact under parent on hierarchy error");
     }
 
     #[test]

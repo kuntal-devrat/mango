@@ -717,12 +717,69 @@ struct ActiveAnimation {
     finished: bool,
 }
 
+/// A scroll-driven animation timeline tracking scroll progress in pixels.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScrollTimeline {
+    pub name: String,
+    pub source: Option<NodeId>,
+    pub axis: crate::values::ScrollTimelineAxis,
+    pub current_scroll_px: f32,
+    pub max_scroll_px: f32,
+}
+
+impl ScrollTimeline {
+    pub fn new(name: impl Into<String>, axis: crate::values::ScrollTimelineAxis) -> Self {
+        Self {
+            name: name.into(),
+            source: None,
+            axis,
+            current_scroll_px: 0.0,
+            max_scroll_px: 0.0,
+        }
+    }
+
+    pub fn progress(&self) -> f32 {
+        if self.max_scroll_px <= 0.0 {
+            0.0
+        } else {
+            (self.current_scroll_px / self.max_scroll_px).clamp(0.0, 1.0)
+        }
+    }
+}
+
+/// A view-driven animation timeline tracking subject intersection with scrollport.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ViewTimeline {
+    pub name: String,
+    pub subject: Option<NodeId>,
+    pub axis: crate::values::ScrollTimelineAxis,
+    pub entry_ratio: f32,
+}
+
+impl ViewTimeline {
+    pub fn new(name: impl Into<String>, axis: crate::values::ScrollTimelineAxis) -> Self {
+        Self {
+            name: name.into(),
+            subject: None,
+            axis,
+            entry_ratio: 0.0,
+        }
+    }
+
+    pub fn progress(&self) -> f32 {
+        self.entry_ratio.clamp(0.0, 1.0)
+    }
+}
+
 /// Tracks and advances running CSS animations for the whole document.
 #[derive(Debug, Default)]
 pub struct AnimationEngine {
     active: Vec<ActiveAnimation>,
     keyframes: HashMap<String, Keyframes>,
     events: Vec<AnimationEvent>,
+    pub scroll_timelines: HashMap<String, ScrollTimeline>,
+    pub view_timelines: HashMap<String, ViewTimeline>,
+    pub node_timelines: HashMap<NodeId, String>,
 }
 
 impl AnimationEngine {
@@ -749,6 +806,50 @@ impl AnimationEngine {
         self.active.iter().any(|a| !a.finished)
     }
 
+    pub fn set_scroll_timeline(&mut self, timeline: ScrollTimeline) {
+        self.scroll_timelines.insert(timeline.name.clone(), timeline);
+    }
+
+    pub fn set_view_timeline(&mut self, timeline: ViewTimeline) {
+        self.view_timelines.insert(timeline.name.clone(), timeline);
+    }
+
+    pub fn update_scroll_timeline(&mut self, name: &str, current_px: f32, max_px: f32) {
+        if let Some(tl) = self.scroll_timelines.get_mut(name) {
+            tl.current_scroll_px = current_px;
+            tl.max_scroll_px = max_px;
+        }
+    }
+
+    pub fn update_view_timeline(&mut self, name: &str, entry_ratio: f32) {
+        if let Some(tl) = self.view_timelines.get_mut(name) {
+            tl.entry_ratio = entry_ratio;
+        }
+    }
+
+    pub fn bind_node_timeline(&mut self, node: NodeId, timeline_name: &str) {
+        self.node_timelines.insert(node, timeline_name.to_string());
+    }
+
+    pub fn timeline_progress(&self, name: &str) -> Option<f32> {
+        if let Some(tl) = self.scroll_timelines.get(name) {
+            Some(tl.progress())
+        } else if let Some(vl) = self.view_timelines.get(name) {
+            Some(vl.progress())
+        } else {
+            None
+        }
+    }
+
+    pub fn start_with_timeline(&mut self, node: NodeId, anim_name: &str, timeline_name: &str) -> bool {
+        let mut spec = Animation::default();
+        spec.name = anim_name.to_string();
+        spec.timing = TimingFunction::Linear;
+        spec.timeline = Some(timeline_name.to_string());
+        self.bind_node_timeline(node, timeline_name);
+        self.start(node, &spec)
+    }
+
     /// Starts (or restarts) the animation described by `spec` on `node`.
     ///
     /// Returns `false` when the animation has no duration or unknown name, which
@@ -764,7 +865,8 @@ impl AnimationEngine {
             return false;
         }
         let infinite = matches!(spec.iteration_count, AnimationIterationCount::Infinite);
-        if !infinite && spec.duration_ms <= 0.0 {
+        let has_timeline = spec.timeline.is_some() || self.node_timelines.contains_key(&node);
+        if !infinite && spec.duration_ms <= 0.0 && !has_timeline {
             return false;
         }
         // Restart if an identical animation already exists for this node.
@@ -800,6 +902,9 @@ impl AnimationEngine {
     pub fn clear(&mut self) {
         self.active.clear();
         self.events.clear();
+        self.scroll_timelines.clear();
+        self.view_timelines.clear();
+        self.node_timelines.clear();
     }
 
     /// Drops animation state for nodes that no longer exist / changed identity.
@@ -947,6 +1052,12 @@ impl AnimationEngine {
 
     /// Applies all animations targeting `node` to `style`, in declaration order.
     pub fn apply(&self, node: NodeId, style: &mut ComputedStyle) {
+        let timeline_override = style
+            .animation_timeline
+            .as_deref()
+            .or_else(|| self.node_timelines.get(&node).map(|s| s.as_str()))
+            .and_then(|tl_name| self.timeline_progress(tl_name));
+
         let ordered: Vec<&ActiveAnimation> =
             self.active.iter().filter(|a| a.node == node).collect();
         for anim in ordered {
@@ -954,10 +1065,17 @@ impl AnimationEngine {
                 // A paused animation freezes at its current progress; the clock is
                 // stopped by skipping `advance`, so just render the current frame.
             }
-            let Some(progress) = Self::progress_for(anim) else {
-                continue;
+            let raw_progress = if let Some(p) = timeline_override {
+                p
+            } else if let Some(p) = anim.spec.timeline.as_deref().and_then(|tl| self.timeline_progress(tl)) {
+                p
+            } else {
+                let Some(progress) = Self::progress_for(anim) else {
+                    continue;
+                };
+                progress
             };
-            let eased = anim.spec.timing.sample(progress);
+            let eased = anim.spec.timing.sample(raw_progress);
             let declarations = anim.frames.sample(eased);
             if declarations.is_empty() {
                 continue;
@@ -1309,6 +1427,7 @@ pub fn interpolate_gradient(a: &Gradient, b: &Gradient, t: f32) -> Option<Gradie
             },
             end_position: None,
             is_current_color: sa.is_current_color || sb.is_current_color,
+            var_name: None,
         })
         .collect();
     match (a, b) {
@@ -1642,5 +1761,59 @@ mod tests {
         assert_eq!(mid.b, 255);
         assert_eq!(mid.r, 0);
         assert_eq!(mid.a, 128);
+    }
+
+    #[test]
+    fn test_scroll_driven_and_view_driven_animation() {
+        let sheet = parse_stylesheet(
+            r#"
+            @keyframes progress-bar {
+                0% { width: 0px; opacity: 0; }
+                100% { width: 500px; opacity: 1; }
+            }
+            "#,
+        );
+        let mut engine = AnimationEngine::new();
+        engine.set_keyframes(collect_keyframes(std::iter::once(&sheet)));
+
+        // 1. Create a scroll timeline
+        let scroll_tl = ScrollTimeline::new("--page-scroll", crate::values::ScrollTimelineAxis::Block);
+        engine.set_scroll_timeline(scroll_tl);
+
+        let node = NodeId::from_raw(42);
+        assert!(engine.start_with_timeline(node, "progress-bar", "--page-scroll"));
+
+        // At 0 scroll px, width should be 0px and opacity 0
+        let mut style = ComputedStyle::default();
+        engine.apply(node, &mut style);
+        assert_eq!(style.width, Length::Px(0.0));
+        assert_eq!(style.opacity, 0.0);
+
+        // Advance scroll to 250px out of 1000px (25% progress)
+        engine.update_scroll_timeline("--page-scroll", 250.0, 1000.0);
+        let mut style2 = ComputedStyle::default();
+        engine.apply(node, &mut style2);
+        assert_eq!(style2.width, Length::Px(125.0)); // 25% of 500 = 125
+        assert_eq!(style2.opacity, 0.25);
+
+        // Advance scroll to 1000px out of 1000px (100% progress)
+        engine.update_scroll_timeline("--page-scroll", 1000.0, 1000.0);
+        let mut style3 = ComputedStyle::default();
+        engine.apply(node, &mut style3);
+        assert_eq!(style3.width, Length::Px(500.0));
+        assert_eq!(style3.opacity, 1.0);
+
+        // 2. Create a view timeline
+        let view_tl = ViewTimeline::new("--view-tl", crate::values::ScrollTimelineAxis::Block);
+        engine.set_view_timeline(view_tl);
+        let node_view = NodeId::from_raw(99);
+        assert!(engine.start_with_timeline(node_view, "progress-bar", "--view-tl"));
+
+        // Halfway through scrollport entry: entry_ratio = 0.5
+        engine.update_view_timeline("--view-tl", 0.5);
+        let mut style_view = ComputedStyle::default();
+        engine.apply(node_view, &mut style_view);
+        assert_eq!(style_view.width, Length::Px(250.0));
+        assert_eq!(style_view.opacity, 0.5);
     }
 }

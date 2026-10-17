@@ -8,7 +8,7 @@
 use mango_core::{EdgeSizes, Point, Rect};
 use mango_css::values::{
     AlignContent, AlignItems, AlignSelf, BoxSizing, Display, GridPlacement, GridTrackSize,
-    JustifyContent, Length, Position,
+    JustifyContent, JustifyItems, JustifySelf, Length, Position,
 };
 
 use crate::block_flow::{layout_block_contents, layout_positioned_children, shift_descendants};
@@ -25,7 +25,12 @@ struct PlacedItem {
 }
 
 /// Formats a single grid item within its assigned cell span width.
-fn format_grid_item(child: &mut LayoutBox, span_w: f32, container_height: f32) -> f32 {
+fn format_grid_item(
+    child: &mut LayoutBox,
+    span_w: f32,
+    container_height: f32,
+    parent_subgrid_cols: Option<&[f32]>,
+) -> f32 {
     use mango_core::EdgeSizes;
     let child_style = child.style.clone().unwrap_or_default();
     let c_fs = child_style.font_size;
@@ -102,7 +107,7 @@ fn format_grid_item(child: &mut LayoutBox, span_w: f32, container_height: f32) -
     let child_display = child.style.as_ref().map(|s| s.display);
     let mut item_float_ctx = FloatContext::new();
     if child_display == Some(Display::Grid) || child_display == Some(Display::InlineGrid) {
-        layout_grid(child, &item_cb, &mut item_float_ctx);
+        layout_grid_internal(child, &item_cb, &mut item_float_ctx, parent_subgrid_cols, None);
     } else if child_display == Some(Display::Flex) {
         crate::flex_flow::layout_flex(child, &item_cb, &mut item_float_ctx);
     } else if child.is_block() {
@@ -151,6 +156,17 @@ pub fn layout_grid(
     container: &mut LayoutBox,
     containing_block: &Dimensions,
     float_ctx: &mut FloatContext,
+) {
+    layout_grid_internal(container, containing_block, float_ctx, None, None);
+}
+
+/// Internal CSS Grid layout implementation with subgrid parent track inheritance.
+pub fn layout_grid_internal(
+    container: &mut LayoutBox,
+    containing_block: &Dimensions,
+    float_ctx: &mut FloatContext,
+    parent_subgrid_cols: Option<&[f32]>,
+    _parent_subgrid_rows: Option<&[f32]>,
 ) {
     let container_width = containing_block.content.width();
     let container_height = if containing_block.content.height() > 0.0 {
@@ -274,7 +290,12 @@ pub fn layout_grid(
     container.dimensions.content.size.width = content_width;
 
     // Position container in parent if not already positioned
-    let (container_x, container_y) = if container.dimensions.content.origin != Point::ZERO {
+    let is_pos = container
+        .style
+        .as_ref()
+        .map(|s| matches!(s.position, Position::Absolute | Position::Fixed))
+        .unwrap_or(false);
+    let (container_x, container_y) = if is_pos || container.dimensions.content.origin != Point::ZERO {
         (
             container.dimensions.content.origin.x,
             container.dimensions.content.origin.y,
@@ -367,7 +388,19 @@ pub fn layout_grid(
         .map(|row| row.len())
         .max()
         .unwrap_or(0);
-    let mut template_cols = if !style.grid_template_columns.is_empty() {
+    let is_subgrid_cols = parent_subgrid_cols.is_some()
+        && style
+            .grid_template_columns
+            .iter()
+            .any(|t| matches!(t, GridTrackSize::Subgrid));
+
+    let mut template_cols = if is_subgrid_cols {
+        parent_subgrid_cols
+            .unwrap()
+            .iter()
+            .map(|&w| GridTrackSize::Length(Length::Px(w)))
+            .collect()
+    } else if !style.grid_template_columns.is_empty() {
         let mut expanded = Vec::new();
         // Calculate non-repeat space
         let mut non_repeat_fixed = 0.0f32;
@@ -887,19 +920,23 @@ pub fn layout_grid(
         }
     }
 
-    // Compute span widths for each placed item
-    let item_spans: Vec<(usize, f32)> = placed_items
+    // Compute span widths and subgrid-inherited tracks for each placed item
+    let item_spans: Vec<(usize, f32, Vec<f32>)> = placed_items
         .iter()
         .map(|item| {
-            let span_w = (item.col_start..item.col_start + item.col_span)
+            let tracks: Vec<f32> = (item.col_start..item.col_start + item.col_span)
                 .map(|c| col_widths.get(c).copied().unwrap_or(0.0))
-                .sum::<f32>()
+                .collect();
+            let span_w = tracks.iter().sum::<f32>()
                 + (item.col_span.saturating_sub(1) as f32) * col_gap;
-            (item.child_idx, span_w)
+            (item.child_idx, span_w, tracks)
         })
         .collect();
 
-    let item_spans_map: std::collections::HashMap<usize, f32> = item_spans.into_iter().collect();
+    let item_spans_map: std::collections::HashMap<usize, (f32, Vec<f32>)> = item_spans
+        .into_iter()
+        .map(|(idx, w, tr)| (idx, (w, tr)))
+        .collect();
 
     // Parallel formatting pass for independent grid cells using Rayon
     if placed_items.len() >= 2 {
@@ -909,14 +946,14 @@ pub fn layout_grid(
             .par_iter_mut()
             .enumerate()
             .for_each(|(idx, child)| {
-                if let Some(&span_w) = item_spans_map.get(&idx) {
-                    format_grid_item(child, span_w, container_height);
+                if let Some((span_w, tracks)) = item_spans_map.get(&idx) {
+                    format_grid_item(child, *span_w, container_height, Some(tracks));
                 }
             });
     } else {
-        for (idx, span_w) in &item_spans_map {
+        for (idx, (span_w, tracks)) in &item_spans_map {
             if let Some(child) = container.children.get_mut(*idx) {
-                format_grid_item(child, *span_w, container_height);
+                format_grid_item(child, *span_w, container_height, Some(tracks));
             }
         }
     }
@@ -1026,10 +1063,43 @@ pub fn layout_grid(
             + child.dimensions.border.left
             + child.dimensions.padding.left;
 
+        let item_justify = match child_style.justify_self {
+            JustifySelf::Auto => style.justify_items,
+            JustifySelf::Stretch => JustifyItems::Stretch,
+            JustifySelf::FlexStart => JustifyItems::FlexStart,
+            JustifySelf::FlexEnd => JustifyItems::FlexEnd,
+            JustifySelf::Center => JustifyItems::Center,
+            JustifySelf::Baseline => JustifyItems::Baseline,
+        };
+
         if is_m_left_auto && is_m_right_auto {
             child_x += remaining_w / 2.0;
         } else if is_m_left_auto {
             child_x += remaining_w;
+        } else {
+            match item_justify {
+                JustifyItems::Center => {
+                    child_x += remaining_w / 2.0;
+                }
+                JustifyItems::FlexEnd => {
+                    child_x += remaining_w;
+                }
+                JustifyItems::Stretch if child_style.width == Length::Auto => {
+                    let p = child.dimensions.padding;
+                    let b = child.dimensions.border;
+                    let m = child.dimensions.margin;
+                    let raw_stretch_w = (span_cell_w
+                        - p.left
+                        - p.right
+                        - b.left
+                        - b.right
+                        - m.left
+                        - m.right)
+                        .max(0.0);
+                    child.dimensions.content.size.width = raw_stretch_w;
+                }
+                _ => {}
+            }
         }
 
         let mut child_y = container_y

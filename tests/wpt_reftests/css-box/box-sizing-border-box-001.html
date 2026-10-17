@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>CSS Box Model Test: box-sizing border-box</title>
+    <link rel="author" title="W3C">
+    <link rel="help" href="https://drafts.csswg.org/css-ui-3/#box-sizing">
+    <link rel="match" href="box-sizing-border-box-001-ref.html">
+    <style>
+        body { margin: 0; padding: 0; }
+        .box {
+            box-sizing: border-box;
+            width: 100px;
+            height: 100px;
+            padding: 15px;
+            border: 5px solid green;
+            background: green;
+        }
+    </style>
+</head>
+<body>
+    <div class="box"></div>
+</body>
+</html>

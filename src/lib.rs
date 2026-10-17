@@ -9,6 +9,7 @@
 
 pub mod app;
 pub mod browser;
+pub mod cdp;
 pub mod chrome_ui;
 pub mod config;
 pub mod context_menu;

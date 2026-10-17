@@ -42,10 +42,28 @@ fn main() {
     let mut probe_selector = None;
     let mut hover_pos = None;
     let mut virtual_time_budget_ms: u64 = 100;
+    let mut wait_sec: u64 = 0;
+
+    let mut remote_debugging_port = None;
 
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
+            arg if arg.starts_with("--remote-debugging-port=") => {
+                if let Ok(port) = arg["--remote-debugging-port=".len()..].parse::<u16>() {
+                    remote_debugging_port = Some(port);
+                }
+                i += 1;
+            }
+            "--remote-debugging-port" => {
+                if i + 1 < args.len() {
+                    if let Ok(port) = args[i + 1].parse::<u16>() {
+                        remote_debugging_port = Some(port);
+                        i += 1;
+                    }
+                }
+                i += 1;
+            }
             "--full-page" | "--full" => {
                 full_page = true;
                 page_only = true;
@@ -92,6 +110,16 @@ fn main() {
                     i += 1;
                 }
             }
+            "--wait" | "--wait-sec" | "--wait-seconds" => {
+                if i + 1 < args.len() {
+                    if let Ok(sec) = args[i + 1].parse::<u64>() {
+                        wait_sec = sec;
+                    }
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
             flag if flag.starts_with("--") => {
                 i += 1;
             }
@@ -99,6 +127,31 @@ fn main() {
                 positional.push(pos);
                 i += 1;
             }
+        }
+    }
+
+    let _cdp_server = if let Some(port) = remote_debugging_port {
+        match mango_browser::cdp::CdpServer::start(port) {
+            Ok(server) => {
+                eprintln!(
+                    "DevTools listening on ws://127.0.0.1:{}/devtools/browser",
+                    server.port()
+                );
+                Some(server)
+            }
+            Err(e) => {
+                eprintln!("Failed to start CDP server on port {port}: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    if positional.is_empty() && remote_debugging_port.is_some() {
+        eprintln!("Mango Headless running with DevTools active. Press Ctrl+C to stop.");
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
     }
 
@@ -154,14 +207,29 @@ fn main() {
     }
     println!("Browser status: {}", browser.status_text());
 
-    // Virtual time budget: drive animations and JS timers
+    // Virtual time budget / real-time wait: drive animations and JS timers
     let tick_interval_ms = 16.0;
-    let total_ticks = ((virtual_time_budget_ms as f32 / tick_interval_ms).ceil() as usize).max(5);
-    for _ in 0..total_ticks {
-        let _ = browser.tick_animations(tick_interval_ms);
-        let _ = browser.tick_js();
-        if browser.has_pending_image_fetches() {
-            browser.drain_pending_images();
+    if wait_sec > 0 {
+        let wait_dur = std::time::Duration::from_secs(wait_sec);
+        let start = std::time::Instant::now();
+        println!("Waiting {}s for rendering, dynamic JS, and network settling...", wait_sec);
+        while start.elapsed() < wait_dur {
+            let _ = browser.tick_navigation();
+            let _ = browser.tick_animations(tick_interval_ms);
+            let _ = browser.tick_js();
+            if browser.has_pending_image_fetches() {
+                browser.drain_pending_images();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(16));
+        }
+    } else {
+        let total_ticks = ((virtual_time_budget_ms as f32 / tick_interval_ms).ceil() as usize).max(5);
+        for _ in 0..total_ticks {
+            let _ = browser.tick_animations(tick_interval_ms);
+            let _ = browser.tick_js();
+            if browser.has_pending_image_fetches() {
+                browser.drain_pending_images();
+            }
         }
     }
 
@@ -171,6 +239,13 @@ fn main() {
         drained_batches += 1;
         if !browser.drain_pending_images() {
             std::thread::sleep(std::time::Duration::from_millis(30));
+        }
+    }
+
+    if !browser.devtools.console_entries.is_empty() {
+        println!("Console messages ({}):", browser.devtools.console_entries.len());
+        for entry in browser.devtools.console_entries.iter().take(20) {
+            println!("  [{:?}] {}", entry.level, entry.message);
         }
     }
 
@@ -228,7 +303,7 @@ fn main() {
     println!("DrawText stats: bold={}, regular={}", bold_count, reg_count);
 
     let mut buffer = vec![0u32; (paint_width * paint_height) as usize];
-    buffer.fill(mango_core::Color::rgb(255, 255, 255).to_rgb_u32());
+    buffer.fill(browser.canvas_bg().to_rgb_u32());
     paint(&dl, &mut buffer, paint_width, paint_height);
 
     let (crop_top, crop_height) = if full_page {
@@ -280,6 +355,7 @@ fn probe(browser: &BrowserChrome, selector: &str) {
         println!("no layout tree (page not loaded)");
         return;
     };
+
     let Some(selector_list) = mango_css::parser::parse_selectors(selector) else {
         println!("could not parse selector: {selector}");
         return;
@@ -307,7 +383,7 @@ fn probe(browser: &BrowserChrome, selector: &str) {
         });
         let style = b.style.as_ref();
         println!(
-            "[{index}] {indent}<{tag}> border=({:.1}, {:.1}, {:.1}x{:.1}) content=({:.1}, {:.1}, {:.1}x{:.1}) pos={:?} display={:?} h={:?} w={:?} max_w={:?} float={:?} clear={:?}",
+            "[{index}] {indent}<{tag}> border=({:.1}, {:.1}, {:.1}x{:.1}) content=({:.1}, {:.1}, {:.1}x{:.1}) pos={:?} display={:?} h={:?} max_h={:?} w={:?} max_w={:?} overflow={:?} float={:?} clear={:?}",
             border.x(),
             border.y(),
             border.width(),
@@ -319,8 +395,10 @@ fn probe(browser: &BrowserChrome, selector: &str) {
             style.map(|s| s.position),
             style.map(|s| s.display),
             style.map(|s| &s.height),
+            style.map(|s| &s.max_height),
             style.map(|s| &s.width),
             style.map(|s| &s.max_width),
+            style.map(|s| (s.overflow_x, s.overflow_y)),
             style.map(|s| s.float),
             style.map(|s| s.clear),
         );

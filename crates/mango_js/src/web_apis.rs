@@ -19,8 +19,6 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use boa_engine::{Context, JsArgs, JsValue, NativeFunction};
-use mango_net::http::HttpClient;
 
 use crate::event_loop::EventLoop;
 
@@ -34,6 +32,17 @@ pub type SharedStatusText = Rc<RefCell<String>>;
 
 /// Shared pending navigation URL triggered by `location.href` assignment.
 pub type SharedPendingNav = Rc<RefCell<Option<String>>>;
+
+/// Represents a window opening request triggered by `window.open(url, target, features)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingWindowOpen {
+    pub url: String,
+    pub target: String,
+    pub features: String,
+}
+
+/// Shared pending window open request.
+pub type SharedPendingOpenWindow = Rc<RefCell<Option<PendingWindowOpen>>>;
 
 /// Thread-safe localStorage store.  Keyed by string; values are UTF-8 strings.
 /// `Arc<Mutex<_>>` so the browser can persist it to disk after each page unload.
@@ -58,7 +67,7 @@ pub fn unescape_profile_field(s: &str) -> String {
         .replace("%25", "%")
 }
 
-/// Restores a `localStorage` profile (`<origin>\t<key>\t<value>` per line) into the store (GAP-017 / PRD 7.6).
+/// Restores a `localStorage` profile (`<origin>\t<key>\t<value>` per line) into the store.
 pub fn load_local_storage_from_file(
     path: &std::path::Path,
     store: &SharedLocalStorage,
@@ -89,7 +98,7 @@ pub fn load_local_storage_from_file(
     Ok(count)
 }
 
-/// Writes the `localStorage` store to its profile file (GAP-017 / PRD 7.6).
+/// Writes the `localStorage` store to its profile file.
 pub fn save_local_storage_to_file(
     path: &std::path::Path,
     store: &SharedLocalStorage,
@@ -187,965 +196,6 @@ pub(crate) fn encode_base64_bytes(input: &[u8]) -> String {
     out
 }
 
-fn parse_simple_headers_json(json: &str) -> Vec<(String, String)> {
-    let mut pairs = Vec::new();
-    let trimmed = json.trim();
-    if !trimmed.starts_with('{') || !trimmed.ends_with('}') {
-        return pairs;
-    }
-    let inner = &trimmed[1..trimmed.len() - 1];
-    for item in inner.split(',') {
-        if let Some((k, v)) = item.split_once(':') {
-            let clean_k = k.trim().trim_matches('"').trim_matches('\'').to_string();
-            let clean_v = v.trim().trim_matches('"').trim_matches('\'').to_string();
-            if !clean_k.is_empty() {
-                pairs.push((clean_k, clean_v));
-            }
-        }
-    }
-    pairs
-}
-
-fn format_fetch_response_json(result: Result<mango_net::HttpResponse, String>) -> String {
-    match result {
-        Ok(resp) => {
-            let body_str = resp.body_as_string();
-            let body_b64 = encode_base64_bytes(&resp.body);
-            let escaped_body = body_str
-                .replace('\\', "\\\\")
-                .replace('"', "\\\"")
-                .replace('\n', "\\n")
-                .replace('\r', "\\r")
-                .replace('\t', "\\t");
-            let ct = resp
-                .headers
-                .get("content-type")
-                .cloned()
-                .unwrap_or_else(|| "text/plain".to_string())
-                .replace('"', "\\\"");
-
-            let mut hdrs_entries = Vec::new();
-            for (k, v) in &resp.headers {
-                let ek = k.replace('\\', "\\\\").replace('"', "\\\"");
-                let ev = v.replace('\\', "\\\\").replace('"', "\\\"");
-                hdrs_entries.push(format!("\"{}\":\"{}\"", ek, ev));
-            }
-            let hdrs_json = hdrs_entries.join(",");
-
-            format!(
-                "{{\"ok\":{},\"status\":{},\"statusText\":\"{}\",\"contentType\":\"{}\",\"headers\":{{{}}},\"body\":\"{}\",\"bodyBase64\":\"{}\",\"error\":null}}",
-                resp.is_success(),
-                resp.status,
-                resp.status_text.replace('"', "\\\""),
-                ct,
-                hdrs_json,
-                escaped_body,
-                body_b64
-            )
-        }
-        Err(e) => {
-            let escaped_err = e.replace('\\', "\\\\").replace('"', "\\\"");
-            format!(
-                "{{\"ok\":false,\"status\":0,\"statusText\":\"\",\"contentType\":\"\",\"headers\":{{}},\"body\":\"\",\"bodyBase64\":\"\",\"error\":\"{}\"}}",
-                escaped_err
-            )
-        }
-    }
-}
-
-// ── Helper macro ──────────────────────────────────────────────────────────────
-
-/// Creates an unsafe NativeFunction from a closure.
-/// SAFETY: Mango is single-threaded; closures capture only `Rc<RefCell<_>>`
-/// or `Arc<Mutex<_>>` values, never raw pointers or `!Send` references.
-macro_rules! native_fn {
-    ($closure:expr) => {
-        unsafe { NativeFunction::from_closure($closure) }
-    };
-}
-
-// ── Public registration entry point ──────────────────────────────────────────
-
-/// Registers all browser Web APIs into the Boa context.
-///
-/// `local_storage` is a shared, externally-owned map so the browser can
-/// load it from disk before page execution and flush it afterwards.
-/// Pass `Arc::new(Mutex::new(HashMap::new()))` for a fresh in-memory store.
-#[allow(clippy::too_many_arguments)]
-pub fn register_web_apis(
-    context: &mut Context,
-    event_loop: SharedEventLoop,
-    status_text: SharedStatusText,
-    viewport_width: Rc<RefCell<f32>>,
-    viewport_height: Rc<RefCell<f32>>,
-    pending_nav: SharedPendingNav,
-    page_url: &str,
-    local_storage: SharedLocalStorage,
-    session_storage: SharedSessionStorage,
-    cookie_jar: SharedCookieStore,
-    worker_manager: crate::worker::WorkerManager,
-    ws_manager: mango_net::WebSocketManager,
-) {
-    register_native_fns(
-        context,
-        event_loop,
-        status_text,
-        viewport_width,
-        viewport_height,
-        pending_nav,
-        page_url,
-        local_storage,
-        session_storage,
-        cookie_jar,
-        worker_manager,
-        ws_manager,
-    );
-    install_js_shim(context, page_url);
-}
-
-// ── Native Rust function registrations ───────────────────────────────────────
-
-#[allow(clippy::too_many_arguments)]
-fn register_native_fns(
-    context: &mut Context,
-    event_loop: SharedEventLoop,
-    status_text: SharedStatusText,
-    viewport_width: Rc<RefCell<f32>>,
-    viewport_height: Rc<RefCell<f32>>,
-    pending_nav: SharedPendingNav,
-    page_url: &str,
-    local_storage: SharedLocalStorage,
-    session_storage: SharedSessionStorage,
-    cookie_jar: SharedCookieStore,
-    worker_manager: crate::worker::WorkerManager,
-    ws_manager: mango_net::WebSocketManager,
-) {
-    // ── Timers ────────────────────────────────────────────────────────────────
-
-    let el = event_loop.clone();
-    let set_timeout_fn = native_fn!(move |_this, args, ctx| {
-        let callback = args.get_or_undefined(0);
-        let delay = args.get_or_undefined(1).to_u32(ctx).unwrap_or(0) as u64;
-        let source = if callback.is_callable() {
-            format!("({})()", callback.to_string(ctx)?.to_std_string_escaped())
-        } else {
-            callback.to_string(ctx)?.to_std_string_escaped()
-        };
-        let id = el.borrow_mut().schedule_timeout(source, delay);
-        Ok(JsValue::from(id))
-    });
-
-    let el = event_loop.clone();
-    let set_interval_fn = native_fn!(move |_this, args, ctx| {
-        let callback = args.get_or_undefined(0);
-        let delay = args.get_or_undefined(1).to_u32(ctx).unwrap_or(0) as u64;
-        let source = if callback.is_callable() {
-            format!("({})()", callback.to_string(ctx)?.to_std_string_escaped())
-        } else {
-            callback.to_string(ctx)?.to_std_string_escaped()
-        };
-        let id = el.borrow_mut().schedule_interval(source, delay);
-        Ok(JsValue::from(id))
-    });
-
-    let el = event_loop.clone();
-    let clear_timeout_fn = native_fn!(move |_this, args, ctx| {
-        let id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        el.borrow_mut().cancel_timer(id);
-        Ok(JsValue::undefined())
-    });
-
-    let el = event_loop.clone();
-    let clear_interval_fn = native_fn!(move |_this, args, ctx| {
-        let id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        el.borrow_mut().cancel_timer(id);
-        Ok(JsValue::undefined())
-    });
-
-    // ── Alert ─────────────────────────────────────────────────────────────────
-
-    let st = status_text.clone();
-    let alert_fn = native_fn!(move |_this, args, ctx| {
-        let msg = args
-            .get_or_undefined(0)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        log::info!("[JS alert] {}", msg);
-        *st.borrow_mut() = format!("Alert: {}", msg);
-        Ok(JsValue::undefined())
-    });
-
-    // ── Navigation ────────────────────────────────────────────────────────────
-
-    let nav_slot = pending_nav.clone();
-    let navigate_fn = native_fn!(move |_this, args, ctx| {
-        let target = args
-            .get_or_undefined(0)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        if !target.is_empty() {
-            log::info!("[JS navigation] Script requested navigate to: {}", target);
-            *nav_slot.borrow_mut() = Some(target);
-        }
-        Ok(JsValue::undefined())
-    });
-
-    // ── Closure-preserving timer helpers ─────────────────────────────────────
-
-    let el = event_loop.clone();
-    let schedule_timer_fn = native_fn!(move |_this, args, ctx| {
-        let id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let delay = args.get_or_undefined(1).to_u32(ctx).unwrap_or(0) as u64;
-        let is_interval = args.get_or_undefined(2).to_boolean();
-        let source = format!(
-            "if (typeof _mangoRunTimer === 'function') _mangoRunTimer({});",
-            id
-        );
-        if is_interval {
-            el.borrow_mut().schedule_interval_with_id(id, source, delay);
-        } else {
-            el.borrow_mut().schedule_timeout_with_id(id, source, delay);
-        }
-        Ok(JsValue::from(id))
-    });
-
-    let el = event_loop.clone();
-    let cancel_timer_fn = native_fn!(move |_this, args, ctx| {
-        let id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        el.borrow_mut().cancel_timer(id);
-        Ok(JsValue::undefined())
-    });
-
-    // ── fetch() — synchronous HTTP bridge ─────────────────────────────────────
-    //
-    // JS calls `_mangoFetch(url, method, headersJson, body)` synchronously on
-    // the Rust side.  We perform a blocking HTTP request and return a JSON
-    // string that the JS `fetch()` polyfill deserialises into a Response object.
-    //
-    // NOTE: This is intentionally synchronous because Boa does not yet integrate
-    // with an async executor.  It blocks the JS microtask queue while the request
-    // is in-flight.  For script compatibility this is acceptable — nearly all
-    // real-world `fetch()` usage wraps the call in `async/await` or `.then()`,
-    // which are both driven by Promise callbacks that execute after _mangoFetch
-    // returns.  The practical latency overhead is no different from a blocking
-    // XMLHttpRequest call, which browsers historically allowed in workers.
-
-    let random_bytes_fn = native_fn!(move |_this, args, ctx| {
-        let count = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let count = count.min(65536);
-        let mut bytes = vec![0u8; count];
-        fill_secure_random(&mut bytes);
-        let vals: Vec<JsValue> = bytes.into_iter().map(JsValue::from).collect();
-        let arr = boa_engine::object::builtins::JsArray::from_iter(vals, ctx);
-        Ok(JsValue::from(arr))
-    });
-
-    let el_fetch = event_loop.clone();
-    let cj_fetch = cookie_jar.clone();
-    let start_fetch_fn = native_fn!(move |_this, args, ctx| {
-        let id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let url_str = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let method_str = args
-            .get_or_undefined(2)
-            .to_string(ctx)
-            .map(|s| s.to_std_string_escaped())
-            .unwrap_or_else(|_| "GET".to_string())
-            .to_uppercase();
-        let headers_json = args
-            .get_or_undefined(3)
-            .to_string(ctx)
-            .map(|s| s.to_std_string_escaped())
-            .unwrap_or_default();
-        let body_str = args
-            .get_or_undefined(4)
-            .to_string(ctx)
-            .map(|s| s.to_std_string_escaped())
-            .unwrap_or_default();
-        let origin_str = args
-            .get_or_undefined(5)
-            .to_string(ctx)
-            .map(|s| s.to_std_string_escaped())
-            .unwrap_or_default();
-        let mode_str = args
-            .get_or_undefined(6)
-            .to_string(ctx)
-            .map(|s| s.to_std_string_escaped())
-            .unwrap_or_else(|_| "cors".to_string())
-            .to_lowercase();
-        let creds_bool = args.get_or_undefined(7).to_boolean();
-
-        let tasks = el_fetch.borrow().task_queue();
-        let jar = cj_fetch.clone();
-
-        std::thread::spawn(move || {
-            let client = HttpClient::with_cookie_jar(jar);
-            let mut custom_headers = parse_simple_headers_json(&headers_json);
-
-            let result = (|| -> Result<mango_net::HttpResponse, String> {
-                let url = mango_net::url::Url::parse(&url_str)
-                    .map_err(|e| format!("Invalid URL: {e}"))?;
-
-                let is_cross_origin = !origin_str.is_empty()
-                    && !mango_net::security::is_same_origin(&origin_str, &url_str);
-
-                if is_cross_origin {
-                    if mode_str == "same-origin" {
-                        return Err("Same-Origin Policy: request to cross-origin resource blocked in same-origin mode".to_string());
-                    }
-
-                    if mode_str == "cors" {
-                        let headers_map: std::collections::HashMap<String, String> =
-                            custom_headers.iter().cloned().collect();
-                        let is_simple =
-                            mango_net::security::is_cors_simple_request(&method_str, &headers_map);
-                        if !is_simple {
-                            // Perform OPTIONS preflight
-                            let mut preflight_headers = Vec::new();
-                            preflight_headers.push(("Origin".to_string(), origin_str.clone()));
-                            preflight_headers.push((
-                                "Access-Control-Request-Method".to_string(),
-                                method_str.clone(),
-                            ));
-                            let req_h_keys: Vec<String> =
-                                custom_headers.iter().map(|(k, _)| k.clone()).collect();
-                            if !req_h_keys.is_empty() {
-                                preflight_headers.push((
-                                    "Access-Control-Request-Headers".to_string(),
-                                    req_h_keys.join(", "),
-                                ));
-                            }
-                            let preflight_resp = client
-                                .request("OPTIONS", &url, &preflight_headers, None)
-                                .map_err(|e| format!("CORS preflight request failed: {e}"))?;
-                            let header_refs: Vec<&str> =
-                                req_h_keys.iter().map(|s| s.as_str()).collect();
-                            mango_net::security::validate_cors_preflight(
-                                preflight_resp.status,
-                                &preflight_resp.headers,
-                                &origin_str,
-                                &method_str,
-                                &header_refs,
-                            )
-                            .map_err(|e| format!("CORS preflight validation failed: {e}"))?;
-                        }
-
-                        // Attach Origin header to actual request
-                        custom_headers.push(("Origin".to_string(), origin_str.clone()));
-                    }
-                }
-
-                let body_opt = if body_str.is_empty() {
-                    None
-                } else {
-                    Some(body_str.as_bytes())
-                };
-                let mut resp = client
-                    .request(&method_str, &url, &custom_headers, body_opt)
-                    .map_err(|e| e.to_string())?;
-
-                if is_cross_origin && mode_str == "cors" {
-                    let exposed = mango_net::security::validate_cors_response(
-                        &resp.headers,
-                        &origin_str,
-                        creds_bool,
-                    )
-                    .map_err(|e| format!("CORS response validation failed: {e}"))?;
-                    resp.headers
-                        .retain(|k, _| exposed.contains(&k.to_ascii_lowercase()));
-                }
-
-                Ok(resp)
-            })();
-
-            let json_result = format_fetch_response_json(result);
-            let escaped_for_js = json_result
-                .replace('\\', "\\\\")
-                .replace('"', "\\\"")
-                .replace('\n', "\\n")
-                .replace('\r', "\\r");
-            let task_source = format!(
-                "if (typeof _mangoResolveFetch === 'function') _mangoResolveFetch({}, \"{}\");",
-                id, escaped_for_js
-            );
-            if let Ok(mut q) = tasks.lock() {
-                q.push(task_source);
-            }
-        });
-
-        Ok(JsValue::undefined())
-    });
-
-    let cj = cookie_jar.clone();
-    let fetch_fn = native_fn!(move |_this, args, ctx| {
-        let url_str = args
-            .get_or_undefined(0)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let method_str = args
-            .get_or_undefined(1)
-            .to_string(ctx)
-            .map(|s| s.to_std_string_escaped())
-            .unwrap_or_else(|_| "GET".to_string())
-            .to_uppercase();
-        let headers_json = args
-            .get_or_undefined(2)
-            .to_string(ctx)
-            .map(|s| s.to_std_string_escaped())
-            .unwrap_or_default();
-        let body_str = args
-            .get_or_undefined(3)
-            .to_string(ctx)
-            .map(|s| s.to_std_string_escaped())
-            .unwrap_or_default();
-        let origin_str = args
-            .get_or_undefined(4)
-            .to_string(ctx)
-            .map(|s| s.to_std_string_escaped())
-            .unwrap_or_default();
-        let mode_str = args
-            .get_or_undefined(5)
-            .to_string(ctx)
-            .map(|s| s.to_std_string_escaped())
-            .unwrap_or_else(|_| "cors".to_string())
-            .to_lowercase();
-        let creds_bool = args.get_or_undefined(6).to_boolean();
-
-        log::debug!("[fetch] {} {}", method_str, url_str);
-
-        let client = HttpClient::with_cookie_jar(cj.clone());
-        let mut custom_headers = parse_simple_headers_json(&headers_json);
-
-        let result = (|| -> Result<mango_net::HttpResponse, String> {
-            let url =
-                mango_net::url::Url::parse(&url_str).map_err(|e| format!("Invalid URL: {e}"))?;
-
-            let is_cross_origin = !origin_str.is_empty()
-                && !mango_net::security::is_same_origin(&origin_str, &url_str);
-
-            if is_cross_origin {
-                if mode_str == "same-origin" {
-                    return Err("Same-Origin Policy: request to cross-origin resource blocked in same-origin mode".to_string());
-                }
-
-                if mode_str == "cors" {
-                    let headers_map: std::collections::HashMap<String, String> =
-                        custom_headers.iter().cloned().collect();
-                    let is_simple =
-                        mango_net::security::is_cors_simple_request(&method_str, &headers_map);
-                    if !is_simple {
-                        let mut preflight_headers = Vec::new();
-                        preflight_headers.push(("Origin".to_string(), origin_str.clone()));
-                        preflight_headers.push((
-                            "Access-Control-Request-Method".to_string(),
-                            method_str.clone(),
-                        ));
-                        let req_h_keys: Vec<String> =
-                            custom_headers.iter().map(|(k, _)| k.clone()).collect();
-                        if !req_h_keys.is_empty() {
-                            preflight_headers.push((
-                                "Access-Control-Request-Headers".to_string(),
-                                req_h_keys.join(", "),
-                            ));
-                        }
-                        let preflight_resp = client
-                            .request("OPTIONS", &url, &preflight_headers, None)
-                            .map_err(|e| format!("CORS preflight request failed: {e}"))?;
-                        let header_refs: Vec<&str> =
-                            req_h_keys.iter().map(|s| s.as_str()).collect();
-                        mango_net::security::validate_cors_preflight(
-                            preflight_resp.status,
-                            &preflight_resp.headers,
-                            &origin_str,
-                            &method_str,
-                            &header_refs,
-                        )
-                        .map_err(|e| format!("CORS preflight validation failed: {e}"))?;
-                    }
-
-                    custom_headers.push(("Origin".to_string(), origin_str.clone()));
-                }
-            }
-
-            let body_opt = if body_str.is_empty() {
-                None
-            } else {
-                Some(body_str.as_bytes())
-            };
-            let mut resp = client
-                .request(&method_str, &url, &custom_headers, body_opt)
-                .map_err(|e| e.to_string())?;
-
-            if is_cross_origin && mode_str == "cors" {
-                let exposed = mango_net::security::validate_cors_response(
-                    &resp.headers,
-                    &origin_str,
-                    creds_bool,
-                )
-                .map_err(|e| format!("CORS response validation failed: {e}"))?;
-                resp.headers
-                    .retain(|k, _| exposed.contains(&k.to_ascii_lowercase()));
-            }
-
-            Ok(resp)
-        })();
-
-        let json_result = format_fetch_response_json(result);
-        Ok(JsValue::from(boa_engine::js_string!(json_result.as_str())))
-    });
-
-    // ── Origin computation for storage partitioning ──────────────────────────
-    let page_origin = match mango_net::Url::parse(page_url) {
-        Ok(u) if u.host.is_some() => {
-            let port_part = match (u.scheme.as_str(), u.port) {
-                ("http", Some(80)) | ("https", Some(443)) => String::new(),
-                (_, Some(p)) => format!(":{p}"),
-                (_, None) => String::new(),
-            };
-            format!(
-                "{}://{}{}",
-                u.scheme.to_ascii_lowercase(),
-                u.host.as_deref().unwrap_or("").to_ascii_lowercase(),
-                port_part
-            )
-        }
-        _ => page_url.to_string(),
-    };
-
-    // ── localStorage native bridge ────────────────────────────────────────────
-    //
-    // These native functions are called by the JS `localStorage` implementation.
-    // Keys are partitioned per origin (RFC 6454 / W3C Web Storage spec).
-
-    let ls = local_storage.clone();
-    let orig = page_origin.clone();
-    let ls_get_fn = native_fn!(move |_this, args, ctx| {
-        let key = args
-            .get_or_undefined(0)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let scoped_key = format!("{orig}\x1f{key}");
-        let val = ls.lock().ok().and_then(|map| map.get(&scoped_key).cloned());
-        match val {
-            Some(v) => Ok(JsValue::from(boa_engine::js_string!(v.as_str()))),
-            None => Ok(JsValue::null()),
-        }
-    });
-
-    let ls = local_storage.clone();
-    let orig = page_origin.clone();
-    let ls_set_fn = native_fn!(move |_this, args, ctx| {
-        let key = args
-            .get_or_undefined(0)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let val = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let scoped_key = format!("{orig}\x1f{key}");
-        if let Ok(mut map) = ls.lock() {
-            map.insert(scoped_key, val);
-        }
-        Ok(JsValue::undefined())
-    });
-
-    let ls = local_storage.clone();
-    let orig = page_origin.clone();
-    let ls_remove_fn = native_fn!(move |_this, args, ctx| {
-        let key = args
-            .get_or_undefined(0)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let scoped_key = format!("{orig}\x1f{key}");
-        if let Ok(mut map) = ls.lock() {
-            map.remove(&scoped_key);
-        }
-        Ok(JsValue::undefined())
-    });
-
-    let ls = local_storage.clone();
-    let orig = page_origin.clone();
-    let prefix = format!("{orig}\x1f");
-    let ls_clear_fn = native_fn!(move |_this, _args, _ctx| {
-        if let Ok(mut map) = ls.lock() {
-            map.retain(|k, _| !k.starts_with(&prefix));
-        }
-        Ok(JsValue::undefined())
-    });
-
-    let ls = local_storage.clone();
-    let orig = page_origin.clone();
-    let prefix = format!("{orig}\x1f");
-    let ls_keys_fn = native_fn!(move |_this, _args, ctx| {
-        let keys: Vec<JsValue> = ls
-            .lock()
-            .map(|map| {
-                map.keys()
-                    .filter(|k| k.starts_with(&prefix) && !k[prefix.len()..].starts_with("__idb__"))
-                    .map(|k| JsValue::from(boa_engine::js_string!(&k[prefix.len()..])))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let arr = boa_engine::object::builtins::JsArray::from_iter(keys, ctx);
-        Ok(JsValue::from(arr))
-    });
-
-    // ── sessionStorage native bridge ──────────────────────────────────────────
-    //
-    // These native functions are called by the JS `sessionStorage` implementation.
-    // Keys are partitioned per origin and scoped to the tab browsing context.
-
-    let ss = session_storage.clone();
-    let orig = page_origin.clone();
-    let ss_get_fn = native_fn!(move |_this, args, ctx| {
-        let key = args
-            .get_or_undefined(0)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let scoped_key = format!("{orig}\x1f{key}");
-        let val = ss.lock().ok().and_then(|map| map.get(&scoped_key).cloned());
-        match val {
-            Some(v) => Ok(JsValue::from(boa_engine::js_string!(v.as_str()))),
-            None => Ok(JsValue::null()),
-        }
-    });
-
-    let ss = session_storage.clone();
-    let orig = page_origin.clone();
-    let ss_set_fn = native_fn!(move |_this, args, ctx| {
-        let key = args
-            .get_or_undefined(0)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let val = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let scoped_key = format!("{orig}\x1f{key}");
-        if let Ok(mut map) = ss.lock() {
-            map.insert(scoped_key, val);
-        }
-        Ok(JsValue::undefined())
-    });
-
-    let ss = session_storage.clone();
-    let orig = page_origin.clone();
-    let ss_remove_fn = native_fn!(move |_this, args, ctx| {
-        let key = args
-            .get_or_undefined(0)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let scoped_key = format!("{orig}\x1f{key}");
-        if let Ok(mut map) = ss.lock() {
-            map.remove(&scoped_key);
-        }
-        Ok(JsValue::undefined())
-    });
-
-    let ss = session_storage.clone();
-    let orig = page_origin.clone();
-    let prefix = format!("{orig}\x1f");
-    let ss_clear_fn = native_fn!(move |_this, _args, _ctx| {
-        if let Ok(mut map) = ss.lock() {
-            map.retain(|k, _| !k.starts_with(&prefix));
-        }
-        Ok(JsValue::undefined())
-    });
-
-    let ss = session_storage.clone();
-    let orig = page_origin.clone();
-    let prefix = format!("{orig}\x1f");
-    let ss_keys_fn = native_fn!(move |_this, _args, ctx| {
-        let keys: Vec<JsValue> = ss
-            .lock()
-            .map(|map| {
-                map.keys()
-                    .filter(|k| k.starts_with(&prefix))
-                    .map(|k| JsValue::from(boa_engine::js_string!(&k[prefix.len()..])))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let arr = boa_engine::object::builtins::JsArray::from_iter(keys, ctx);
-        Ok(JsValue::from(arr))
-    });
-
-    // ── IndexedDB native bridge ───────────────────────────────────────────────
-    let ls = local_storage.clone();
-    let orig = page_origin.clone();
-    let idb_load_fn = native_fn!(move |_this, args, ctx| {
-        let name = args
-            .get_or_undefined(0)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let key = format!("{orig}\x1f__idb__{name}");
-        let val = ls.lock().ok().and_then(|map| map.get(&key).cloned());
-        match val {
-            Some(v) => Ok(JsValue::from(boa_engine::js_string!(v.as_str()))),
-            None => Ok(JsValue::null()),
-        }
-    });
-
-    let ls = local_storage.clone();
-    let orig = page_origin.clone();
-    let idb_save_fn = native_fn!(move |_this, args, ctx| {
-        let name = args
-            .get_or_undefined(0)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let json = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let key = format!("{orig}\x1f__idb__{name}");
-        if let Ok(mut map) = ls.lock() {
-            map.insert(key, json);
-        }
-        Ok(JsValue::undefined())
-    });
-
-    let ls = local_storage.clone();
-    let orig = page_origin.clone();
-    let idb_delete_fn = native_fn!(move |_this, args, ctx| {
-        let name = args
-            .get_or_undefined(0)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let key = format!("{orig}\x1f__idb__{name}");
-        if let Ok(mut map) = ls.lock() {
-            map.remove(&key);
-        }
-        Ok(JsValue::undefined())
-    });
-
-    let ls = local_storage.clone();
-    let orig = page_origin.clone();
-    let prefix = format!("{orig}\x1f__idb__");
-    let idb_list_fn = native_fn!(move |_this, _args, ctx| {
-        let names: Vec<JsValue> = ls
-            .lock()
-            .map(|map| {
-                map.keys()
-                    .filter(|k| k.starts_with(&prefix))
-                    .map(|k| JsValue::from(boa_engine::js_string!(&k[prefix.len()..])))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let arr = boa_engine::object::builtins::JsArray::from_iter(names, ctx);
-        Ok(JsValue::from(arr))
-    });
-
-    // ── Register window dims ──────────────────────────────────────────────────
-
-    let vw = *viewport_width.borrow();
-    let vh = *viewport_height.borrow();
-    context
-        .register_global_property(
-            boa_engine::js_string!("innerWidth"),
-            JsValue::from(vw as i32),
-            boa_engine::property::Attribute::WRITABLE
-                | boa_engine::property::Attribute::CONFIGURABLE,
-        )
-        .expect("register innerWidth");
-    context
-        .register_global_property(
-            boa_engine::js_string!("innerHeight"),
-            JsValue::from(vh as i32),
-            boa_engine::property::Attribute::WRITABLE
-                | boa_engine::property::Attribute::CONFIGURABLE,
-        )
-        .expect("register innerHeight");
-
-    // ── Web Worker native bridges ─────────────────────────────────────────────
-    let wm = worker_manager.clone();
-    let el_wm = event_loop.clone();
-    let p_url = page_url.to_string();
-    let worker_create_fn = native_fn!(move |_this, args, ctx| {
-        let id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as u64;
-        let script_url = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let tasks = el_wm.borrow().task_queue();
-        wm.create_worker(id, &script_url, &p_url, tasks);
-        Ok(JsValue::undefined())
-    });
-
-    let wm = worker_manager.clone();
-    let worker_post_fn = native_fn!(move |_this, args, ctx| {
-        let id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as u64;
-        let msg_json = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let _ = wm.post_message(id, &msg_json);
-        Ok(JsValue::undefined())
-    });
-
-    let wm = worker_manager.clone();
-    let worker_term_fn = native_fn!(move |_this, args, ctx| {
-        let id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as u64;
-        wm.terminate(id);
-        Ok(JsValue::undefined())
-    });
-
-    let wm = worker_manager.clone();
-    let blob_reg_fn = native_fn!(move |_this, args, ctx| {
-        let url = args
-            .get_or_undefined(0)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let content = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        wm.register_blob(url, content);
-        Ok(JsValue::undefined())
-    });
-
-    // ── WebSocket native bridges ──────────────────────────────────────────────
-    let ws = ws_manager.clone();
-    let el_ws = event_loop.clone();
-    let ws_connect_fn = native_fn!(move |_this, args, ctx| {
-        let id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as u64;
-        let url = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let protocols = args
-            .get_or_undefined(2)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let tasks = el_ws.borrow().task_queue();
-        ws.connect(id, &url, &protocols, move |event| {
-            let cmd = match event {
-                mango_net::WebSocketEvent::Open { protocol } => {
-                    let p = protocol.replace('\\', "\\\\").replace('"', "\\\"");
-                    format!(
-                        "if (typeof _mangoDispatchWsOpen === 'function') _mangoDispatchWsOpen({}, \"{}\");",
-                        id, p
-                    )
-                }
-                mango_net::WebSocketEvent::Message { data } => {
-                    let escaped = data
-                        .replace('\\', "\\\\")
-                        .replace('"', "\\\"")
-                        .replace('\n', "\\n")
-                        .replace('\r', "\\r");
-                    format!(
-                        "if (typeof _mangoDispatchWsMessage === 'function') _mangoDispatchWsMessage({}, \"{}\");",
-                        id, escaped
-                    )
-                }
-                mango_net::WebSocketEvent::BinaryMessage { data: _ } => {
-                    format!(
-                        "if (typeof _mangoDispatchWsMessage === 'function') _mangoDispatchWsMessage({}, \"\");",
-                        id
-                    )
-                }
-                mango_net::WebSocketEvent::Error { message } => {
-                    let escaped = message
-                        .replace('\\', "\\\\")
-                        .replace('"', "\\\"")
-                        .replace('\n', "\\n")
-                        .replace('\r', "\\r");
-                    format!(
-                        "if (typeof _mangoDispatchWsError === 'function') _mangoDispatchWsError({}, \"{}\");",
-                        id, escaped
-                    )
-                }
-                mango_net::WebSocketEvent::Close {
-                    code,
-                    reason,
-                    was_clean,
-                } => {
-                    let escaped = reason
-                        .replace('\\', "\\\\")
-                        .replace('"', "\\\"")
-                        .replace('\n', "\\n")
-                        .replace('\r', "\\r");
-                    format!(
-                        "if (typeof _mangoDispatchWsClose === 'function') _mangoDispatchWsClose({}, {}, \"{}\", {});",
-                        id, code, escaped, was_clean
-                    )
-                }
-            };
-            if let Ok(mut q) = tasks.lock() {
-                q.push(cmd);
-            }
-        });
-        Ok(JsValue::undefined())
-    });
-
-    let ws = ws_manager.clone();
-    let ws_send_fn = native_fn!(move |_this, args, ctx| {
-        let id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as u64;
-        let data = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let _ = ws.send_text(id, data);
-        Ok(JsValue::undefined())
-    });
-
-    let ws = ws_manager.clone();
-    let ws_close_fn = native_fn!(move |_this, args, ctx| {
-        let id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as u64;
-        let code = args.get_or_undefined(1).to_u32(ctx).unwrap_or(1000) as u16;
-        let reason = args
-            .get_or_undefined(2)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let _ = ws.close(id, code, reason);
-        Ok(JsValue::undefined())
-    });
-
-    // ── Register all callables ────────────────────────────────────────────────
-
-    let fns: &[(&str, usize, NativeFunction)] = &[
-        ("setTimeout", 2, set_timeout_fn),
-        ("setInterval", 2, set_interval_fn),
-        ("clearTimeout", 1, clear_timeout_fn),
-        ("clearInterval", 1, clear_interval_fn),
-        ("alert", 1, alert_fn),
-        ("_mangoNavigate", 1, navigate_fn),
-        ("_mangoScheduleTimer", 3, schedule_timer_fn),
-        ("_mangoCancelTimer", 1, cancel_timer_fn),
-        ("_mangoRandomBytes", 1, random_bytes_fn),
-        ("_mangoStartFetch", 8, start_fetch_fn),
-        ("_mangoFetch", 7, fetch_fn),
-        ("_mangoLsGet", 1, ls_get_fn),
-        ("_mangoLsSet", 2, ls_set_fn),
-        ("_mangoLsRemove", 1, ls_remove_fn),
-        ("_mangoLsClear", 0, ls_clear_fn),
-        ("_mangoLsKeys", 0, ls_keys_fn),
-        ("_mangoSsGet", 1, ss_get_fn),
-        ("_mangoSsSet", 2, ss_set_fn),
-        ("_mangoSsRemove", 1, ss_remove_fn),
-        ("_mangoSsClear", 0, ss_clear_fn),
-        ("_mangoSsKeys", 0, ss_keys_fn),
-        ("_mangoIdbLoad", 1, idb_load_fn),
-        ("_mangoIdbSave", 2, idb_save_fn),
-        ("_mangoIdbDelete", 1, idb_delete_fn),
-        ("_mangoIdbList", 0, idb_list_fn),
-        ("_mangoWorkerCreate", 2, worker_create_fn),
-        ("_mangoWorkerPostMessage", 2, worker_post_fn),
-        ("_mangoWorkerTerminate", 1, worker_term_fn),
-        ("_mangoBlobRegister", 2, blob_reg_fn),
-        ("_mangoWsConnect", 3, ws_connect_fn),
-        ("_mangoWsSend", 2, ws_send_fn),
-        ("_mangoWsClose", 3, ws_close_fn),
-    ];
-
-    for (name, len, func) in fns.iter().cloned() {
-        context
-            .register_global_callable(boa_engine::js_string!(name), len, func)
-            .unwrap_or_else(|e| panic!("register {name}: {e}"));
-    }
-}
-
 // ── JS shim ───────────────────────────────────────────────────────────────────
 
 pub fn build_web_apis_shim(page_url: &str) -> String {
@@ -1159,6 +209,16 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
     globalThis.self   = globalThis;
     globalThis.top    = globalThis;
     globalThis.parent = globalThis;
+    globalThis.global = globalThis;
+    if (!globalThis.process) {{
+        globalThis.process = {{
+            env: {{ NODE_ENV: 'production' }},
+            browser: true,
+            version: 'v18.0.0',
+            versions: {{ node: '18.0.0', v8: '10.0.0' }},
+            nextTick: (typeof queueMicrotask === 'function') ? queueMicrotask : function(cb) {{ setTimeout(cb, 0); }}
+        }};
+    }}
 
     // ── 2. location ───────────────────────────────────────────────────────────
     function _parseUrlComponents(urlStr, baseStr) {{
@@ -1628,7 +688,7 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
     // ── 7. localStorage (backed by native Rust HashMap) ───────────────────────
     //
     // Reads/writes go through _mangoLs* native functions so the browser can
-    // persist the map to disk across page loads (GAP-017 implemented).
+    // persist the map to disk across page loads.
     function Storage() {{}}
     var _storageProto = {{
         getItem: function(k) {{ return _mangoLsGet(String(k)); }},
@@ -2868,6 +1928,53 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
             }};
             it[Symbol.iterator] = function() {{ return this; }};
             return it;
+        }},
+        serializeUrlEncoded: function() {{
+            var pairs = [];
+            for (var i = 0; i < this._entries.length; i++) {{
+                var k = encodeURIComponent(this._entries[i][0]).replace(/%20/g, '+');
+                var v = encodeURIComponent(String(this._entries[i][1])).replace(/%20/g, '+');
+                pairs.push(k + '=' + v);
+            }}
+            return pairs.join('&');
+        }},
+        toUrlSearchParams: function() {{
+            if (typeof globalThis.URLSearchParams === 'function') {{
+                var usp = new globalThis.URLSearchParams();
+                for (var i = 0; i < this._entries.length; i++) {{
+                    usp.append(this._entries[i][0], String(this._entries[i][1]));
+                }}
+                return usp;
+            }}
+            return null;
+        }},
+        serializeMultipart: function(boundary) {{
+            var b = boundary || ('----WebKitFormBoundary' + Math.random().toString(36).substring(2));
+            var lines = [];
+            for (var i = 0; i < this._entries.length; i++) {{
+                var k = this._entries[i][0];
+                var v = this._entries[i][1];
+                lines.push('--' + b);
+                if (v && typeof v === 'object' && v.name !== undefined) {{
+                    var fn = v.name || 'blob';
+                    var ct = v.type || 'application/octet-stream';
+                    lines.push('Content-Disposition: form-data; name="' + k + '"; filename="' + fn + '"');
+                    lines.push('Content-Type: ' + ct);
+                    lines.push('');
+                    lines.push(v._data ? (typeof v._data === 'string' ? v._data : String(v._data)) : '');
+                }} else {{
+                    lines.push('Content-Disposition: form-data; name="' + k + '"');
+                    lines.push('');
+                    lines.push(String(v));
+                }}
+            }}
+            lines.push('--' + b + '--');
+            lines.push('');
+            return {{
+                boundary: b,
+                contentType: 'multipart/form-data; boundary=' + b,
+                body: lines.join('\r\n')
+            }};
         }}
     }};
     FormData.prototype[Symbol.iterator] = FormData.prototype.entries;
@@ -3077,6 +2184,387 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
     }};
     globalThis.AbortController = AbortController;
 
+    // ── 20b. WHATWG Streams API ──────────────────────────────────────────────
+    function ByteLengthQueuingStrategy(options) {{
+        this.highWaterMark = (options && options.highWaterMark !== undefined) ? Number(options.highWaterMark) : 0;
+    }}
+    ByteLengthQueuingStrategy.prototype.size = function(chunk) {{
+        return (chunk && chunk.byteLength !== undefined) ? chunk.byteLength : 0;
+    }};
+    globalThis.ByteLengthQueuingStrategy = ByteLengthQueuingStrategy;
+
+    function CountQueuingStrategy(options) {{
+        this.highWaterMark = (options && options.highWaterMark !== undefined) ? Number(options.highWaterMark) : 0;
+    }}
+    CountQueuingStrategy.prototype.size = function() {{
+        return 1;
+    }};
+    globalThis.CountQueuingStrategy = CountQueuingStrategy;
+
+    function ReadableStreamDefaultReader(stream) {{
+        if (!(stream instanceof ReadableStream)) {{
+            throw new TypeError("ReadableStreamDefaultReader requires a ReadableStream");
+        }}
+        if (stream.locked) {{
+            throw new TypeError("ReadableStream is already locked");
+        }}
+        this._stream = stream;
+        stream._reader = this;
+        this._pendingReads = [];
+        var self = this;
+        this.closed = new Promise(function(resolve, reject) {{
+            self._closedResolve = resolve;
+            self._closedReject = reject;
+        }});
+        if (stream._state === 'closed') {{
+            this._closedResolve();
+        }} else if (stream._state === 'errored') {{
+            this._closedReject(stream._storedError);
+        }}
+    }}
+    ReadableStreamDefaultReader.prototype = {{
+        read: function() {{
+            var stream = this._stream;
+            if (!stream) {{
+                return Promise.reject(new TypeError("Reader was released"));
+            }}
+            stream._disturbed = true;
+            if (stream._queue.length > 0) {{
+                var chunk = stream._queue.shift();
+                return Promise.resolve({{ value: chunk, done: false }});
+            }}
+            if (stream._state === 'closed') {{
+                return Promise.resolve({{ value: undefined, done: true }});
+            }}
+            if (stream._state === 'errored') {{
+                return Promise.reject(stream._storedError);
+            }}
+            var self = this;
+            return new Promise(function(resolve, reject) {{
+                self._pendingReads.push({{ resolve: resolve, reject: reject }});
+                if (typeof stream._underlyingSource.pull === 'function') {{
+                    try {{
+                        var p = stream._underlyingSource.pull(stream._controller);
+                        if (p && typeof p.then === 'function') {{
+                            p.catch(function(err) {{ stream._controller.error(err); }});
+                        }}
+                    }} catch(e) {{
+                        stream._controller.error(e);
+                    }}
+                }}
+            }});
+        }},
+        releaseLock: function() {{
+            if (!this._stream) return;
+            if (this._pendingReads.length > 0) {{
+                throw new TypeError("Cannot release lock with pending reads");
+            }}
+            this._stream._reader = null;
+            this._stream = null;
+        }},
+        cancel: function(reason) {{
+            if (!this._stream) {{
+                return Promise.reject(new TypeError("Reader was released"));
+            }}
+            return this._stream.cancel(reason);
+        }}
+    }};
+    globalThis.ReadableStreamDefaultReader = ReadableStreamDefaultReader;
+
+    function ReadableStream(underlyingSource, strategy) {{
+        underlyingSource = underlyingSource || {{}};
+        strategy = strategy || {{}};
+        this._state = 'readable';
+        this._storedError = undefined;
+        this._queue = [];
+        this._reader = null;
+        this._disturbed = false;
+
+        var self = this;
+        var controller = {{
+            get desiredSize() {{
+                if (self._state === 'errored') return null;
+                if (self._state === 'closed') return 0;
+                var hwm = (strategy && strategy.highWaterMark !== undefined) ? strategy.highWaterMark : 1;
+                return Math.max(0, hwm - self._queue.length);
+            }},
+            close: function() {{
+                if (self._state !== 'readable') return;
+                self._state = 'closed';
+                if (self._reader) {{
+                    while (self._reader._pendingReads.length > 0) {{
+                        var r = self._reader._pendingReads.shift();
+                        r.resolve({{ value: undefined, done: true }});
+                    }}
+                    if (self._reader._closedResolve) self._reader._closedResolve();
+                }}
+            }},
+            enqueue: function(chunk) {{
+                if (self._state !== 'readable') {{
+                    throw new TypeError("Cannot enqueue chunk into non-readable stream");
+                }}
+                if (self._reader && self._reader._pendingReads.length > 0) {{
+                    var r = self._reader._pendingReads.shift();
+                    r.resolve({{ value: chunk, done: false }});
+                }} else {{
+                    self._queue.push(chunk);
+                }}
+            }},
+            error: function(e) {{
+                if (self._state !== 'readable') return;
+                self._state = 'errored';
+                self._storedError = e;
+                if (self._reader) {{
+                    while (self._reader._pendingReads.length > 0) {{
+                        var r = self._reader._pendingReads.shift();
+                        r.reject(e);
+                    }}
+                    if (self._reader._closedReject) self._reader._closedReject(e);
+                }}
+            }}
+        }};
+        this._controller = controller;
+        this._underlyingSource = underlyingSource;
+
+        if (typeof underlyingSource.start === 'function') {{
+            try {{
+                var res = underlyingSource.start(controller);
+                if (res && typeof res.then === 'function') {{
+                    res.catch(function(err) {{ controller.error(err); }});
+                }}
+            }} catch(e) {{
+                controller.error(e);
+            }}
+        }}
+    }}
+    Object.defineProperty(ReadableStream.prototype, 'locked', {{
+        get: function() {{ return this._reader !== null; }},
+        configurable: true,
+        enumerable: true
+    }});
+    ReadableStream.prototype.cancel = function(reason) {{
+        if (this._reader !== null) {{
+            return Promise.reject(new TypeError("Cannot cancel a locked stream"));
+        }}
+        this._state = 'closed';
+        this._storedError = reason;
+        this._queue = [];
+        if (typeof this._underlyingSource.cancel === 'function') {{
+            return Promise.resolve(this._underlyingSource.cancel(reason));
+        }}
+        return Promise.resolve();
+    }};
+    ReadableStream.prototype.getReader = function(options) {{
+        if (this._reader !== null) {{
+            throw new TypeError("ReadableStream is already locked");
+        }}
+        return new ReadableStreamDefaultReader(this);
+    }};
+    ReadableStream.prototype.pipeThrough = function(transform, options) {{
+        if (!transform || !transform.writable || !transform.readable) {{
+            throw new TypeError("transform must have writable and readable properties");
+        }}
+        this.pipeTo(transform.writable, options);
+        return transform.readable;
+    }};
+    ReadableStream.prototype.pipeTo = function(destination, options) {{
+        var self = this;
+        var reader = this.getReader();
+        var writer = destination.getWriter();
+        return new Promise(function(resolve, reject) {{
+            function pump() {{
+                reader.read().then(function(res) {{
+                    if (res.done) {{
+                        writer.close().then(resolve, reject);
+                        return;
+                    }}
+                    writer.write(res.value).then(pump, reject);
+                }}).catch(reject);
+            }}
+            pump();
+        }});
+    }};
+    ReadableStream.prototype.tee = function() {{
+        var self = this;
+        var branch1Ctrl, branch2Ctrl;
+        var b1 = new ReadableStream({{
+            start: function(c) {{ branch1Ctrl = c; }}
+        }});
+        var b2 = new ReadableStream({{
+            start: function(c) {{ branch2Ctrl = c; }}
+        }});
+        var reader = self.getReader();
+        function pump() {{
+            reader.read().then(function(res) {{
+                if (res.done) {{
+                    branch1Ctrl.close();
+                    branch2Ctrl.close();
+                    return;
+                }}
+                branch1Ctrl.enqueue(res.value);
+                branch2Ctrl.enqueue(res.value);
+                pump();
+            }}).catch(function(err) {{
+                branch1Ctrl.error(err);
+                branch2Ctrl.error(err);
+            }});
+        }}
+        pump();
+        return [b1, b2];
+    }};
+    if (typeof Symbol !== 'undefined' && Symbol.asyncIterator) {{
+        ReadableStream.prototype[Symbol.asyncIterator] = function() {{
+            var reader = this.getReader();
+            return {{
+                next: function() {{
+                    return reader.read();
+                }},
+                return: function(val) {{
+                    reader.releaseLock();
+                    return Promise.resolve({{ value: val, done: true }});
+                }}
+            }};
+        }};
+    }}
+    globalThis.ReadableStream = ReadableStream;
+
+    function WritableStreamDefaultWriter(stream) {{
+        if (!(stream instanceof WritableStream)) {{
+            throw new TypeError("Expected WritableStream");
+        }}
+        if (stream.locked) throw new TypeError("WritableStream is locked");
+        this._stream = stream;
+        stream._writer = this;
+        var self = this;
+        this.closed = new Promise(function(res, rej) {{
+            self._closedResolve = res;
+            self._closedReject = rej;
+        }});
+        this.ready = Promise.resolve();
+    }}
+    Object.defineProperty(WritableStreamDefaultWriter.prototype, 'desiredSize', {{
+        get: function() {{ return 1; }}
+    }});
+    WritableStreamDefaultWriter.prototype.write = function(chunk) {{
+        if (!this._stream) return Promise.reject(new TypeError("Writer released"));
+        var sink = this._stream._sink;
+        if (typeof sink.write === 'function') {{
+            return Promise.resolve(sink.write(chunk, this._stream._controller));
+        }}
+        return Promise.resolve();
+    }};
+    WritableStreamDefaultWriter.prototype.close = function() {{
+        if (!this._stream) return Promise.reject(new TypeError("Writer released"));
+        var self = this;
+        return this._stream._closeInternal().then(function() {{
+            self._closedResolve();
+        }});
+    }};
+    WritableStreamDefaultWriter.prototype.abort = function(reason) {{
+        if (!this._stream) return Promise.reject(new TypeError("Writer released"));
+        return this._stream.abort(reason);
+    }};
+    WritableStreamDefaultWriter.prototype.releaseLock = function() {{
+        if (!this._stream) return;
+        this._stream._writer = null;
+        this._stream = null;
+    }};
+    globalThis.WritableStreamDefaultWriter = WritableStreamDefaultWriter;
+
+    function WritableStream(underlyingSink, strategy) {{
+        underlyingSink = underlyingSink || {{}};
+        this._sink = underlyingSink;
+        this._strategy = strategy || {{}};
+        this._state = 'writable';
+        this._storedError = undefined;
+        this._writer = null;
+        var self = this;
+        var controller = {{
+            error: function(e) {{
+                self._state = 'errored';
+                self._storedError = e;
+            }}
+        }};
+        this._controller = controller;
+        if (typeof underlyingSink.start === 'function') {{
+            try {{ underlyingSink.start(controller); }} catch(e) {{ controller.error(e); }}
+        }}
+    }}
+    Object.defineProperty(WritableStream.prototype, 'locked', {{
+        get: function() {{ return this._writer !== null; }},
+        configurable: true,
+        enumerable: true
+    }});
+    WritableStream.prototype.abort = function(reason) {{
+        this._state = 'errored';
+        this._storedError = reason;
+        if (typeof this._sink.abort === 'function') {{
+            return Promise.resolve(this._sink.abort(reason));
+        }}
+        return Promise.resolve();
+    }};
+    WritableStream.prototype.close = function() {{
+        if (this.locked) return Promise.reject(new TypeError("Stream is locked"));
+        return this._closeInternal();
+    }};
+    WritableStream.prototype._closeInternal = function() {{
+        this._state = 'closed';
+        if (typeof this._sink.close === 'function') {{
+            return Promise.resolve(this._sink.close());
+        }}
+        return Promise.resolve();
+    }};
+    WritableStream.prototype.getWriter = function() {{
+        if (this.locked) throw new TypeError("WritableStream is locked");
+        return new WritableStreamDefaultWriter(this);
+    }};
+    globalThis.WritableStream = WritableStream;
+
+    function TransformStream(transformer, writableStrategy, readableStrategy) {{
+        transformer = transformer || {{}};
+        var readableCtrl;
+        var self = this;
+        var r = new ReadableStream({{
+            start: function(c) {{ readableCtrl = c; }}
+        }}, readableStrategy);
+
+        var controller = {{
+            get desiredSize() {{ return readableCtrl.desiredSize; }},
+            enqueue: function(chunk) {{ readableCtrl.enqueue(chunk); }},
+            error: function(reason) {{ readableCtrl.error(reason); }},
+            terminate: function() {{ readableCtrl.close(); }}
+        }};
+
+        var w = new WritableStream({{
+            start: function(c) {{
+                if (typeof transformer.start === 'function') {{
+                    return transformer.start(controller);
+                }}
+            }},
+            write: function(chunk, c) {{
+                if (typeof transformer.transform === 'function') {{
+                    return transformer.transform(chunk, controller);
+                }}
+                controller.enqueue(chunk);
+            }},
+            close: function() {{
+                if (typeof transformer.flush === 'function') {{
+                    return Promise.resolve(transformer.flush(controller)).then(function() {{
+                        controller.terminate();
+                    }});
+                }}
+                controller.terminate();
+            }},
+            abort: function(reason) {{
+                controller.error(reason);
+            }}
+        }}, writableStrategy);
+
+        this.readable = r;
+        this.writable = w;
+    }}
+    globalThis.TransformStream = TransformStream;
+
     // ── 21. fetch() ───────────────────────────────────────────────────────────
     function Headers(init) {{
         this._map = {{}};
@@ -3212,7 +2700,13 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
     globalThis.Request = Request;
 
     function Response(body, init) {{
-        this._body = body !== undefined && body !== null ? body : '';
+        if (body instanceof ReadableStream) {{
+            this._bodyStream = body;
+            this._body = null;
+        }} else {{
+            this._body = body !== undefined && body !== null ? body : '';
+            this._bodyStream = null;
+        }}
         this.status = (init && init.status !== undefined) ? Number(init.status) : 200;
         this.statusText = (init && init.statusText !== undefined) ? String(init.statusText) : (this.status === 200 ? 'OK' : String(this.status));
         this.ok = this.status >= 200 && this.status < 300;
@@ -3220,57 +2714,134 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         this.url = (init && init.url) ? String(init.url) : '';
         this.type = (init && init.type) ? String(init.type) : 'default';
         this.redirected = !!(init && init.redirected);
-        this.bodyUsed = false;
+        this._bodyUsed = false;
     }}
-    Response.prototype = {{
-        text: function() {{
-            this.bodyUsed = true;
-            if (typeof this._body === 'string') return Promise.resolve(this._body);
-            if (this._body instanceof Blob) return this._body.text();
-            if (this._body instanceof ArrayBuffer || ArrayBuffer.isView(this._body)) {{
-                return Promise.resolve(new TextDecoder().decode(this._body));
-            }}
-            return Promise.resolve(String(this._body));
+    Object.defineProperty(Response.prototype, 'bodyUsed', {{
+        get: function() {{
+            return !!this._bodyUsed || (this._bodyStream ? this._bodyStream._disturbed : false);
         }},
-        json: function() {{
+        set: function(val) {{
+            this._bodyUsed = !!val;
+        }},
+        configurable: true,
+        enumerable: true
+    }});
+    Object.defineProperty(Response.prototype, 'body', {{
+        get: function() {{
+            if (this._bodyStream) return this._bodyStream;
             var self = this;
-            return this.text().then(function(t) {{
-                return JSON.parse(t);
+            var rawBody = this._body;
+            var rawBase64 = this._raw && this._raw.bodyBase64;
+            this._bodyStream = new ReadableStream({{
+                start: function(controller) {{
+                    var chunk = null;
+                    if (rawBase64 && typeof atob === 'function') {{
+                        try {{
+                            var bin = atob(rawBase64);
+                            chunk = new Uint8Array(bin.length);
+                            for (var i = 0; i < bin.length; i++) chunk[i] = bin.charCodeAt(i);
+                        }} catch(e) {{}}
+                    }}
+                    if (!chunk) {{
+                        if (rawBody instanceof Uint8Array) {{
+                            chunk = rawBody;
+                        }} else if (rawBody instanceof ArrayBuffer) {{
+                            chunk = new Uint8Array(rawBody);
+                        }} else if (ArrayBuffer.isView(rawBody)) {{
+                            chunk = new Uint8Array(rawBody.buffer, rawBody.byteOffset, rawBody.byteLength);
+                        }} else if (typeof rawBody === 'string' && rawBody.length > 0) {{
+                            chunk = new TextEncoder().encode(rawBody);
+                        }}
+                    }}
+                    if (chunk && chunk.length > 0) {{
+                        controller.enqueue(chunk);
+                    }}
+                    controller.close();
+                }}
             }});
+            return this._bodyStream;
         }},
-        blob: function() {{
-            this.bodyUsed = true;
-            if (this._body instanceof Blob) return Promise.resolve(this._body);
-            var ct = this.headers.get('content-type') || 'text/plain';
-            return Promise.resolve(new Blob([this._body], {{ type: ct }}));
-        }},
-        arrayBuffer: function() {{
-            this.bodyUsed = true;
-            if (this._body instanceof ArrayBuffer) return Promise.resolve(this._body);
-            if (ArrayBuffer.isView(this._body)) return Promise.resolve(this._body.buffer);
-            if (this._body instanceof Blob) return this._body.arrayBuffer();
-            var enc = new TextEncoder().encode(String(this._body));
-            return Promise.resolve(enc.buffer);
-        }},
-        formData: function() {{
-            this.bodyUsed = true;
-            var fd = new FormData();
-            return this.text().then(function(t) {{
-                var params = new URLSearchParams(t);
-                params.forEach(function(v, k) {{ fd.append(k, v); }});
-                return fd;
-            }});
-        }},
-        clone: function() {{
-            return new Response(this._body, {{
-                status: this.status,
-                statusText: this.statusText,
-                headers: this.headers,
-                url: this.url,
-                type: this.type,
-                redirected: this.redirected
-            }});
+        configurable: true,
+        enumerable: true
+    }});
+    Response.prototype.text = function() {{
+        if (this.bodyUsed && !this._bodyStream) {{
+            return Promise.reject(new TypeError("Body already used"));
         }}
+        this.bodyUsed = true;
+        if (this._bodyStream && this._body === null) {{
+            var reader = this._bodyStream.getReader();
+            var chunks = [];
+            function drain() {{
+                return reader.read().then(function(res) {{
+                    if (res.done) {{
+                        var totalLen = 0;
+                        for (var i = 0; i < chunks.length; i++) totalLen += chunks[i].length;
+                        var merged = new Uint8Array(totalLen);
+                        var off = 0;
+                        for (var i = 0; i < chunks.length; i++) {{
+                            merged.set(chunks[i], off);
+                            off += chunks[i].length;
+                        }}
+                        return new TextDecoder().decode(merged);
+                    }}
+                    if (typeof res.value === 'string') {{
+                        chunks.push(new TextEncoder().encode(res.value));
+                    }} else if (res.value instanceof Uint8Array) {{
+                        chunks.push(res.value);
+                    }} else if (res.value && res.value.buffer) {{
+                        chunks.push(new Uint8Array(res.value.buffer));
+                    }}
+                    return drain();
+                }});
+            }}
+            return drain();
+        }}
+        if (typeof this._body === 'string') return Promise.resolve(this._body);
+        if (this._body instanceof Blob) return this._body.text();
+        if (this._body instanceof ArrayBuffer || ArrayBuffer.isView(this._body)) {{
+            return Promise.resolve(new TextDecoder().decode(this._body));
+        }}
+        return Promise.resolve(String(this._body));
+    }};
+    Response.prototype.json = function() {{
+        var self = this;
+        return this.text().then(function(t) {{
+            return JSON.parse(t);
+        }});
+    }};
+    Response.prototype.blob = function() {{
+        this.bodyUsed = true;
+        if (this._body instanceof Blob) return Promise.resolve(this._body);
+        var ct = this.headers.get('content-type') || 'text/plain';
+        return Promise.resolve(new Blob([this._body], {{ type: ct }}));
+    }};
+    Response.prototype.arrayBuffer = function() {{
+        this.bodyUsed = true;
+        if (this._body instanceof ArrayBuffer) return Promise.resolve(this._body);
+        if (ArrayBuffer.isView(this._body)) return Promise.resolve(this._body.buffer);
+        if (this._body instanceof Blob) return this._body.arrayBuffer();
+        var enc = new TextEncoder().encode(String(this._body));
+        return Promise.resolve(enc.buffer);
+    }};
+    Response.prototype.formData = function() {{
+        this.bodyUsed = true;
+        var fd = new FormData();
+        return this.text().then(function(t) {{
+            var params = new URLSearchParams(t);
+            params.forEach(function(v, k) {{ fd.append(k, v); }});
+            return fd;
+        }});
+    }};
+    Response.prototype.clone = function() {{
+        return new Response(this._body, {{
+            status: this.status,
+            statusText: this.statusText,
+            headers: this.headers,
+            url: this.url,
+            type: this.type,
+            redirected: this.redirected
+        }});
     }};
     Response.error = function() {{
         var r = new Response(null, {{ status: 0, statusText: '' }});
@@ -3301,8 +2872,12 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
     Cache.prototype = {{
         match: function(request, options) {{
             var url = (request instanceof Request) ? request.url : String(request);
+            var ignoreSearch = !!(options && options.ignoreSearch);
+            var target = ignoreSearch ? url.split('?')[0] : url;
             for (var i = 0; i < this._items.length; i++) {{
-                if (this._items[i].req.url === url) {{
+                var itemUrl = this._items[i].req.url;
+                var cmpUrl = ignoreSearch ? itemUrl.split('?')[0] : itemUrl;
+                if (cmpUrl === target) {{
                     return Promise.resolve(this._items[i].res.clone());
                 }}
             }}
@@ -3311,8 +2886,12 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         matchAll: function(request, options) {{
             var results = [];
             var url = request ? ((request instanceof Request) ? request.url : String(request)) : null;
+            var ignoreSearch = !!(options && options.ignoreSearch);
+            var target = (url && ignoreSearch) ? url.split('?')[0] : url;
             for (var i = 0; i < this._items.length; i++) {{
-                if (!url || this._items[i].req.url === url) {{
+                var itemUrl = this._items[i].req.url;
+                var cmpUrl = ignoreSearch ? itemUrl.split('?')[0] : itemUrl;
+                if (!target || cmpUrl === target) {{
                     results.push(this._items[i].res.clone());
                 }}
             }}
@@ -3345,8 +2924,12 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         }},
         delete: function(request, options) {{
             var url = (request instanceof Request) ? request.url : String(request);
+            var ignoreSearch = !!(options && options.ignoreSearch);
+            var target = ignoreSearch ? url.split('?')[0] : url;
             for (var i = 0; i < this._items.length; i++) {{
-                if (this._items[i].req.url === url) {{
+                var itemUrl = this._items[i].req.url;
+                var cmpUrl = ignoreSearch ? itemUrl.split('?')[0] : itemUrl;
+                if (cmpUrl === target) {{
                     this._items.splice(i, 1);
                     return Promise.resolve(true);
                 }}
@@ -3356,8 +2939,12 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         keys: function(request, options) {{
             var keys = [];
             var url = request ? ((request instanceof Request) ? request.url : String(request)) : null;
+            var ignoreSearch = !!(options && options.ignoreSearch);
+            var target = (url && ignoreSearch) ? url.split('?')[0] : url;
             for (var i = 0; i < this._items.length; i++) {{
-                if (!url || this._items[i].req.url === url) {{
+                var itemUrl = this._items[i].req.url;
+                var cmpUrl = ignoreSearch ? itemUrl.split('?')[0] : itemUrl;
+                if (!target || cmpUrl === target) {{
                     keys.push(this._items[i].req.clone());
                 }}
             }}
@@ -3393,6 +2980,11 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         }},
         match: function(request, options) {{
             var self = this;
+            if (options && options.cacheName) {{
+                var single = this._caches[String(options.cacheName)];
+                if (single) return single.match(request, options);
+                return Promise.resolve(undefined);
+            }}
             var keys = Object.keys(this._caches);
             function checkNext(idx) {{
                 if (idx >= keys.length) return Promise.resolve(undefined);
@@ -3501,43 +3093,97 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         
         var hdrs = {{}};
         req.headers.forEach(function(v, k) {{ hdrs[k] = v; }});
-        var bodyStr = (req.body !== undefined && req.body !== null) ? String(req.body) : '';
+        var bodyStr = (req.body !== undefined && req.body !== null && !(req.body instanceof ReadableStream)) ? String(req.body) : '';
         var pageOrigin = (globalThis.location && globalThis.location.origin) ? globalThis.location.origin : '';
         var reqMode = req.mode || (init && init.mode) || 'cors';
         var reqCreds = (req.credentials === 'include' || (init && init.credentials === 'include'));
-        
-        return new Promise(function(resolve, reject) {{
-            if (signal) {{
-                signal.addEventListener('abort', function() {{
-                    reject(new Error('The user aborted a request.'));
+        if (init && init._swBypass) req._swBypass = true;
+
+        // Service Worker Fetch Event Interception
+        if (!req._swBypass && typeof FetchEvent !== 'undefined' && globalThis.navigator && globalThis.navigator.serviceWorker && globalThis.navigator.serviceWorker.controller) {{
+            var sw = globalThis.navigator.serviceWorker.controller;
+            var hasFetchHandler = (sw._listeners && sw._listeners['fetch'] && sw._listeners['fetch'].length > 0) || (typeof sw.onfetch === 'function');
+            if (hasFetchHandler && !sw._handlingFetch) {{
+                try {{
+                    sw._handlingFetch = true;
+                    var fe = new FetchEvent('fetch', {{ request: req }});
+                    sw.dispatchEvent(fe);
+                    if (fe._responded && fe._responsePromise) {{
+                        return fe._responsePromise;
+                    }}
+                }} finally {{
+                    sw._handlingFetch = false;
+                }}
+            }}
+        }}
+
+        function performFetch(bodyPayload) {{
+            return new Promise(function(resolve, reject) {{
+                if (signal) {{
+                    signal.addEventListener('abort', function() {{
+                        reject(new Error('The user aborted a request.'));
+                    }});
+                }}
+
+                var fetchStart = (typeof _p0 !== 'undefined') ? (Date.now() - _p0) : 0;
+                if (typeof _mangoStartFetch === 'function') {{
+                    var fetchId = _nextFetchId++;
+                    _pendingFetches[fetchId] = {{ resolve: resolve, reject: reject, url: url, startTime: fetchStart }};
+                    _mangoStartFetch(fetchId, url, req.method, JSON.stringify(hdrs), bodyPayload, pageOrigin, reqMode, reqCreds);
+                }} else if (typeof _mangoFetch === 'function') {{
+                    try {{
+                        var resultJson = _mangoFetch(url, req.method, JSON.stringify(hdrs), bodyPayload, pageOrigin, reqMode, reqCreds);
+                        var raw = JSON.parse(resultJson);
+                        if (raw.error) reject(new TypeError('fetch failed: ' + raw.error));
+                        else {{
+                            var res = _makeResponse(raw);
+                            if (typeof PerformanceResourceTiming !== 'undefined' && typeof _perfEntries !== 'undefined' && typeof _p0 !== 'undefined') {{
+                                var dur = Math.max(0, (Date.now() - _p0) - fetchStart);
+                                _perfEntries.push(new PerformanceResourceTiming(url, 'fetch', fetchStart, dur, raw.status || 200));
+                            }}
+                            resolve(res);
+                        }}
+                    }} catch(e) {{
+                        reject(new TypeError('fetch error: ' + (e.message || e)));
+                    }}
+                }} else {{
+                    reject(new TypeError('fetch: native bridge unavailable'));
+                }}
+            }});
+        }}
+
+        if (req.body instanceof ReadableStream) {{
+            var reader = req.body.getReader();
+            var streamChunks = [];
+            function drainStream() {{
+                return reader.read().then(function(res) {{
+                    if (res.done) {{
+                        var totalLen = 0;
+                        for (var i = 0; i < streamChunks.length; i++) totalLen += streamChunks[i].length;
+                        var merged = new Uint8Array(totalLen);
+                        var off = 0;
+                        for (var i = 0; i < streamChunks.length; i++) {{
+                            merged.set(streamChunks[i], off);
+                            off += streamChunks[i].length;
+                        }}
+                        return new TextDecoder().decode(merged);
+                    }}
+                    if (typeof res.value === 'string') {{
+                        streamChunks.push(new TextEncoder().encode(res.value));
+                    }} else if (res.value instanceof Uint8Array) {{
+                        streamChunks.push(res.value);
+                    }} else if (res.value && res.value.buffer) {{
+                        streamChunks.push(new Uint8Array(res.value.buffer));
+                    }}
+                    return drainStream();
                 }});
             }}
+            return drainStream().then(function(drainedText) {{
+                return performFetch(drainedText);
+            }});
+        }}
 
-            var fetchStart = (typeof _p0 !== 'undefined') ? (Date.now() - _p0) : 0;
-            if (typeof _mangoStartFetch === 'function') {{
-                var fetchId = _nextFetchId++;
-                _pendingFetches[fetchId] = {{ resolve: resolve, reject: reject, url: url, startTime: fetchStart }};
-                _mangoStartFetch(fetchId, url, req.method, JSON.stringify(hdrs), bodyStr, pageOrigin, reqMode, reqCreds);
-            }} else if (typeof _mangoFetch === 'function') {{
-                try {{
-                    var resultJson = _mangoFetch(url, req.method, JSON.stringify(hdrs), bodyStr, pageOrigin, reqMode, reqCreds);
-                    var raw = JSON.parse(resultJson);
-                    if (raw.error) reject(new TypeError('fetch failed: ' + raw.error));
-                    else {{
-                        var res = _makeResponse(raw);
-                        if (typeof PerformanceResourceTiming !== 'undefined' && typeof _perfEntries !== 'undefined' && typeof _p0 !== 'undefined') {{
-                            var dur = Math.max(0, (Date.now() - _p0) - fetchStart);
-                            _perfEntries.push(new PerformanceResourceTiming(url, 'fetch', fetchStart, dur, raw.status || 200));
-                        }}
-                        resolve(res);
-                    }}
-                }} catch(e) {{
-                    reject(new TypeError('fetch error: ' + (e.message || e)));
-                }}
-            }} else {{
-                reject(new TypeError('fetch: native bridge unavailable'));
-            }}
-        }});
+        return performFetch(bodyStr);
     }};
 
     // ── 22. XMLHttpRequest (legacy compatibility) ─────────────────────────────
@@ -3789,10 +3435,18 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
 
     globalThis.Node = function() {{}};
     globalThis.Node.prototype = Object.create(EventTarget.prototype);
-    // Node type constants
-    var _nodeConsts = {{ ELEMENT_NODE:1, ATTRIBUTE_NODE:2, TEXT_NODE:3, CDATA_SECTION_NODE:4,
+    // Node type constants and Document Position bitmasks
+    var _nodeConsts = {{
+        ELEMENT_NODE:1, ATTRIBUTE_NODE:2, TEXT_NODE:3, CDATA_SECTION_NODE:4,
         ENTITY_REFERENCE_NODE:5, ENTITY_NODE:6, PROCESSING_INSTRUCTION_NODE:7, COMMENT_NODE:8,
-        DOCUMENT_NODE:9, DOCUMENT_TYPE_NODE:10, DOCUMENT_FRAGMENT_NODE:11, NOTATION_NODE:12 }};
+        DOCUMENT_NODE:9, DOCUMENT_TYPE_NODE:10, DOCUMENT_FRAGMENT_NODE:11, NOTATION_NODE:12,
+        DOCUMENT_POSITION_DISCONNECTED: 1,
+        DOCUMENT_POSITION_PRECEDING: 2,
+        DOCUMENT_POSITION_FOLLOWING: 4,
+        DOCUMENT_POSITION_CONTAINS: 8,
+        DOCUMENT_POSITION_CONTAINED_BY: 16,
+        DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC: 32
+    }};
     Object.assign(globalThis.Node, _nodeConsts);
     Object.assign(globalThis.Node.prototype, _nodeConsts);
     globalThis.Node.prototype.insertBefore    = function(n, r) {{ return this.appendChild ? this.appendChild(n) : n; }};
@@ -3804,7 +3458,39 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
     globalThis.Node.prototype.isConnected     = true;
     globalThis.Node.prototype.isEqualNode     = function(o) {{ return this === o; }};
     globalThis.Node.prototype.isSameNode      = function(o) {{ return this === o; }};
-    globalThis.Node.prototype.compareDocumentPosition = function() {{ return 0; }};
+    Object.defineProperty(globalThis.Node.prototype, 'ownerDocument', {{
+        get: function() {{
+            return (typeof document !== 'undefined' && this === document) ? null : (typeof document !== 'undefined' ? document : null);
+        }},
+        configurable: true
+    }});
+    globalThis.Node.prototype.getRootNode     = function(options) {{
+        var cur = this;
+        while (cur) {{
+            var parent = cur.parentNode || cur.parentElement;
+            if (!parent) break;
+            cur = parent;
+        }}
+        return cur || (typeof document !== 'undefined' ? document : this);
+    }};
+    globalThis.Node.prototype.compareDocumentPosition = function(other) {{
+        if (this === other) return 0;
+        if (!other || typeof other !== 'object') {{
+            throw new TypeError("Failed to execute 'compareDocumentPosition' on 'Node': parameter 1 is not of type 'Node'.");
+        }}
+        var otherId = (other._nodeId !== undefined) ? other._nodeId : null;
+        var myId = (this._nodeId !== undefined) ? this._nodeId : null;
+        if (myId === null && typeof document !== 'undefined' && this === document) {{
+            myId = 0;
+        }}
+        if (otherId === null && typeof document !== 'undefined' && other === document) {{
+            otherId = 0;
+        }}
+        if (typeof _compareDocumentPosition === 'function' && myId !== null && otherId !== null) {{
+            return _compareDocumentPosition(myId, otherId);
+        }}
+        return 1 | 32 | 4;
+    }};
 
     globalThis.Element = function() {{}};
     globalThis.Element.prototype = Object.create(globalThis.Node.prototype);
@@ -4266,12 +3952,15 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
     _htmlSubclasses.forEach(function(name) {{
         globalThis[name] = function() {{}};
         globalThis[name].prototype = Object.create(globalThis.HTMLElement.prototype);
+        globalThis[name].prototype.constructor = globalThis[name];
     }});
     if (globalThis.HTMLMediaElement && globalThis.HTMLVideoElement) {{
         globalThis.HTMLVideoElement.prototype = Object.create(globalThis.HTMLMediaElement.prototype);
+        globalThis.HTMLVideoElement.prototype.constructor = globalThis.HTMLVideoElement;
     }}
     if (globalThis.HTMLMediaElement && globalThis.HTMLAudioElement) {{
         globalThis.HTMLAudioElement.prototype = Object.create(globalThis.HTMLMediaElement.prototype);
+        globalThis.HTMLAudioElement.prototype.constructor = globalThis.HTMLAudioElement;
     }}
 
     // HTMLSelectElement prototype surface
@@ -4304,8 +3993,102 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         var opt = opts[index];
         if (opt && opt.parentNode) opt.parentNode.removeChild(opt);
     }};
+    Object.defineProperty(globalThis.HTMLSelectElement.prototype, 'value', {{
+        get: function() {{
+            var opts = this.options || [];
+            for (var i = 0; i < opts.length; i++) {{
+                if (opts[i].selected) {{
+                    return opts[i].value;
+                }}
+            }}
+            if (!this.multiple && opts.length > 0) {{
+                return opts[0].value;
+            }}
+            return "";
+        }},
+        set: function(val) {{
+            var targetVal = (val === null || val === undefined) ? "" : String(val);
+            var opts = this.options || [];
+            var matched = false;
+            for (var i = 0; i < opts.length; i++) {{
+                if (opts[i].value === targetVal) {{
+                    opts[i].selected = true;
+                    matched = true;
+                }} else if (!this.multiple) {{
+                    opts[i].selected = false;
+                }}
+            }}
+            if (!matched && !this.multiple) {{
+                this.selectedIndex = -1;
+            }}
+        }},
+        configurable: true,
+        enumerable: true
+    }});
+
+    // HTMLTextAreaElement prototype surface
+    Object.defineProperty(globalThis.HTMLTextAreaElement.prototype, 'value', {{
+        get: function() {{
+            var v = this.getAttribute ? this.getAttribute("data-mango-value") : null;
+            if (v !== null) return v;
+            return this.textContent || "";
+        }},
+        set: function(val) {{
+            var str = (val === null || val === undefined) ? "" : String(val);
+            if (this.setAttribute) {{
+                this.setAttribute("data-mango-value", str);
+            }}
+            this.textContent = str;
+        }},
+        configurable: true,
+        enumerable: true
+    }});
 
     // HTMLInputElement prototype surface
+    Object.defineProperty(globalThis.HTMLInputElement.prototype, 'value', {{
+        get: function() {{
+            var v = this.getAttribute ? this.getAttribute("data-mango-value") : null;
+            if (v !== null) return v;
+            var attr = this.getAttribute ? this.getAttribute("value") : null;
+            return attr === null ? "" : attr;
+        }},
+        set: function(val) {{
+            if (this.getAttribute && this.getAttribute("data-mango-default-value") === null) {{
+                var initVal = this.getAttribute("value");
+                if (this.setAttribute) this.setAttribute("data-mango-default-value", initVal === null ? "" : initVal);
+            }}
+            var str = (val === null || val === undefined) ? "" : String(val);
+            if (this.setAttribute) {{
+                this.setAttribute("data-mango-value", str);
+                this.setAttribute("value", str);
+            }}
+        }},
+        configurable: true,
+        enumerable: true
+    }});
+
+    Object.defineProperty(globalThis.HTMLInputElement.prototype, 'checked', {{
+        get: function() {{
+            var dyn = this.getAttribute ? this.getAttribute("data-mango-checked") : null;
+            if (dyn !== null) return dyn === "true";
+            return this.hasAttribute ? this.hasAttribute("checked") : false;
+        }},
+        set: function(val) {{
+            if (this.hasAttribute && !this.hasAttribute("data-mango-default-checked")) {{
+                this.setAttribute("data-mango-default-checked", this.hasAttribute("checked") ? "true" : "false");
+            }}
+            if (this.setAttribute) {{
+                this.setAttribute("data-mango-checked", val ? "true" : "false");
+                if (val) this.setAttribute("checked", "");
+                else if (this.removeAttribute) this.removeAttribute("checked");
+            }}
+            if (this.dispatchEvent) {{
+                this.dispatchEvent({{ type: 'change' }});
+            }}
+        }},
+        configurable: true,
+        enumerable: true
+    }});
     globalThis.HTMLInputElement.prototype.stepUp = function(n) {{
         var count = (n === undefined) ? 1 : (parseInt(n, 10) || 0);
         var stepAttr = this.getAttribute ? this.getAttribute('step') : null;
@@ -4975,8 +4758,122 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
             Object.defineProperty(globalThis.window, 'pageYOffset', {{ get: function() {{ return _winScrollY; }}, set: function(v) {{ _setWinScroll(_winScrollX, v, true); }}, configurable: true }});
         }} catch(e) {{}}
     }}
-    globalThis.window.devicePixelRatio = 1;
-    globalThis.window.open      = function(url) {{ if (typeof _mangoNavigate === 'function') _mangoNavigate(String(url || '')); return null; }};
+    function WindowProxy(url, target, features, openerWindow) {{
+        var self = this;
+        this.closed = false;
+        this.name = String(target || '_blank');
+        this.opener = openerWindow || ((typeof globalThis.window !== 'undefined') ? globalThis.window : globalThis);
+        this.location = {{
+            _href: String(url || 'about:blank'),
+            get href() {{ return this._href; }},
+            set href(val) {{
+                this._href = String(val);
+                if (typeof _mangoOpenWindow === 'function') {{
+                    _mangoOpenWindow(this._href, target, features);
+                }}
+            }},
+            toString: function() {{ return this._href; }}
+        }};
+        this.focus = function() {{}};
+        this.blur = function() {{}};
+        this.close = function() {{
+            self.closed = true;
+        }};
+        this._listeners = {{}};
+        this.onmessage = null;
+        this.addEventListener = function(type, listener) {{
+            if (!self._listeners[type]) self._listeners[type] = [];
+            self._listeners[type].push(listener);
+        }};
+        this.removeEventListener = function(type, listener) {{
+            if (!self._listeners[type]) return;
+            self._listeners[type] = self._listeners[type].filter(function(l) {{ return l !== listener; }});
+        }};
+        this.dispatchEvent = function(event) {{
+            if (self.closed) return true;
+            var list = (self._listeners[event.type] || []).slice();
+            for (var i = 0; i < list.length; i++) {{
+                try {{ list[i].call(self, event); }} catch(e) {{
+                    if (typeof console !== 'undefined' && console.error) console.error(e);
+                }}
+            }}
+            var onfn = self['on' + event.type];
+            if (typeof onfn === 'function') {{
+                try {{ onfn.call(self, event); }} catch(e) {{
+                    if (typeof console !== 'undefined' && console.error) console.error(e);
+                }}
+            }}
+            return !event.defaultPrevented;
+        }};
+        this.postMessage = function(message, targetOrigin, transfer) {{
+            if (self.closed) return;
+            var clonedData;
+            try {{
+                clonedData = (typeof structuredClone === 'function') ? structuredClone(message) : message;
+            }} catch(e) {{
+                clonedData = message;
+            }}
+            var origin = (typeof location !== 'undefined' && location.origin) ? location.origin : '*';
+            var ev = (typeof globalThis.MessageEvent === 'function')
+                ? new globalThis.MessageEvent('message', {{ data: clonedData, origin: origin, source: self.opener }})
+                : {{ type: 'message', data: clonedData, origin: origin, source: self.opener, defaultPrevented: false }};
+            var defer = (typeof queueMicrotask === 'function') ? queueMicrotask : function(cb) {{ setTimeout(cb, 0); }};
+            defer(function() {{
+                self.dispatchEvent(ev);
+            }});
+        }};
+    }}
+    globalThis.WindowProxy = WindowProxy;
+
+    var _windowOpenFn = function(url, target, features) {{
+        var finalUrl = String(url || 'about:blank');
+        var targetStr = String(target || '_blank');
+        var featuresStr = String(features || '');
+        if (targetStr === '_self') {{
+            if (typeof _mangoNavigate === 'function') {{
+                _mangoNavigate(finalUrl);
+            }}
+            return (typeof globalThis.window !== 'undefined') ? globalThis.window : globalThis;
+        }}
+        if (typeof _mangoOpenWindow === 'function') {{
+            _mangoOpenWindow(finalUrl, targetStr, featuresStr);
+        }}
+        var openerWin = (typeof globalThis.window !== 'undefined') ? globalThis.window : globalThis;
+        return new WindowProxy(finalUrl, targetStr, featuresStr, openerWin);
+    }};
+
+    if (globalThis.window) {{
+        globalThis.window.open = _windowOpenFn;
+        if (!globalThis.window.opener) {{
+            globalThis.window.opener = null;
+        }}
+        globalThis.window.postMessage = function(message, targetOrigin, transfer) {{
+            var clonedData;
+            try {{
+                clonedData = (typeof structuredClone === 'function') ? structuredClone(message) : message;
+            }} catch(e) {{
+                clonedData = message;
+            }}
+            var origin = (typeof location !== 'undefined' && location.origin) ? location.origin : '*';
+            var ev = (typeof globalThis.MessageEvent === 'function')
+                ? new globalThis.MessageEvent('message', {{ data: clonedData, origin: origin, source: globalThis.window }})
+                : {{ type: 'message', data: clonedData, origin: origin, source: globalThis.window, defaultPrevented: false }};
+            var defer = (typeof queueMicrotask === 'function') ? queueMicrotask : function(cb) {{ setTimeout(cb, 0); }};
+            defer(function() {{
+                if (typeof globalThis.window.dispatchEvent === 'function') {{
+                    globalThis.window.dispatchEvent(ev);
+                }} else if (typeof globalThis.dispatchEvent === 'function') {{
+                    globalThis.dispatchEvent(ev);
+                }}
+                if (typeof globalThis.window.onmessage === 'function') {{
+                    try {{ globalThis.window.onmessage(ev); }} catch(e) {{}}
+                }} else if (typeof globalThis.onmessage === 'function') {{
+                    try {{ globalThis.onmessage(ev); }} catch(e) {{}}
+                }}
+            }});
+        }};
+    }}
+    globalThis.open = _windowOpenFn;
     globalThis.window.close     = function() {{}};
     globalThis.window.focus     = function() {{}};
     globalThis.window.blur      = function() {{}};
@@ -5479,20 +5376,31 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
     _setupLazyLoadingProperty(globalThis.HTMLImageElement ? globalThis.HTMLImageElement.prototype : null);
     _setupLazyLoadingProperty(globalThis.HTMLIFrameElement ? globalThis.HTMLIFrameElement.prototype : null);
 
+    function ResizeObserverSize(inlineSize, blockSize) {{
+        this.inlineSize = Number(inlineSize) || 0;
+        this.blockSize = Number(blockSize) || 0;
+        Object.freeze(this);
+    }}
+    ResizeObserverSize.prototype[Symbol.toStringTag] = 'ResizeObserverSize';
+    globalThis.ResizeObserverSize = ResizeObserverSize;
+
     function ResizeObserverEntry(target) {{
         this.target = target;
         var r = (typeof target.getBoundingClientRect === 'function') ? target.getBoundingClientRect() : {{ x:0, y:0, width:0, height:0 }};
         var w = r.width || 0;
         var h = r.height || 0;
         this.contentRect = (globalThis.DOMRectReadOnly) ? new globalThis.DOMRectReadOnly(r.x, r.y, w, h) : r;
-        this.borderBoxSize = [{{ inlineSize: w, blockSize: h }}];
-        this.contentBoxSize = [{{ inlineSize: w, blockSize: h }}];
-        this.devicePixelContentBoxSize = [{{ inlineSize: w, blockSize: h }}];
+        this.borderBoxSize = Object.freeze([new ResizeObserverSize(w, h)]);
+        this.contentBoxSize = Object.freeze([new ResizeObserverSize(w, h)]);
+        var dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+        this.devicePixelContentBoxSize = Object.freeze([new ResizeObserverSize(Math.round(w * dpr), Math.round(h * dpr))]);
     }}
     ResizeObserverEntry.prototype[Symbol.toStringTag] = 'ResizeObserverEntry';
     globalThis.ResizeObserverEntry = ResizeObserverEntry;
 
     var _activeResizeObservers = [];
+    var _resizeObserverLoopCount = 0;
+    var _resizeObserverResetScheduled = false;
 
     function ResizeObserver(cb) {{
         if (typeof cb !== 'function') throw new TypeError("ResizeObserver callback must be a function");
@@ -5520,6 +5428,32 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
     ResizeObserver.prototype._scheduleDelivery = function() {{
         if (this._scheduled) return;
         this._scheduled = true;
+        _resizeObserverLoopCount++;
+        if (_resizeObserverLoopCount > 20) {{
+            this._scheduled = false;
+            if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {{
+                var errEvt;
+                if (typeof globalThis.ErrorEvent === 'function') {{
+                    errEvt = new globalThis.ErrorEvent('error', {{
+                        message: 'ResizeObserver loop completed with undelivered notifications.'
+                    }});
+                }} else if (typeof globalThis.Event === 'function') {{
+                    errEvt = new globalThis.Event('error');
+                    errEvt.message = 'ResizeObserver loop completed with undelivered notifications.';
+                }}
+                if (errEvt) window.dispatchEvent(errEvt);
+            }}
+            return;
+        }}
+        if (!_resizeObserverResetScheduled) {{
+            _resizeObserverResetScheduled = true;
+            var resetLoop = function() {{
+                _resizeObserverLoopCount = 0;
+                _resizeObserverResetScheduled = false;
+            }};
+            if (typeof setTimeout !== 'undefined') setTimeout(resetLoop, 0);
+            else if (typeof queueMicrotask === 'function') queueMicrotask(resetLoop);
+        }}
         var self = this;
         var deliver = function() {{
             self._scheduled = false;
@@ -5569,7 +5503,13 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         this._stopImmediate    = false;
         this._currentPassive   = false;
         this.preventDefault    = function() {{
-            if (!this._currentPassive && this.cancelable) {{
+            if (this._currentPassive) {{
+                if (typeof console !== 'undefined' && console.warn) {{
+                    console.warn("Unable to preventDefault inside passive event listener invocation.");
+                }}
+                return;
+            }}
+            if (this.cancelable) {{
                 this.defaultPrevented = true;
             }}
         }};
@@ -5589,7 +5529,13 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
     globalThis.Event.AT_TARGET = 2;
     globalThis.Event.BUBBLING_PHASE = 3;
     globalThis.Event.prototype.preventDefault = function() {{
-        if (!this._currentPassive && this.cancelable) {{
+        if (this._currentPassive) {{
+            if (typeof console !== 'undefined' && console.warn) {{
+                console.warn("Unable to preventDefault inside passive event listener invocation.");
+            }}
+            return;
+        }}
+        if (this.cancelable) {{
             this.defaultPrevented = true;
         }}
     }};
@@ -5603,6 +5549,7 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         this.cancelBubble = true;
     }};
     globalThis.Event.prototype.composedPath = function() {{ return []; }};
+    globalThis.Event.prototype.constructor = globalThis.Event;
 
     globalThis.UIEvent = function(type, dict) {{
         globalThis.Event.call(this, type, dict);
@@ -5610,6 +5557,7 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         this.detail = (dict && dict.detail) || 0;
     }};
     globalThis.UIEvent.prototype = Object.create(globalThis.Event.prototype);
+    globalThis.UIEvent.prototype.constructor = globalThis.UIEvent;
 
     globalThis.MouseEvent = function(type, dict) {{
         globalThis.UIEvent.call(this, type, dict);
@@ -5625,6 +5573,7 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         this.getModifierState = function(key) {{ return false; }};
     }};
     globalThis.MouseEvent.prototype = Object.create(globalThis.UIEvent.prototype);
+    globalThis.MouseEvent.prototype.constructor = globalThis.MouseEvent;
 
     globalThis.PointerEvent = function(type, dict) {{
         globalThis.MouseEvent.call(this, type, dict);
@@ -5637,6 +5586,7 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         this.height      = dict.height      || 1;
     }};
     globalThis.PointerEvent.prototype = Object.create(globalThis.MouseEvent.prototype);
+    globalThis.PointerEvent.prototype.constructor = globalThis.PointerEvent;
 
     globalThis.KeyboardEvent = function(type, dict) {{
         globalThis.UIEvent.call(this, type, dict);
@@ -5650,6 +5600,7 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         this.getModifierState = function(k) {{ return false; }};
     }};
     globalThis.KeyboardEvent.prototype = Object.create(globalThis.UIEvent.prototype);
+    globalThis.KeyboardEvent.prototype.constructor = globalThis.KeyboardEvent;
     globalThis.KeyboardEvent.DOM_KEY_LOCATION_STANDARD = 0;
     globalThis.KeyboardEvent.DOM_KEY_LOCATION_LEFT     = 1;
     globalThis.KeyboardEvent.DOM_KEY_LOCATION_RIGHT    = 2;
@@ -5660,6 +5611,7 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         this.relatedTarget = (dict && dict.relatedTarget) || null;
     }};
     globalThis.FocusEvent.prototype = Object.create(globalThis.UIEvent.prototype);
+    globalThis.FocusEvent.prototype.constructor = globalThis.FocusEvent;
 
     globalThis.InputEvent = function(type, dict) {{
         globalThis.UIEvent.call(this, type, dict);
@@ -5670,6 +5622,7 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         this.dataTransfer   = dict.dataTransfer   || null;
     }};
     globalThis.InputEvent.prototype = Object.create(globalThis.UIEvent.prototype);
+    globalThis.InputEvent.prototype.constructor = globalThis.InputEvent;
 
     globalThis.WheelEvent = function(type, dict) {{
         globalThis.MouseEvent.call(this, type, dict);
@@ -5680,6 +5633,7 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         this.deltaMode = dict.deltaMode || 0;
     }};
     globalThis.WheelEvent.prototype = Object.create(globalThis.MouseEvent.prototype);
+    globalThis.WheelEvent.prototype.constructor = globalThis.WheelEvent;
     globalThis.WheelEvent.DOM_DELTA_PIXEL = 0;
     globalThis.WheelEvent.DOM_DELTA_LINE  = 1;
     globalThis.WheelEvent.DOM_DELTA_PAGE  = 2;
@@ -5742,6 +5696,7 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         this.dataTransfer = (dict && dict.dataTransfer !== undefined) ? dict.dataTransfer : new globalThis.DataTransfer();
     }};
     globalThis.DragEvent.prototype = Object.create(globalThis.MouseEvent.prototype);
+    globalThis.DragEvent.prototype.constructor = globalThis.DragEvent;
 
     globalThis.TouchEvent = function(type, dict) {{
         globalThis.UIEvent.call(this, type, dict);
@@ -5751,6 +5706,7 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         this.changedTouches = dict.changedTouches || [];
     }};
     globalThis.TouchEvent.prototype = Object.create(globalThis.UIEvent.prototype);
+    globalThis.TouchEvent.prototype.constructor = globalThis.TouchEvent;
 
     globalThis.CustomEvent = function(type, dict) {{
         globalThis.Event.call(this, type, dict);
@@ -5758,6 +5714,16 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         this.initCustomEvent = function(t, b, c, d) {{ this.type=t; this.bubbles=b; this.cancelable=c; this.detail=d; }};
     }};
     globalThis.CustomEvent.prototype = Object.create(globalThis.Event.prototype);
+    globalThis.CustomEvent.prototype.constructor = globalThis.CustomEvent;
+
+    globalThis.ToggleEvent = function(type, dict) {{
+        globalThis.Event.call(this, type, dict);
+        dict = dict || {{}};
+        this.oldState = (dict && dict.oldState !== undefined) ? String(dict.oldState) : 'closed';
+        this.newState = (dict && dict.newState !== undefined) ? String(dict.newState) : 'closed';
+    }};
+    globalThis.ToggleEvent.prototype = Object.create(globalThis.Event.prototype);
+    globalThis.ToggleEvent.prototype.constructor = globalThis.ToggleEvent;
 
     globalThis.HashChangeEvent = function(type, dict) {{
         globalThis.Event.call(this, type, dict);
@@ -5765,12 +5731,14 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         this.newURL = (dict && dict.newURL) || '';
     }};
     globalThis.HashChangeEvent.prototype = Object.create(globalThis.Event.prototype);
+    globalThis.HashChangeEvent.prototype.constructor = globalThis.HashChangeEvent;
 
     globalThis.PopStateEvent = function(type, dict) {{
         globalThis.Event.call(this, type, dict);
         this.state = (dict && dict.state) || null;
     }};
     globalThis.PopStateEvent.prototype = Object.create(globalThis.Event.prototype);
+    globalThis.PopStateEvent.prototype.constructor = globalThis.PopStateEvent;
 
     globalThis.ErrorEvent = function(type, dict) {{
         globalThis.Event.call(this, type, dict);
@@ -5782,6 +5750,7 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         this.error    = dict.error    || null;
     }};
     globalThis.ErrorEvent.prototype = Object.create(globalThis.Event.prototype);
+    globalThis.ErrorEvent.prototype.constructor = globalThis.ErrorEvent;
 
     globalThis.StorageEvent = function(type, dict) {{
         globalThis.Event.call(this, type, dict);
@@ -5793,6 +5762,7 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         this.storageArea = dict.storageArea || null;
     }};
     globalThis.StorageEvent.prototype = Object.create(globalThis.Event.prototype);
+    globalThis.StorageEvent.prototype.constructor = globalThis.StorageEvent;
 
     // TransitionEvent / AnimationEvent (for CSS animation callbacks)
     globalThis.TransitionEvent = function(type, dict) {{
@@ -5803,6 +5773,7 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         this.pseudoElement= dict.pseudoElement|| '';
     }};
     globalThis.TransitionEvent.prototype = Object.create(globalThis.Event.prototype);
+    globalThis.TransitionEvent.prototype.constructor = globalThis.TransitionEvent;
 
     globalThis.AnimationEvent = function(type, dict) {{
         globalThis.Event.call(this, type, dict);
@@ -5812,6 +5783,7 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         this.pseudoElement = dict.pseudoElement || '';
     }};
     globalThis.AnimationEvent.prototype = Object.create(globalThis.Event.prototype);
+    globalThis.AnimationEvent.prototype.constructor = globalThis.AnimationEvent;
 
     globalThis.SubmitEvent = function(type, dict) {{
         globalThis.Event.call(this, type, dict);
@@ -5819,6 +5791,7 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         this.submitter = dict.submitter || null;
     }};
     globalThis.SubmitEvent.prototype = Object.create(globalThis.Event.prototype);
+    globalThis.SubmitEvent.prototype.constructor = globalThis.SubmitEvent;
 
     globalThis.FormDataEvent = function(type, dict) {{
         globalThis.Event.call(this, type, dict);
@@ -5826,6 +5799,7 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         this.formData = dict.formData || null;
     }};
     globalThis.FormDataEvent.prototype = Object.create(globalThis.Event.prototype);
+    globalThis.FormDataEvent.prototype.constructor = globalThis.FormDataEvent;
 
     globalThis.PageTransitionEvent = function(type, dict) {{
         globalThis.Event.call(this, type, dict);
@@ -5833,6 +5807,7 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         this.persisted = !!dict.persisted;
     }};
     globalThis.PageTransitionEvent.prototype = Object.create(globalThis.Event.prototype);
+    globalThis.PageTransitionEvent.prototype.constructor = globalThis.PageTransitionEvent;
 
     globalThis.MessageEvent = function(type, dict) {{
         globalThis.Event.call(this, type, dict);
@@ -5844,6 +5819,152 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         this.ports = dict.ports || [];
     }};
     globalThis.MessageEvent.prototype = Object.create(globalThis.Event.prototype);
+    globalThis.MessageEvent.prototype.constructor = globalThis.MessageEvent;
+
+    // ── 27b. MessagePort & MessageChannel (React Scheduler / WHATWG) ───────────
+    function MessagePort() {{
+        if (typeof globalThis.EventTarget === 'function') {{
+            globalThis.EventTarget.call(this);
+        }}
+        this._listeners = {{}};
+        this._entangled = null;
+        this._closed = false;
+        this._started = false;
+        this._queue = [];
+        this._onmessage = null;
+        this._onmessageerror = null;
+    }}
+    if (typeof globalThis.EventTarget === 'function') {{
+        MessagePort.prototype = Object.create(globalThis.EventTarget.prototype);
+    }} else {{
+        MessagePort.prototype = {{}};
+    }}
+    MessagePort.prototype.constructor = MessagePort;
+
+    if (!MessagePort.prototype.addEventListener) {{
+        MessagePort.prototype.addEventListener = function(type, listener, opts) {{
+            var t = String(type);
+            if (!this._listeners[t]) this._listeners[t] = [];
+            this._listeners[t].push(listener);
+        }};
+        MessagePort.prototype.removeEventListener = function(type, listener, opts) {{
+            var t = String(type);
+            if (!this._listeners[t]) return;
+            this._listeners[t] = this._listeners[t].filter(function(l) {{ return l !== listener; }});
+        }};
+        MessagePort.prototype.dispatchEvent = function(evt) {{
+            var t = String(evt.type || evt);
+            if (this._listeners[t]) {{
+                var list = this._listeners[t].slice();
+                for (var i = 0; i < list.length; i++) {{
+                    try {{
+                        if (typeof list[i] === 'function') list[i].call(this, evt);
+                        else if (list[i] && typeof list[i].handleEvent === 'function') list[i].handleEvent(evt);
+                    }} catch(e) {{}}
+                }}
+            }}
+            return true;
+        }};
+    }}
+
+    Object.defineProperty(MessagePort.prototype, 'onmessage', {{
+        get: function() {{ return this._onmessage; }},
+        set: function(fn) {{
+            this._onmessage = fn;
+            if (fn) {{
+                this.start();
+            }}
+        }},
+        configurable: true,
+        enumerable: true
+    }});
+
+    Object.defineProperty(MessagePort.prototype, 'onmessageerror', {{
+        get: function() {{ return this._onmessageerror; }},
+        set: function(fn) {{ this._onmessageerror = fn; }},
+        configurable: true,
+        enumerable: true
+    }});
+
+    MessagePort.prototype.start = function() {{
+        if (this._started) return;
+        this._started = true;
+        this._drain();
+    }};
+
+    MessagePort.prototype.close = function() {{
+        this._closed = true;
+        this._queue = [];
+    }};
+
+    MessagePort.prototype._drain = function() {{
+        if (!this._started || this._closed) return;
+        while (this._queue.length > 0) {{
+            var msg = this._queue.shift();
+            this._dispatch(msg);
+        }}
+    }};
+
+    MessagePort.prototype._dispatch = function(msg) {{
+        if (this._closed) return;
+        var ev = (typeof globalThis.MessageEvent === 'function')
+            ? new globalThis.MessageEvent('message', {{ data: msg.data, ports: msg.ports || [] }})
+            : {{ type: 'message', data: msg.data, ports: msg.ports || [] }};
+        if (typeof this._onmessage === 'function') {{
+            try {{ this._onmessage.call(this, ev); }} catch(e) {{
+                if (typeof console !== 'undefined' && console.error) console.error(e);
+            }}
+        }}
+        if (typeof this.dispatchEvent === 'function') {{
+            this.dispatchEvent(ev);
+        }}
+    }};
+
+    MessagePort.prototype.postMessage = function(data, transfer) {{
+        if (this._closed || !this._entangled || this._entangled._closed) return;
+        var target = this._entangled;
+        var clonedData = data;
+        try {{
+            if (typeof structuredClone === 'function') {{
+                clonedData = structuredClone(data);
+            }}
+        }} catch(e) {{
+            clonedData = data;
+        }}
+
+        var msg = {{
+            data: clonedData,
+            ports: Array.isArray(transfer) ? transfer : []
+        }};
+
+        var defer = (typeof queueMicrotask === 'function')
+            ? queueMicrotask
+            : function(cb) {{ setTimeout(cb, 0); }};
+        defer(function() {{
+            if (target._closed) return;
+            if (target._started) {{
+                target._dispatch(msg);
+            }} else {{
+                target._queue.push(msg);
+            }}
+        }});
+    }};
+
+    function MessageChannel() {{
+        var p1 = new MessagePort();
+        var p2 = new MessagePort();
+        p1._entangled = p2;
+        p2._entangled = p1;
+        this.port1 = p1;
+        this.port2 = p2;
+    }}
+    globalThis.MessagePort = MessagePort;
+    globalThis.MessageChannel = MessageChannel;
+    if (typeof window !== 'undefined') {{
+        window.MessagePort = MessagePort;
+        window.MessageChannel = MessageChannel;
+    }}
+
 
     globalThis.CloseEvent = function(type, dict) {{
         globalThis.Event.call(this, type, dict);
@@ -5853,12 +5974,29 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         this.wasClean = !!dict.wasClean;
     }};
     globalThis.CloseEvent.prototype = Object.create(globalThis.Event.prototype);
+    globalThis.CloseEvent.prototype.constructor = globalThis.CloseEvent;
 
     // ── 28. Web Components ────────────────────────────────────────────────────
     globalThis.WebComponents = {{ ready: true }};
-    globalThis.CustomElementRegistry = function() {{ this._registry = {{}}; }};
+    globalThis.CustomElementRegistry = function() {{
+        this._registry = {{}};
+        this._whenDefinedPromises = {{}};
+    }};
     globalThis.CustomElementRegistry.prototype.define = function(name, ctor, opts) {{
         name = String(name).toLowerCase();
+        if (!/^[a-z][a-z0-9._-]*-[a-z0-9._-]*$/.test(name)) {{
+            throw new TypeError("Failed to execute 'define' on 'CustomElementRegistry': '" + name + "' is not a valid custom element name.");
+        }}
+        var reserved = [
+            'annotation-xml', 'color-profile', 'font-face', 'font-face-src',
+            'font-face-uri', 'font-face-format', 'font-face-name', 'missing-glyph'
+        ];
+        if (reserved.indexOf(name) !== -1) {{
+            throw new TypeError("Failed to execute 'define' on 'CustomElementRegistry': '" + name + "' is a reserved custom element name.");
+        }}
+        if (this._registry[name]) {{
+            throw new Error("Failed to execute 'define' on 'CustomElementRegistry': the name '" + name + "' has already been used with this registry");
+        }}
         this._registry[name] = ctor;
         // Run upgrades for any already-parsed elements with this tag name
         if (typeof document !== 'undefined' && document.querySelectorAll) {{
@@ -5867,25 +6005,141 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
                 for (var i = 0; i < els.length; i++) {{
                     var el = els[i];
                     if (ctor && ctor.prototype) Object.setPrototypeOf(el, ctor.prototype);
-                    if (typeof el.connectedCallback === 'function') {{
+                    if (typeof el.connectedCallback === 'function' && el.isConnected) {{
                         try {{ el.connectedCallback(); }} catch(e) {{}}
                     }}
                 }}
             }} catch(e) {{}}
         }}
+        if (this._whenDefinedPromises && this._whenDefinedPromises[name]) {{
+            var cbs = this._whenDefinedPromises[name];
+            delete this._whenDefinedPromises[name];
+            for (var j = 0; j < cbs.length; j++) {{
+                try {{ cbs[j](ctor); }} catch(e) {{}}
+            }}
+        }}
     }};
-    globalThis.CustomElementRegistry.prototype.get          = function(n) {{ return this._registry[n]; }};
-    globalThis.CustomElementRegistry.prototype.upgrade      = function(root) {{}};
-    globalThis.CustomElementRegistry.prototype.whenDefined   = function(n) {{ return Promise.resolve(); }};
-    globalThis.CustomElementRegistry.prototype.getName       = function(ctor) {{ return Object.keys(this._registry).find(function(k) {{ return this._registry[k] === ctor; }}, this) || null; }};
+    globalThis.CustomElementRegistry.prototype.get = function(n) {{ return this._registry[String(n).toLowerCase()]; }};
+    globalThis.CustomElementRegistry.prototype.upgrade = function(root) {{
+        if (!root || !root.querySelectorAll) return;
+        var names = Object.keys(this._registry);
+        for (var i = 0; i < names.length; i++) {{
+            var name = names[i];
+            var ctor = this._registry[name];
+            var els = root.querySelectorAll(name);
+            for (var j = 0; j < els.length; j++) {{
+                var el = els[j];
+                if (ctor && ctor.prototype) Object.setPrototypeOf(el, ctor.prototype);
+                if (typeof el.connectedCallback === 'function' && el.isConnected) {{
+                    try {{ el.connectedCallback(); }} catch(e) {{}}
+                }}
+            }}
+        }}
+    }};
+    globalThis.CustomElementRegistry.prototype.whenDefined = function(n) {{
+        var name = String(n).toLowerCase();
+        if (this._registry[name]) {{
+            return Promise.resolve(this._registry[name]);
+        }}
+        var self = this;
+        return new Promise(function(resolve) {{
+            if (!self._whenDefinedPromises) self._whenDefinedPromises = {{}};
+            if (!self._whenDefinedPromises[name]) self._whenDefinedPromises[name] = [];
+            self._whenDefinedPromises[name].push(resolve);
+        }});
+    }};
+    globalThis.CustomElementRegistry.prototype.getName = function(ctor) {{
+        return Object.keys(this._registry).find(function(k) {{ return this._registry[k] === ctor; }}, this) || null;
+    }};
     if (!globalThis.customElements) {{
         globalThis.customElements = new globalThis.CustomElementRegistry();
+    }}
+
+    // ── 28.5 Constructable Stylesheets (CSSOM §2) ─────────────────────────────
+    function CSSStyleSheet(options) {{
+        this._rules = [];
+        this._disabled = !!(options && options.disabled);
+        this._media = (options && options.media) || 'all';
+    }}
+
+    Object.defineProperty(CSSStyleSheet.prototype, 'cssRules', {{
+        get: function() {{ return this._rules; }},
+        enumerable: true
+    }});
+    Object.defineProperty(CSSStyleSheet.prototype, 'rules', {{
+        get: function() {{ return this._rules; }},
+        enumerable: true
+    }});
+    Object.defineProperty(CSSStyleSheet.prototype, 'disabled', {{
+        get: function() {{ return this._disabled; }},
+        set: function(v) {{ this._disabled = !!v; }},
+        enumerable: true
+    }});
+    Object.defineProperty(CSSStyleSheet.prototype, 'media', {{
+        get: function() {{ return this._media; }},
+        enumerable: true
+    }});
+
+    CSSStyleSheet.prototype.replaceSync = function(text) {{
+        this._rules = [];
+        var css = String(text);
+        var blocks = css.split('}}');
+        for (var i = 0; i < blocks.length; i++) {{
+            var block = blocks[i].trim();
+            if (!block) continue;
+            var parts = block.split('{{');
+            if (parts.length >= 2) {{
+                var sel = parts[0].trim();
+                var body = parts.slice(1).join('{{').trim();
+                this._rules.push({{
+                    cssText: sel + ' {{ ' + body + ' }}',
+                    selectorText: sel,
+                    style: {{ cssText: body }}
+                }});
+            }}
+        }}
+        return undefined;
+    }};
+
+    CSSStyleSheet.prototype.replace = function(text) {{
+        var self = this;
+        return new Promise(function(resolve) {{
+            self.replaceSync(text);
+            resolve(self);
+        }});
+    }};
+
+    CSSStyleSheet.prototype.insertRule = function(rule, index) {{
+        index = index === undefined ? 0 : index;
+        var rStr = String(rule).trim();
+        var parts = rStr.split('{{');
+        var sel = parts[0].trim();
+        var body = parts.length > 1 ? parts.slice(1).join('{{').replace(/}}$/, '').trim() : '';
+        var parsed = {{
+            cssText: rStr,
+            selectorText: sel,
+            style: {{ cssText: body }}
+        }};
+        this._rules.splice(index, 0, parsed);
+        return index;
+    }};
+
+    CSSStyleSheet.prototype.deleteRule = function(index) {{
+        if (index < 0 || index >= this._rules.length) {{
+            throw new RangeError("Index out of range");
+        }}
+        this._rules.splice(index, 1);
+    }};
+
+    globalThis.CSSStyleSheet = CSSStyleSheet;
+    if (typeof window !== 'undefined') {{
+        window.CSSStyleSheet = CSSStyleSheet;
     }}
 
     // ── 29. Blob / File / FileReader ──────────────────────────────────────────
     // (Full standard implementations of Blob, File, and FileReader are defined above in section 19)
 
-    // ── 30. Promise (ensure existence — Boa has built-in Promise) ────────────
+    // ── 30. Promise (ensure standard existence) ──────────────────────────────
     if (typeof Promise === 'undefined') {{
         // Minimal synchronous Promise polyfill as last-resort fallback
         globalThis.Promise = function(executor) {{
@@ -5918,7 +6172,7 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         Promise.resolve().then(function() {{ try {{ fn(); }} catch(e) {{}} }});
     }};
 
-    // ── 32. Web Worker & Service Worker (GAP-015) ──────────────────────────
+    // ── 32. Web Worker & Service Worker ──────────────────────────
     var _nextWorkerId = 1;
     var _activeWorkers = {{}};
 
@@ -6001,50 +6255,494 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
     Worker.prototype = Object.create(EventTarget.prototype);
     globalThis.Worker = Worker;
 
-    // ServiceWorker interfaces
-    function ServiceWorker(scriptURL) {{
+    // ── 13b. ServiceWorker API (W3C Service Workers) ──────────────────────────
+    function ExtendableEvent(type, eventInitDict) {{
+        Event.call(this, type, eventInitDict);
+        this._extendLifetimePromises = [];
+    }}
+    ExtendableEvent.prototype = Object.create(Event.prototype);
+    ExtendableEvent.prototype.waitUntil = function(p) {{
+        this._extendLifetimePromises.push(Promise.resolve(p));
+    }};
+    globalThis.ExtendableEvent = ExtendableEvent;
+
+    function FetchEvent(type, init) {{
+        ExtendableEvent.call(this, type, init);
+        this.request = (init && init.request) ? (init.request instanceof Request ? init.request : new Request(init.request)) : null;
+        this.clientId = (init && init.clientId) || '';
+        this.isReload = !!(init && init.isReload);
+        this.resultingClientId = (init && init.resultingClientId) || '';
+        this.handled = Promise.resolve();
+        this.preloadResponse = Promise.resolve(undefined);
+        this._responsePromise = null;
+        this._responded = false;
+    }}
+    FetchEvent.prototype = Object.create(ExtendableEvent.prototype);
+    FetchEvent.prototype.respondWith = function(r) {{
+        this._responded = true;
+        this._responsePromise = Promise.resolve(r);
+    }};
+    globalThis.FetchEvent = FetchEvent;
+
+    function ExtendableMessageEvent(type, init) {{
+        ExtendableEvent.call(this, type, init);
+        this.data = (init && init.data) || null;
+        this.origin = (init && init.origin) || '';
+        this.lastEventId = (init && init.lastEventId) || '';
+        this.source = (init && init.source) || null;
+        this.ports = (init && init.ports) || [];
+    }}
+    ExtendableMessageEvent.prototype = Object.create(ExtendableEvent.prototype);
+    globalThis.ExtendableMessageEvent = ExtendableMessageEvent;
+
+    function ServiceWorker(scriptURL, state) {{
+        EventTarget.call(this);
         this.scriptURL = scriptURL || '';
-        this.state = 'activated';
+        this.state = state || 'activated';
         this.onstatechange = null;
         this.onerror = null;
-        this.postMessage = function(msg) {{}};
+        this.onfetch = null;
+        this.oninstall = null;
+        this.onactivate = null;
+        this.onmessage = null;
+        this._handlingFetch = false;
     }}
+    ServiceWorker.prototype = Object.create(EventTarget.prototype);
+    ServiceWorker.prototype._setState = function(newState) {{
+        this.state = newState;
+        var evt = new Event('statechange');
+        if (typeof this.onstatechange === 'function') {{
+            try {{ this.onstatechange.call(this, evt); }} catch(e) {{}}
+        }}
+        this.dispatchEvent(evt);
+    }};
+    ServiceWorker.prototype.postMessage = function(msg, transfer) {{
+        var self = this;
+        var evt = new ExtendableMessageEvent('message', {{ data: msg, source: self }});
+        setTimeout(function() {{
+            if (typeof self.onmessage === 'function') {{
+                try {{ self.onmessage.call(self, evt); }} catch(e) {{}}
+            }}
+            self.dispatchEvent(evt);
+        }}, 0);
+    }};
     globalThis.ServiceWorker = ServiceWorker;
 
+    function NavigationPreloadManager() {{
+        this._enabled = false;
+        this._header = '';
+    }}
+    NavigationPreloadManager.prototype.enable = function() {{ this._enabled = true; return Promise.resolve(); }};
+    NavigationPreloadManager.prototype.disable = function() {{ this._enabled = false; return Promise.resolve(); }};
+    NavigationPreloadManager.prototype.setHeaderValue = function(val) {{ this._header = String(val); return Promise.resolve(); }};
+    NavigationPreloadManager.prototype.getState = function() {{ return Promise.resolve({{ enabled: this._enabled, headerValue: this._header }}); }};
+    globalThis.NavigationPreloadManager = NavigationPreloadManager;
+
     function ServiceWorkerRegistration(scope, sw) {{
+        EventTarget.call(this);
         this.scope = scope || '/';
+        var activeWorker = sw || new ServiceWorker('', 'activated');
         this.installing = null;
         this.waiting = null;
-        this.active = sw || new ServiceWorker();
-        this.update = function() {{ return Promise.resolve(this); }};
-        this.unregister = function() {{ return Promise.resolve(true); }};
+        this.active = activeWorker;
+        this.navigationPreload = new NavigationPreloadManager();
+        this.onupdatefound = null;
     }}
+    ServiceWorkerRegistration.prototype = Object.create(EventTarget.prototype);
+    ServiceWorkerRegistration.prototype.update = function() {{ return Promise.resolve(this); }};
+    ServiceWorkerRegistration.prototype.unregister = function() {{ return Promise.resolve(true); }};
+    ServiceWorkerRegistration.prototype.showNotification = function(title, options) {{ return Promise.resolve(); }};
+    ServiceWorkerRegistration.prototype.getNotifications = function() {{ return Promise.resolve([]); }};
     globalThis.ServiceWorkerRegistration = ServiceWorkerRegistration;
 
     function ServiceWorkerContainer() {{
+        EventTarget.call(this);
         var self = this;
-        this.controller = new ServiceWorker('/');
-        this.ready = Promise.resolve(new ServiceWorkerRegistration('/', self.controller));
+        var defaultActive = new ServiceWorker('/', 'activated');
+        var defaultReg = new ServiceWorkerRegistration('/', defaultActive);
+        this.controller = defaultActive;
+        this._registrations = {{ '/': defaultReg }};
+        this.ready = Promise.resolve(defaultReg);
         this.oncontrollerchange = null;
         this.onmessage = null;
-        this.register = function(scriptURL, options) {{
-            var scope = (options && options.scope) ? options.scope : '/';
-            var reg = new ServiceWorkerRegistration(scope, new ServiceWorker(scriptURL));
-            self.controller = reg.active;
-            return Promise.resolve(reg);
-        }};
-        this.getRegistration = function(clientURL) {{
-            return Promise.resolve(new ServiceWorkerRegistration('/', self.controller));
-        }};
-        this.getRegistrations = function() {{
-            return Promise.resolve([new ServiceWorkerRegistration('/', self.controller)]);
-        }};
-        this.startMessages = function() {{}};
     }}
+    ServiceWorkerContainer.prototype = Object.create(EventTarget.prototype);
+    ServiceWorkerContainer.prototype.register = function(scriptURL, options) {{
+        var self = this;
+        var scope = (options && options.scope) ? options.scope : '/';
+        var sw = new ServiceWorker(scriptURL, 'installing');
+        var reg = new ServiceWorkerRegistration(scope, sw);
+        reg.installing = sw;
+        self._registrations[scope] = reg;
+        self.ready = Promise.resolve(reg);
+
+        // Lifecycle: dispatch install event
+        var installEvt = new ExtendableEvent('install');
+        if (typeof sw.oninstall === 'function') {{
+            try {{ sw.oninstall.call(sw, installEvt); }} catch(e) {{}}
+        }}
+        sw.dispatchEvent(installEvt);
+
+        // Transition to installed (waiting)
+        sw._setState('installed');
+        reg.installing = null;
+        reg.waiting = sw;
+
+        // Transition to activating -> activated (active)
+        sw._setState('activating');
+        var activateEvt = new ExtendableEvent('activate');
+        if (typeof sw.onactivate === 'function') {{
+            try {{ sw.onactivate.call(sw, activateEvt); }} catch(e) {{}}
+        }}
+        sw.dispatchEvent(activateEvt);
+
+        reg.waiting = null;
+        reg.active = sw;
+        sw._setState('activated');
+        self.controller = sw;
+
+        var changeEvt = new Event('controllerchange');
+        if (typeof self.oncontrollerchange === 'function') {{
+            try {{ self.oncontrollerchange.call(self, changeEvt); }} catch(e) {{}}
+        }}
+        self.dispatchEvent(changeEvt);
+
+        return Promise.resolve(reg);
+    }};
+    ServiceWorkerContainer.prototype.getRegistration = function(clientURL) {{
+        var url = clientURL || '/';
+        var bestScope = null;
+        for (var s in this._registrations) {{
+            if (url.indexOf(s) === 0) {{
+                if (!bestScope || s.length > bestScope.length) {{
+                    bestScope = s;
+                }}
+            }}
+        }}
+        return Promise.resolve(bestScope ? this._registrations[bestScope] : undefined);
+    }};
+    ServiceWorkerContainer.prototype.getRegistrations = function() {{
+        var list = [];
+        for (var k in this._registrations) {{
+            list.push(this._registrations[k]);
+        }}
+        return Promise.resolve(list);
+    }};
+    ServiceWorkerContainer.prototype.startMessages = function() {{}};
     globalThis.ServiceWorkerContainer = ServiceWorkerContainer;
 
     if (globalThis.navigator) {{
         globalThis.navigator.serviceWorker = new ServiceWorkerContainer();
+    }}
+
+    function Client(id, url) {{
+        this.id = id || 'client-1';
+        this.url = url || (globalThis.location ? globalThis.location.href : 'http://localhost/');
+        this.type = 'window';
+        this.frameType = 'top-level';
+    }}
+    Client.prototype.postMessage = function(msg) {{}};
+
+    function Clients() {{}}
+    Clients.prototype.get = function(id) {{ return Promise.resolve(new Client(id)); }};
+    Clients.prototype.matchAll = function(options) {{ return Promise.resolve([new Client()]); }};
+    Clients.prototype.openWindow = function(url) {{ return Promise.resolve(new Client(null, url)); }};
+    Clients.prototype.claim = function() {{ return Promise.resolve(); }};
+
+    globalThis.Client = Client;
+    globalThis.Clients = Clients;
+    if (!globalThis.clients) {{
+        globalThis.clients = new Clients();
+    }}
+    if (!globalThis.skipWaiting) {{
+        globalThis.skipWaiting = function() {{ return Promise.resolve(); }};
+    }}
+
+    // ── 13c. BroadcastChannel API (WHATWG HTML § 9.4) ─────────────────────────
+    var _nextBroadcastId = 1;
+    var _activeBroadcastChannels = {{}};
+
+    function BroadcastChannel(name) {{
+        if (!arguments.length) {{
+            throw new TypeError("Failed to construct 'BroadcastChannel': 1 argument required, but only 0 present.");
+        }}
+        EventTarget.call(this);
+        this.name = String(name);
+        this._closed = false;
+        this._id = _nextBroadcastId++;
+        this.onmessage = null;
+        this.onmessageerror = null;
+        this._listeners = {{}};
+
+        _activeBroadcastChannels[this._id] = this;
+
+        if (typeof _mangoBroadcastCreate === 'function') {{
+            _mangoBroadcastCreate(this._id, this.name);
+        }}
+    }}
+    BroadcastChannel.prototype = Object.create(EventTarget.prototype);
+    BroadcastChannel.prototype.constructor = BroadcastChannel;
+
+    BroadcastChannel.prototype.addEventListener = function(type, fn) {{
+        if (!this._listeners[type]) this._listeners[type] = [];
+        this._listeners[type].push(fn);
+    }};
+
+    BroadcastChannel.prototype.removeEventListener = function(type, fn) {{
+        if (!this._listeners[type]) return;
+        this._listeners[type] = this._listeners[type].filter(function(f) {{ return f !== fn; }});
+    }};
+
+    BroadcastChannel.prototype.dispatchEvent = function(evt) {{
+        var type = evt.type;
+        if (type === 'message' && typeof this.onmessage === 'function') {{
+            try {{ this.onmessage.call(this, evt); }} catch(e) {{ if (typeof console !== 'undefined') console.error(e); }}
+        }}
+        if (type === 'messageerror' && typeof this.onmessageerror === 'function') {{
+            try {{ this.onmessageerror.call(this, evt); }} catch(e) {{ if (typeof console !== 'undefined') console.error(e); }}
+        }}
+        var list = this._listeners[type] || [];
+        for (var i = 0; i < list.length; i++) {{
+            try {{ list[i].call(this, evt); }} catch(e) {{ if (typeof console !== 'undefined') console.error(e); }}
+        }}
+        return !evt.defaultPrevented;
+    }};
+
+    BroadcastChannel.prototype.postMessage = function(message) {{
+        if (this._closed) {{
+            throw new DOMException("Failed to execute 'postMessage' on 'BroadcastChannel': The channel is closed.", "InvalidStateError");
+        }}
+        var cloned = message;
+        try {{
+            if (typeof structuredClone === 'function') {{
+                cloned = structuredClone(message);
+            }}
+        }} catch(e) {{}}
+
+        var self = this;
+        for (var id in _activeBroadcastChannels) {{
+            if (Number(id) !== self._id) {{
+                var ch = _activeBroadcastChannels[id];
+                if (ch && !ch._closed && ch.name === self.name) {{
+                    (function(targetCh) {{
+                        var defer = (typeof queueMicrotask === 'function') ? queueMicrotask : function(cb) {{ setTimeout(cb, 0); }};
+                        defer(function() {{
+                            if (targetCh._closed) return;
+                            var ev = (typeof MessageEvent === 'function')
+                                ? new MessageEvent('message', {{ data: cloned }})
+                                : {{ type: 'message', data: cloned }};
+                            targetCh.dispatchEvent(ev);
+                        }});
+                    }})(ch);
+                }}
+            }}
+        }}
+
+        if (typeof _mangoBroadcastPost === 'function') {{
+            _mangoBroadcastPost(this._id, this.name, JSON.stringify(message));
+        }}
+    }};
+
+    BroadcastChannel.prototype.close = function() {{
+        if (this._closed) return;
+        this._closed = true;
+        if (typeof _mangoBroadcastClose === 'function') {{
+            _mangoBroadcastClose(this._id, this.name);
+        }}
+        delete _activeBroadcastChannels[this._id];
+    }};
+
+    globalThis._mangoDispatchBroadcastMessage = function(channelId, jsonString) {{
+        var ch = _activeBroadcastChannels[channelId];
+        if (ch && !ch._closed) {{
+            try {{
+                var data = JSON.parse(jsonString);
+                var ev = (typeof MessageEvent === 'function')
+                    ? new MessageEvent('message', {{ data: data }})
+                    : {{ type: 'message', data: data }};
+                ch.dispatchEvent(ev);
+            }} catch(e) {{}}
+        }}
+    }};
+
+    globalThis.BroadcastChannel = BroadcastChannel;
+
+    // ── 13d. SharedWorker API (WHATWG HTML § 10.1.2) ──────────────────────────
+    var _nextSharedPortId = 1;
+    var _activeSharedPorts = {{}};
+
+    function SharedWorker(scriptURL, options) {{
+        if (!arguments.length) {{
+            throw new TypeError("Failed to construct 'SharedWorker': 1 argument required, but only 0 present.");
+        }}
+        EventTarget.call(this);
+        this.scriptURL = String(scriptURL || '');
+        var name = '';
+        if (typeof options === 'string') {{
+            name = options;
+        }} else if (options && typeof options.name === 'string') {{
+            name = options.name;
+        }}
+        this._name = name;
+        this.onerror = null;
+
+        var portId = _nextSharedPortId++;
+        var port = new MessagePort();
+        port._sharedPortId = portId;
+        _activeSharedPorts[portId] = port;
+
+        var origPostMessage = port.postMessage;
+        port.postMessage = function(data, transfer) {{
+            if (this._closed) return;
+            if (typeof _mangoSharedWorkerPost === 'function') {{
+                _mangoSharedWorkerPost(portId, JSON.stringify(data));
+            }} else {{
+                origPostMessage.call(port, data, transfer);
+            }}
+        }};
+
+        var origClose = port.close;
+        port.close = function() {{
+            origClose.call(port);
+            if (typeof _mangoSharedWorkerClosePort === 'function') {{
+                _mangoSharedWorkerClosePort(portId);
+            }}
+            delete _activeSharedPorts[portId];
+        }};
+
+        this.port = port;
+
+        if (typeof _mangoSharedWorkerConnect === 'function') {{
+            _mangoSharedWorkerConnect(portId, this.scriptURL, this._name);
+        }}
+    }}
+    SharedWorker.prototype = Object.create(EventTarget.prototype);
+    SharedWorker.prototype.constructor = SharedWorker;
+
+    globalThis._mangoDispatchSharedPortMessage = function(portId, jsonString) {{
+        var port = _activeSharedPorts[portId];
+        if (port && !port._closed) {{
+            try {{
+                var data = JSON.parse(jsonString);
+                var msg = {{ data: data, ports: [] }};
+                if (port._started || port._onmessage) {{
+                    port._dispatch(msg);
+                }} else {{
+                    port._queue.push(msg);
+                }}
+            }} catch(e) {{}}
+        }}
+    }};
+
+    globalThis.SharedWorker = SharedWorker;
+
+    // ── 13e. Web Locks API (W3C Web Locks) ────────────────────────────────────
+    var _nextClientId = 'client-' + Math.floor(Math.random() * 1000000);
+    var _activeLockCallbacks = {{}};
+
+    function LockManager() {{}}
+    LockManager.prototype.request = function(name, optionsOrCallback, maybeCallback) {{
+        var self = this;
+        var callback = typeof optionsOrCallback === 'function' ? optionsOrCallback : maybeCallback;
+        var options = typeof optionsOrCallback === 'object' && optionsOrCallback !== null ? optionsOrCallback : {{}};
+        if (typeof callback !== 'function') {{
+            return Promise.reject(new TypeError("Lock callback must be a function"));
+        }}
+
+        var mode = (options.mode === 'shared') ? 'shared' : 'exclusive';
+        var ifAvailable = !!options.ifAvailable;
+        var steal = !!options.steal;
+        var signal = options.signal;
+
+        return new Promise(function(resolve, reject) {{
+            if (signal && signal.aborted) {{
+                return reject(signal.reason || new DOMException("AbortError", "AbortError"));
+            }}
+
+            if (typeof _mangoLocksRequest !== 'function') {{
+                var lockObj = {{ name: String(name), mode: mode }};
+                return Promise.resolve(callback(lockObj)).then(resolve, reject);
+            }}
+
+            var resJson = _mangoLocksRequest(String(name), mode, ifAvailable, steal, _nextClientId);
+            var res = JSON.parse(resJson);
+
+            if (res.status === 'unavailable') {{
+                return Promise.resolve(callback(null)).then(resolve, reject);
+            }}
+
+            var executeGrant = function(grantId, grantMode) {{
+                var lockObj = {{ name: String(name), mode: grantMode || mode }};
+                Promise.resolve()
+                    .then(function() {{ return callback(lockObj); }})
+                    .then(function(val) {{
+                        if (typeof _mangoLocksRelease === 'function') {{
+                            var unblockedJson = _mangoLocksRelease(String(name), grantId);
+                            self._processUnblocked(unblockedJson);
+                        }}
+                        resolve(val);
+                    }}, function(err) {{
+                        if (typeof _mangoLocksRelease === 'function') {{
+                            var unblockedJson = _mangoLocksRelease(String(name), grantId);
+                            self._processUnblocked(unblockedJson);
+                        }}
+                        reject(err);
+                    }});
+            }};
+
+            if (res.status === 'granted') {{
+                executeGrant(res.grantId, res.mode);
+            }} else if (res.status === 'queued') {{
+                var reqId = res.requestId;
+                _activeLockCallbacks[reqId] = {{
+                    execute: executeGrant,
+                    reject: reject,
+                    name: String(name)
+                }};
+
+                if (signal) {{
+                    signal.addEventListener('abort', function() {{
+                        delete _activeLockCallbacks[reqId];
+                        if (typeof _mangoLocksAbort === 'function') {{
+                            _mangoLocksAbort(String(name), reqId);
+                        }}
+                        reject(signal.reason || new DOMException("AbortError", "AbortError"));
+                    }}, {{ once: true }});
+                }}
+            }}
+        }});
+    }};
+
+    LockManager.prototype._processUnblocked = function(unblockedJson) {{
+        if (!unblockedJson) return;
+        try {{
+            var items = JSON.parse(unblockedJson);
+            for (var i = 0; i < items.length; i++) {{
+                var item = items[i];
+                var cb = _activeLockCallbacks[item.requestId || item.grantId];
+                if (cb) {{
+                    delete _activeLockCallbacks[item.requestId || item.grantId];
+                    cb.execute(item.grantId, item.mode);
+                }}
+            }}
+        }} catch(e) {{}}
+    }};
+
+    LockManager.prototype.query = function() {{
+        if (typeof _mangoLocksQuery === 'function') {{
+            try {{
+                var json = _mangoLocksQuery();
+                return Promise.resolve(JSON.parse(json));
+            }} catch(e) {{
+                return Promise.reject(e);
+            }}
+        }}
+        return Promise.resolve({{ held: [], pending: [] }});
+    }};
+
+    globalThis.LockManager = LockManager;
+    if (globalThis.navigator) {{
+        globalThis.navigator.locks = new LockManager();
     }}
 
     // ── 14. IndexedDB API (W3C Indexed Database API) ──────────────────────────
@@ -6195,6 +6893,26 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
     }}
     globalThis.IDBVersionChangeEvent = IDBVersionChangeEvent;
 
+    function _extractIdbKey(obj, keyPath) {{
+        if (!obj || typeof obj !== 'object' || keyPath === null || keyPath === undefined) return undefined;
+        if (Array.isArray(keyPath)) {{
+            var arr = [];
+            for (var i = 0; i < keyPath.length; i++) {{
+                arr.push(obj[keyPath[i]]);
+            }}
+            return arr;
+        }}
+        return obj[keyPath];
+    }}
+
+    function _idbKeyType(k) {{
+        if (typeof k === 'number') return 1;
+        if (k instanceof Date) return 2;
+        if (typeof k === 'string') return 3;
+        if (Array.isArray(k)) return 4;
+        return 0;
+    }}
+
     function IDBKeyRange(lower, upper, lowerOpen, upperOpen) {{
         this.lower = lower;
         this.upper = upper;
@@ -6215,10 +6933,12 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
     }};
     IDBKeyRange.prototype.includes = function(key) {{
         if (this.lower !== undefined) {{
-            if (this.lowerOpen ? key <= this.lower : key < this.lower) return false;
+            var cLow = IDBFactory.prototype.cmp(key, this.lower);
+            if (this.lowerOpen ? cLow <= 0 : cLow < 0) return false;
         }}
         if (this.upper !== undefined) {{
-            if (this.upperOpen ? key >= this.upper : key > this.upper) return false;
+            var cUp = IDBFactory.prototype.cmp(key, this.upper);
+            if (this.upperOpen ? cUp >= 0 : cUp > 0) return false;
         }}
         return true;
     }};
@@ -6235,6 +6955,11 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         this._active = true;
         this._listeners = {{}};
         this._completeDispatched = false;
+        try {{
+            this._snapshot = JSON.stringify(db._data);
+        }} catch(e) {{
+            this._snapshot = null;
+        }}
     }}
     Object.defineProperty(IDBTransaction.prototype, 'oncomplete', {{
         get: function() {{ return this._oncomplete; }},
@@ -6267,14 +6992,23 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         return new IDBObjectStore(name, this.db, this);
     }};
     IDBTransaction.prototype.abort = function() {{
+        if (!this._active) return;
         this._active = false;
-        if (typeof this._onabort === 'function') this._onabort({{ type: 'abort', target: this }});
-        this.dispatchEvent({{ type: 'abort', target: this }});
+        if (this._snapshot) {{
+            try {{
+                this.db._data = JSON.parse(this._snapshot);
+                this.db._persist();
+            }} catch(e) {{}}
+        }}
+        var abortEvt = {{ type: 'abort', target: this }};
+        if (typeof this._onabort === 'function') this._onabort(abortEvt);
+        this.dispatchEvent(abortEvt);
     }};
     IDBTransaction.prototype.commit = function() {{
         this._active = false;
-        if (typeof this._oncomplete === 'function') this._oncomplete({{ type: 'complete', target: this }});
-        this.dispatchEvent({{ type: 'complete', target: this }});
+        var completeEvt = {{ type: 'complete', target: this }};
+        if (typeof this._oncomplete === 'function') this._oncomplete(completeEvt);
+        this.dispatchEvent(completeEvt);
     }};
     IDBTransaction.prototype.addEventListener = IDBRequest.prototype.addEventListener;
     IDBTransaction.prototype.removeEventListener = IDBRequest.prototype.removeEventListener;
@@ -6297,7 +7031,11 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         var sData = this._db._data.stores[this.name];
         if (!sData) return -1;
         for (var i = 0; i < sData.records.length; i++) {{
-            if (sData.records[i].key === key) return i;
+            try {{
+                if (IDBFactory.prototype.cmp(sData.records[i].key, key) === 0) return i;
+            }} catch(e) {{
+                if (sData.records[i].key === key) return i;
+            }}
         }}
         return -1;
     }};
@@ -6321,7 +7059,17 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
             var limit = count !== undefined ? count : sData.records.length;
             for (var i = 0; i < sData.records.length && all.length < limit; i++) {{
                 var rec = sData.records[i];
-                if (!query || (query.includes ? query.includes(rec.key) : rec.key === query)) {{
+                var isMatch = true;
+                if (query !== undefined && query !== null) {{
+                    if (query instanceof IDBKeyRange) {{
+                        isMatch = query.includes(rec.key);
+                    }} else if (query.includes) {{
+                        isMatch = query.includes(rec.key);
+                    }} else {{
+                        try {{ isMatch = (IDBFactory.prototype.cmp(rec.key, query) === 0); }} catch(e) {{ isMatch = (rec.key === query); }}
+                    }}
+                }}
+                if (isMatch) {{
                     all.push(rec.value);
                 }}
             }}
@@ -6340,7 +7088,17 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
             var limit = count !== undefined ? count : sData.records.length;
             for (var i = 0; i < sData.records.length && all.length < limit; i++) {{
                 var rec = sData.records[i];
-                if (!query || (query.includes ? query.includes(rec.key) : rec.key === query)) {{
+                var isMatch = true;
+                if (query !== undefined && query !== null) {{
+                    if (query instanceof IDBKeyRange) {{
+                        isMatch = query.includes(rec.key);
+                    }} else if (query.includes) {{
+                        isMatch = query.includes(rec.key);
+                    }} else {{
+                        try {{ isMatch = (IDBFactory.prototype.cmp(rec.key, query) === 0); }} catch(e) {{ isMatch = (rec.key === query); }}
+                    }}
+                }}
+                if (isMatch) {{
                     all.push(rec.key);
                 }}
             }}
@@ -6355,19 +7113,44 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         req.transaction = this.transaction;
         var sData = this._db._data.stores[this.name];
         var recKey = key;
-        if (recKey === undefined && this.keyPath && value && typeof value === 'object') {{
-            recKey = value[this.keyPath];
+        if (recKey === undefined && this.keyPath) {{
+            recKey = _extractIdbKey(value, this.keyPath);
         }}
         if (recKey === undefined && this.autoIncrement) {{
             recKey = sData.nextId++;
-            if (this.keyPath && value && typeof value === 'object') {{
+            if (this.keyPath && value && typeof value === 'object' && !Array.isArray(this.keyPath)) {{
                 value[this.keyPath] = recKey;
             }}
         }}
         if (recKey === undefined) {{
             req.error = new Error("DataError: No key provided");
             req.readyState = 'done';
+            if (typeof req._onerror === 'function') req._onerror.call(req, {{ type: 'error', target: req }});
             return req;
+        }}
+        // Check unique index constraints
+        if (sData.indexes) {{
+            for (var idxName in sData.indexes) {{
+                var idxDef = sData.indexes[idxName];
+                if (idxDef.unique) {{
+                    var valToCheck = _extractIdbKey(value, idxDef.keyPath);
+                    if (valToCheck !== undefined) {{
+                        for (var r = 0; r < sData.records.length; r++) {{
+                            if (sData.records[r].key !== recKey) {{
+                                var existingVal = _extractIdbKey(sData.records[r].value, idxDef.keyPath);
+                                try {{
+                                    if (IDBFactory.prototype.cmp(existingVal, valToCheck) === 0) {{
+                                        req.error = new Error("ConstraintError: Unique index constraint violated for index " + idxName);
+                                        req.readyState = 'done';
+                                        if (typeof req._onerror === 'function') req._onerror.call(req, {{ type: 'error', target: req }});
+                                        return req;
+                                    }}
+                                }} catch(e) {{}}
+                            }}
+                        }}
+                    }}
+                }}
+            }}
         }}
         var idx = this._findRecordIndex(recKey);
         if (idx !== -1) {{
@@ -6378,6 +7161,7 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         this._save();
         req.result = recKey;
         req.readyState = 'done';
+        if (typeof req._onsuccess === 'function') req._onsuccess.call(req, {{ type: 'success', target: req }});
         return req;
     }};
     IDBObjectStore.prototype.add = function(value, key) {{
@@ -6386,30 +7170,55 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         req.transaction = this.transaction;
         var sData = this._db._data.stores[this.name];
         var recKey = key;
-        if (recKey === undefined && this.keyPath && value && typeof value === 'object') {{
-            recKey = value[this.keyPath];
+        if (recKey === undefined && this.keyPath) {{
+            recKey = _extractIdbKey(value, this.keyPath);
         }}
         if (recKey === undefined && this.autoIncrement) {{
             recKey = sData.nextId++;
-            if (this.keyPath && value && typeof value === 'object') {{
+            if (this.keyPath && value && typeof value === 'object' && !Array.isArray(this.keyPath)) {{
                 value[this.keyPath] = recKey;
             }}
         }}
         if (recKey === undefined) {{
             req.error = new Error("DataError: No key provided");
             req.readyState = 'done';
+            if (typeof req._onerror === 'function') req._onerror.call(req, {{ type: 'error', target: req }});
             return req;
         }}
         var idx = this._findRecordIndex(recKey);
         if (idx !== -1) {{
             req.error = new Error("ConstraintError: Key already exists in object store");
             req.readyState = 'done';
+            if (typeof req._onerror === 'function') req._onerror.call(req, {{ type: 'error', target: req }});
             return req;
+        }}
+        // Check unique index constraints
+        if (sData.indexes) {{
+            for (var idxName in sData.indexes) {{
+                var idxDef = sData.indexes[idxName];
+                if (idxDef.unique) {{
+                    var valToCheck = _extractIdbKey(value, idxDef.keyPath);
+                    if (valToCheck !== undefined) {{
+                        for (var r = 0; r < sData.records.length; r++) {{
+                            var existingVal = _extractIdbKey(sData.records[r].value, idxDef.keyPath);
+                            try {{
+                                if (IDBFactory.prototype.cmp(existingVal, valToCheck) === 0) {{
+                                    req.error = new Error("ConstraintError: Unique index constraint violated for index " + idxName);
+                                    req.readyState = 'done';
+                                    if (typeof req._onerror === 'function') req._onerror.call(req, {{ type: 'error', target: req }});
+                                    return req;
+                                }}
+                            }} catch(e) {{}}
+                        }}
+                    }}
+                }}
+            }}
         }}
         sData.records.push({{ key: recKey, value: value }});
         this._save();
         req.result = recKey;
         req.readyState = 'done';
+        if (typeof req._onsuccess === 'function') req._onsuccess.call(req, {{ type: 'success', target: req }});
         return req;
     }};
     IDBObjectStore.prototype.delete = function(key) {{
@@ -6424,6 +7233,7 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         }}
         req.result = undefined;
         req.readyState = 'done';
+        if (typeof req._onsuccess === 'function') req._onsuccess.call(req, {{ type: 'success', target: req }});
         return req;
     }};
     IDBObjectStore.prototype.clear = function() {{
@@ -6437,6 +7247,7 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         }}
         req.result = undefined;
         req.readyState = 'done';
+        if (typeof req._onsuccess === 'function') req._onsuccess.call(req, {{ type: 'success', target: req }});
         return req;
     }};
     IDBObjectStore.prototype.count = function(query) {{
@@ -6446,17 +7257,19 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         var sData = this._db._data.stores[this.name];
         var c = 0;
         if (sData) {{
-            if (!query) {{
+            if (query === undefined || query === null) {{
                 c = sData.records.length;
             }} else {{
                 for (var i = 0; i < sData.records.length; i++) {{
                     var k = sData.records[i].key;
-                    if (query.includes ? query.includes(k) : k === query) c++;
+                    var isMatch = (query instanceof IDBKeyRange) ? query.includes(k) : (query.includes ? query.includes(k) : (k === query));
+                    if (isMatch) c++;
                 }}
             }}
         }}
         req.result = c;
         req.readyState = 'done';
+        if (typeof req._onsuccess === 'function') req._onsuccess.call(req, {{ type: 'success', target: req }});
         return req;
     }};
     IDBObjectStore.prototype.createIndex = function(name, keyPath, options) {{
@@ -6490,23 +7303,46 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         req.transaction = this.transaction;
         var sData = this._db._data.stores[this.name];
         var records = sData ? sData.records.slice() : [];
+        try {{
+            records.sort(function(a, b) {{ return IDBFactory.prototype.cmp(a.key, b.key); }});
+        }} catch(e) {{}}
         if (direction === 'prev' || direction === 'prevunique') {{
             records.reverse();
         }}
         var matched = [];
         for (var i = 0; i < records.length; i++) {{
             var k = records[i].key;
-            if (!query || (query.includes ? query.includes(k) : k === query)) {{
+            var isMatch = true;
+            if (query !== undefined && query !== null) {{
+                if (query instanceof IDBKeyRange) {{
+                    isMatch = query.includes(k);
+                }} else if (query.includes) {{
+                    isMatch = query.includes(k);
+                }} else {{
+                    try {{ isMatch = (IDBFactory.prototype.cmp(k, query) === 0); }} catch(e) {{ isMatch = (k === query); }}
+                }}
+            }}
+            if (isMatch) {{
                 matched.push(records[i]);
             }}
         }}
         if (matched.length > 0) {{
             var cursor = new IDBCursorWithValue(this, direction || 'next', matched, 0, req);
+            cursor.key = matched[0].key;
+            cursor.primaryKey = matched[0].key;
+            cursor.value = matched[0].value;
             req.result = cursor;
         }} else {{
             req.result = null;
         }}
         req.readyState = 'done';
+        return req;
+    }};
+    IDBObjectStore.prototype.openKeyCursor = function(query, direction) {{
+        var req = this.openCursor(query, direction);
+        if (req.result) {{
+            req.result.value = undefined;
+        }}
         return req;
     }};
     globalThis.IDBObjectStore = IDBObjectStore;
@@ -6519,14 +7355,14 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         this._req = req;
         var cur = records[index];
         this.key = cur ? cur.key : undefined;
-        this.primaryKey = cur ? cur.key : undefined;
+        this.primaryKey = cur ? (cur.primaryKey !== undefined ? cur.primaryKey : cur.key) : undefined;
     }}
     IDBCursor.prototype.continue = function() {{
         this._index++;
         if (this._index < this._records.length) {{
             var cur = this._records[this._index];
             this.key = cur.key;
-            this.primaryKey = cur.key;
+            this.primaryKey = cur.primaryKey !== undefined ? cur.primaryKey : cur.key;
             if (this.value !== undefined) this.value = cur.value;
             this._req.result = this;
         }} else {{
@@ -6542,6 +7378,49 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
     IDBCursor.prototype.advance = function(count) {{
         this._index += (count - 1);
         this.continue();
+    }};
+    IDBCursor.prototype.update = function(val) {{
+        var req = new IDBRequest();
+        req.source = this;
+        var store = this.source.objectStore || this.source;
+        var idx = store._findRecordIndex(this.primaryKey);
+        if (idx !== -1) {{
+            var sData = store._db._data.stores[store.name];
+            sData.records[idx].value = val;
+            store._save();
+            this.value = val;
+            req.result = this.primaryKey;
+        }} else {{
+            req.error = new Error("DataError: Record not found to update");
+        }}
+        req.readyState = 'done';
+        if (typeof req._onsuccess === 'function' && !req.error) {{
+            req._onsuccess.call(req, {{ type: 'success', target: req }});
+        }} else if (typeof req._onerror === 'function' && req.error) {{
+            req._onerror.call(req, {{ type: 'error', target: req }});
+        }}
+        return req;
+    }};
+    IDBCursor.prototype.delete = function() {{
+        var req = new IDBRequest();
+        req.source = this;
+        var store = this.source.objectStore || this.source;
+        var idx = store._findRecordIndex(this.primaryKey);
+        if (idx !== -1) {{
+            var sData = store._db._data.stores[store.name];
+            sData.records.splice(idx, 1);
+            store._save();
+            req.result = undefined;
+        }} else {{
+            req.error = new Error("DataError: Record not found to delete");
+        }}
+        req.readyState = 'done';
+        if (typeof req._onsuccess === 'function' && !req.error) {{
+            req._onsuccess.call(req, {{ type: 'success', target: req }});
+        }} else if (typeof req._onerror === 'function' && req.error) {{
+            req._onerror.call(req, {{ type: 'error', target: req }});
+        }}
+        return req;
     }};
     globalThis.IDBCursor = IDBCursor;
 
@@ -6569,15 +7448,41 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         if (sData) {{
             for (var i = 0; i < sData.records.length; i++) {{
                 var rec = sData.records[i];
-                var val = rec.value;
-                var idxKey = val && typeof val === 'object' ? val[this.keyPath] : undefined;
-                if (idxKey === key) {{
-                    found = val;
-                    break;
+                var idxKey = _extractIdbKey(rec.value, this.keyPath);
+                try {{
+                    if (IDBFactory.prototype.cmp(idxKey, key) === 0) {{
+                        found = rec.value;
+                        break;
+                    }}
+                }} catch (e) {{
+                    if (idxKey === key) {{ found = rec.value; break; }}
                 }}
             }}
         }}
         req.result = found;
+        req.readyState = 'done';
+        return req;
+    }};
+    IDBIndex.prototype.getKey = function(key) {{
+        var req = new IDBRequest();
+        req.source = this;
+        var sData = this.objectStore._db._data.stores[this.objectStore.name];
+        var foundKey = undefined;
+        if (sData) {{
+            for (var i = 0; i < sData.records.length; i++) {{
+                var rec = sData.records[i];
+                var idxKey = _extractIdbKey(rec.value, this.keyPath);
+                try {{
+                    if (IDBFactory.prototype.cmp(idxKey, key) === 0) {{
+                        foundKey = rec.key;
+                        break;
+                    }}
+                }} catch (e) {{
+                    if (idxKey === key) {{ foundKey = rec.key; break; }}
+                }}
+            }}
+        }}
+        req.result = foundKey;
         req.readyState = 'done';
         return req;
     }};
@@ -6590,10 +7495,48 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
             var limit = count !== undefined ? count : sData.records.length;
             for (var i = 0; i < sData.records.length && all.length < limit; i++) {{
                 var rec = sData.records[i];
-                var val = rec.value;
-                var idxKey = val && typeof val === 'object' ? val[this.keyPath] : undefined;
-                if (!query || (query.includes ? query.includes(idxKey) : idxKey === query)) {{
-                    all.push(val);
+                var idxKey = _extractIdbKey(rec.value, this.keyPath);
+                var isMatch = true;
+                if (query !== undefined && query !== null) {{
+                    if (query instanceof IDBKeyRange) {{
+                        isMatch = query.includes(idxKey);
+                    }} else if (query.includes) {{
+                        isMatch = query.includes(idxKey);
+                    }} else {{
+                        try {{ isMatch = (IDBFactory.prototype.cmp(idxKey, query) === 0); }} catch (e) {{ isMatch = (idxKey === query); }}
+                    }}
+                }}
+                if (isMatch) {{
+                    all.push(rec.value);
+                }}
+            }}
+        }}
+        req.result = all;
+        req.readyState = 'done';
+        return req;
+    }};
+    IDBIndex.prototype.getAllKeys = function(query, count) {{
+        var req = new IDBRequest();
+        req.source = this;
+        var sData = this.objectStore._db._data.stores[this.objectStore.name];
+        var all = [];
+        if (sData) {{
+            var limit = count !== undefined ? count : sData.records.length;
+            for (var i = 0; i < sData.records.length && all.length < limit; i++) {{
+                var rec = sData.records[i];
+                var idxKey = _extractIdbKey(rec.value, this.keyPath);
+                var isMatch = true;
+                if (query !== undefined && query !== null) {{
+                    if (query instanceof IDBKeyRange) {{
+                        isMatch = query.includes(idxKey);
+                    }} else if (query.includes) {{
+                        isMatch = query.includes(idxKey);
+                    }} else {{
+                        try {{ isMatch = (IDBFactory.prototype.cmp(idxKey, query) === 0); }} catch (e) {{ isMatch = (idxKey === query); }}
+                    }}
+                }}
+                if (isMatch) {{
+                    all.push(rec.key);
                 }}
             }}
         }}
@@ -6603,6 +7546,61 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
     }};
     IDBIndex.prototype.count = function(query) {{
         return this.objectStore.count(query);
+    }};
+    IDBIndex.prototype.openCursor = function(query, direction) {{
+        var req = new IDBRequest();
+        req.source = this;
+        req.transaction = this.objectStore.transaction;
+        var sData = this.objectStore._db._data.stores[this.objectStore.name];
+        var records = sData ? sData.records.slice() : [];
+        var matched = [];
+        for (var i = 0; i < records.length; i++) {{
+            var rec = records[i];
+            var idxKey = _extractIdbKey(rec.value, this.keyPath);
+            if (idxKey !== undefined) {{
+                var isMatch = true;
+                if (query !== undefined && query !== null) {{
+                    if (query instanceof IDBKeyRange) {{
+                        isMatch = query.includes(idxKey);
+                    }} else if (query.includes) {{
+                        isMatch = query.includes(idxKey);
+                    }} else {{
+                        try {{ isMatch = (IDBFactory.prototype.cmp(idxKey, query) === 0); }} catch (e) {{ isMatch = (idxKey === query); }}
+                    }}
+                }}
+                if (isMatch) {{
+                    matched.push({{ key: idxKey, primaryKey: rec.key, value: rec.value }});
+                }}
+            }}
+        }}
+        try {{
+            matched.sort(function(a, b) {{
+                var c = IDBFactory.prototype.cmp(a.key, b.key);
+                if (c !== 0) return c;
+                return IDBFactory.prototype.cmp(a.primaryKey, b.primaryKey);
+            }});
+        }} catch (e) {{}}
+        if (direction === 'prev' || direction === 'prevunique') {{
+            matched.reverse();
+        }}
+        if (matched.length > 0) {{
+            var cursor = new IDBCursorWithValue(this, direction || 'next', matched, 0, req);
+            cursor.key = matched[0].key;
+            cursor.primaryKey = matched[0].primaryKey;
+            cursor.value = matched[0].value;
+            req.result = cursor;
+        }} else {{
+            req.result = null;
+        }}
+        req.readyState = 'done';
+        return req;
+    }};
+    IDBIndex.prototype.openKeyCursor = function(query, direction) {{
+        var req = this.openCursor(query, direction);
+        if (req.result) {{
+            req.result.value = undefined;
+        }}
+        return req;
     }};
     globalThis.IDBIndex = IDBIndex;
 
@@ -6709,8 +7707,32 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         return Promise.resolve(res);
     }};
     IDBFactory.prototype.cmp = function(a, b) {{
-        if (a < b) return -1;
-        if (a > b) return 1;
+        var tA = _idbKeyType(a);
+        var tB = _idbKeyType(b);
+        if (tA === 0 || tB === 0) {{
+            throw new TypeError("DataError: The operand is not a valid key.");
+        }}
+        if (tA !== tB) {{
+            return tA < tB ? -1 : 1;
+        }}
+        if (tA === 1) {{
+            return a < b ? -1 : (a > b ? 1 : 0);
+        }}
+        if (tA === 2) {{
+            var t1 = a.getTime(), t2 = b.getTime();
+            return t1 < t2 ? -1 : (t1 > t2 ? 1 : 0);
+        }}
+        if (tA === 3) {{
+            return a < b ? -1 : (a > b ? 1 : 0);
+        }}
+        if (tA === 4) {{
+            var len = Math.min(a.length, b.length);
+            for (var i = 0; i < len; i++) {{
+                var res = IDBFactory.prototype.cmp(a[i], b[i]);
+                if (res !== 0) return res;
+            }}
+            return a.length < b.length ? -1 : (a.length > b.length ? 1 : 0);
+        }}
         return 0;
     }};
     globalThis.IDBFactory = IDBFactory;
@@ -7111,15 +8133,44 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
             READ_FRAMEBUFFER: 0x8CA8,
             DRAW_FRAMEBUFFER: 0x8CA9,
             UNIFORM_BUFFER: 0x8A11,
+            UNIFORM_BUFFER_BINDING: 0x8A28,
+            UNIFORM_BUFFER_START: 0x8A29,
+            UNIFORM_BUFFER_SIZE: 0x8A2A,
+            TRANSFORM_FEEDBACK_BUFFER: 0x8C8E,
+            TRANSFORM_FEEDBACK_BUFFER_BINDING: 0x8C8F,
+            TRANSFORM_FEEDBACK_BUFFER_START: 0x8C84,
+            TRANSFORM_FEEDBACK_BUFFER_SIZE: 0x8C85,
+            TRANSFORM_FEEDBACK: 0x8E22,
+            TRANSFORM_FEEDBACK_PAUSED: 0x8E23,
+            TRANSFORM_FEEDBACK_ACTIVE: 0x8E24,
+            TRANSFORM_FEEDBACK_BINDING: 0x8E25,
             COLOR: 0x1800,
             DEPTH: 0x1801,
             STENCIL: 0x1802,
-            RASTERIZER_DISCARD: 0x8C89
+            RASTERIZER_DISCARD: 0x8C89,
+            SAMPLER_2D: 0x8B5E,
+            SAMPLER_CUBE: 0x8B60,
+            SAMPLER_BINDING: 0x8919,
+            QUERY_RESULT: 0x8866,
+            QUERY_RESULT_AVAILABLE: 0x8867,
+            ANY_SAMPLES_PASSED: 0x8C2F,
+            ANY_SAMPLES_PASSED_CONSERVATIVE: 0x8D6A,
+            SYNC_FENCE: 0x9112,
+            SYNC_GPU_COMMANDS_COMPLETE: 0x9117,
+            UNSIGNALED: 0x9118,
+            SIGNALED: 0x9119,
+            ALREADY_SIGNALED: 0x911A,
+            TIMEOUT_EXPIRED: 0x911B,
+            CONDITION_SATISFIED: 0x911C,
+            WAIT_FAILED: 0x911D,
+            SYNC_FLUSH_COMMANDS_BIT: 0x00000001
         }});
 
         function WebGLVertexArrayObject() {{}}
         function WebGLQuery() {{}}
         function WebGLSync() {{}}
+        function WebGLTransformFeedback() {{}}
+        function WebGLSampler() {{}}
 
         function WebGL2RenderingContext(canvas) {{
             WebGLRenderingContext.call(this, canvas);
@@ -7132,15 +8183,60 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
             WebGL2RenderingContext.prototype[k2] = WEBGL2_CONSTANTS[k2];
         }}
 
+        WebGL2RenderingContext.prototype.getParameter = function(pname) {{
+            if (pname === 0x1F00) return 'Mango WebGL Renderer';
+            if (pname === 0x1F01) return 'Mango GPU Rasterizer';
+            if (pname === 0x1F02) return 'WebGL 2.0 (Mango Engine)';
+            if (pname === 0x8B8C) return 'WebGL GLSL ES 3.00 (Mango Engine)';
+            return 0;
+        }};
+
         WebGL2RenderingContext.prototype.createVertexArray = function() {{ return new WebGLVertexArrayObject(); }};
         WebGL2RenderingContext.prototype.bindVertexArray = function(vao) {{}};
         WebGL2RenderingContext.prototype.deleteVertexArray = function(vao) {{}};
+        WebGL2RenderingContext.prototype.isVertexArray = function(vao) {{ return vao instanceof WebGLVertexArrayObject; }};
+
         WebGL2RenderingContext.prototype.createQuery = function() {{ return new WebGLQuery(); }};
         WebGL2RenderingContext.prototype.beginQuery = function(target, q) {{}};
         WebGL2RenderingContext.prototype.endQuery = function(target) {{}};
+        WebGL2RenderingContext.prototype.deleteQuery = function(q) {{}};
+        WebGL2RenderingContext.prototype.isQuery = function(q) {{ return q instanceof WebGLQuery; }};
+        WebGL2RenderingContext.prototype.getQueryParameter = function(q, pname) {{
+            if (pname === 0x8867) return true;
+            if (pname === 0x8866) return 0;
+            return 0;
+        }};
+
         WebGL2RenderingContext.prototype.fenceSync = function(condition, flags) {{ return new WebGLSync(); }};
         WebGL2RenderingContext.prototype.clientWaitSync = function(sync, flags, timeout) {{ return 0x911A; }};
+        WebGL2RenderingContext.prototype.waitSync = function(sync, flags, timeout) {{}};
         WebGL2RenderingContext.prototype.deleteSync = function(sync) {{}};
+        WebGL2RenderingContext.prototype.isSync = function(sync) {{ return sync instanceof WebGLSync; }};
+
+        WebGL2RenderingContext.prototype.createTransformFeedback = function() {{ return new WebGLTransformFeedback(); }};
+        WebGL2RenderingContext.prototype.bindTransformFeedback = function(target, tf) {{}};
+        WebGL2RenderingContext.prototype.deleteTransformFeedback = function(tf) {{}};
+        WebGL2RenderingContext.prototype.isTransformFeedback = function(tf) {{ return tf instanceof WebGLTransformFeedback; }};
+        WebGL2RenderingContext.prototype.beginTransformFeedback = function(primitiveMode) {{}};
+        WebGL2RenderingContext.prototype.endTransformFeedback = function() {{}};
+        WebGL2RenderingContext.prototype.pauseTransformFeedback = function() {{}};
+        WebGL2RenderingContext.prototype.resumeTransformFeedback = function() {{}};
+
+        WebGL2RenderingContext.prototype.createSampler = function() {{ return new WebGLSampler(); }};
+        WebGL2RenderingContext.prototype.bindSampler = function(unit, sampler) {{}};
+        WebGL2RenderingContext.prototype.deleteSampler = function(sampler) {{}};
+        WebGL2RenderingContext.prototype.isSampler = function(sampler) {{ return sampler instanceof WebGLSampler; }};
+        WebGL2RenderingContext.prototype.samplerParameteri = function(sampler, pname, param) {{}};
+        WebGL2RenderingContext.prototype.samplerParameterf = function(sampler, pname, param) {{}};
+
+        WebGL2RenderingContext.prototype.bindBufferBase = function(target, index, buffer) {{}};
+        WebGL2RenderingContext.prototype.bindBufferRange = function(target, index, buffer, offset, size) {{}};
+        WebGL2RenderingContext.prototype.getUniformBlockIndex = function(program, uniformBlockName) {{ return 0; }};
+        WebGL2RenderingContext.prototype.uniformBlockBinding = function(program, uniformBlockIndex, uniformBlockBinding) {{}};
+
+        WebGL2RenderingContext.prototype.drawArraysInstanced = function(mode, first, count, instanceCount) {{}};
+        WebGL2RenderingContext.prototype.drawElementsInstanced = function(mode, count, type, offset, instanceCount) {{}};
+        WebGL2RenderingContext.prototype.vertexAttribDivisor = function(index, divisor) {{}};
 
         globalThis.WebGLRenderingContext = WebGLRenderingContext;
         globalThis.WebGL2RenderingContext = WebGL2RenderingContext;
@@ -7148,8 +8244,49 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         globalThis.WebGLProgram = WebGLProgram;
         globalThis.WebGLBuffer = WebGLBuffer;
         globalThis.WebGLTexture = WebGLTexture;
+        globalThis.WebGLVertexArrayObject = WebGLVertexArrayObject;
+        globalThis.WebGLQuery = WebGLQuery;
+        globalThis.WebGLSync = WebGLSync;
+        globalThis.WebGLTransformFeedback = WebGLTransformFeedback;
+        globalThis.WebGLSampler = WebGLSampler;
 
         // WebGPU API
+        var GPUBufferUsage = {{
+            MAP_READ: 0x0001,
+            MAP_WRITE: 0x0002,
+            COPY_SRC: 0x0004,
+            COPY_DST: 0x0008,
+            INDEX: 0x0010,
+            VERTEX: 0x0020,
+            UNIFORM: 0x0040,
+            STORAGE: 0x0080,
+            INDIRECT: 0x0100,
+            QUERY_RESOLVE: 0x0200
+        }};
+        globalThis.GPUBufferUsage = GPUBufferUsage;
+
+        var GPUTextureUsage = {{
+            COPY_SRC: 0x01,
+            COPY_DST: 0x02,
+            TEXTURE_BINDING: 0x04,
+            STORAGE_BINDING: 0x08,
+            RENDER_ATTACHMENT: 0x10
+        }};
+        globalThis.GPUTextureUsage = GPUTextureUsage;
+
+        var GPUShaderStage = {{
+            VERTEX: 0x1,
+            FRAGMENT: 0x2,
+            COMPUTE: 0x4
+        }};
+        globalThis.GPUShaderStage = GPUShaderStage;
+
+        var GPUMapMode = {{
+            READ: 0x0001,
+            WRITE: 0x0002
+        }};
+        globalThis.GPUMapMode = GPUMapMode;
+
         function GPUBuffer(descriptor) {{
             this.size = (descriptor && descriptor.size) || 0;
             this.usage = (descriptor && descriptor.usage) || 0;
@@ -7165,12 +8302,17 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         GPUBuffer.prototype.unmap = function() {{ this.mapState = 'unmapped'; }};
         GPUBuffer.prototype.destroy = function() {{ this.mapState = 'destroyed'; }};
 
+        function GPUTextureView(descriptor) {{
+            this.descriptor = descriptor || {{}};
+        }}
+        globalThis.GPUTextureView = GPUTextureView;
+
         function GPUTexture(descriptor) {{
             this.width = (descriptor && descriptor.size && descriptor.size.width) || 1;
             this.height = (descriptor && descriptor.size && descriptor.size.height) || 1;
             this.format = (descriptor && descriptor.format) || 'rgba8unorm';
         }}
-        GPUTexture.prototype.createView = function() {{ return {{}}; }};
+        GPUTexture.prototype.createView = function(descriptor) {{ return new GPUTextureView(descriptor); }};
         GPUTexture.prototype.destroy = function() {{}};
 
         function GPUQueue() {{}}
@@ -7182,14 +8324,62 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         function GPURenderPassEncoder() {{}}
         GPURenderPassEncoder.prototype.setPipeline = function(pipeline) {{}};
         GPURenderPassEncoder.prototype.setVertexBuffer = function(slot, buffer) {{}};
+        GPURenderPassEncoder.prototype.setIndexBuffer = function(buffer, indexFormat, offset, size) {{}};
         GPURenderPassEncoder.prototype.setBindGroup = function(index, bindGroup) {{}};
         GPURenderPassEncoder.prototype.draw = function(vertexCount, instanceCount, firstVertex, firstInstance) {{}};
         GPURenderPassEncoder.prototype.drawIndexed = function(indexCount, instanceCount, firstIndex, baseVertex, firstInstance) {{}};
         GPURenderPassEncoder.prototype.end = function() {{}};
 
+        function GPUComputePassEncoder() {{}}
+        GPUComputePassEncoder.prototype.setPipeline = function(pipeline) {{}};
+        GPUComputePassEncoder.prototype.setBindGroup = function(index, bindGroup) {{}};
+        GPUComputePassEncoder.prototype.dispatchWorkgroups = function(workgroupCountX, workgroupCountY, workgroupCountZ) {{}};
+        GPUComputePassEncoder.prototype.end = function() {{}};
+
         function GPUCommandEncoder() {{}}
         GPUCommandEncoder.prototype.beginRenderPass = function(descriptor) {{ return new GPURenderPassEncoder(); }};
+        GPUCommandEncoder.prototype.beginComputePass = function(descriptor) {{ return new GPUComputePassEncoder(); }};
         GPUCommandEncoder.prototype.finish = function() {{ return new GPUCommandBuffer(); }};
+        GPUCommandEncoder.prototype.copyBufferToBuffer = function(source, sourceOffset, destination, destinationOffset, size) {{}};
+        GPUCommandEncoder.prototype.copyBufferToTexture = function(source, destination, copySize) {{}};
+        GPUCommandEncoder.prototype.copyTextureToBuffer = function(source, destination, copySize) {{}};
+        GPUCommandEncoder.prototype.copyTextureToTexture = function(source, destination, copySize) {{}};
+
+        function GPUShaderModule(descriptor) {{
+            this.code = (descriptor && descriptor.code) || '';
+        }}
+        GPUShaderModule.prototype.getCompilationInfo = function() {{
+            return Promise.resolve({{ messages: [] }});
+        }};
+
+        function GPUBindGroupLayout(descriptor) {{
+            this.entries = (descriptor && descriptor.entries) || [];
+        }}
+
+        function GPUBindGroup(descriptor) {{
+            this.layout = descriptor && descriptor.layout;
+            this.entries = (descriptor && descriptor.entries) || [];
+        }}
+
+        function GPUPipelineLayout(descriptor) {{
+            this.bindGroupLayouts = (descriptor && descriptor.bindGroupLayouts) || [];
+        }}
+
+        function GPURenderPipeline(descriptor) {{
+            this.descriptor = descriptor;
+            this.layout = descriptor && descriptor.layout;
+        }}
+        GPURenderPipeline.prototype.getBindGroupLayout = function(index) {{
+            return new GPUBindGroupLayout({{}});
+        }};
+
+        function GPUComputePipeline(descriptor) {{
+            this.descriptor = descriptor;
+            this.layout = descriptor && descriptor.layout;
+        }}
+        GPUComputePipeline.prototype.getBindGroupLayout = function(index) {{
+            return new GPUBindGroupLayout({{}});
+        }};
 
         function GPUDevice(adapter) {{
             this.adapter = adapter;
@@ -7206,11 +8396,15 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         }}
         GPUDevice.prototype.createBuffer = function(descriptor) {{ return new GPUBuffer(descriptor); }};
         GPUDevice.prototype.createTexture = function(descriptor) {{ return new GPUTexture(descriptor); }};
-        GPUDevice.prototype.createShaderModule = function(descriptor) {{ return {{ code: descriptor && descriptor.code }}; }};
-        GPUDevice.prototype.createBindGroupLayout = function(descriptor) {{ return {{}}; }};
-        GPUDevice.prototype.createPipelineLayout = function(descriptor) {{ return {{}}; }};
-        GPUDevice.prototype.createRenderPipeline = function(descriptor) {{ return {{}}; }};
-        GPUDevice.prototype.createComputePipeline = function(descriptor) {{ return {{}}; }};
+        GPUDevice.prototype.createSampler = function(descriptor) {{ return {{}}; }};
+        GPUDevice.prototype.createShaderModule = function(descriptor) {{ return new GPUShaderModule(descriptor); }};
+        GPUDevice.prototype.createBindGroupLayout = function(descriptor) {{ return new GPUBindGroupLayout(descriptor); }};
+        GPUDevice.prototype.createBindGroup = function(descriptor) {{ return new GPUBindGroup(descriptor); }};
+        GPUDevice.prototype.createPipelineLayout = function(descriptor) {{ return new GPUPipelineLayout(descriptor); }};
+        GPUDevice.prototype.createRenderPipeline = function(descriptor) {{ return new GPURenderPipeline(descriptor); }};
+        GPUDevice.prototype.createComputePipeline = function(descriptor) {{ return new GPUComputePipeline(descriptor); }};
+        GPUDevice.prototype.createRenderPipelineAsync = function(descriptor) {{ return Promise.resolve(new GPURenderPipeline(descriptor)); }};
+        GPUDevice.prototype.createComputePipelineAsync = function(descriptor) {{ return Promise.resolve(new GPUComputePipeline(descriptor)); }};
         GPUDevice.prototype.createCommandEncoder = function(descriptor) {{ return new GPUCommandEncoder(); }};
         GPUDevice.prototype.destroy = function() {{}};
 
@@ -7254,7 +8448,17 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         globalThis.GPUQueue = GPUQueue;
         globalThis.GPUBuffer = GPUBuffer;
         globalThis.GPUTexture = GPUTexture;
+        globalThis.GPUTextureView = GPUTextureView;
         globalThis.GPUCommandEncoder = GPUCommandEncoder;
+        globalThis.GPURenderPassEncoder = GPURenderPassEncoder;
+        globalThis.GPUComputePassEncoder = GPUComputePassEncoder;
+        globalThis.GPUCommandBuffer = GPUCommandBuffer;
+        globalThis.GPUShaderModule = GPUShaderModule;
+        globalThis.GPUBindGroupLayout = GPUBindGroupLayout;
+        globalThis.GPUBindGroup = GPUBindGroup;
+        globalThis.GPUPipelineLayout = GPUPipelineLayout;
+        globalThis.GPURenderPipeline = GPURenderPipeline;
+        globalThis.GPUComputePipeline = GPUComputePipeline;
         globalThis.GPUCanvasContext = GPUCanvasContext;
 
         if (typeof navigator !== 'undefined') {{
@@ -7299,6 +8503,18 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         }};
         AudioParam.prototype.setTargetAtTime = function(target, startTime, timeConstant) {{
             this.value = target;
+            return this;
+        }};
+        AudioParam.prototype.setValueCurveAtTime = function(values, startTime, duration) {{
+            if (values && values.length > 0) {{
+                this.value = values[values.length - 1];
+            }}
+            return this;
+        }};
+        AudioParam.prototype.cancelScheduledValues = function(startTime) {{
+            return this;
+        }};
+        AudioParam.prototype.cancelAndHoldAtTime = function(cancelTime) {{
             return this;
         }};
 
@@ -7398,6 +8614,102 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         }}
         BiquadFilterNode.prototype = Object.create(AudioNode.prototype);
 
+        function PannerNode(context, options) {{
+            AudioNode.call(this, context);
+            options = options || {{}};
+            this.panningModel = options.panningModel || 'equalpower';
+            this.distanceModel = options.distanceModel || 'inverse';
+            this.refDistance = options.refDistance !== undefined ? options.refDistance : 1;
+            this.maxDistance = options.maxDistance !== undefined ? options.maxDistance : 10000;
+            this.rolloffFactor = options.rolloffFactor !== undefined ? options.rolloffFactor : 1;
+            this.coneInnerAngle = options.coneInnerAngle !== undefined ? options.coneInnerAngle : 360;
+            this.coneOuterAngle = options.coneOuterAngle !== undefined ? options.coneOuterAngle : 360;
+            this.coneOuterGain = options.coneOuterGain !== undefined ? options.coneOuterGain : 0;
+            this.positionX = new AudioParam(options.positionX !== undefined ? options.positionX : 0);
+            this.positionY = new AudioParam(options.positionY !== undefined ? options.positionY : 0);
+            this.positionZ = new AudioParam(options.positionZ !== undefined ? options.positionZ : 0);
+            this.orientationX = new AudioParam(options.orientationX !== undefined ? options.orientationX : 1);
+            this.orientationY = new AudioParam(options.orientationY !== undefined ? options.orientationY : 0);
+            this.orientationZ = new AudioParam(options.orientationZ !== undefined ? options.orientationZ : 0);
+        }}
+        PannerNode.prototype = Object.create(AudioNode.prototype);
+        PannerNode.prototype.setPosition = function(x, y, z) {{
+            this.positionX.value = x;
+            this.positionY.value = y;
+            this.positionZ.value = z;
+        }};
+        PannerNode.prototype.setOrientation = function(x, y, z) {{
+            this.orientationX.value = x;
+            this.orientationY.value = y;
+            this.orientationZ.value = z;
+        }};
+
+        function StereoPannerNode(context, options) {{
+            AudioNode.call(this, context);
+            options = options || {{}};
+            this.pan = new AudioParam(options.pan !== undefined ? options.pan : 0);
+        }}
+        StereoPannerNode.prototype = Object.create(AudioNode.prototype);
+
+        function ConstantSourceNode(context, options) {{
+            AudioNode.call(this, context);
+            options = options || {{}};
+            this.offset = new AudioParam(options.offset !== undefined ? options.offset : 1);
+            this._started = false;
+            this._stopped = false;
+        }}
+        ConstantSourceNode.prototype = Object.create(AudioNode.prototype);
+        ConstantSourceNode.prototype.start = function() {{ this._started = true; }};
+        ConstantSourceNode.prototype.stop = function() {{ this._stopped = true; }};
+
+        function AudioListener() {{
+            this.positionX = new AudioParam(0);
+            this.positionY = new AudioParam(0);
+            this.positionZ = new AudioParam(0);
+            this.forwardX = new AudioParam(0);
+            this.forwardY = new AudioParam(0);
+            this.forwardZ = new AudioParam(-1);
+            this.upX = new AudioParam(0);
+            this.upY = new AudioParam(1);
+            this.upZ = new AudioParam(0);
+        }}
+        AudioListener.prototype.setPosition = function(x, y, z) {{
+            this.positionX.value = x;
+            this.positionY.value = y;
+            this.positionZ.value = z;
+        }};
+        AudioListener.prototype.setOrientation = function(x, y, z, xUp, yUp, zUp) {{
+            this.forwardX.value = x;
+            this.forwardY.value = y;
+            this.forwardZ.value = z;
+            if (xUp !== undefined) this.upX.value = xUp;
+            if (yUp !== undefined) this.upY.value = yUp;
+            if (zUp !== undefined) this.upZ.value = zUp;
+        }};
+
+        function AudioWorklet() {{
+            this._modules = [];
+        }}
+        AudioWorklet.prototype.addModule = function(moduleURL, options) {{
+            this._modules.push(moduleURL);
+            return Promise.resolve();
+        }};
+
+        function AudioWorkletNode(context, name, options) {{
+            AudioNode.call(this, context);
+            this.nodeName = name;
+            this.parameters = new Map();
+            if (options && options.parameterData) {{
+                for (var k in options.parameterData) {{
+                    this.parameters.set(k, new AudioParam(options.parameterData[k]));
+                }}
+            }}
+            var channel = new MessageChannel();
+            this.port = channel.port1;
+            this._port2 = channel.port2;
+        }}
+        AudioWorkletNode.prototype = Object.create(AudioNode.prototype);
+
         function AudioDestinationNode(context) {{
             AudioNode.call(this, context);
             this.maxChannelCount = 2;
@@ -7409,7 +8721,8 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
             this.sampleRate = 44100;
             this.currentTime = 0;
             this.destination = new AudioDestinationNode(this);
-            this.listener = {{ positionX: 0, positionY: 0, positionZ: 0 }};
+            this.listener = new AudioListener();
+            this.audioWorklet = new AudioWorklet();
         }}
         BaseAudioContext.prototype.createGain = function() {{ return new GainNode(this); }};
         BaseAudioContext.prototype.createOscillator = function() {{ return new OscillatorNode(this); }};
@@ -7419,6 +8732,9 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         }};
         BaseAudioContext.prototype.createAnalyser = function() {{ return new AnalyserNode(this); }};
         BaseAudioContext.prototype.createBiquadFilter = function() {{ return new BiquadFilterNode(this); }};
+        BaseAudioContext.prototype.createPanner = function() {{ return new PannerNode(this); }};
+        BaseAudioContext.prototype.createStereoPanner = function() {{ return new StereoPannerNode(this); }};
+        BaseAudioContext.prototype.createConstantSource = function() {{ return new ConstantSourceNode(this); }};
         BaseAudioContext.prototype.decodeAudioData = function(audioData, successCb, errorCb) {{
             var self = this;
             return new Promise(function(resolve, reject) {{
@@ -7454,6 +8770,12 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         globalThis.AudioBufferSourceNode = AudioBufferSourceNode;
         globalThis.AnalyserNode = AnalyserNode;
         globalThis.BiquadFilterNode = BiquadFilterNode;
+        globalThis.PannerNode = PannerNode;
+        globalThis.StereoPannerNode = StereoPannerNode;
+        globalThis.ConstantSourceNode = ConstantSourceNode;
+        globalThis.AudioListener = AudioListener;
+        globalThis.AudioWorklet = AudioWorklet;
+        globalThis.AudioWorkletNode = AudioWorkletNode;
         globalThis.AudioDestinationNode = AudioDestinationNode;
         globalThis.BaseAudioContext = BaseAudioContext;
         globalThis.AudioContext = AudioContext;
@@ -7462,6 +8784,7 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
 
     // ── OffscreenCanvas ────────────────────────────────────────────────────────
     (function() {{
+        if (typeof globalThis.OffscreenCanvas !== 'undefined') return;
         function OffscreenCanvas(width, height) {{
             this.width = Math.max(0, parseInt(width) || 300);
             this.height = Math.max(0, parseInt(height) || 150);
@@ -7508,7 +8831,14 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
                         }};
                     }}
                 }}
-                return this._context2d;
+            }} else if (contextId === 'webgl') {{
+                if (typeof WebGLRenderingContext === 'function') {{
+                    return new WebGLRenderingContext(this);
+                }}
+            }} else if (contextId === 'webgl2') {{
+                if (typeof WebGL2RenderingContext === 'function') {{
+                    return new WebGL2RenderingContext(this);
+                }}
             }} else if (contextId === 'webgpu') {{
                 if (typeof GPUCanvasContext === 'function') {{
                     return new GPUCanvasContext(this);
@@ -7538,16 +8868,1039 @@ pub fn build_web_apis_shim(page_url: &str) -> String {
         }}
     }})();
 
+    // ── WebCodecs ───────────────────────────────────────────────────
+    (function() {{
+        // VideoFrame
+        if (typeof globalThis.VideoFrame === 'undefined') {{
+            function VideoFrame(source, init) {{
+                if (!source) throw new TypeError("VideoFrame constructor requires a source");
+                this._closed = false;
+                this._colorSpace = (init && init.colorSpace) || {{
+                    primaries: 'bt709',
+                    transfer: 'iec61966-2-1',
+                    matrix: 'rgb',
+                    fullRange: true
+                }};
+
+                if (source instanceof ArrayBuffer || ArrayBuffer.isView(source)) {{
+                    if (!init || typeof init.codedWidth !== 'number' || typeof init.codedHeight !== 'number' || !init.format) {{
+                        throw new TypeError("VideoFrame from buffer requires format, codedWidth, and codedHeight");
+                    }}
+                    this._format = init.format;
+                    this._codedWidth = init.codedWidth;
+                    this._codedHeight = init.codedHeight;
+                    this._timestamp = typeof init.timestamp === 'number' ? init.timestamp : 0;
+                    this._duration = typeof init.duration === 'number' ? init.duration : null;
+
+                    var bpp = (this._format === 'RGBA' || this._format === 'BGRA') ? 4 : 1.5;
+                    var minSize = Math.floor(this._codedWidth * this._codedHeight * bpp);
+                    var u8 = source instanceof ArrayBuffer ? new Uint8Array(source) : new Uint8Array(source.buffer, source.byteOffset, source.byteLength);
+                    this._buffer = new Uint8Array(minSize);
+                    this._buffer.set(u8.subarray(0, Math.min(u8.length, minSize)));
+                }} else if (source instanceof VideoFrame) {{
+                    if (source._closed) throw new TypeError("Cannot clone a closed VideoFrame");
+                    this._format = source._format;
+                    this._codedWidth = source._codedWidth;
+                    this._codedHeight = source._codedHeight;
+                    this._timestamp = (init && typeof init.timestamp === 'number') ? init.timestamp : source._timestamp;
+                    this._duration = (init && typeof init.duration === 'number') ? init.duration : source._duration;
+                    this._buffer = new Uint8Array(source._buffer);
+                }} else {{
+                    var width = (source && source.width) || (init && init.codedWidth) || 300;
+                    var height = (source && source.height) || (init && init.codedHeight) || 150;
+                    this._format = (init && init.format) || 'RGBA';
+                    this._codedWidth = width;
+                    this._codedHeight = height;
+                    this._timestamp = (init && typeof init.timestamp === 'number') ? init.timestamp : 0;
+                    this._duration = (init && typeof init.duration === 'number') ? init.duration : null;
+                    var sz = width * height * 4;
+                    this._buffer = new Uint8Array(sz);
+                    if (source && typeof source.getContext === 'function') {{
+                        try {{
+                            var ctx = source.getContext('2d');
+                            if (ctx && typeof ctx.getImageData === 'function') {{
+                                var imgData = ctx.getImageData(0, 0, width, height);
+                                if (imgData && imgData.data) {{
+                                    this._buffer.set(imgData.data);
+                                }}
+                            }}
+                        }} catch(e) {{}}
+                    }}
+                }}
+
+                var vr = (init && init.visibleRect) || {{ x: 0, y: 0, width: this._codedWidth, height: this._codedHeight }};
+                this._visibleRect = {{ x: vr.x || 0, y: vr.y || 0, width: vr.width || this._codedWidth, height: vr.height || this._codedHeight }};
+                this._displayWidth = (init && init.displayWidth) || this._visibleRect.width;
+                this._displayHeight = (init && init.displayHeight) || this._visibleRect.height;
+            }}
+
+            Object.defineProperty(VideoFrame.prototype, 'format', {{ get: function() {{ if (this._closed) throw new TypeError("VideoFrame is closed"); return this._format; }} }});
+            Object.defineProperty(VideoFrame.prototype, 'codedWidth', {{ get: function() {{ if (this._closed) throw new TypeError("VideoFrame is closed"); return this._codedWidth; }} }});
+            Object.defineProperty(VideoFrame.prototype, 'codedHeight', {{ get: function() {{ if (this._closed) throw new TypeError("VideoFrame is closed"); return this._codedHeight; }} }});
+            Object.defineProperty(VideoFrame.prototype, 'codedRect', {{ get: function() {{ if (this._closed) throw new TypeError("VideoFrame is closed"); return {{ x: 0, y: 0, width: this._codedWidth, height: this._codedHeight }}; }} }});
+            Object.defineProperty(VideoFrame.prototype, 'visibleRect', {{ get: function() {{ if (this._closed) throw new TypeError("VideoFrame is closed"); return {{ x: this._visibleRect.x, y: this._visibleRect.y, width: this._visibleRect.width, height: this._visibleRect.height }}; }} }});
+            Object.defineProperty(VideoFrame.prototype, 'displayWidth', {{ get: function() {{ if (this._closed) throw new TypeError("VideoFrame is closed"); return this._displayWidth; }} }});
+            Object.defineProperty(VideoFrame.prototype, 'displayHeight', {{ get: function() {{ if (this._closed) throw new TypeError("VideoFrame is closed"); return this._displayHeight; }} }});
+            Object.defineProperty(VideoFrame.prototype, 'duration', {{ get: function() {{ if (this._closed) throw new TypeError("VideoFrame is closed"); return this._duration; }} }});
+            Object.defineProperty(VideoFrame.prototype, 'timestamp', {{ get: function() {{ if (this._closed) throw new TypeError("VideoFrame is closed"); return this._timestamp; }} }});
+            Object.defineProperty(VideoFrame.prototype, 'colorSpace', {{ get: function() {{ if (this._closed) throw new TypeError("VideoFrame is closed"); return this._colorSpace; }} }});
+
+            VideoFrame.prototype.allocationSize = function(options) {{
+                if (this._closed) throw new TypeError("VideoFrame is closed");
+                var rect = (options && options.rect) || this._visibleRect;
+                var bpp = (this._format === 'RGBA' || this._format === 'BGRA') ? 4 : 1.5;
+                return Math.floor(rect.width * rect.height * bpp);
+            }};
+
+            VideoFrame.prototype.copyTo = function(destination, options) {{
+                if (this._closed) throw new TypeError("VideoFrame is closed");
+                var destBuf = destination instanceof ArrayBuffer ? new Uint8Array(destination) : new Uint8Array(destination.buffer, destination.byteOffset, destination.byteLength);
+                var toCopy = Math.min(destBuf.length, this._buffer.length);
+                destBuf.set(this._buffer.subarray(0, toCopy));
+                var stride = this._codedWidth * ((this._format === 'RGBA' || this._format === 'BGRA') ? 4 : 1);
+                return Promise.resolve([{{ offset: 0, stride: stride }}]);
+            }};
+
+            VideoFrame.prototype.clone = function() {{
+                if (this._closed) throw new TypeError("VideoFrame is closed");
+                return new VideoFrame(this);
+            }};
+
+            VideoFrame.prototype.close = function() {{
+                this._closed = true;
+                this._buffer = null;
+            }};
+            globalThis.VideoFrame = VideoFrame;
+        }}
+
+        // AudioData
+        if (typeof globalThis.AudioData === 'undefined') {{
+            function AudioData(init) {{
+                if (!init || !init.format || typeof init.sampleRate !== 'number' || typeof init.numberOfFrames !== 'number' || typeof init.numberOfChannels !== 'number' || !init.data) {{
+                    throw new TypeError("AudioData constructor requires format, sampleRate, numberOfFrames, numberOfChannels, and data");
+                }}
+                this._closed = false;
+                this._format = init.format;
+                this._sampleRate = init.sampleRate;
+                this._numberOfFrames = init.numberOfFrames;
+                this._numberOfChannels = init.numberOfChannels;
+                this._timestamp = typeof init.timestamp === 'number' ? init.timestamp : 0;
+                this._duration = Math.round((this._numberOfFrames / this._sampleRate) * 1000000);
+
+                var bytesPerSample = (this._format === 'f32' || this._format === 'f32-planar' || this._format === 's32' || this._format === 's32-planar') ? 4 : (this._format === 's16' || this._format === 's16-planar' ? 2 : 1);
+                var totalBytes = this._numberOfFrames * this._numberOfChannels * bytesPerSample;
+                var u8 = init.data instanceof ArrayBuffer ? new Uint8Array(init.data) : new Uint8Array(init.data.buffer, init.data.byteOffset, init.data.byteLength);
+                this._buffer = new Uint8Array(totalBytes);
+                this._buffer.set(u8.subarray(0, Math.min(u8.length, totalBytes)));
+                this._bytesPerSample = bytesPerSample;
+            }}
+
+            Object.defineProperty(AudioData.prototype, 'format', {{ get: function() {{ if (this._closed) throw new TypeError("AudioData is closed"); return this._format; }} }});
+            Object.defineProperty(AudioData.prototype, 'sampleRate', {{ get: function() {{ if (this._closed) throw new TypeError("AudioData is closed"); return this._sampleRate; }} }});
+            Object.defineProperty(AudioData.prototype, 'numberOfFrames', {{ get: function() {{ if (this._closed) throw new TypeError("AudioData is closed"); return this._numberOfFrames; }} }});
+            Object.defineProperty(AudioData.prototype, 'numberOfChannels', {{ get: function() {{ if (this._closed) throw new TypeError("AudioData is closed"); return this._numberOfChannels; }} }});
+            Object.defineProperty(AudioData.prototype, 'duration', {{ get: function() {{ if (this._closed) throw new TypeError("AudioData is closed"); return this._duration; }} }});
+            Object.defineProperty(AudioData.prototype, 'timestamp', {{ get: function() {{ if (this._closed) throw new TypeError("AudioData is closed"); return this._timestamp; }} }});
+
+            AudioData.prototype.allocationSize = function(options) {{
+                if (this._closed) throw new TypeError("AudioData is closed");
+                var planeIndex = (options && typeof options.planeIndex === 'number') ? options.planeIndex : null;
+                var frameCount = (options && typeof options.frameCount === 'number') ? options.frameCount : this._numberOfFrames;
+                if (planeIndex !== null) {{
+                    return frameCount * this._bytesPerSample;
+                }}
+                return frameCount * this._numberOfChannels * this._bytesPerSample;
+            }};
+
+            AudioData.prototype.copyTo = function(destination, options) {{
+                if (this._closed) throw new TypeError("AudioData is closed");
+                var destBuf = destination instanceof ArrayBuffer ? new Uint8Array(destination) : new Uint8Array(destination.buffer, destination.byteOffset, destination.byteLength);
+                var toCopy = Math.min(destBuf.length, this._buffer.length);
+                destBuf.set(this._buffer.subarray(0, toCopy));
+            }};
+
+            AudioData.prototype.clone = function() {{
+                if (this._closed) throw new TypeError("AudioData is closed");
+                return new AudioData({{
+                    format: this._format,
+                    sampleRate: this._sampleRate,
+                    numberOfFrames: this._numberOfFrames,
+                    numberOfChannels: this._numberOfChannels,
+                    timestamp: this._timestamp,
+                    data: this._buffer.slice()
+                }});
+            }};
+
+            AudioData.prototype.close = function() {{
+                this._closed = true;
+                this._buffer = null;
+            }};
+            globalThis.AudioData = AudioData;
+        }}
+
+        // EncodedVideoChunk & EncodedAudioChunk
+        if (typeof globalThis.EncodedVideoChunk === 'undefined') {{
+            function EncodedVideoChunk(init) {{
+                if (!init || !init.type || typeof init.timestamp !== 'number' || !init.data) {{
+                    throw new TypeError("EncodedVideoChunk requires type, timestamp, and data");
+                }}
+                this.type = init.type;
+                this.timestamp = init.timestamp;
+                this.duration = typeof init.duration === 'number' ? init.duration : null;
+                var u8 = init.data instanceof ArrayBuffer ? new Uint8Array(init.data) : new Uint8Array(init.data.buffer, init.data.byteOffset, init.data.byteLength);
+                this._data = new Uint8Array(u8);
+                this.byteLength = this._data.byteLength;
+            }}
+            EncodedVideoChunk.prototype.copyTo = function(destination) {{
+                var destBuf = destination instanceof ArrayBuffer ? new Uint8Array(destination) : new Uint8Array(destination.buffer, destination.byteOffset, destination.byteLength);
+                var toCopy = Math.min(destBuf.length, this._data.byteLength);
+                destBuf.set(this._data.subarray(0, toCopy));
+            }};
+            globalThis.EncodedVideoChunk = EncodedVideoChunk;
+        }}
+
+        if (typeof globalThis.EncodedAudioChunk === 'undefined') {{
+            function EncodedAudioChunk(init) {{
+                if (!init || !init.type || typeof init.timestamp !== 'number' || !init.data) {{
+                    throw new TypeError("EncodedAudioChunk requires type, timestamp, and data");
+                }}
+                this.type = init.type;
+                this.timestamp = init.timestamp;
+                this.duration = typeof init.duration === 'number' ? init.duration : null;
+                var u8 = init.data instanceof ArrayBuffer ? new Uint8Array(init.data) : new Uint8Array(init.data.buffer, init.data.byteOffset, init.data.byteLength);
+                this._data = new Uint8Array(u8);
+                this.byteLength = this._data.byteLength;
+            }}
+            EncodedAudioChunk.prototype.copyTo = function(destination) {{
+                var destBuf = destination instanceof ArrayBuffer ? new Uint8Array(destination) : new Uint8Array(destination.buffer, destination.byteOffset, destination.byteLength);
+                var toCopy = Math.min(destBuf.length, this._data.byteLength);
+                destBuf.set(this._data.subarray(0, toCopy));
+            }};
+            globalThis.EncodedAudioChunk = EncodedAudioChunk;
+        }}
+
+        // VideoDecoder
+        if (typeof globalThis.VideoDecoder === 'undefined') {{
+            function VideoDecoder(init) {{
+                if (!init || typeof init.output !== 'function' || typeof init.error !== 'function') {{
+                    throw new TypeError("VideoDecoder requires output and error callbacks");
+                }}
+                this._output = init.output;
+                this._error = init.error;
+                this.state = 'unconfigured';
+                this.decodeQueueSize = 0;
+                this._config = null;
+            }}
+            VideoDecoder.isConfigSupported = function(config) {{
+                return Promise.resolve({{
+                    supported: !!(config && config.codec),
+                    config: config
+                }});
+            }};
+            VideoDecoder.prototype.configure = function(config) {{
+                if (this.state === 'closed') throw new TypeError("VideoDecoder is closed");
+                if (!config || !config.codec) throw new TypeError("VideoDecoder configure requires valid config with codec");
+                this._config = config;
+                this.state = 'configured';
+            }};
+            VideoDecoder.prototype.decode = function(chunk) {{
+                if (this.state !== 'configured') throw new TypeError("VideoDecoder must be configured before decode");
+                if (!(chunk instanceof EncodedVideoChunk)) throw new TypeError("decode expects an EncodedVideoChunk");
+                this.decodeQueueSize++;
+                var self = this;
+                Promise.resolve().then(function() {{
+                    if (self.state === 'closed') return;
+                    self.decodeQueueSize = Math.max(0, self.decodeQueueSize - 1);
+                    var width = (self._config && self._config.codedWidth) || 640;
+                    var height = (self._config && self._config.codedHeight) || 480;
+                    var frame = new VideoFrame(new Uint8Array(width * height * 4), {{
+                        format: 'RGBA',
+                        codedWidth: width,
+                        codedHeight: height,
+                        timestamp: chunk.timestamp,
+                        duration: chunk.duration || 33333
+                    }});
+                    try {{
+                        self._output(frame);
+                    }} catch(e) {{
+                        self._error(e);
+                    }}
+                }});
+            }};
+            VideoDecoder.prototype.flush = function() {{
+                if (this.state !== 'configured') return Promise.reject(new TypeError("VideoDecoder not configured"));
+                var self = this;
+                return new Promise(function(resolve) {{
+                    Promise.resolve().then(function() {{
+                        self.decodeQueueSize = 0;
+                        resolve();
+                    }});
+                }});
+            }};
+            VideoDecoder.prototype.reset = function() {{
+                if (this.state === 'closed') throw new TypeError("VideoDecoder is closed");
+                this.decodeQueueSize = 0;
+            }};
+            VideoDecoder.prototype.close = function() {{
+                this.state = 'closed';
+                this.decodeQueueSize = 0;
+            }};
+            globalThis.VideoDecoder = VideoDecoder;
+        }}
+
+        // AudioDecoder
+        if (typeof globalThis.AudioDecoder === 'undefined') {{
+            function AudioDecoder(init) {{
+                if (!init || typeof init.output !== 'function' || typeof init.error !== 'function') {{
+                    throw new TypeError("AudioDecoder requires output and error callbacks");
+                }}
+                this._output = init.output;
+                this._error = init.error;
+                this.state = 'unconfigured';
+                this.decodeQueueSize = 0;
+                this._config = null;
+            }}
+            AudioDecoder.isConfigSupported = function(config) {{
+                return Promise.resolve({{
+                    supported: !!(config && config.codec),
+                    config: config
+                }});
+            }};
+            AudioDecoder.prototype.configure = function(config) {{
+                if (this.state === 'closed') throw new TypeError("AudioDecoder is closed");
+                if (!config || !config.codec) throw new TypeError("AudioDecoder configure requires valid config with codec");
+                this._config = config;
+                this.state = 'configured';
+            }};
+            AudioDecoder.prototype.decode = function(chunk) {{
+                if (this.state !== 'configured') throw new TypeError("AudioDecoder must be configured before decode");
+                if (!(chunk instanceof EncodedAudioChunk)) throw new TypeError("decode expects an EncodedAudioChunk");
+                this.decodeQueueSize++;
+                var self = this;
+                Promise.resolve().then(function() {{
+                    if (self.state === 'closed') return;
+                    self.decodeQueueSize = Math.max(0, self.decodeQueueSize - 1);
+                    var sampleRate = (self._config && self._config.sampleRate) || 48000;
+                    var channels = (self._config && self._config.numberOfChannels) || 2;
+                    var frames = 1024;
+                    var data = new Float32Array(frames * channels);
+                    var audioData = new AudioData({{
+                        format: 'f32',
+                        sampleRate: sampleRate,
+                        numberOfFrames: frames,
+                        numberOfChannels: channels,
+                        timestamp: chunk.timestamp,
+                        data: data.buffer
+                    }});
+                    try {{
+                        self._output(audioData);
+                    }} catch(e) {{
+                        self._error(e);
+                    }}
+                }});
+            }};
+            AudioDecoder.prototype.flush = function() {{
+                if (this.state !== 'configured') return Promise.reject(new TypeError("AudioDecoder not configured"));
+                var self = this;
+                return new Promise(function(resolve) {{
+                    Promise.resolve().then(function() {{
+                        self.decodeQueueSize = 0;
+                        resolve();
+                    }});
+                }});
+            }};
+            AudioDecoder.prototype.reset = function() {{
+                if (this.state === 'closed') throw new TypeError("AudioDecoder is closed");
+                this.decodeQueueSize = 0;
+            }};
+            AudioDecoder.prototype.close = function() {{
+                this.state = 'closed';
+                this.decodeQueueSize = 0;
+            }};
+            globalThis.AudioDecoder = AudioDecoder;
+        }}
+
+        // VideoEncoder
+        if (typeof globalThis.VideoEncoder === 'undefined') {{
+            function VideoEncoder(init) {{
+                if (!init || typeof init.output !== 'function' || typeof init.error !== 'function') {{
+                    throw new TypeError("VideoEncoder requires output and error callbacks");
+                }}
+                this._output = init.output;
+                this._error = init.error;
+                this.state = 'unconfigured';
+                this.encodeQueueSize = 0;
+                this._config = null;
+            }}
+            VideoEncoder.isConfigSupported = function(config) {{
+                return Promise.resolve({{
+                    supported: !!(config && config.codec),
+                    config: config
+                }});
+            }};
+            VideoEncoder.prototype.configure = function(config) {{
+                if (this.state === 'closed') throw new TypeError("VideoEncoder is closed");
+                if (!config || !config.codec) throw new TypeError("VideoEncoder configure requires valid config with codec");
+                this._config = config;
+                this.state = 'configured';
+            }};
+            VideoEncoder.prototype.encode = function(frame, options) {{
+                if (this.state !== 'configured') throw new TypeError("VideoEncoder must be configured before encode");
+                if (!(frame instanceof VideoFrame)) throw new TypeError("encode expects a VideoFrame");
+                this.encodeQueueSize++;
+                var isKey = (options && options.keyFrame) || false;
+                var self = this;
+                var ts = frame.timestamp;
+                var dur = frame.duration;
+                Promise.resolve().then(function() {{
+                    if (self.state === 'closed') return;
+                    self.encodeQueueSize = Math.max(0, self.encodeQueueSize - 1);
+                    var dummyBytes = new Uint8Array([0x00, 0x00, 0x00, 0x01, isKey ? 0x67 : 0x41]);
+                    var chunk = new EncodedVideoChunk({{
+                        type: isKey ? 'key' : 'delta',
+                        timestamp: ts,
+                        duration: dur,
+                        data: dummyBytes.buffer
+                    }});
+                    try {{
+                        self._output(chunk, {{ decoderConfig: self._config }});
+                    }} catch(e) {{
+                        self._error(e);
+                    }}
+                }});
+            }};
+            VideoEncoder.prototype.flush = function() {{
+                if (this.state !== 'configured') return Promise.reject(new TypeError("VideoEncoder not configured"));
+                var self = this;
+                return new Promise(function(resolve) {{
+                    Promise.resolve().then(function() {{
+                        self.encodeQueueSize = 0;
+                        resolve();
+                    }});
+                }});
+            }};
+            VideoEncoder.prototype.reset = function() {{
+                if (this.state === 'closed') throw new TypeError("VideoEncoder is closed");
+                this.encodeQueueSize = 0;
+            }};
+            VideoEncoder.prototype.close = function() {{
+                this.state = 'closed';
+                this.encodeQueueSize = 0;
+            }};
+            globalThis.VideoEncoder = VideoEncoder;
+        }}
+
+        // AudioEncoder
+        if (typeof globalThis.AudioEncoder === 'undefined') {{
+            function AudioEncoder(init) {{
+                if (!init || typeof init.output !== 'function' || typeof init.error !== 'function') {{
+                    throw new TypeError("AudioEncoder requires output and error callbacks");
+                }}
+                this._output = init.output;
+                this._error = init.error;
+                this.state = 'unconfigured';
+                this.encodeQueueSize = 0;
+                this._config = null;
+            }}
+            AudioEncoder.isConfigSupported = function(config) {{
+                return Promise.resolve({{
+                    supported: !!(config && config.codec),
+                    config: config
+                }});
+            }};
+            AudioEncoder.prototype.configure = function(config) {{
+                if (this.state === 'closed') throw new TypeError("AudioEncoder is closed");
+                if (!config || !config.codec) throw new TypeError("AudioEncoder configure requires valid config with codec");
+                this._config = config;
+                this.state = 'configured';
+            }};
+            AudioEncoder.prototype.encode = function(data) {{
+                if (this.state !== 'configured') throw new TypeError("AudioEncoder must be configured before encode");
+                if (!(data instanceof AudioData)) throw new TypeError("encode expects AudioData");
+                this.encodeQueueSize++;
+                var self = this;
+                var ts = data.timestamp;
+                var dur = data.duration;
+                Promise.resolve().then(function() {{
+                    if (self.state === 'closed') return;
+                    self.encodeQueueSize = Math.max(0, self.encodeQueueSize - 1);
+                    var dummyBytes = new Uint8Array([0xFF, 0xF1, 0x50, 0x80]);
+                    var chunk = new EncodedAudioChunk({{
+                        type: 'key',
+                        timestamp: ts,
+                        duration: dur,
+                        data: dummyBytes.buffer
+                    }});
+                    try {{
+                        self._output(chunk, {{ decoderConfig: self._config }});
+                    }} catch(e) {{
+                        self._error(e);
+                    }}
+                }});
+            }};
+            AudioEncoder.prototype.flush = function() {{
+                if (this.state !== 'configured') return Promise.reject(new TypeError("AudioEncoder not configured"));
+                var self = this;
+                return new Promise(function(resolve) {{
+                    Promise.resolve().then(function() {{
+                        self.encodeQueueSize = 0;
+                        resolve();
+                    }});
+                }});
+            }};
+            AudioEncoder.prototype.reset = function() {{
+                if (this.state === 'closed') throw new TypeError("AudioEncoder is closed");
+                this.encodeQueueSize = 0;
+            }};
+            AudioEncoder.prototype.close = function() {{
+                this.state = 'closed';
+                this.encodeQueueSize = 0;
+            }};
+            globalThis.AudioEncoder = AudioEncoder;
+        }}
+    }})();
+
+    // ── Origin Private File System (OPFS) ──────────────────────────
+    (function() {{
+        var _opfsRoot = {{
+            kind: 'directory',
+            name: '',
+            children: new Map(),
+            parent: null
+        }};
+
+        function FileSystemHandle(kind, name) {{
+            this.kind = kind;
+            this.name = name;
+        }}
+        FileSystemHandle.prototype.isSameEntry = function(other) {{
+            if (!other || !(other instanceof FileSystemHandle)) return Promise.resolve(false);
+            return Promise.resolve(this._entry === other._entry);
+        }};
+        globalThis.FileSystemHandle = FileSystemHandle;
+
+        function FileSystemWritableFileStream(entry, initialBuffer) {{
+            var self = this;
+            this._entry = entry;
+            this._position = 0;
+            this._buffer = initialBuffer ? new Uint8Array(initialBuffer) : new Uint8Array(0);
+            this._closed = false;
+
+            var sink = {{
+                write: function(chunk) {{ return self.write(chunk); }},
+                close: function() {{ return self.close(); }},
+                abort: function(reason) {{ return self.abort(reason); }}
+            }};
+            if (typeof WritableStream === 'function') {{
+                try {{
+                    WritableStream.call(this, sink);
+                }} catch(e) {{}}
+            }}
+        }}
+        if (typeof WritableStream === 'function') {{
+            FileSystemWritableFileStream.prototype = Object.create(WritableStream.prototype);
+            FileSystemWritableFileStream.prototype.constructor = FileSystemWritableFileStream;
+        }}
+        FileSystemWritableFileStream.prototype.write = function(data) {{
+            if (this._closed) return Promise.reject(new DOMException("Stream is closed", "InvalidStateError"));
+            var bytes = null;
+            var pos = this._position;
+            if (typeof data === 'string') {{
+                bytes = new TextEncoder().encode(data);
+            }} else if (data instanceof ArrayBuffer) {{
+                bytes = new Uint8Array(data);
+            }} else if (ArrayBuffer.isView(data)) {{
+                bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+            }} else if (data && typeof data === 'object') {{
+                if (data.type === 'seek') {{
+                    return this.seek(data.position);
+                }} else if (data.type === 'truncate') {{
+                    return this.truncate(data.size);
+                }} else if (data.type === 'write') {{
+                    if (typeof data.position === 'number') {{
+                        pos = Math.max(0, data.position);
+                    }}
+                    if (typeof data.data === 'string') {{
+                        bytes = new TextEncoder().encode(data.data);
+                    }} else if (data.data instanceof ArrayBuffer) {{
+                        bytes = new Uint8Array(data.data);
+                    }} else if (ArrayBuffer.isView(data.data)) {{
+                        bytes = new Uint8Array(data.data.buffer, data.data.byteOffset, data.data.byteLength);
+                    }}
+                }}
+            }}
+            if (bytes) {{
+                var needed = pos + bytes.length;
+                if (needed > this._buffer.length) {{
+                    var bigger = new Uint8Array(needed);
+                    bigger.set(this._buffer);
+                    this._buffer = bigger;
+                }}
+                this._buffer.set(bytes, pos);
+                this._position = pos + bytes.length;
+            }}
+            return Promise.resolve();
+        }};
+        FileSystemWritableFileStream.prototype.seek = function(position) {{
+            if (this._closed) return Promise.reject(new DOMException("Stream is closed", "InvalidStateError"));
+            this._position = Math.max(0, parseInt(position) || 0);
+            return Promise.resolve();
+        }};
+        FileSystemWritableFileStream.prototype.truncate = function(size) {{
+            if (this._closed) return Promise.reject(new DOMException("Stream is closed", "InvalidStateError"));
+            var newSize = Math.max(0, parseInt(size) || 0);
+            var nextBuf = new Uint8Array(newSize);
+            nextBuf.set(this._buffer.subarray(0, Math.min(this._buffer.length, newSize)));
+            this._buffer = nextBuf;
+            if (this._position > newSize) {{
+                this._position = newSize;
+            }}
+            return Promise.resolve();
+        }};
+        FileSystemWritableFileStream.prototype.close = function() {{
+            if (this._closed) return Promise.resolve();
+            this._closed = true;
+            this._entry.data = this._buffer;
+            this._entry.lastModified = Date.now();
+            this._entry.locked = false;
+            return Promise.resolve();
+        }};
+        FileSystemWritableFileStream.prototype.abort = function(reason) {{
+            this._closed = true;
+            this._entry.locked = false;
+            return Promise.resolve();
+        }};
+        globalThis.FileSystemWritableFileStream = FileSystemWritableFileStream;
+
+        function FileSystemSyncAccessHandle(entry) {{
+            this._entry = entry;
+            this._cursor = 0;
+            this._closed = false;
+        }}
+        FileSystemSyncAccessHandle.prototype.read = function(buffer, options) {{
+            if (this._closed) throw new DOMException("AccessHandle is closed", "InvalidStateError");
+            if (!buffer || !buffer.buffer) throw new TypeError("buffer must be an ArrayBufferView");
+            var at = (options && typeof options.at === 'number') ? options.at : this._cursor;
+            var fileData = this._entry.data;
+            if (at >= fileData.length) return 0;
+            var available = fileData.length - at;
+            var toRead = Math.min(buffer.byteLength, available);
+            var destU8 = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+            destU8.set(fileData.subarray(at, at + toRead));
+            if (!options || typeof options.at !== 'number') {{
+                this._cursor += toRead;
+            }}
+            return toRead;
+        }};
+        FileSystemSyncAccessHandle.prototype.write = function(buffer, options) {{
+            if (this._closed) throw new DOMException("AccessHandle is closed", "InvalidStateError");
+            if (!buffer || !buffer.buffer) throw new TypeError("buffer must be an ArrayBufferView");
+            var at = (options && typeof options.at === 'number') ? options.at : this._cursor;
+            var srcU8 = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+            var needed = at + srcU8.length;
+            if (needed > this._entry.data.length) {{
+                var bigger = new Uint8Array(needed);
+                bigger.set(this._entry.data);
+                this._entry.data = bigger;
+            }}
+            this._entry.data.set(srcU8, at);
+            this._entry.lastModified = Date.now();
+            if (!options || typeof options.at !== 'number') {{
+                this._cursor += srcU8.length;
+            }}
+            return srcU8.length;
+        }};
+        FileSystemSyncAccessHandle.prototype.truncate = function(newSize) {{
+            if (this._closed) throw new DOMException("AccessHandle is closed", "InvalidStateError");
+            var sz = Math.max(0, parseInt(newSize) || 0);
+            var nextBuf = new Uint8Array(sz);
+            nextBuf.set(this._entry.data.subarray(0, Math.min(this._entry.data.length, sz)));
+            this._entry.data = nextBuf;
+            this._entry.lastModified = Date.now();
+            if (this._cursor > sz) this._cursor = sz;
+        }};
+        FileSystemSyncAccessHandle.prototype.getSize = function() {{
+            if (this._closed) throw new DOMException("AccessHandle is closed", "InvalidStateError");
+            return this._entry.data.length;
+        }};
+        FileSystemSyncAccessHandle.prototype.flush = function() {{
+            if (this._closed) throw new DOMException("AccessHandle is closed", "InvalidStateError");
+        }};
+        FileSystemSyncAccessHandle.prototype.close = function() {{
+            if (this._closed) return;
+            this._closed = true;
+            this._entry.locked = false;
+        }};
+        globalThis.FileSystemSyncAccessHandle = FileSystemSyncAccessHandle;
+
+        function FileSystemFileHandle(entry) {{
+            FileSystemHandle.call(this, 'file', entry.name);
+            this._entry = entry;
+        }}
+        FileSystemFileHandle.prototype = Object.create(FileSystemHandle.prototype);
+        FileSystemFileHandle.prototype.constructor = FileSystemFileHandle;
+        FileSystemFileHandle.prototype.getFile = function() {{
+            var self = this;
+            var u8 = self._entry.data ? self._entry.data.slice() : new Uint8Array(0);
+            var file = new File([u8], self.name, {{
+                type: 'application/octet-stream',
+                lastModified: self._entry.lastModified || Date.now()
+            }});
+            return Promise.resolve(file);
+        }};
+        FileSystemFileHandle.prototype.createWritable = function(options) {{
+            if (this._entry.locked) {{
+                return Promise.reject(new DOMException("The requested file could not be accessed because it is locked.", "NoModificationAllowedError"));
+            }}
+            this._entry.locked = true;
+            var keep = options && options.keepExistingData;
+            var initBuf = keep ? this._entry.data.slice() : new Uint8Array(0);
+            var stream = new FileSystemWritableFileStream(this._entry, initBuf);
+            return Promise.resolve(stream);
+        }};
+        FileSystemFileHandle.prototype.createSyncAccessHandle = function() {{
+            if (this._entry.locked) {{
+                return Promise.reject(new DOMException("The requested file could not be accessed because it is locked.", "NoModificationAllowedError"));
+            }}
+            this._entry.locked = true;
+            return Promise.resolve(new FileSystemSyncAccessHandle(this._entry));
+        }};
+        globalThis.FileSystemFileHandle = FileSystemFileHandle;
+
+        function FileSystemDirectoryHandle(entry) {{
+            FileSystemHandle.call(this, 'directory', entry.name);
+            this._entry = entry;
+        }}
+        FileSystemDirectoryHandle.prototype = Object.create(FileSystemHandle.prototype);
+        FileSystemDirectoryHandle.prototype.constructor = FileSystemDirectoryHandle;
+        FileSystemDirectoryHandle.prototype.getFileHandle = function(name, options) {{
+            if (!name || typeof name !== 'string' || name.indexOf('/') !== -1 || name === '.' || name === '..') {{
+                return Promise.reject(new TypeError("Invalid file name: " + name));
+            }}
+            var create = !!(options && options.create);
+            if (this._entry.children.has(name)) {{
+                var child = this._entry.children.get(name);
+                if (child.kind === 'directory') {{
+                    return Promise.reject(new DOMException("The entry is a directory, not a file.", "TypeMismatchError"));
+                }}
+                return Promise.resolve(new FileSystemFileHandle(child));
+            }}
+            if (create) {{
+                var newChild = {{
+                    kind: 'file',
+                    name: name,
+                    data: new Uint8Array(0),
+                    lastModified: Date.now(),
+                    locked: false,
+                    parent: this._entry
+                }};
+                this._entry.children.set(name, newChild);
+                return Promise.resolve(new FileSystemFileHandle(newChild));
+            }}
+            return Promise.reject(new DOMException("A requested file or directory could not be found.", "NotFoundError"));
+        }};
+        FileSystemDirectoryHandle.prototype.getDirectoryHandle = function(name, options) {{
+            if (!name || typeof name !== 'string' || name.indexOf('/') !== -1 || name === '.' || name === '..') {{
+                return Promise.reject(new TypeError("Invalid directory name: " + name));
+            }}
+            var create = !!(options && options.create);
+            if (this._entry.children.has(name)) {{
+                var child = this._entry.children.get(name);
+                if (child.kind === 'file') {{
+                    return Promise.reject(new DOMException("The entry is a file, not a directory.", "TypeMismatchError"));
+                }}
+                return Promise.resolve(new FileSystemDirectoryHandle(child));
+            }}
+            if (create) {{
+                var newDir = {{
+                    kind: 'directory',
+                    name: name,
+                    children: new Map(),
+                    parent: this._entry
+                }};
+                this._entry.children.set(name, newDir);
+                return Promise.resolve(new FileSystemDirectoryHandle(newDir));
+            }}
+            return Promise.reject(new DOMException("A requested file or directory could not be found.", "NotFoundError"));
+        }};
+        FileSystemDirectoryHandle.prototype.removeEntry = function(name, options) {{
+            if (!this._entry.children.has(name)) {{
+                return Promise.reject(new DOMException("Entry not found: " + name, "NotFoundError"));
+            }}
+            var child = this._entry.children.get(name);
+            var recursive = !!(options && options.recursive);
+            if (child.kind === 'directory' && child.children.size > 0 && !recursive) {{
+                return Promise.reject(new DOMException("The entry is a non-empty directory.", "InvalidModificationError"));
+            }}
+            this._entry.children.delete(name);
+            return Promise.resolve();
+        }};
+        FileSystemDirectoryHandle.prototype.resolve = function(possibleDescendant) {{
+            if (!possibleDescendant || !possibleDescendant._entry) return Promise.resolve(null);
+            var curr = possibleDescendant._entry;
+            var path = [];
+            while (curr && curr !== this._entry) {{
+                path.unshift(curr.name);
+                curr = curr.parent;
+            }}
+            if (curr === this._entry) {{
+                return Promise.resolve(path);
+            }}
+            return Promise.resolve(null);
+        }};
+        function makeAsyncIterator(entries) {{
+            var index = 0;
+            var iter = {{
+                next: function() {{
+                    if (index < entries.length) {{
+                        return Promise.resolve({{ value: entries[index++], done: false }});
+                    }}
+                    return Promise.resolve({{ value: undefined, done: true }});
+                }}
+            }};
+            iter[Symbol.asyncIterator] = function() {{ return this; }};
+            return iter;
+        }}
+        FileSystemDirectoryHandle.prototype.entries = function() {{
+            var list = [];
+            this._entry.children.forEach(function(val, key) {{
+                var handle = val.kind === 'directory' ? new FileSystemDirectoryHandle(val) : new FileSystemFileHandle(val);
+                list.push([key, handle]);
+            }});
+            return makeAsyncIterator(list);
+        }};
+        FileSystemDirectoryHandle.prototype.keys = function() {{
+            var list = [];
+            this._entry.children.forEach(function(val, key) {{
+                list.push(key);
+            }});
+            return makeAsyncIterator(list);
+        }};
+        FileSystemDirectoryHandle.prototype.values = function() {{
+            var list = [];
+            this._entry.children.forEach(function(val) {{
+                var handle = val.kind === 'directory' ? new FileSystemDirectoryHandle(val) : new FileSystemFileHandle(val);
+                list.push(handle);
+            }});
+            return makeAsyncIterator(list);
+        }};
+        FileSystemDirectoryHandle.prototype[Symbol.asyncIterator] = function() {{
+            return this.entries();
+        }};
+        globalThis.FileSystemDirectoryHandle = FileSystemDirectoryHandle;
+
+        if (globalThis.navigator) {{
+            if (!globalThis.navigator.storage) {{
+                globalThis.navigator.storage = {{
+                    estimate: function() {{ return Promise.resolve({{ quota: 1000000000, usage: 0 }}); }},
+                    persist: function() {{ return Promise.resolve(true); }}
+                }};
+            }}
+            globalThis.navigator.storage.getDirectory = function() {{
+                return Promise.resolve(new FileSystemDirectoryHandle(_opfsRoot));
+            }};
+        }}
+    }})();
+
+    // ── WebTransport (HTTP/3 & QUIC) ────────────────────────────────
+    (function() {{
+        function WebTransportError(message, options) {{
+            var err = new Error(message || "WebTransport error");
+            err.name = "WebTransportError";
+            err.source = (options && options.source) || "session";
+            err.streamErrorCode = (options && typeof options.streamErrorCode === 'number') ? options.streamErrorCode : null;
+            Object.setPrototypeOf(err, WebTransportError.prototype);
+            return err;
+        }}
+        WebTransportError.prototype = Object.create(Error.prototype);
+        WebTransportError.prototype.constructor = WebTransportError;
+        globalThis.WebTransportError = WebTransportError;
+
+        function WebTransportBidirectionalStream(readable, writable) {{
+            this.readable = readable;
+            this.writable = writable;
+        }}
+        globalThis.WebTransportBidirectionalStream = WebTransportBidirectionalStream;
+
+        function WebTransport(url, options) {{
+            if (!url) throw new TypeError("WebTransport requires a URL string");
+            var parsed;
+            try {{
+                parsed = new URL(url);
+            }} catch(e) {{
+                throw new DOMException("Invalid WebTransport URL: " + url, "SyntaxError");
+            }}
+            if (parsed.protocol !== 'https:' && parsed.protocol !== 'wts:') {{
+                throw new DOMException("WebTransport URL scheme must be https or wts", "SyntaxError");
+            }}
+            if (parsed.hash && parsed.hash.length > 0) {{
+                throw new DOMException("WebTransport URL must not contain a fragment identifier", "SyntaxError");
+            }}
+
+            this._url = parsed.href;
+            this._options = options || {{}};
+            this.reliability = (options && options.requireUnreliable) ? 'supports-unreliable' : 'supports-unreliable';
+            this.congestionControl = (options && options.congestionControl) || 'default';
+            this._closed = false;
+
+            var self = this;
+            var resolveReady, rejectReady;
+            this.ready = new Promise(function(res, rej) {{
+                resolveReady = res;
+                rejectReady = rej;
+            }});
+
+            var resolveClosed, rejectClosed;
+            this.closed = new Promise(function(res, rej) {{
+                resolveClosed = res;
+                rejectClosed = rej;
+            }});
+
+            this._resolveClosed = resolveClosed;
+            this._rejectClosed = rejectClosed;
+
+            Promise.resolve().then(function() {{
+                if (!self._closed) {{
+                    resolveReady();
+                }}
+            }});
+
+            var resolveDraining;
+            this.draining = new Promise(function(res) {{
+                resolveDraining = res;
+            }});
+            this._resolveDraining = resolveDraining;
+
+            this.datagrams = {{
+                maxDatagramSize: 1232,
+                incomingMaxAge: null,
+                outgoingMaxAge: null,
+                incomingHighWaterMark: 1,
+                outgoingHighWaterMark: 1,
+                readable: new ReadableStream({{
+                    start: function(controller) {{
+                        self._datagramController = controller;
+                    }},
+                    pull: function(controller) {{}},
+                    cancel: function(reason) {{}}
+                }}),
+                writable: new WritableStream({{
+                    write: function(chunk) {{
+                        return Promise.resolve();
+                    }},
+                    close: function() {{
+                        return Promise.resolve();
+                    }},
+                    abort: function(reason) {{
+                        return Promise.resolve();
+                    }}
+                }})
+            }};
+
+            this.incomingBidirectionalStreams = new ReadableStream({{
+                start: function(controller) {{
+                    self._incomingBidiController = controller;
+                }}
+            }});
+            this.incomingUnidirectionalStreams = new ReadableStream({{
+                start: function(controller) {{
+                    self._incomingUniController = controller;
+                }}
+            }});
+        }}
+
+        WebTransport.prototype.createBidirectionalStream = function(options) {{
+            if (this._closed) return Promise.reject(new WebTransportError("Connection closed", {{ source: 'session' }}));
+            var readCtrl;
+            var readable = new ReadableStream({{
+                start: function(controller) {{ readCtrl = controller; }}
+            }});
+            var writable = new WritableStream({{
+                write: function(chunk) {{ return Promise.resolve(); }},
+                close: function() {{ return Promise.resolve(); }}
+            }});
+            var bidi = new WebTransportBidirectionalStream(readable, writable);
+            return Promise.resolve(bidi);
+        }};
+
+        WebTransport.prototype.createUnidirectionalStream = function(options) {{
+            if (this._closed) return Promise.reject(new WebTransportError("Connection closed", {{ source: 'session' }}));
+            var writable = new WritableStream({{
+                write: function(chunk) {{ return Promise.resolve(); }},
+                close: function() {{ return Promise.resolve(); }}
+            }});
+            return Promise.resolve(writable);
+        }};
+
+        WebTransport.prototype.close = function(closeInfo) {{
+            if (this._closed) return;
+            this._closed = true;
+            var code = (closeInfo && typeof closeInfo.closeCode === 'number') ? closeInfo.closeCode : 0;
+            var reason = (closeInfo && closeInfo.reason) || "";
+            this._resolveClosed({{ closeCode: code, reason: reason }});
+        }};
+
+        WebTransport.prototype.getStats = function() {{
+            return Promise.resolve({{
+                bytesSent: 0,
+                packetsSent: 0,
+                bytesReceived: 0,
+                packetsReceived: 0,
+                smoothedRtt: 15.0,
+                rttVariation: 2.0,
+                minRtt: 10.0,
+                datagrams: {{
+                    droppedSendRate: 0,
+                    expiredOutgoing: 0,
+                    lostOutgoing: 0
+                }}
+            }});
+        }};
+        globalThis.WebTransport = WebTransport;
+    }})();
+
+    // ── Multi-Threading, Shared Memory & Cross-Origin Isolation ─────
+    (function() {{
+        var _coi = false;
+        var _coopHeader = "";
+        var _coepHeader = "";
+
+        function evaluateCoi() {{
+            var coopOk = (_coopHeader === 'same-origin');
+            var coepOk = (_coepHeader === 'require-corp' || _coepHeader === 'credentialless');
+            _coi = coopOk && coepOk;
+            return _coi;
+        }}
+
+        Object.defineProperty(globalThis, 'crossOriginIsolated', {{
+            get: function() {{ return _coi; }},
+            set: function(val) {{ _coi = !!val; }},
+            configurable: true,
+            enumerable: true
+        }});
+
+        if (typeof window !== 'undefined') {{
+            Object.defineProperty(window, 'crossOriginIsolated', {{
+                get: function() {{ return _coi; }},
+                set: function(val) {{ _coi = !!val; }},
+                configurable: true,
+                enumerable: true
+            }});
+        }}
+
+        globalThis.__setCrossOriginIsolationHeaders = function(coop, coep) {{
+            _coopHeader = (coop || "").trim();
+            _coepHeader = (coep || "").trim();
+            return evaluateCoi();
+        }};
+
+        globalThis.__setCrossOriginIsolated = function(val) {{
+            _coi = !!val;
+            return _coi;
+        }};
+    }})();
+
 }})();
 "##
     )
-}
-
-fn install_js_shim(context: &mut Context, page_url: &str) {
-    let shim = build_web_apis_shim(page_url);
-    if let Err(e) = context.eval(boa_engine::Source::from_bytes(shim.as_bytes())) {
-        log::error!("Failed to install browser Web API shims: {}", e);
-        #[cfg(test)]
-        panic!("Failed to install browser Web API shims: {}", e);
-    }
 }

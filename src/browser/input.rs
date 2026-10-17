@@ -1,12 +1,12 @@
 //! Keyboard, mouse, scroll, focus, and picker interaction handling.
 
-use mango_html::dom::{NodeData, NodeId};
-use mango_platform::input::{KeyEvent, KeyState, MangoKey, MouseButton};
+use super::BrowserChrome;
+use super::forms::find_element_by_id;
 use crate::chrome_ui::*;
 use crate::context_menu::*;
 use crate::form_handler::*;
-use super::BrowserChrome;
-use super::forms::find_element_by_id;
+use mango_html::dom::{NodeData, NodeId};
+use mango_platform::input::{KeyEvent, KeyState, MangoKey, MouseButton};
 
 impl BrowserChrome {
     /// Handles mouse wheel scrolling with clamping.
@@ -74,10 +74,9 @@ impl BrowserChrome {
         }
     }
 
-
     /// Handles keyboard events.
     pub fn handle_key_event(&mut self, event: &KeyEvent) {
-        // F12 or Ctrl+Shift+I toggles DevTools (GAP-022)
+        // F12 or Ctrl+Shift+I toggles DevTools
         if event.key == MangoKey::F12
             || (event.modifiers.ctrl
                 && event.modifiers.shift
@@ -199,7 +198,7 @@ impl BrowserChrome {
                 }
             }
 
-            // Tab / Shift+Tab keyboard focus navigation (UX-3.4.1)
+            // Tab / Shift+Tab keyboard focus navigation
             if event.key == MangoKey::Tab && !event.modifiers.ctrl {
                 self.focus_next_element(event.modifiers.shift);
                 return;
@@ -267,7 +266,7 @@ impl BrowserChrome {
                 return;
             }
 
-            // Tab / Shift+Tab keyboard focus navigation (UX-3.4.1)
+            // Tab / Shift+Tab keyboard focus navigation
             if event.key == MangoKey::Tab && !event.modifiers.ctrl {
                 self.focus_next_element(event.modifiers.shift);
                 return;
@@ -707,7 +706,6 @@ impl BrowserChrome {
         }
     }
 
-
     /// Toggles the Find-in-Page search bar overlay (Ctrl+F).
     pub fn toggle_find(&mut self) {
         self.find_in_page.active = !self.find_in_page.active;
@@ -834,7 +832,6 @@ impl BrowserChrome {
         self.page_dirty = true;
     }
 
-
     /// Sets the currently hovered DOM element, updating `data-mango-hover` in the active document.
     /// Returns `true` if the hovered element chain changed.
     pub fn set_hover_node(&mut self, node_id: Option<mango_html::dom::NodeId>) -> bool {
@@ -928,7 +925,6 @@ impl BrowserChrome {
             false
         }
     }
-
 
     /// Handles mouse movement and updates hovered target. Returns `true` if hover state changed.
     pub fn handle_mouse_move(&mut self, x: f32, y: f32) -> bool {
@@ -1233,13 +1229,9 @@ impl BrowserChrome {
 
     /// Handles mouse clicks on UI elements, context menu, form inputs, or links in content.
     pub fn handle_mouse_click(&mut self, button: MouseButton, state: KeyState) {
-        if state == KeyState::Released && button == MouseButton::Left {
-            self.scrollbar_dragging = false;
-
-            let mut link_to_navigate = None;
-
-            if self.mouse_y > HEADER_HEIGHT && self.mouse_y < self.height as f32 - STATUS_BAR_HEIGHT
-            {
+        // Middle click (auxiliary click) on links opens in a background tab
+        if state == KeyState::Released && button == MouseButton::Middle {
+            if self.mouse_y > HEADER_HEIGHT && self.mouse_y < self.height as f32 - STATUS_BAR_HEIGHT {
                 let content_x = self.mouse_x;
                 let content_y = self.mouse_y - HEADER_HEIGHT + self.scroll_y;
                 let hit_link = self
@@ -1249,12 +1241,43 @@ impl BrowserChrome {
                         root.hit_test_link(mango_core::Point::new(content_x, content_y))
                     })
                     .map(|s| s.to_string());
+                if let Some(target_href) = hit_link {
+                    let nav_url = if let Some(base) = &self.base_url {
+                        base.resolve(&target_href)
+                            .map(|u| u.to_string())
+                            .unwrap_or_else(|_| target_href.clone())
+                    } else {
+                        target_href
+                    };
+                    log::info!("Middle-click link: opening in background tab: {}", nav_url);
+                    self.new_background_tab(&nav_url);
+                }
+            }
+            return;
+        }
+
+        if state == KeyState::Released && button == MouseButton::Left {
+            self.scrollbar_dragging = false;
+
+            let mut link_to_navigate: Option<(String, Option<String>)> = None;
+
+            if self.mouse_y > HEADER_HEIGHT && self.mouse_y < self.height as f32 - STATUS_BAR_HEIGHT
+            {
+                let content_x = self.mouse_x;
+                let content_y = self.mouse_y - HEADER_HEIGHT + self.scroll_y;
+                let hit_link = self
+                    .root_box
+                    .as_ref()
+                    .and_then(|root| {
+                        root.hit_test_link_full(mango_core::Point::new(content_x, content_y))
+                    })
+                    .map(|(s, f)| (s.to_string(), f.map(|frame| frame.to_string())));
                 let hit_node = self
                     .root_box
                     .as_ref()
                     .and_then(|root| root.hit_test(mango_core::Point::new(content_x, content_y)));
 
-                if let Some(target_href) = hit_link {
+                if let Some((target_href, target_frame)) = hit_link {
                     if let Some(node_id) = hit_node {
                         self.fire_dom_event(node_id, "click");
                     }
@@ -1265,8 +1288,12 @@ impl BrowserChrome {
                     } else {
                         target_href
                     };
-                    log::info!("Navigating to clicked link: {}", nav_url);
-                    link_to_navigate = Some(nav_url);
+                    log::info!(
+                        "Navigating to clicked link: {} (target={:?})",
+                        nav_url,
+                        target_frame
+                    );
+                    link_to_navigate = Some((nav_url, target_frame));
                 } else if let Some(node_id) = hit_node {
                     self.fire_dom_event(node_id, "click");
                 }
@@ -1287,8 +1314,12 @@ impl BrowserChrome {
                     self.fire_dom_event(node_id, "change");
                 }
             }
-            if let Some(nav_url) = link_to_navigate {
-                self.navigate(&nav_url);
+            if let Some((nav_url, target_frame)) = link_to_navigate {
+                if target_frame.as_deref() == Some("_blank") {
+                    self.new_tab_and_navigate(&nav_url);
+                } else {
+                    self.navigate(&nav_url);
+                }
             }
             return;
         }
@@ -1389,6 +1420,11 @@ impl BrowserChrome {
                 } else {
                     link.to_string()
                 };
+                items.push(ContextMenuItem {
+                    label: "Open Link in New Tab".to_string(),
+                    action: ContextMenuAction::OpenLinkInNewTab(resolved.clone()),
+                    enabled: true,
+                });
                 items.push(ContextMenuItem {
                     label: "Copy Link Address".to_string(),
                     action: ContextMenuAction::CopyLink(resolved),
@@ -1506,6 +1542,9 @@ impl BrowserChrome {
                         ContextMenuAction::Back => self.go_back(),
                         ContextMenuAction::Forward => self.go_forward(),
                         ContextMenuAction::Reload => self.reload(),
+                        ContextMenuAction::OpenLinkInNewTab(url) => {
+                            self.new_tab_and_navigate(url);
+                        }
                         ContextMenuAction::CopyLink(url) => {
                             if let Ok(mut cb) = arboard::Clipboard::new() {
                                 let _ = cb.set_text(url.clone());
@@ -1732,7 +1771,7 @@ impl BrowserChrome {
         }
     }
 
-    /// Collects all interactive elements in DOM tree order that can receive keyboard focus (UX-3.4.1).
+    /// Collects all interactive elements in DOM tree order that can receive keyboard focus.
     pub fn collect_focusable_elements(&self) -> Vec<mango_html::dom::NodeId> {
         let doc = self.document_view();
         let mut focusable = Vec::new();
@@ -1781,7 +1820,7 @@ impl BrowserChrome {
         focusable
     }
 
-    /// Advances or reverses focus among interactive elements on Tab / Shift+Tab (UX-3.4.1).
+    /// Advances or reverses focus among interactive elements on Tab / Shift+Tab.
     pub fn focus_next_element(&mut self, reverse: bool) {
         let focusable = self.collect_focusable_elements();
         if focusable.is_empty() {
@@ -2890,4 +2929,3 @@ impl BrowserChrome {
         }
     }
 }
-

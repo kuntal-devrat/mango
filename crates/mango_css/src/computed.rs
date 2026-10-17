@@ -15,7 +15,7 @@ use crate::values::{
     BackgroundLayer, BackgroundRepeat, BackgroundSize, BorderCollapse, BorderImage, BorderStyle,
     BoxShadow, BoxSizing, CaptionSide, Clear, Cursor, Direction, Display, FlexDirection, FlexWrap,
     Float, FontStyle, FontWeight, GridAutoFlow, GridPlacement, GridTrackSize, Isolation,
-    JustifyContent, Length, ListStylePosition, ListStyleType, MaskComposite, Overflow, Position,
+    JustifyContent, JustifyItems, JustifySelf, Length, ListStylePosition, ListStyleType, MaskComposite, Overflow, Position,
     TableLayout, TextAlign, TextDecoration, TextOverflow, TextTransform, UnicodeBidi, Value,
     VerticalAlign, Visibility, WhiteSpace,
 };
@@ -110,6 +110,8 @@ pub struct ComputedStyle {
     pub flex_direction: FlexDirection,
     pub flex_wrap: FlexWrap,
     pub justify_content: JustifyContent,
+    pub justify_items: JustifyItems,
+    pub justify_self: JustifySelf,
     pub align_items: AlignItems,
     pub align_self: AlignSelf,
     pub align_content: AlignContent,
@@ -133,7 +135,7 @@ pub struct ComputedStyle {
     pub grid_row_start: GridPlacement,
     pub grid_row_end: GridPlacement,
 
-    // Phase 6 CSS properties
+    // Visual formatting and display properties
     pub overflow_x: Overflow,
     pub overflow_y: Overflow,
     pub visibility: Visibility,
@@ -170,6 +172,8 @@ pub struct ComputedStyle {
     pub column_span: crate::values::ColumnSpan,
     pub break_inside: crate::values::BreakInside,
     pub contain: crate::values::Contain,
+    pub contain_intrinsic_width: Option<Length>,
+    pub contain_intrinsic_height: Option<Length>,
     pub content_visibility: crate::values::ContentVisibility,
     pub writing_mode: crate::values::WritingMode,
     pub resize: crate::values::Resize,
@@ -177,7 +181,7 @@ pub struct ComputedStyle {
     pub scrollbar_color: Option<(Color, Color)>,
     pub appearance: Appearance,
 
-    // Phase 7 CSS properties
+    // Transform, filter, and animation properties
     /// CSS `transform` property — list of transform functions.
     pub transform: crate::values::Transform,
     /// CSS `transform-origin` in px (defaults to 50% 50% = center).
@@ -219,7 +223,7 @@ pub struct ComputedStyle {
     /// CSS `will-change` property names list.
     pub will_change_properties: Vec<String>,
 
-    // Phase 2 / Section 6.4 Text & Font properties
+    // Text and typography properties
     pub word_break: crate::values::WordBreak,
     pub overflow_wrap: crate::values::OverflowWrap,
     pub hyphens: crate::values::Hyphens,
@@ -232,6 +236,18 @@ pub struct ComputedStyle {
     pub line_clamp: crate::values::LineClamp,
     pub font_display: crate::values::FontDisplay,
     pub accent_color: Option<Color>,
+
+    // Anchor positioning, motion, and timeline properties
+    pub text_wrap: crate::values::TextWrap,
+    pub anchor_name: Option<String>,
+    pub position_anchor: Option<String>,
+    pub position_try_fallbacks: Vec<String>,
+    pub scroll_timeline_name: Option<String>,
+    pub scroll_timeline_axis: crate::values::ScrollTimelineAxis,
+    pub view_timeline_name: Option<String>,
+    pub view_timeline_axis: crate::values::ScrollTimelineAxis,
+    pub animation_timeline: Option<String>,
+    pub view_transition_name: Option<String>,
 }
 
 impl ComputedStyle {
@@ -423,6 +439,8 @@ impl Default for ComputedStyle {
             flex_direction: FlexDirection::Row,
             flex_wrap: FlexWrap::NoWrap,
             justify_content: JustifyContent::FlexStart,
+            justify_items: JustifyItems::Stretch,
+            justify_self: JustifySelf::Auto,
             align_items: AlignItems::Stretch,
             align_self: AlignSelf::Auto,
             align_content: AlignContent::Stretch,
@@ -481,6 +499,8 @@ impl Default for ComputedStyle {
             column_span: crate::values::ColumnSpan::None,
             break_inside: crate::values::BreakInside::Auto,
             contain: crate::values::Contain::None,
+            contain_intrinsic_width: None,
+            contain_intrinsic_height: None,
             content_visibility: crate::values::ContentVisibility::Visible,
             writing_mode: crate::values::WritingMode::HorizontalTb,
             resize: crate::values::Resize::None,
@@ -521,6 +541,17 @@ impl Default for ComputedStyle {
             line_clamp: crate::values::LineClamp::None,
             font_display: crate::values::FontDisplay::Auto,
             accent_color: None,
+
+            text_wrap: crate::values::TextWrap::default(),
+            anchor_name: None,
+            position_anchor: None,
+            position_try_fallbacks: Vec::new(),
+            scroll_timeline_name: None,
+            scroll_timeline_axis: crate::values::ScrollTimelineAxis::default(),
+            view_timeline_name: None,
+            view_timeline_axis: crate::values::ScrollTimelineAxis::default(),
+            animation_timeline: None,
+            view_transition_name: None,
         }
     }
 }
@@ -549,7 +580,13 @@ fn resolve_value_vars(
                     .and_then(|fb| resolve_value_vars(fb, custom_props, visited));
             }
             visited.insert(name.clone());
-            let res = if let Some(target_val) = custom_props.get(name) {
+            let target_val_opt = custom_props.get(name).or_else(|| {
+                custom_props
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case(name))
+                    .map(|(_, v)| v)
+            });
+            let res = if let Some(target_val) = target_val_opt {
                 resolve_value_vars(target_val, custom_props, visited).or_else(|| {
                     fallback
                         .as_ref()
@@ -563,10 +600,15 @@ fn resolve_value_vars(
             visited.remove(name);
             res
         }
+        Value::Gradient(g) => {
+            let mut grad = (**g).clone();
+            grad.resolve_var_colors(custom_props);
+            Some(Value::Gradient(Box::new(grad)))
+        }
         Value::List(items) => {
             let mut has_var = false;
             for item in items {
-                if matches!(item, Value::Var { .. }) {
+                if matches!(item, Value::Var { .. } | Value::Gradient(_)) {
                     has_var = true;
                     break;
                 }
@@ -633,6 +675,7 @@ pub fn compute_style_with_index(
         style.font_variation_settings = parent.font_variation_settings.clone();
         style.accent_color = parent.accent_color;
         style.quotes = parent.quotes.clone();
+        style.text_wrap = parent.text_wrap;
     }
 
     // Collect custom properties defined directly on this element
@@ -889,6 +932,7 @@ fn apply_background_image(style: &mut ComputedStyle, val: &Value) {
         Value::Gradient(g) => {
             let mut grad = (**g).clone();
             grad.resolve_current_color(style.color);
+            grad.resolve_var_colors(&style.custom_properties);
             style.background_gradient = Some(grad.clone());
             style.background_layers = vec![BackgroundLayer {
                 gradient: Some(Box::new(grad)),
@@ -916,6 +960,7 @@ fn apply_background_image(style: &mut ComputedStyle, val: &Value) {
                     Value::Gradient(g) => {
                         let mut grad = (**g).clone();
                         grad.resolve_current_color(style.color);
+                        grad.resolve_var_colors(&style.custom_properties);
                         layer.gradient = Some(Box::new(grad));
                     }
                     _ => {}
@@ -934,6 +979,34 @@ fn apply_background_image(style: &mut ComputedStyle, val: &Value) {
             style.background_layers.clear();
         }
         _ => {}
+    }
+}
+
+fn parse_intrinsic_length(val: &Value) -> Option<Length> {
+    match val {
+        Value::Length(l) => Some(*l),
+        Value::Keyword(k) | Value::String(k) => {
+            let s = k.trim();
+            if s.eq_ignore_ascii_case("none") {
+                None
+            } else {
+                let stripped = s.strip_prefix("auto").unwrap_or(s).trim();
+                if stripped.is_empty() || stripped.eq_ignore_ascii_case("none") {
+                    None
+                } else {
+                    Length::parse(stripped)
+                }
+            }
+        }
+        Value::List(items) => {
+            for item in items.iter().rev() {
+                if let Some(l) = parse_intrinsic_length(item) {
+                    return Some(l);
+                }
+            }
+            None
+        }
+        _ => None,
     }
 }
 
@@ -1103,6 +1176,7 @@ pub fn apply_cascaded_properties(
                 Value::Gradient(g) => {
                     let mut grad = (**g).clone();
                     grad.resolve_current_color(style.color);
+                    grad.resolve_var_colors(&style.custom_properties);
                     style.background_gradient = Some(grad);
                 }
                 Value::Keyword(k) if k.eq_ignore_ascii_case("none") => {
@@ -1756,6 +1830,60 @@ pub fn apply_cascaded_properties(
                 },
                 _ => {}
             },
+            "justify-items" => match val {
+                Value::JustifyItems(ji) => style.justify_items = *ji,
+                Value::TextAlign(TextAlign::Center) => style.justify_items = JustifyItems::Center,
+                Value::JustifyContent(JustifyContent::FlexStart) => {
+                    style.justify_items = JustifyItems::FlexStart
+                }
+                Value::JustifyContent(JustifyContent::FlexEnd) => {
+                    style.justify_items = JustifyItems::FlexEnd
+                }
+                Value::JustifyContent(JustifyContent::Center) => {
+                    style.justify_items = JustifyItems::Center
+                }
+                Value::Keyword(kw) => match kw.to_ascii_lowercase().as_str() {
+                    "center" => style.justify_items = JustifyItems::Center,
+                    "start" | "flex-start" => style.justify_items = JustifyItems::FlexStart,
+                    "end" | "flex-end" => style.justify_items = JustifyItems::FlexEnd,
+                    "stretch" => style.justify_items = JustifyItems::Stretch,
+                    "baseline" => style.justify_items = JustifyItems::Baseline,
+                    _ => {}
+                },
+                _ => {}
+            },
+            "justify-self" => match val {
+                Value::JustifySelf(js) => style.justify_self = *js,
+                Value::JustifyItems(ji) => {
+                    style.justify_self = match ji {
+                        JustifyItems::Stretch => JustifySelf::Stretch,
+                        JustifyItems::FlexStart => JustifySelf::FlexStart,
+                        JustifyItems::FlexEnd => JustifySelf::FlexEnd,
+                        JustifyItems::Center => JustifySelf::Center,
+                        JustifyItems::Baseline => JustifySelf::Baseline,
+                    };
+                }
+                Value::TextAlign(TextAlign::Center) => style.justify_self = JustifySelf::Center,
+                Value::JustifyContent(JustifyContent::FlexStart) => {
+                    style.justify_self = JustifySelf::FlexStart
+                }
+                Value::JustifyContent(JustifyContent::FlexEnd) => {
+                    style.justify_self = JustifySelf::FlexEnd
+                }
+                Value::JustifyContent(JustifyContent::Center) => {
+                    style.justify_self = JustifySelf::Center
+                }
+                Value::Keyword(kw) => match kw.to_ascii_lowercase().as_str() {
+                    "auto" => style.justify_self = JustifySelf::Auto,
+                    "center" => style.justify_self = JustifySelf::Center,
+                    "start" | "flex-start" => style.justify_self = JustifySelf::FlexStart,
+                    "end" | "flex-end" => style.justify_self = JustifySelf::FlexEnd,
+                    "stretch" => style.justify_self = JustifySelf::Stretch,
+                    "baseline" => style.justify_self = JustifySelf::Baseline,
+                    _ => {}
+                },
+                _ => {}
+            },
             "align-items" => match val {
                 Value::AlignItems(ai) => style.align_items = *ai,
                 Value::TextAlign(TextAlign::Center) => style.align_items = AlignItems::Center,
@@ -1900,7 +2028,7 @@ pub fn apply_cascaded_properties(
                 _ => {}
             },
 
-            // Phase 6 CSS properties
+            // Visual formatting properties
             "overflow" => match val {
                 Value::Overflow(o) => {
                     style.overflow_x = *o;
@@ -2224,29 +2352,69 @@ pub fn apply_cascaded_properties(
                 },
                 _ => {}
             },
-            "contain" => {
-                if let Value::Keyword(k) = val {
-                    style.contain = match k.to_ascii_lowercase().as_str() {
-                        "strict" => crate::values::Contain::Strict,
-                        "content" => crate::values::Contain::Content,
-                        "paint" => crate::values::Contain::Paint,
-                        "layout" => crate::values::Contain::Layout,
-                        "size" => crate::values::Contain::Size,
-                        "style" => crate::values::Contain::Style,
-                        "inline-size" => crate::values::Contain::InlineSize,
-                        _ => crate::values::Contain::None,
-                    };
+            "contain" => match val {
+                Value::Keyword(k) | Value::String(k) => {
+                    if let Some(c) = crate::values::Contain::parse(k) {
+                        style.contain = c;
+                    }
                 }
+                Value::List(items) => {
+                    let combined = items
+                        .iter()
+                        .filter_map(|item| match item {
+                            Value::Keyword(s) | Value::String(s) => Some(s.as_str()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    if let Some(c) = crate::values::Contain::parse(&combined) {
+                        style.contain = c;
+                    }
+                }
+                _ => {}
+            },
+            "contain-intrinsic-width" => {
+                style.contain_intrinsic_width = parse_intrinsic_length(val);
             }
-            "content-visibility" => {
-                if let Value::Keyword(k) = val {
+            "contain-intrinsic-height" => {
+                style.contain_intrinsic_height = parse_intrinsic_length(val);
+            }
+            "contain-intrinsic-size" => match val {
+                Value::List(items) if items.len() >= 2 => {
+                    style.contain_intrinsic_width = parse_intrinsic_length(&items[0]);
+                    style.contain_intrinsic_height = parse_intrinsic_length(&items[1]);
+                }
+                _ => {
+                    let len = parse_intrinsic_length(val);
+                    style.contain_intrinsic_width = len;
+                    style.contain_intrinsic_height = len;
+                }
+            },
+            "content-visibility" => match val {
+                Value::Overflow(Overflow::Hidden) => {
+                    style.content_visibility = crate::values::ContentVisibility::Hidden;
+                }
+                Value::Overflow(Overflow::Auto) => {
+                    style.content_visibility = crate::values::ContentVisibility::Auto;
+                }
+                Value::Overflow(Overflow::Visible) => {
+                    style.content_visibility = crate::values::ContentVisibility::Visible;
+                }
+                Value::Visibility(Visibility::Hidden) => {
+                    style.content_visibility = crate::values::ContentVisibility::Hidden;
+                }
+                Value::Visibility(Visibility::Visible) => {
+                    style.content_visibility = crate::values::ContentVisibility::Visible;
+                }
+                Value::Keyword(k) | Value::String(k) => {
                     style.content_visibility = match k.to_ascii_lowercase().as_str() {
                         "auto" => crate::values::ContentVisibility::Auto,
                         "hidden" => crate::values::ContentVisibility::Hidden,
                         _ => crate::values::ContentVisibility::Visible,
                     };
                 }
-            }
+                _ => {}
+            },
             "writing-mode" => {
                 if let Value::Keyword(k) = val {
                     style.writing_mode = match k.to_ascii_lowercase().as_str() {
@@ -2506,7 +2674,7 @@ pub fn apply_cascaded_properties(
                 _ => {}
             },
 
-            // Phase 7 CSS properties
+            // Transform and filter properties
             "transform" => match val {
                 Value::Transform(t) => style.transform = t.clone(),
                 Value::Keyword(k) if k.eq_ignore_ascii_case("none") => {
@@ -2945,6 +3113,145 @@ pub fn apply_cascaded_properties(
                     }
                 }
             }
+            "text-wrap" => match val {
+                Value::Keyword(k) | Value::String(k) => {
+                    if let Some(tw) = crate::values::TextWrap::parse(k) {
+                        style.text_wrap = tw;
+                    }
+                }
+                _ => {}
+            },
+            "anchor-name" => match val {
+                Value::Keyword(k) | Value::String(k) => {
+                    if k.eq_ignore_ascii_case("none") {
+                        style.anchor_name = None;
+                    } else {
+                        style.anchor_name = Some(k.clone());
+                    }
+                }
+                _ => {}
+            },
+            "position-anchor" => match val {
+                Value::Keyword(k) | Value::String(k) => {
+                    if k.eq_ignore_ascii_case("auto") {
+                        style.position_anchor = None;
+                    } else {
+                        style.position_anchor = Some(k.clone());
+                    }
+                }
+                _ => {}
+            },
+            "position-try-fallbacks" | "position-try-options" => match val {
+                Value::Keyword(k) | Value::String(k) => {
+                    if k.eq_ignore_ascii_case("none") {
+                        style.position_try_fallbacks.clear();
+                    } else {
+                        style.position_try_fallbacks = k
+                            .split(',')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect();
+                    }
+                }
+                Value::List(items) => {
+                    style.position_try_fallbacks = items
+                        .iter()
+                        .filter_map(|it| match it {
+                            Value::Keyword(s) | Value::String(s) => Some(s.clone()),
+                            _ => None,
+                        })
+                        .collect();
+                }
+                _ => {}
+            },
+            "scroll-timeline-name" => match val {
+                Value::Keyword(k) | Value::String(k) => {
+                    if k.eq_ignore_ascii_case("none") {
+                        style.scroll_timeline_name = None;
+                    } else {
+                        style.scroll_timeline_name = Some(k.clone());
+                    }
+                }
+                _ => {}
+            },
+            "scroll-timeline-axis" => match val {
+                Value::Keyword(k) | Value::String(k) => {
+                    if let Some(axis) = crate::values::ScrollTimelineAxis::parse(k) {
+                        style.scroll_timeline_axis = axis;
+                    }
+                }
+                _ => {}
+            },
+            "scroll-timeline" => match val {
+                Value::Keyword(k) | Value::String(k) => {
+                    let parts: Vec<&str> = k.split_whitespace().collect();
+                    if let Some(&first) = parts.first() {
+                        if !first.eq_ignore_ascii_case("none") {
+                            style.scroll_timeline_name = Some(first.to_string());
+                        }
+                    }
+                    if let Some(&second) = parts.get(1) {
+                        if let Some(axis) = crate::values::ScrollTimelineAxis::parse(second) {
+                            style.scroll_timeline_axis = axis;
+                        }
+                    }
+                }
+                _ => {}
+            },
+            "view-timeline-name" => match val {
+                Value::Keyword(k) | Value::String(k) => {
+                    if k.eq_ignore_ascii_case("none") {
+                        style.view_timeline_name = None;
+                    } else {
+                        style.view_timeline_name = Some(k.clone());
+                    }
+                }
+                _ => {}
+            },
+            "view-timeline-axis" => match val {
+                Value::Keyword(k) | Value::String(k) => {
+                    if let Some(axis) = crate::values::ScrollTimelineAxis::parse(k) {
+                        style.view_timeline_axis = axis;
+                    }
+                }
+                _ => {}
+            },
+            "view-timeline" => match val {
+                Value::Keyword(k) | Value::String(k) => {
+                    let parts: Vec<&str> = k.split_whitespace().collect();
+                    if let Some(&first) = parts.first() {
+                        if !first.eq_ignore_ascii_case("none") {
+                            style.view_timeline_name = Some(first.to_string());
+                        }
+                    }
+                    if let Some(&second) = parts.get(1) {
+                        if let Some(axis) = crate::values::ScrollTimelineAxis::parse(second) {
+                            style.view_timeline_axis = axis;
+                        }
+                    }
+                }
+                _ => {}
+            },
+            "animation-timeline" => match val {
+                Value::Keyword(k) | Value::String(k) => {
+                    if k.eq_ignore_ascii_case("none") || k.eq_ignore_ascii_case("auto") {
+                        style.animation_timeline = None;
+                    } else {
+                        style.animation_timeline = Some(k.clone());
+                    }
+                }
+                _ => {}
+            },
+            "view-transition-name" => match val {
+                Value::Keyword(k) | Value::String(k) => {
+                    if k.eq_ignore_ascii_case("none") {
+                        style.view_transition_name = None;
+                    } else {
+                        style.view_transition_name = Some(k.clone());
+                    }
+                }
+                _ => {}
+            },
             // Silently accept but ignore vendor-prefixed and future properties
             _ => {}
         }

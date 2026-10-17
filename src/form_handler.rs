@@ -1,4 +1,4 @@
-//! Form handler and interactive picker subsystem for Mango Browser (OPT-001).
+//! Form handler and interactive picker subsystem for Mango Browser.
 //!
 //! Provides overlay management, geometry calculation, hit-testing, and rendering
 //! for `<select>` dropdowns and specialized pickers (`color`, `date`, `time`, `file`).
@@ -443,6 +443,104 @@ pub fn month_name(month: u32) -> &'static str {
     }
 }
 
+/// An interactive HTML5 constraint validation bubble overlay.
+///
+/// Displayed when `reportValidity()` fails or form submission is rejected
+/// due to constraint validation violations, pointing to the invalid form control.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ValidationBubble {
+    pub target_node_id: mango_html::dom::NodeId,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub message: String,
+}
+
+impl ValidationBubble {
+    /// Constructs a new validation bubble positioned at `(x, y)` with the given error message.
+    pub fn new(target_node_id: mango_html::dom::NodeId, x: f32, y: f32, message: String) -> Self {
+        let text_len = message.chars().count();
+        let width = ((text_len as f32 * 7.5) + 36.0).clamp(160.0, 360.0);
+        let height = 36.0;
+        Self {
+            target_node_id,
+            x,
+            y,
+            width,
+            height,
+            message,
+        }
+    }
+
+    /// Tests whether coordinates are within the validation bubble boundaries.
+    pub fn contains(&self, px: f32, py: f32) -> bool {
+        px >= self.x && px <= self.x + self.width && py >= self.y && py <= self.y + self.height
+    }
+
+    /// Renders the validation bubble overlay display commands.
+    pub fn render(&self) -> Vec<DisplayCommand> {
+        let mut dl = Vec::new();
+        let bubble_rect = Rect::new(self.x, self.y, self.width, self.height);
+
+        // Drop shadow
+        dl.push(DisplayCommand::FillRoundedRect {
+            rect: Rect::new(self.x + 1.0, self.y + 2.0, self.width, self.height),
+            color: Color::rgba(0, 0, 0, 45),
+            radii: [6.0, 6.0, 6.0, 6.0],
+        });
+
+        // Bubble background (warm white)
+        dl.push(DisplayCommand::FillRoundedRect {
+            rect: bubble_rect,
+            color: Color::rgb(255, 255, 255),
+            radii: [6.0, 6.0, 6.0, 6.0],
+        });
+
+        // Warning accent border
+        dl.push(DisplayCommand::DrawBorder {
+            rect: bubble_rect,
+            color: Color::rgb(220, 53, 69),
+            widths: BorderWidths {
+                top: 1.0,
+                right: 1.0,
+                bottom: 1.0,
+                left: 1.0,
+            },
+            radii: [6.0; 4],
+        });
+
+        // Alert badge
+        dl.push(DisplayCommand::FillRoundedRect {
+            rect: Rect::new(self.x + 8.0, self.y + 10.0, 16.0, 16.0),
+            color: Color::rgb(220, 53, 69),
+            radii: [8.0; 4],
+        });
+        dl.push(DisplayCommand::draw_text(
+            "!",
+            self.x + 13.0,
+            self.y + 11.0,
+            Color::rgb(255, 255, 255),
+            12.0,
+            FontWeight::Bold,
+            FontFamily::SansSerif,
+        ));
+
+        // Message text
+        dl.push(DisplayCommand::draw_text(
+            &self.message,
+            self.x + 30.0,
+            self.y + 11.0,
+            Color::rgb(33, 37, 41),
+            13.0,
+            FontWeight::Regular,
+            FontFamily::SansSerif,
+        ));
+
+        dl
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -488,5 +586,22 @@ mod tests {
             50.0 + PICKER_SWATCH_PAD + 2.0,
         );
         assert_eq!(hit, Some(PickerHit::ColorSwatch(0)));
+    }
+
+    #[test]
+    fn test_validation_bubble_geometry_and_render() {
+        let bubble = ValidationBubble::new(
+            mango_html::dom::NodeId::from_raw(42),
+            100.0,
+            200.0,
+            "Please fill out this field.".to_string(),
+        );
+        assert!(bubble.width >= 160.0);
+        assert_eq!(bubble.height, 36.0);
+        assert!(bubble.contains(120.0, 210.0));
+        assert!(!bubble.contains(50.0, 50.0));
+
+        let commands = bubble.render();
+        assert!(!commands.is_empty());
     }
 }

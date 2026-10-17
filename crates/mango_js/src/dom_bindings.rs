@@ -1,14 +1,9 @@
-//! DOM API bindings that bridge Boa JS engine to Mango's arena-based DOM.
-//!
-//! Registers native functions on the Boa context so JavaScript can call
-//! `document.getElementById()`, `document.createElement()`, `element.textContent`, etc.
+//! DOM API bindings that bridge JavaScript to Mango's arena-based DOM.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use boa_engine::object::builtins::JsArray;
-use boa_engine::{Context, JsArgs, JsValue, NativeFunction};
-use mango_html::dom::{Document, NodeData, NodeId, QuirksMode};
+use mango_html::dom::{Document, NodeData, NodeId};
 
 /// Shared document reference accessible from JS callbacks.
 pub type SharedDocument = Rc<RefCell<Document>>;
@@ -16,7 +11,7 @@ pub type SharedDocument = Rc<RefCell<Document>>;
 /// Flag indicating the DOM was mutated and needs re-layout.
 pub type DomDirtyFlag = Rc<RefCell<bool>>;
 
-/// Published layout geometry: DOM node id → `[x, y, width, height]` in viewport pixels.
+/// Published layout geometry: DOM node id -> `[x, y, width, height]` in viewport pixels.
 ///
 /// The browser refreshes this after every layout so that JS measurement APIs
 /// (`getBoundingClientRect`, `offsetWidth`, `elementFromPoint`) return real values
@@ -27,2053 +22,13 @@ pub type LayoutBounds = Rc<RefCell<std::collections::HashMap<u32, [f32; 4]>>>;
 ///
 /// The browser owns the jar (it loads and saves it from the profile) and shares
 /// that exact handle with the HTTP loader and this runtime, so a script write is
-/// visible to the very next request with no copy step (GAP-016).
+/// visible to the very next request with no copy step.
 pub type CookieStore = std::sync::Arc<std::sync::Mutex<mango_net::CookieJar>>;
 
 pub(crate) fn jar_lock(store: &CookieStore) -> std::sync::MutexGuard<'_, mango_net::CookieJar> {
     store
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-/// Helper macro to create an unsafe NativeFunction::from_closure.
-/// SAFETY: Mango is single-threaded; closures capture only Rc<RefCell<_>> values.
-macro_rules! native_fn {
-    ($closure:expr) => {
-        unsafe { NativeFunction::from_closure($closure) }
-    };
-}
-
-/// Registers the `document` object with DOM query and mutation methods.
-pub fn register_document_api(
-    context: &mut Context,
-    doc: SharedDocument,
-    dirty: DomDirtyFlag,
-    layout_bounds: LayoutBounds,
-    cookie_jar: CookieStore,
-    page_url: String,
-) {
-    // document.getElementById(id)
-    let doc_ref = doc.clone();
-    let get_element_by_id = native_fn!(move |_this, args, ctx| {
-        let id_str = args
-            .get_or_undefined(0)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let document = doc_ref.borrow();
-        let root = document.root();
-        match find_element_by_id_recursive(&document, root, &id_str) {
-            Some(node_id) => Ok(JsValue::from(node_id.raw() as i32)),
-            None => Ok(JsValue::null()),
-        }
-    });
-
-    // document.querySelector(selector) / element.querySelector(selector)
-    let doc_ref = doc.clone();
-    let query_selector = native_fn!(move |_this, args, ctx| {
-        let (scope_idx, sel_arg_idx) = if args.len() > 1 {
-            (args.get_or_undefined(0).to_u32(ctx).unwrap_or(0), 1)
-        } else {
-            (0, 0)
-        };
-        let sel_str = args
-            .get_or_undefined(sel_arg_idx)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let document = doc_ref.borrow();
-        let scope_id = if scope_idx == 0 {
-            document.root()
-        } else {
-            NodeId::from_raw(scope_idx)
-        };
-        if let Some(selectors) = mango_css::parse_selectors(&sel_str)
-            && let Some(found) = find_first_matching_element(&document, scope_id, &selectors)
-        {
-            return Ok(JsValue::from(found.raw() as i32));
-        }
-        match query_selector_simple(&document, scope_id, &sel_str) {
-            Some(node_id) => Ok(JsValue::from(node_id.raw() as i32)),
-            None => Ok(JsValue::null()),
-        }
-    });
-
-    // document.querySelectorAll(selector) / element.querySelectorAll(selector)
-    let doc_ref = doc.clone();
-    let query_selector_all = native_fn!(move |_this, args, ctx| {
-        let (scope_idx, sel_arg_idx) = if args.len() > 1 {
-            (args.get_or_undefined(0).to_u32(ctx).unwrap_or(0), 1)
-        } else {
-            (0, 0)
-        };
-        let sel_str = args
-            .get_or_undefined(sel_arg_idx)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let document = doc_ref.borrow();
-        let scope_id = if scope_idx == 0 {
-            document.root()
-        } else {
-            NodeId::from_raw(scope_idx)
-        };
-        let mut matched = Vec::new();
-        if let Some(selectors) = mango_css::parse_selectors(&sel_str) {
-            collect_matching_elements(&document, scope_id, &selectors, &mut matched);
-        }
-        let values: Vec<JsValue> = matched
-            .into_iter()
-            .map(|id| JsValue::from(id.raw() as i32))
-            .collect();
-        let js_array = JsArray::from_iter(values, ctx);
-        Ok(js_array.into())
-    });
-
-    // document.createElement(tagName)
-    let doc_ref = doc.clone();
-    let dirty_ref = dirty.clone();
-    let create_element = native_fn!(move |_this, args, ctx| {
-        let tag = args
-            .get_or_undefined(0)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let mut document = doc_ref.borrow_mut();
-        let node_id = document.create_element(&tag, vec![]);
-        *dirty_ref.borrow_mut() = true;
-        Ok(JsValue::from(node_id.raw() as i32))
-    });
-
-    // document.createTextNode(text)
-    let doc_ref = doc.clone();
-    let dirty_ref = dirty.clone();
-    let create_text_node = native_fn!(move |_this, args, ctx| {
-        let text = args
-            .get_or_undefined(0)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let mut document = doc_ref.borrow_mut();
-        let node_id = document.create_text(&text);
-        *dirty_ref.borrow_mut() = true;
-        Ok(JsValue::from(node_id.raw() as i32))
-    });
-
-    // Register document object with methods
-    let doc_obj = boa_engine::object::ObjectInitializer::new(context)
-        .function(
-            get_element_by_id,
-            boa_engine::js_string!("getElementById"),
-            1,
-        )
-        .function(
-            query_selector.clone(),
-            boa_engine::js_string!("querySelector"),
-            1,
-        )
-        .function(
-            query_selector_all.clone(),
-            boa_engine::js_string!("querySelectorAll"),
-            1,
-        )
-        .function(create_element, boa_engine::js_string!("createElement"), 1)
-        .function(
-            create_text_node,
-            boa_engine::js_string!("createTextNode"),
-            1,
-        )
-        .build();
-
-    context
-        .register_global_property(
-            boa_engine::js_string!("document"),
-            doc_obj,
-            boa_engine::property::Attribute::all(),
-        )
-        .expect("register document");
-
-    // --- Helper functions for element manipulation ---
-
-    let doc_ref = doc.clone();
-    let get_text_content = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let node_id = NodeId::from_raw(node_idx);
-        let document = doc_ref.borrow();
-        let text = document.text_content(node_id);
-        Ok(JsValue::from(boa_engine::js_string!(text)))
-    });
-
-    let doc_ref = doc.clone();
-    let dirty_ref = dirty.clone();
-    let set_text_content = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let text = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let node_id = NodeId::from_raw(node_idx);
-        let mut document = doc_ref.borrow_mut();
-        let children: Vec<NodeId> = document.children(node_id).map(|n| n.id).collect();
-        for child in children {
-            document.detach(child);
-        }
-        let text_node = document.create_text(&text);
-        document.append_child(node_id, text_node);
-        *dirty_ref.borrow_mut() = true;
-        Ok(JsValue::undefined())
-    });
-
-    let doc_ref = doc.clone();
-    let dirty_ref = dirty.clone();
-    let append_child = native_fn!(move |_this, args, ctx| {
-        let parent_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let child_idx = args.get_or_undefined(1).to_u32(ctx).unwrap_or(0);
-        let mut document = doc_ref.borrow_mut();
-        document.append_child(NodeId::from_raw(parent_idx), NodeId::from_raw(child_idx));
-        *dirty_ref.borrow_mut() = true;
-        Ok(JsValue::undefined())
-    });
-
-    let doc_ref = doc.clone();
-    let dirty_ref = dirty.clone();
-    let remove_child = native_fn!(move |_this, args, ctx| {
-        let child_idx = args.get_or_undefined(1).to_u32(ctx).unwrap_or(0);
-        let mut document = doc_ref.borrow_mut();
-        document.remove_child_and_recycle(NodeId::from_raw(child_idx));
-        *dirty_ref.borrow_mut() = true;
-        Ok(JsValue::undefined())
-    });
-
-    let doc_ref = doc.clone();
-    let dirty_ref = dirty.clone();
-    let set_attribute = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let name = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let value = args
-            .get_or_undefined(2)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let node_id = NodeId::from_raw(node_idx);
-        let mut document = doc_ref.borrow_mut();
-        if let Some(node) = document.get_mut(node_id)
-            && let NodeData::Element(ref mut elem) = node.data
-        {
-            if let Some(attr) = elem.attributes.iter_mut().find(|(k, _)| k == &name) {
-                attr.1 = value;
-            } else {
-                elem.attributes.push((name, value));
-            }
-            *dirty_ref.borrow_mut() = true;
-        }
-        Ok(JsValue::undefined())
-    });
-
-    let doc_ref = doc.clone();
-    let dirty_ref = dirty.clone();
-    let remove_attribute = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let name = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let node_id = NodeId::from_raw(node_idx);
-        let mut document = doc_ref.borrow_mut();
-        if let Some(node) = document.get_mut(node_id)
-            && let NodeData::Element(ref mut elem) = node.data
-        {
-            elem.attributes.retain(|(k, _)| k != &name);
-            *dirty_ref.borrow_mut() = true;
-        }
-        Ok(JsValue::undefined())
-    });
-
-    let doc_ref = doc.clone();
-    let get_attribute = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let name = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let node_id = NodeId::from_raw(node_idx);
-        let document = doc_ref.borrow();
-        if let Some(node) = document.get(node_id)
-            && let NodeData::Element(ref elem) = node.data
-            && let Some(val) = elem.get_attribute(&name)
-        {
-            return Ok(JsValue::from(boa_engine::js_string!(val)));
-        }
-        Ok(JsValue::null())
-    });
-
-    let doc_ref = doc.clone();
-    let get_tag_name = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let node_id = NodeId::from_raw(node_idx);
-        let document = doc_ref.borrow();
-        if let Some(node) = document.get(node_id)
-            && let NodeData::Element(ref elem) = node.data
-        {
-            return Ok(JsValue::from(boa_engine::js_string!(
-                elem.tag_name.to_uppercase()
-            )));
-        }
-        Ok(JsValue::from(boa_engine::js_string!("")))
-    });
-
-    let doc_ref = doc.clone();
-    let element_matches = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let sel_str = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let node_id = NodeId::from_raw(node_idx);
-        let document = doc_ref.borrow();
-        if let Some(selectors) = mango_css::parse_selectors(&sel_str) {
-            return Ok(JsValue::from(selectors.matches(node_id, &document)));
-        }
-        if let Some(node) = document.get(node_id)
-            && let NodeData::Element(elem) = &node.data
-        {
-            let s = sel_str.trim();
-            if let Some(id) = s.strip_prefix('#') {
-                return Ok(JsValue::from(elem.id() == Some(id)));
-            }
-            if let Some(cls) = s.strip_prefix('.') {
-                return Ok(JsValue::from(elem.has_class(cls)));
-            }
-            return Ok(JsValue::from(elem.tag_name.eq_ignore_ascii_case(s)));
-        }
-        Ok(JsValue::from(false))
-    });
-
-    let doc_ref = doc.clone();
-    let element_closest = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let sel_str = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let mut curr_id = Some(NodeId::from_raw(node_idx));
-        let document = doc_ref.borrow();
-        let selectors = mango_css::parse_selectors(&sel_str);
-        while let Some(id) = curr_id {
-            if let Some(node) = document.get(id) {
-                if let NodeData::Element(elem) = &node.data {
-                    if let Some(ref sel) = selectors {
-                        if sel.matches(id, &document) {
-                            return Ok(JsValue::from(id.raw() as i32));
-                        }
-                    } else {
-                        let s = sel_str.trim();
-                        if let Some(target_id) = s.strip_prefix('#') {
-                            if elem.id() == Some(target_id) {
-                                return Ok(JsValue::from(id.raw() as i32));
-                            }
-                        } else if let Some(cls) = s.strip_prefix('.') {
-                            if elem.has_class(cls) {
-                                return Ok(JsValue::from(id.raw() as i32));
-                            }
-                        } else if elem.tag_name.eq_ignore_ascii_case(s) {
-                            return Ok(JsValue::from(id.raw() as i32));
-                        }
-                    }
-                }
-                curr_id = node.parent;
-            } else {
-                break;
-            }
-        }
-        Ok(JsValue::null())
-    });
-
-    let doc_ref = doc.clone();
-    let get_compat_mode = native_fn!(move |_this, _args, _ctx| {
-        let document = doc_ref.borrow();
-        let mode = match document.quirks_mode {
-            QuirksMode::Quirks => "BackCompat",
-            QuirksMode::NoQuirks | QuirksMode::LimitedQuirks => "CSS1Compat",
-        };
-        Ok(JsValue::from(boa_engine::js_string!(mode)))
-    });
-
-    let doc_ref = doc.clone();
-    let get_character_set = native_fn!(move |_this, _args, _ctx| {
-        let document = doc_ref.borrow();
-        Ok(JsValue::from(boa_engine::js_string!(
-            document.character_set.clone()
-        )))
-    });
-
-    let doc_ref = doc.clone();
-    let get_content_type = native_fn!(move |_this, _args, _ctx| {
-        let document = doc_ref.borrow();
-        Ok(JsValue::from(boa_engine::js_string!(
-            document.content_type.clone()
-        )))
-    });
-
-    let doc_ref = doc.clone();
-    let get_parent = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let node_id = NodeId::from_raw(node_idx);
-        let document = doc_ref.borrow();
-        if let Some(node) = document.get(node_id)
-            && let Some(parent) = node.parent
-            && let Some(p_node) = document.get(parent)
-            && matches!(p_node.data, NodeData::Element(_))
-        {
-            return Ok(JsValue::from(parent.raw() as i32));
-        }
-        Ok(JsValue::null())
-    });
-
-    let doc_ref = doc.clone();
-    let get_children = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let node_id = NodeId::from_raw(node_idx);
-        let document = doc_ref.borrow();
-        let mut elem_children = Vec::new();
-        for child in document.children(node_id) {
-            if matches!(child.data, NodeData::Element(_)) {
-                elem_children.push(JsValue::from(child.id.raw() as i32));
-            }
-        }
-        let js_array = JsArray::from_iter(elem_children, ctx);
-        Ok(js_array.into())
-    });
-
-    // _getChildNodeIds(nodeId) → every child node including text and comment nodes
-    let doc_ref = doc.clone();
-    let get_child_node_ids = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let document = doc_ref.borrow();
-        let ids: Vec<JsValue> = document
-            .children(NodeId::from_raw(node_idx))
-            .map(|n| JsValue::from(n.id.raw() as i32))
-            .collect();
-        Ok(JsArray::from_iter(ids, ctx).into())
-    });
-
-    let doc_ref = doc.clone();
-    let get_first_element_child = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let node_id = NodeId::from_raw(node_idx);
-        let document = doc_ref.borrow();
-        for child in document.children(node_id) {
-            if matches!(child.data, NodeData::Element(_)) {
-                return Ok(JsValue::from(child.id.raw() as i32));
-            }
-        }
-        Ok(JsValue::null())
-    });
-
-    let doc_ref = doc.clone();
-    let get_last_element_child = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let node_id = NodeId::from_raw(node_idx);
-        let document = doc_ref.borrow();
-        let mut last = None;
-        for child in document.children(node_id) {
-            if matches!(child.data, NodeData::Element(_)) {
-                last = Some(child.id);
-            }
-        }
-        if let Some(id) = last {
-            Ok(JsValue::from(id.raw() as i32))
-        } else {
-            Ok(JsValue::null())
-        }
-    });
-
-    let doc_ref = doc.clone();
-    let get_next_element_sibling = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let node_id = NodeId::from_raw(node_idx);
-        let document = doc_ref.borrow();
-        let mut curr = document.get(node_id).and_then(|n| n.next_sibling);
-        while let Some(id) = curr {
-            if let Some(node) = document.get(id) {
-                if matches!(node.data, NodeData::Element(_)) {
-                    return Ok(JsValue::from(id.raw() as i32));
-                }
-                curr = node.next_sibling;
-            } else {
-                break;
-            }
-        }
-        Ok(JsValue::null())
-    });
-
-    let doc_ref = doc.clone();
-    let get_previous_element_sibling = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let node_id = NodeId::from_raw(node_idx);
-        let document = doc_ref.borrow();
-        let mut curr = document.get(node_id).and_then(|n| n.prev_sibling);
-        while let Some(id) = curr {
-            if let Some(node) = document.get(id) {
-                if matches!(node.data, NodeData::Element(_)) {
-                    return Ok(JsValue::from(id.raw() as i32));
-                }
-                curr = node.prev_sibling;
-            } else {
-                break;
-            }
-        }
-        Ok(JsValue::null())
-    });
-
-    let doc_ref = doc.clone();
-    let get_first_child = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let node_id = NodeId::from_raw(node_idx);
-        let document = doc_ref.borrow();
-        if let Some(node) = document.get(node_id)
-            && let Some(fc) = node.first_child
-        {
-            Ok(JsValue::from(fc.raw() as i32))
-        } else {
-            Ok(JsValue::null())
-        }
-    });
-
-    let doc_ref = doc.clone();
-    let get_last_child = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let node_id = NodeId::from_raw(node_idx);
-        let document = doc_ref.borrow();
-        if let Some(node) = document.get(node_id)
-            && let Some(lc) = node.last_child
-        {
-            Ok(JsValue::from(lc.raw() as i32))
-        } else {
-            Ok(JsValue::null())
-        }
-    });
-
-    let doc_ref = doc.clone();
-    let get_next_sibling = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let node_id = NodeId::from_raw(node_idx);
-        let document = doc_ref.borrow();
-        if let Some(node) = document.get(node_id)
-            && let Some(ns) = node.next_sibling
-        {
-            Ok(JsValue::from(ns.raw() as i32))
-        } else {
-            Ok(JsValue::null())
-        }
-    });
-
-    let doc_ref = doc.clone();
-    let get_previous_sibling = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let node_id = NodeId::from_raw(node_idx);
-        let document = doc_ref.borrow();
-        if let Some(node) = document.get(node_id)
-            && let Some(ps) = node.prev_sibling
-        {
-            Ok(JsValue::from(ps.raw() as i32))
-        } else {
-            Ok(JsValue::null())
-        }
-    });
-
-    // ── DOM API completeness bindings (Phase 1.5 / 7.4) ───────────────────────
-
-    // _cloneNode(nodeId, deep) → new node id
-    let doc_ref = doc.clone();
-    let dirty_ref = dirty.clone();
-    let clone_node = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let deep = args.get_or_undefined(1).to_boolean();
-        let mut document = doc_ref.borrow_mut();
-        let new_id = clone_subtree(&mut document, NodeId::from_raw(node_idx), deep);
-        *dirty_ref.borrow_mut() = true;
-        Ok(match new_id {
-            Some(id) => JsValue::from(id.raw() as i32),
-            None => JsValue::null(),
-        })
-    });
-
-    // _createFragment() → document fragment node id
-    let doc_ref = doc.clone();
-    let dirty_ref = dirty.clone();
-    let create_fragment = native_fn!(move |_this, _args, _ctx| {
-        let mut document = doc_ref.borrow_mut();
-        let node_id = document.create_fragment();
-        *dirty_ref.borrow_mut() = true;
-        Ok(JsValue::from(node_id.raw() as i32))
-    });
-
-    // _attachShadow(hostId) -> shadow root fragment node id (GAP-012)
-    let doc_ref = doc.clone();
-    let dirty_ref = dirty.clone();
-    let attach_shadow_native = native_fn!(move |_this, args, ctx| {
-        let host_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let mut document = doc_ref.borrow_mut();
-        let host_id = NodeId::from_raw(host_idx);
-        if let Some(sr_id) = document.attach_shadow(host_id) {
-            *dirty_ref.borrow_mut() = true;
-            Ok(JsValue::from(sr_id.raw() as i32))
-        } else {
-            Ok(JsValue::null())
-        }
-    });
-
-    // _insertBefore(parentId, childId, refId) — refId 0 means "append"
-    let doc_ref = doc.clone();
-    let dirty_ref = dirty.clone();
-    let insert_before_native = native_fn!(move |_this, args, ctx| {
-        let parent_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let child_idx = args.get_or_undefined(1).to_u32(ctx).unwrap_or(0);
-        let ref_idx = args.get_or_undefined(2).to_u32(ctx).unwrap_or(0);
-        let mut document = doc_ref.borrow_mut();
-        let parent = NodeId::from_raw(parent_idx);
-        let child = NodeId::from_raw(child_idx);
-        if ref_idx == 0 {
-            document.append_child(parent, child);
-        } else {
-            let _ = document.insert_before(parent, child, NodeId::from_raw(ref_idx));
-        }
-        *dirty_ref.borrow_mut() = true;
-        Ok(JsValue::undefined())
-    });
-
-    // _replaceChild(parentId, newChildId, oldChildId)
-    let doc_ref = doc.clone();
-    let dirty_ref = dirty.clone();
-    let replace_child_native = native_fn!(move |_this, args, ctx| {
-        let parent_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let new_idx = args.get_or_undefined(1).to_u32(ctx).unwrap_or(0);
-        let old_idx = args.get_or_undefined(2).to_u32(ctx).unwrap_or(0);
-        let mut document = doc_ref.borrow_mut();
-        let parent = NodeId::from_raw(parent_idx);
-        let new_child = NodeId::from_raw(new_idx);
-        let old_child = NodeId::from_raw(old_idx);
-        document.replace_child(parent, new_child, old_child);
-        *dirty_ref.borrow_mut() = true;
-        Ok(JsValue::undefined())
-    });
-
-    // _elementContains(ancestorId, otherId) → bool
-    let doc_ref = doc.clone();
-    let element_contains = native_fn!(move |_this, args, ctx| {
-        // Node id 0 is the document root, so "no node" must be signalled by an
-        // out-of-range value rather than zero.
-        let Some(ancestor) = args.get_or_undefined(0).to_u32(ctx).ok() else {
-            return Ok(JsValue::from(false));
-        };
-        let Some(other) = args.get_or_undefined(1).to_u32(ctx).ok() else {
-            return Ok(JsValue::from(false));
-        };
-        let document = doc_ref.borrow();
-        if document.get(NodeId::from_raw(ancestor)).is_none() {
-            return Ok(JsValue::from(false));
-        }
-        let mut cur = Some(NodeId::from_raw(other));
-        while let Some(id) = cur {
-            if id.raw() == ancestor {
-                return Ok(JsValue::from(true));
-            }
-            cur = document.get(id).and_then(|n| n.parent);
-        }
-        Ok(JsValue::from(false))
-    });
-
-    // _getInnerHTML(nodeId) / _getOuterHTML(nodeId)
-    let doc_ref = doc.clone();
-    let get_inner_html = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let document = doc_ref.borrow();
-        Ok(JsValue::from(boa_engine::js_string!(
-            document.serialize_children(NodeId::from_raw(node_idx))
-        )))
-    });
-
-    let doc_ref = doc.clone();
-    let get_outer_html = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let document = doc_ref.borrow();
-        Ok(JsValue::from(boa_engine::js_string!(
-            document.serialize_html(NodeId::from_raw(node_idx))
-        )))
-    });
-
-    let doc_ref = doc.clone();
-    let get_template_content = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let mut document = doc_ref.borrow_mut();
-        let frag_id = document.get_or_create_template_contents(NodeId::from_raw(node_idx));
-        Ok(JsValue::from(frag_id.raw()))
-    });
-
-    // _setInnerHTML(nodeId, html) — parses an HTML fragment and adopts its children
-    let doc_ref = doc.clone();
-    let dirty_ref = dirty.clone();
-    let set_inner_html = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let html = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let mut document = doc_ref.borrow_mut();
-        let node_id = NodeId::from_raw(node_idx);
-        let children: Vec<NodeId> = document.children(node_id).map(|n| n.id).collect();
-        for child in children {
-            document.remove_child_and_recycle(child);
-        }
-        let fragment = mango_html::parse_html(&format!("<html><body>{html}</body></html>"));
-        if let Some(body) = fragment.find_element_by_tag(fragment.root(), "body") {
-            adopt_children(&fragment, body, &mut document, node_id);
-        }
-        *dirty_ref.borrow_mut() = true;
-        Ok(JsValue::undefined())
-    });
-
-    // _setOuterHTML(nodeId, html) — replaces the node itself
-    let doc_ref = doc.clone();
-    let dirty_ref = dirty.clone();
-    let set_outer_html = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let html = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let mut document = doc_ref.borrow_mut();
-        let node_id = NodeId::from_raw(node_idx);
-        let Some(parent) = document.get(node_id).and_then(|n| n.parent) else {
-            return Ok(JsValue::undefined());
-        };
-        let fragment = mango_html::parse_html(&format!("<html><body>{html}</body></html>"));
-        if let Some(body) = fragment.find_element_by_tag(fragment.root(), "body") {
-            adopt_children_before(&fragment, body, &mut document, parent, node_id);
-        }
-        document.remove_child_and_recycle(node_id);
-        *dirty_ref.borrow_mut() = true;
-        Ok(JsValue::undefined())
-    });
-
-    // _getNodeType(nodeId) / _getNodeName(nodeId) / _getNodeValue(nodeId) / _setNodeValue
-    let doc_ref = doc.clone();
-    let get_node_type = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let document = doc_ref.borrow();
-        let t = match document.get(NodeId::from_raw(node_idx)).map(|n| &n.data) {
-            Some(NodeData::Element(_)) => 1,
-            Some(NodeData::Text(_)) => 3,
-            Some(NodeData::Comment(_)) => 8,
-            Some(NodeData::Document) => 9,
-            Some(NodeData::DocumentType { .. }) => 10,
-            Some(NodeData::DocumentFragment) => 11,
-            None => 0,
-        };
-        Ok(JsValue::from(t))
-    });
-
-    let doc_ref = doc.clone();
-    let get_node_name = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let document = doc_ref.borrow();
-        let name = match document.get(NodeId::from_raw(node_idx)).map(|n| &n.data) {
-            Some(NodeData::Element(el)) => el.tag_name.to_uppercase(),
-            Some(NodeData::Text(_)) => "#text".to_string(),
-            Some(NodeData::Comment(_)) => "#comment".to_string(),
-            Some(NodeData::Document) => "#document".to_string(),
-            Some(NodeData::DocumentType { name, .. }) => name.clone(),
-            Some(NodeData::DocumentFragment) => "#document-fragment".to_string(),
-            None => String::new(),
-        };
-        Ok(JsValue::from(boa_engine::js_string!(name)))
-    });
-
-    let doc_ref = doc.clone();
-    let get_node_value = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let document = doc_ref.borrow();
-        Ok(
-            match document.get(NodeId::from_raw(node_idx)).map(|n| &n.data) {
-                Some(NodeData::Text(t)) | Some(NodeData::Comment(t)) => {
-                    JsValue::from(boa_engine::js_string!(t.clone()))
-                }
-                _ => JsValue::null(),
-            },
-        )
-    });
-
-    let doc_ref = doc.clone();
-    let dirty_ref = dirty.clone();
-    let set_node_value = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let value = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let mut document = doc_ref.borrow_mut();
-        if let Some(node) = document.get_mut(NodeId::from_raw(node_idx)) {
-            match &mut node.data {
-                NodeData::Text(t) | NodeData::Comment(t) => {
-                    *t = value;
-                    *dirty_ref.borrow_mut() = true;
-                }
-                _ => {}
-            }
-        }
-        Ok(JsValue::undefined())
-    });
-
-    // _getAttributeNames(nodeId) → array of attribute names
-    let doc_ref = doc.clone();
-    let get_attribute_names = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let document = doc_ref.borrow();
-        let names: Vec<JsValue> = match document.get(NodeId::from_raw(node_idx)).map(|n| &n.data) {
-            Some(NodeData::Element(el)) => el
-                .attributes
-                .iter()
-                .map(|(k, _)| JsValue::from(boa_engine::js_string!(k.clone())))
-                .collect(),
-            _ => Vec::new(),
-        };
-        Ok(JsArray::from_iter(names, ctx).into())
-    });
-
-    // data-* attribute helpers for element.dataset
-    let doc_ref = doc.clone();
-    let get_dataset_value = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let prop = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let attr = dataset_prop_to_attribute(&prop);
-        let document = doc_ref.borrow();
-        Ok(
-            match document.get(NodeId::from_raw(node_idx)).map(|n| &n.data) {
-                Some(NodeData::Element(el)) => match el.get_attribute(&attr) {
-                    Some(v) => JsValue::from(boa_engine::js_string!(v.to_string())),
-                    None => JsValue::undefined(),
-                },
-                _ => JsValue::undefined(),
-            },
-        )
-    });
-
-    let doc_ref = doc.clone();
-    let dirty_ref = dirty.clone();
-    let set_dataset_value = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let prop = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let value = args
-            .get_or_undefined(2)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let attr = dataset_prop_to_attribute(&prop);
-        let mut document = doc_ref.borrow_mut();
-        if let Some(node) = document.get_mut(NodeId::from_raw(node_idx))
-            && let NodeData::Element(el) = &mut node.data
-        {
-            set_element_attribute(el, &attr, &value);
-            *dirty_ref.borrow_mut() = true;
-        }
-        Ok(JsValue::undefined())
-    });
-
-    let doc_ref = doc.clone();
-    let dirty_ref = dirty.clone();
-    let remove_dataset_value = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let prop = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let attr = dataset_prop_to_attribute(&prop);
-        let mut document = doc_ref.borrow_mut();
-        if let Some(node) = document.get_mut(NodeId::from_raw(node_idx))
-            && let NodeData::Element(el) = &mut node.data
-        {
-            el.attributes
-                .retain(|(k, _)| !k.eq_ignore_ascii_case(&attr));
-            *dirty_ref.borrow_mut() = true;
-        }
-        Ok(JsValue::undefined())
-    });
-
-    let doc_ref = doc.clone();
-    let get_dataset_keys = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let document = doc_ref.borrow();
-        let keys: Vec<JsValue> = match document.get(NodeId::from_raw(node_idx)).map(|n| &n.data) {
-            Some(NodeData::Element(el)) => el
-                .attributes
-                .iter()
-                .filter_map(|(k, _)| k.strip_prefix("data-").map(camel_case_key))
-                .map(|k| JsValue::from(boa_engine::js_string!(k)))
-                .collect(),
-            _ => Vec::new(),
-        };
-        Ok(JsArray::from_iter(keys, ctx).into())
-    });
-
-    // _getDocumentElements(kind) → array of node ids (forms/images/links/anchors/scripts)
-    let doc_ref = doc.clone();
-    let get_document_elements = native_fn!(move |_this, args, ctx| {
-        let kind = args
-            .get_or_undefined(0)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let document = doc_ref.borrow();
-        let mut out = Vec::new();
-        collect_elements_by_kind(&document, document.root(), &kind, &mut out);
-        let values: Vec<JsValue> = out
-            .into_iter()
-            .map(|id| JsValue::from(id.raw() as i32))
-            .collect();
-        Ok(JsArray::from_iter(values, ctx).into())
-    });
-
-    // _createComment(text) → comment node id
-    let doc_ref = doc.clone();
-    let dirty_ref = dirty.clone();
-    let create_comment_native = native_fn!(move |_this, args, ctx| {
-        let text = args
-            .get_or_undefined(0)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let mut document = doc_ref.borrow_mut();
-        let node_id = document.create_comment(&text);
-        *dirty_ref.borrow_mut() = true;
-        Ok(JsValue::from(node_id.raw() as i32))
-    });
-
-    // _setFocusState(nodeId, focused) — drives the :focus / :focus-within pseudo-classes
-    let doc_ref = doc.clone();
-    let dirty_ref = dirty.clone();
-    let set_focus_state = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let focused = args.get_or_undefined(1).to_boolean();
-        let mut document = doc_ref.borrow_mut();
-        if let Some(node) = document.get_mut(NodeId::from_raw(node_idx))
-            && let NodeData::Element(el) = &mut node.data
-        {
-            if focused {
-                set_element_attribute(el, "data-mango-focused", "true");
-            } else {
-                el.attributes.retain(|(k, _)| k != "data-mango-focused");
-            }
-            *dirty_ref.borrow_mut() = true;
-        }
-        Ok(JsValue::undefined())
-    });
-
-    // _getElementRect(nodeId) → [x, y, width, height] from the browser's layout tree
-    let bounds_ref = layout_bounds.clone();
-    let get_element_rect = native_fn!(move |_this, args, ctx| {
-        let node_idx = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0);
-        let bounds = bounds_ref.borrow();
-        let rect = bounds
-            .get(&node_idx)
-            .copied()
-            .unwrap_or([0.0, 0.0, 0.0, 0.0]);
-        let values: Vec<JsValue> = rect.iter().map(|v| JsValue::from(*v)).collect();
-        Ok(JsArray::from_iter(values, ctx).into())
-    });
-
-    // _elementFromPoint(x, y) → topmost node id at the given viewport point
-    let bounds_ref = layout_bounds.clone();
-    let element_from_point = native_fn!(move |_this, args, ctx| {
-        let x = args.get_or_undefined(0).to_number(ctx)? as f32;
-        let y = args.get_or_undefined(1).to_number(ctx)? as f32;
-        let bounds = bounds_ref.borrow();
-        let mut best: Option<(u32, f32)> = None;
-        for (id, rect) in bounds.iter() {
-            let (rx, ry, rw, rh) = (rect[0], rect[1], rect[2], rect[3]);
-            if x >= rx && x <= rx + rw && y >= ry && y <= ry + rh {
-                let area = rw * rh;
-                if best.is_none_or(|(_, best_area)| area < best_area) {
-                    best = Some((*id, area));
-                }
-            }
-        }
-        Ok(match best {
-            Some((id, _)) => JsValue::from(id as i32),
-            None => JsValue::null(),
-        })
-    });
-
-    // _elementsFromPoint(x, y) → array of node ids at the given viewport point (innermost first)
-    let bounds_ref = layout_bounds.clone();
-    let elements_from_point = native_fn!(move |_this, args, ctx| {
-        let x = args.get_or_undefined(0).to_number(ctx)? as f32;
-        let y = args.get_or_undefined(1).to_number(ctx)? as f32;
-        let bounds = bounds_ref.borrow();
-        let mut matches: Vec<(u32, f32)> = Vec::new();
-        for (id, rect) in bounds.iter() {
-            let (rx, ry, rw, rh) = (rect[0], rect[1], rect[2], rect[3]);
-            if x >= rx && x <= rx + rw && y >= ry && y <= ry + rh {
-                let area = rw * rh;
-                matches.push((*id, area));
-            }
-        }
-        matches.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-        let values: Vec<JsValue> = matches
-            .into_iter()
-            .map(|(id, _)| JsValue::from(id as i32))
-            .collect();
-        Ok(JsArray::from_iter(values, ctx).into())
-    });
-
-    // _getDocumentCookie() → the `document.cookie` string for the current page.
-    let cookie_jar_ref = cookie_jar.clone();
-    let cookie_url = page_url.clone();
-    let get_document_cookie = native_fn!(move |_this, _args, _ctx| {
-        let jar = jar_lock(&cookie_jar_ref);
-        let url = match mango_net::Url::parse(&cookie_url) {
-            Ok(u) => u,
-            Err(_) => return Ok(JsValue::from(boa_engine::js_string!(""))),
-        };
-        let value = jar.script_cookie_string(&url);
-        Ok(JsValue::from(boa_engine::js_string!(value)))
-    });
-
-    // _setDocumentCookie(str) → applies a `document.cookie = ...` assignment.
-    let cookie_jar_ref = cookie_jar.clone();
-    let cookie_url = page_url.clone();
-    let set_document_cookie = native_fn!(move |_this, args, ctx| {
-        let raw = args
-            .get_or_undefined(0)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let url = match mango_net::Url::parse(&cookie_url) {
-            Ok(u) => u,
-            Err(_) => return Ok(JsValue::undefined()),
-        };
-        let mut jar = jar_lock(&cookie_jar_ref);
-        jar.set_from_script(&raw, &url);
-        jar.prune_expired();
-        drop(jar);
-        Ok(JsValue::undefined())
-    });
-
-    // Register all helper functions as globals
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_getDocumentCookie"),
-            0,
-            get_document_cookie,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_setDocumentCookie"),
-            1,
-            set_document_cookie,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_getTextContent"),
-            1,
-            get_text_content,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_setTextContent"),
-            2,
-            set_text_content,
-        )
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_appendChild"), 2, append_child)
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_removeChild"), 2, remove_child)
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_setAttribute"), 3, set_attribute)
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_removeAttribute"),
-            2,
-            remove_attribute,
-        )
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_getAttribute"), 2, get_attribute)
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_getTagName"), 1, get_tag_name)
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_querySelector"), 2, query_selector)
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_querySelectorAll"),
-            2,
-            query_selector_all,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_elementMatches"),
-            2,
-            element_matches,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_elementClosest"),
-            2,
-            element_closest,
-        )
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_getCompatMode"), 0, get_compat_mode)
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_getCharacterSet"),
-            0,
-            get_character_set,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_getContentType"),
-            0,
-            get_content_type,
-        )
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_getParent"), 1, get_parent)
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_getChildren"), 1, get_children)
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_getChildNodeIds"),
-            1,
-            get_child_node_ids,
-        )
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_getFirstChild"), 1, get_first_child)
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_getLastChild"), 1, get_last_child)
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_getNextSibling"),
-            1,
-            get_next_sibling,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_getPreviousSibling"),
-            1,
-            get_previous_sibling,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_getFirstElementChild"),
-            1,
-            get_first_element_child,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_getLastElementChild"),
-            1,
-            get_last_element_child,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_getNextElementSibling"),
-            1,
-            get_next_element_sibling,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_getPreviousElementSibling"),
-            1,
-            get_previous_element_sibling,
-        )
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_cloneNode"), 2, clone_node)
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_createFragment"),
-            0,
-            create_fragment,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_attachShadow"),
-            1,
-            attach_shadow_native,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_createComment"),
-            1,
-            create_comment_native,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_insertBefore"),
-            3,
-            insert_before_native,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_replaceChild"),
-            3,
-            replace_child_native,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_elementContains"),
-            2,
-            element_contains,
-        )
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_getInnerHTML"), 1, get_inner_html)
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_setInnerHTML"), 2, set_inner_html)
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_getOuterHTML"), 1, get_outer_html)
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_setOuterHTML"), 2, set_outer_html)
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_getTemplateContent"),
-            1,
-            get_template_content,
-        )
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_getNodeType"), 1, get_node_type)
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_getNodeName"), 1, get_node_name)
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_getNodeValue"), 1, get_node_value)
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_setNodeValue"), 2, set_node_value)
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_getAttributeNames"),
-            1,
-            get_attribute_names,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_getDatasetValue"),
-            2,
-            get_dataset_value,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_setDatasetValue"),
-            3,
-            set_dataset_value,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_removeDatasetValue"),
-            2,
-            remove_dataset_value,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_getDatasetKeys"),
-            1,
-            get_dataset_keys,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_getDocumentElements"),
-            1,
-            get_document_elements,
-        )
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_setFocusState"), 2, set_focus_state)
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_getElementRect"),
-            1,
-            get_element_rect,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_elementFromPoint"),
-            2,
-            element_from_point,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_elementsFromPoint"),
-            2,
-            elements_from_point,
-        )
-        .unwrap();
-
-    // Canvas native bindings
-    let dirty_ref = dirty.clone();
-    let canvas_resize = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let width = args.get_or_undefined(1).to_u32(ctx).unwrap_or(300);
-        let height = args.get_or_undefined(2).to_u32(ctx).unwrap_or(150);
-        mango_render::resize_canvas(node_id, width, height);
-        *dirty_ref.borrow_mut() = true;
-        Ok(JsValue::undefined())
-    });
-
-    let canvas_set_fill_style = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let color_str = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let color =
-            mango_render::color::parse_color(&color_str).unwrap_or(mango_core::Color::BLACK);
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.set_fill_style(color);
-        });
-        Ok(JsValue::undefined())
-    });
-
-    let canvas_set_stroke_style = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let color_str = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let color =
-            mango_render::color::parse_color(&color_str).unwrap_or(mango_core::Color::BLACK);
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.set_stroke_style(color);
-        });
-        Ok(JsValue::undefined())
-    });
-
-    let canvas_set_line_width = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let width = args.get_or_undefined(1).to_number(ctx).unwrap_or(1.0) as f32;
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.set_line_width(width);
-        });
-        Ok(JsValue::undefined())
-    });
-
-    let canvas_set_line_cap = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let cap = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.set_line_cap(&cap);
-        });
-        Ok(JsValue::undefined())
-    });
-
-    let canvas_set_line_join = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let join = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.set_line_join(&join);
-        });
-        Ok(JsValue::undefined())
-    });
-
-    let canvas_set_miter_limit = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let limit = args.get_or_undefined(1).to_number(ctx).unwrap_or(10.0) as f32;
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.set_miter_limit(limit);
-        });
-        Ok(JsValue::undefined())
-    });
-
-    let canvas_set_global_alpha = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let alpha = args.get_or_undefined(1).to_number(ctx).unwrap_or(1.0) as f32;
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.set_global_alpha(alpha);
-        });
-        Ok(JsValue::undefined())
-    });
-
-    let canvas_set_font = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let font_str = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.set_font(&font_str);
-        });
-        Ok(JsValue::undefined())
-    });
-
-    let canvas_set_text_align = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let align_str = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.set_text_align(&align_str);
-        });
-        Ok(JsValue::undefined())
-    });
-
-    let canvas_set_text_baseline = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let baseline_str = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.set_text_baseline(&baseline_str);
-        });
-        Ok(JsValue::undefined())
-    });
-
-    let dirty_ref = dirty.clone();
-    let canvas_fill_rect = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let x = args.get_or_undefined(1).to_number(ctx).unwrap_or(0.0) as f32;
-        let y = args.get_or_undefined(2).to_number(ctx).unwrap_or(0.0) as f32;
-        let w = args.get_or_undefined(3).to_number(ctx).unwrap_or(0.0) as f32;
-        let h = args.get_or_undefined(4).to_number(ctx).unwrap_or(0.0) as f32;
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.fill_rect(x, y, w, h);
-        });
-        *dirty_ref.borrow_mut() = true;
-        Ok(JsValue::undefined())
-    });
-
-    let dirty_ref = dirty.clone();
-    let canvas_stroke_rect = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let x = args.get_or_undefined(1).to_number(ctx).unwrap_or(0.0) as f32;
-        let y = args.get_or_undefined(2).to_number(ctx).unwrap_or(0.0) as f32;
-        let w = args.get_or_undefined(3).to_number(ctx).unwrap_or(0.0) as f32;
-        let h = args.get_or_undefined(4).to_number(ctx).unwrap_or(0.0) as f32;
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.stroke_rect(x, y, w, h);
-        });
-        *dirty_ref.borrow_mut() = true;
-        Ok(JsValue::undefined())
-    });
-
-    let dirty_ref = dirty.clone();
-    let canvas_clear_rect = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let x = args.get_or_undefined(1).to_number(ctx).unwrap_or(0.0) as f32;
-        let y = args.get_or_undefined(2).to_number(ctx).unwrap_or(0.0) as f32;
-        let w = args.get_or_undefined(3).to_number(ctx).unwrap_or(0.0) as f32;
-        let h = args.get_or_undefined(4).to_number(ctx).unwrap_or(0.0) as f32;
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.clear_rect(x, y, w, h);
-        });
-        *dirty_ref.borrow_mut() = true;
-        Ok(JsValue::undefined())
-    });
-
-    let canvas_begin_path = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.begin_path();
-        });
-        Ok(JsValue::undefined())
-    });
-
-    let canvas_close_path = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.close_path();
-        });
-        Ok(JsValue::undefined())
-    });
-
-    let canvas_move_to = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let x = args.get_or_undefined(1).to_number(ctx).unwrap_or(0.0) as f32;
-        let y = args.get_or_undefined(2).to_number(ctx).unwrap_or(0.0) as f32;
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.move_to(x, y);
-        });
-        Ok(JsValue::undefined())
-    });
-
-    let canvas_line_to = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let x = args.get_or_undefined(1).to_number(ctx).unwrap_or(0.0) as f32;
-        let y = args.get_or_undefined(2).to_number(ctx).unwrap_or(0.0) as f32;
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.line_to(x, y);
-        });
-        Ok(JsValue::undefined())
-    });
-
-    let canvas_rect = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let x = args.get_or_undefined(1).to_number(ctx).unwrap_or(0.0) as f32;
-        let y = args.get_or_undefined(2).to_number(ctx).unwrap_or(0.0) as f32;
-        let w = args.get_or_undefined(3).to_number(ctx).unwrap_or(0.0) as f32;
-        let h = args.get_or_undefined(4).to_number(ctx).unwrap_or(0.0) as f32;
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.rect(x, y, w, h);
-        });
-        Ok(JsValue::undefined())
-    });
-
-    let canvas_arc = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let cx_val = args.get_or_undefined(1).to_number(ctx).unwrap_or(0.0) as f32;
-        let cy_val = args.get_or_undefined(2).to_number(ctx).unwrap_or(0.0) as f32;
-        let r_val = args.get_or_undefined(3).to_number(ctx).unwrap_or(0.0) as f32;
-        let sa_val = args.get_or_undefined(4).to_number(ctx).unwrap_or(0.0) as f32;
-        let ea_val = args.get_or_undefined(5).to_number(ctx).unwrap_or(0.0) as f32;
-        let ccw = args.get_or_undefined(6).to_boolean();
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.arc(cx_val, cy_val, r_val, sa_val, ea_val, ccw);
-        });
-        Ok(JsValue::undefined())
-    });
-
-    let canvas_arc_to = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let x1 = args.get_or_undefined(1).to_number(ctx).unwrap_or(0.0) as f32;
-        let y1 = args.get_or_undefined(2).to_number(ctx).unwrap_or(0.0) as f32;
-        let x2 = args.get_or_undefined(3).to_number(ctx).unwrap_or(0.0) as f32;
-        let y2 = args.get_or_undefined(4).to_number(ctx).unwrap_or(0.0) as f32;
-        let r = args.get_or_undefined(5).to_number(ctx).unwrap_or(0.0) as f32;
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.arc_to(x1, y1, x2, y2, r);
-        });
-        Ok(JsValue::undefined())
-    });
-
-    let canvas_bezier_curve_to = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let cp1x = args.get_or_undefined(1).to_number(ctx).unwrap_or(0.0) as f32;
-        let cp1y = args.get_or_undefined(2).to_number(ctx).unwrap_or(0.0) as f32;
-        let cp2x = args.get_or_undefined(3).to_number(ctx).unwrap_or(0.0) as f32;
-        let cp2y = args.get_or_undefined(4).to_number(ctx).unwrap_or(0.0) as f32;
-        let x = args.get_or_undefined(5).to_number(ctx).unwrap_or(0.0) as f32;
-        let y = args.get_or_undefined(6).to_number(ctx).unwrap_or(0.0) as f32;
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.bezier_curve_to(cp1x, cp1y, cp2x, cp2y, x, y);
-        });
-        Ok(JsValue::undefined())
-    });
-
-    let canvas_quadratic_curve_to = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let cpx = args.get_or_undefined(1).to_number(ctx).unwrap_or(0.0) as f32;
-        let cpy = args.get_or_undefined(2).to_number(ctx).unwrap_or(0.0) as f32;
-        let x = args.get_or_undefined(3).to_number(ctx).unwrap_or(0.0) as f32;
-        let y = args.get_or_undefined(4).to_number(ctx).unwrap_or(0.0) as f32;
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.quadratic_curve_to(cpx, cpy, x, y);
-        });
-        Ok(JsValue::undefined())
-    });
-
-    let dirty_ref = dirty.clone();
-    let canvas_fill = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let _rule = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.fill();
-        });
-        *dirty_ref.borrow_mut() = true;
-        Ok(JsValue::undefined())
-    });
-
-    let dirty_ref = dirty.clone();
-    let canvas_stroke = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.stroke();
-        });
-        *dirty_ref.borrow_mut() = true;
-        Ok(JsValue::undefined())
-    });
-
-    let canvas_save = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.save();
-        });
-        Ok(JsValue::undefined())
-    });
-
-    let canvas_restore = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.restore();
-        });
-        Ok(JsValue::undefined())
-    });
-
-    let canvas_scale = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let sx = args.get_or_undefined(1).to_number(ctx).unwrap_or(1.0) as f32;
-        let sy = args.get_or_undefined(2).to_number(ctx).unwrap_or(1.0) as f32;
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.scale(sx, sy);
-        });
-        Ok(JsValue::undefined())
-    });
-
-    let canvas_rotate = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let angle = args.get_or_undefined(1).to_number(ctx).unwrap_or(0.0) as f32;
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.rotate(angle);
-        });
-        Ok(JsValue::undefined())
-    });
-
-    let canvas_translate = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let dx = args.get_or_undefined(1).to_number(ctx).unwrap_or(0.0) as f32;
-        let dy = args.get_or_undefined(2).to_number(ctx).unwrap_or(0.0) as f32;
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.translate(dx, dy);
-        });
-        Ok(JsValue::undefined())
-    });
-
-    let canvas_transform = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let a = args.get_or_undefined(1).to_number(ctx).unwrap_or(1.0) as f32;
-        let b = args.get_or_undefined(2).to_number(ctx).unwrap_or(0.0) as f32;
-        let c = args.get_or_undefined(3).to_number(ctx).unwrap_or(0.0) as f32;
-        let d = args.get_or_undefined(4).to_number(ctx).unwrap_or(1.0) as f32;
-        let e = args.get_or_undefined(5).to_number(ctx).unwrap_or(0.0) as f32;
-        let f = args.get_or_undefined(6).to_number(ctx).unwrap_or(0.0) as f32;
-        mango_render::with_canvas_mut(node_id, 300, 150, |cv| {
-            cv.transform(a, b, c, d, e, f);
-        });
-        Ok(JsValue::undefined())
-    });
-
-    let canvas_set_transform = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let a = args.get_or_undefined(1).to_number(ctx).unwrap_or(1.0) as f32;
-        let b = args.get_or_undefined(2).to_number(ctx).unwrap_or(0.0) as f32;
-        let c = args.get_or_undefined(3).to_number(ctx).unwrap_or(0.0) as f32;
-        let d = args.get_or_undefined(4).to_number(ctx).unwrap_or(1.0) as f32;
-        let e = args.get_or_undefined(5).to_number(ctx).unwrap_or(0.0) as f32;
-        let f = args.get_or_undefined(6).to_number(ctx).unwrap_or(0.0) as f32;
-        mango_render::with_canvas_mut(node_id, 300, 150, |cv| {
-            cv.set_transform(a, b, c, d, e, f);
-        });
-        Ok(JsValue::undefined())
-    });
-
-    let canvas_reset_transform = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.reset_transform();
-        });
-        Ok(JsValue::undefined())
-    });
-
-    let dirty_ref = dirty.clone();
-    let canvas_fill_text = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let text = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let x = args.get_or_undefined(2).to_number(ctx).unwrap_or(0.0) as f32;
-        let y = args.get_or_undefined(3).to_number(ctx).unwrap_or(0.0) as f32;
-        let max_w =
-            if !args.get_or_undefined(4).is_undefined() && !args.get_or_undefined(4).is_null() {
-                Some(args.get_or_undefined(4).to_number(ctx).unwrap_or(0.0) as f32)
-            } else {
-                None
-            };
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.fill_text(&text, x, y, max_w);
-        });
-        *dirty_ref.borrow_mut() = true;
-        Ok(JsValue::undefined())
-    });
-
-    let dirty_ref = dirty.clone();
-    let canvas_stroke_text = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let text = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let x = args.get_or_undefined(2).to_number(ctx).unwrap_or(0.0) as f32;
-        let y = args.get_or_undefined(3).to_number(ctx).unwrap_or(0.0) as f32;
-        let max_w =
-            if !args.get_or_undefined(4).is_undefined() && !args.get_or_undefined(4).is_null() {
-                Some(args.get_or_undefined(4).to_number(ctx).unwrap_or(0.0) as f32)
-            } else {
-                None
-            };
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.stroke_text(&text, x, y, max_w);
-        });
-        *dirty_ref.borrow_mut() = true;
-        Ok(JsValue::undefined())
-    });
-
-    let canvas_measure_text = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let text = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let w = mango_render::with_canvas_mut(node_id, 300, 150, |c| c.measure_text(&text))
-            .unwrap_or(0.0);
-        Ok(JsValue::from(w as f64))
-    });
-
-    let canvas_get_image_data = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let sx = args.get_or_undefined(1).to_i32(ctx).unwrap_or(0);
-        let sy = args.get_or_undefined(2).to_i32(ctx).unwrap_or(0);
-        let sw = args.get_or_undefined(3).to_u32(ctx).unwrap_or(1);
-        let sh = args.get_or_undefined(4).to_u32(ctx).unwrap_or(1);
-        let bytes =
-            mango_render::with_canvas_mut(node_id, 300, 150, |c| c.get_image_data(sx, sy, sw, sh))
-                .unwrap_or_else(|| vec![0u8; (sw * sh * 4) as usize]);
-        let values: Vec<JsValue> = bytes.into_iter().map(|b| JsValue::from(b as i32)).collect();
-        let js_array = JsArray::from_iter(values, ctx);
-        Ok(js_array.into())
-    });
-
-    let dirty_ref = dirty.clone();
-    let canvas_put_image_data = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let raw_val = args.get_or_undefined(1);
-        let dx = args.get_or_undefined(2).to_i32(ctx).unwrap_or(0);
-        let dy = args.get_or_undefined(3).to_i32(ctx).unwrap_or(0);
-        let dirty_x = args.get_or_undefined(4).to_i32(ctx).unwrap_or(0);
-        let dirty_y = args.get_or_undefined(5).to_i32(ctx).unwrap_or(0);
-        let dirty_w = args.get_or_undefined(6).to_u32(ctx).unwrap_or(1);
-        let dirty_h = args.get_or_undefined(7).to_u32(ctx).unwrap_or(1);
-        let src_width = args.get_or_undefined(8).to_u32(ctx).unwrap_or(0);
-
-        let mut byte_vec = Vec::new();
-        if let Some(obj) = raw_val.as_object() {
-            let len = obj
-                .get(boa_engine::js_string!("length"), ctx)
-                .ok()
-                .and_then(|v| v.to_u32(ctx).ok())
-                .unwrap_or(0);
-            byte_vec.reserve(len as usize);
-            for i in 0..len {
-                if let Ok(v) = obj.get(i, ctx) {
-                    byte_vec.push(v.to_u32(ctx).unwrap_or(0) as u8);
-                } else {
-                    byte_vec.push(0);
-                }
-            }
-        }
-
-        mango_render::with_canvas_mut(node_id, 300, 150, |c| {
-            c.put_image_data_with_stride(
-                &byte_vec, src_width, dx, dy, dirty_x, dirty_y, dirty_w, dirty_h,
-            );
-        });
-        *dirty_ref.borrow_mut() = true;
-        Ok(JsValue::undefined())
-    });
-
-    let canvas_to_data_url = native_fn!(move |_this, args, ctx| {
-        let node_id = args.get_or_undefined(0).to_u32(ctx).unwrap_or(0) as usize;
-        let mime = args
-            .get_or_undefined(1)
-            .to_string(ctx)?
-            .to_std_string_escaped();
-        let url = mango_render::with_canvas_mut(node_id, 300, 150, |c| c.to_data_url(&mime))
-            .unwrap_or_else(|| "data:image/png;base64,".to_string());
-        Ok(JsValue::from(boa_engine::js_string!(url)))
-    });
-
-    context
-        .register_global_callable(boa_engine::js_string!("_canvasResize"), 3, canvas_resize)
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_canvasSetFillStyle"),
-            2,
-            canvas_set_fill_style,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_canvasSetStrokeStyle"),
-            2,
-            canvas_set_stroke_style,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_canvasSetLineWidth"),
-            2,
-            canvas_set_line_width,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_canvasSetLineCap"),
-            2,
-            canvas_set_line_cap,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_canvasSetLineJoin"),
-            2,
-            canvas_set_line_join,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_canvasSetMiterLimit"),
-            2,
-            canvas_set_miter_limit,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_canvasSetGlobalAlpha"),
-            2,
-            canvas_set_global_alpha,
-        )
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_canvasSetFont"), 2, canvas_set_font)
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_canvasSetTextAlign"),
-            2,
-            canvas_set_text_align,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_canvasSetTextBaseline"),
-            2,
-            canvas_set_text_baseline,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_canvasFillRect"),
-            5,
-            canvas_fill_rect,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_canvasStrokeRect"),
-            5,
-            canvas_stroke_rect,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_canvasClearRect"),
-            5,
-            canvas_clear_rect,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_canvasBeginPath"),
-            1,
-            canvas_begin_path,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_canvasClosePath"),
-            1,
-            canvas_close_path,
-        )
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_canvasMoveTo"), 3, canvas_move_to)
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_canvasLineTo"), 3, canvas_line_to)
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_canvasRect"), 5, canvas_rect)
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_canvasArc"), 7, canvas_arc)
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_canvasArcTo"), 6, canvas_arc_to)
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_canvasBezierCurveTo"),
-            7,
-            canvas_bezier_curve_to,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_canvasQuadraticCurveTo"),
-            5,
-            canvas_quadratic_curve_to,
-        )
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_canvasFill"), 2, canvas_fill)
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_canvasStroke"), 1, canvas_stroke)
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_canvasSave"), 1, canvas_save)
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_canvasRestore"), 1, canvas_restore)
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_canvasScale"), 3, canvas_scale)
-        .unwrap();
-    context
-        .register_global_callable(boa_engine::js_string!("_canvasRotate"), 2, canvas_rotate)
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_canvasTranslate"),
-            3,
-            canvas_translate,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_canvasTransform"),
-            7,
-            canvas_transform,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_canvasSetTransform"),
-            7,
-            canvas_set_transform,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_canvasResetTransform"),
-            1,
-            canvas_reset_transform,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_canvasFillText"),
-            5,
-            canvas_fill_text,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_canvasStrokeText"),
-            5,
-            canvas_stroke_text,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_canvasMeasureText"),
-            2,
-            canvas_measure_text,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_canvasGetImageData"),
-            5,
-            canvas_get_image_data,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_canvasPutImageData"),
-            9,
-            canvas_put_image_data,
-        )
-        .unwrap();
-    context
-        .register_global_callable(
-            boa_engine::js_string!("_canvasToDataUrl"),
-            2,
-            canvas_to_data_url,
-        )
-        .unwrap();
-
-    let shim = DOM_SHIM;
-    if let Err(e) = context.eval(boa_engine::Source::from_bytes(shim)) {
-        log::error!("Failed to install DOM shim: {}", e);
-        #[cfg(test)]
-        panic!("Failed to install DOM shim: {}", e);
-    }
 }
 
 pub const DOM_SHIM: &str = r#"
@@ -2144,6 +99,72 @@ pub const DOM_SHIM: &str = r#"
         });
     }
 
+    if (typeof globalThis.ToggleEvent === 'undefined') {
+        function ToggleEvent(type, dict) {
+            dict = dict || {};
+            var evt = (typeof globalThis.Event === 'function') ? new globalThis.Event(type, dict) : { type: type };
+            evt.oldState = (dict && dict.oldState !== undefined) ? String(dict.oldState) : 'closed';
+            evt.newState = (dict && dict.newState !== undefined) ? String(dict.newState) : 'closed';
+            return evt;
+        }
+        if (typeof globalThis.Event === 'function') {
+            ToggleEvent.prototype = Object.create(globalThis.Event.prototype);
+            ToggleEvent.prototype.constructor = ToggleEvent;
+        }
+        globalThis.ToggleEvent = ToggleEvent;
+    }
+
+    if (typeof globalThis.ValidityState === 'undefined') {
+        function ValidityState(flags) {
+            if (flags) {
+                this.badInput = !!flags.badInput;
+                this.customError = !!flags.customError;
+                this.patternMismatch = !!flags.patternMismatch;
+                this.rangeOverflow = !!flags.rangeOverflow;
+                this.rangeUnderflow = !!flags.rangeUnderflow;
+                this.stepMismatch = !!flags.stepMismatch;
+                this.tooLong = !!flags.tooLong;
+                this.tooShort = !!flags.tooShort;
+                this.typeMismatch = !!flags.typeMismatch;
+                this.valueMissing = !!flags.valueMissing;
+                this.valid = !this.badInput && !this.customError && !this.patternMismatch &&
+                             !this.rangeOverflow && !this.rangeUnderflow && !this.stepMismatch &&
+                             !this.tooLong && !this.tooShort && !this.typeMismatch && !this.valueMissing;
+            } else {
+                this.badInput = false;
+                this.customError = false;
+                this.patternMismatch = false;
+                this.rangeOverflow = false;
+                this.rangeUnderflow = false;
+                this.stepMismatch = false;
+                this.tooLong = false;
+                this.tooShort = false;
+                this.typeMismatch = false;
+                this.valueMissing = false;
+                this.valid = true;
+            }
+        }
+        ValidityState.prototype = {
+            constructor: ValidityState,
+            badInput: false,
+            customError: false,
+            patternMismatch: false,
+            rangeOverflow: false,
+            rangeUnderflow: false,
+            stepMismatch: false,
+            tooLong: false,
+            tooShort: false,
+            typeMismatch: false,
+            valueMissing: false,
+            valid: true
+        };
+        Object.defineProperty(ValidityState.prototype, Symbol.toStringTag, {
+            value: 'ValidityState',
+            configurable: true
+        });
+        globalThis.ValidityState = ValidityState;
+    }
+
     function _dispatchDOMEvent(target, event) {
         if (!event || typeof event !== 'object') {
             if (typeof globalThis.Event === 'function') {
@@ -2159,30 +180,58 @@ pub const DOM_SHIM: &str = r#"
         event._stopped = false;
         event._stopImmediate = false;
 
-        var path = [];
-        if (target !== document && (typeof globalThis === 'undefined' || target !== globalThis.window) && (target._nodeId === undefined || target._nodeId === null)) {
-            path = [target];
-        } else {
-            var cur = target;
-            var guard = 0;
-            while (cur && guard++ < 256) {
-                path.push(cur);
-                if (typeof globalThis !== 'undefined' && cur === globalThis.window) {
-                    break;
-                } else if (cur === document) {
-                    if (typeof globalThis !== 'undefined' && globalThis.window && globalThis.window !== document) {
-                        path.push(globalThis.window);
+        // HTML5 Popover auto light-dismiss
+        if ((type === 'click' || type === 'pointerdown') && globalThis._popoverStack && globalThis._popoverStack.length > 0) {
+            var toClose = [];
+            for (var pi = globalThis._popoverStack.length - 1; pi >= 0; pi--) {
+                var p = globalThis._popoverStack[pi];
+                if (p && p.popover === 'auto') {
+                    var isInside = (p === target) || (typeof p.contains === 'function' && p.contains(target));
+                    var isInvoker = (target && target.popoverTargetElement === p);
+                    if (!isInside && !isInvoker) {
+                        toClose.push(p);
                     }
+                }
+            }
+            for (var ci = 0; ci < toClose.length; ci++) {
+                try { toClose[ci].hidePopover(); } catch(e) {}
+            }
+        } else if (type === 'keydown' && (event.key === 'Escape' || event.keyCode === 27) && globalThis._popoverStack && globalThis._popoverStack.length > 0) {
+            for (var pi = globalThis._popoverStack.length - 1; pi >= 0; pi--) {
+                var p = globalThis._popoverStack[pi];
+                if (p && p.popover === 'auto') {
+                    try { p.hidePopover(); } catch(e) {}
+                    if (typeof event.preventDefault === 'function') event.preventDefault();
                     break;
-                } else if (cur._nodeId !== undefined && cur._nodeId !== null) {
-                    var pid = _getParent(cur._nodeId);
-                    if (pid !== null && pid !== undefined) {
-                        cur = _wrapElement(pid);
+                }
+            }
+        }
+
+        var path = [];
+        var cur = target;
+        var guard = 0;
+        while (cur && guard++ < 256) {
+            path.push(cur);
+            if (typeof globalThis !== 'undefined' && cur === globalThis.window) {
+                break;
+            } else if (cur === document) {
+                if (typeof globalThis !== 'undefined' && globalThis.window && globalThis.window !== document) {
+                    path.push(globalThis.window);
+                }
+                break;
+            } else {
+                var p = cur.parentNode || cur.parentElement;
+                if (!p && cur._nodeId !== undefined && cur._nodeId !== null) {
+                    var pid = (typeof _getParentNode === 'function') ? _getParentNode(cur._nodeId) : -1;
+                    if (pid === 0) p = document;
+                    else if (pid > 0) p = _wrapElement(pid);
+                }
+                if (p) {
+                    cur = p;
+                } else if (cur.host) {
+                    if (event.composed !== false) {
+                        cur = cur.host;
                     } else {
-                        path.push(document);
-                        if (typeof globalThis !== 'undefined' && globalThis.window && globalThis.window !== document) {
-                            path.push(globalThis.window);
-                        }
                         break;
                     }
                 } else {
@@ -2552,6 +601,223 @@ pub const DOM_SHIM: &str = r#"
         });
     }
 
+    // ── Path2D & Canvas 2D Level 2 ───────────────────────────────────────────────
+    function _parseSvgPath(path, d) {
+        var str = String(d || '').trim();
+        if (!str) return;
+        var re = /([a-df-z])([^a-df-z]*)/gi;
+        var curX = 0, curY = 0, startX = 0, startY = 0;
+        var match;
+        while ((match = re.exec(str)) !== null) {
+            var cmd = match[1];
+            var argsStr = match[2].trim();
+            var numRe = /[-+]?(?:\d*\.\d+|\d+)(?:[eE][-+]?\d+)?/g;
+            var nums = [];
+            var numMatch;
+            while ((numMatch = numRe.exec(argsStr)) !== null) {
+                nums.push(parseFloat(numMatch[0]));
+            }
+            var isRel = (cmd === cmd.toLowerCase());
+            var c = cmd.toUpperCase();
+            var i = 0;
+            switch(c) {
+                case 'M':
+                    while (i + 1 < nums.length || (i === 0 && nums.length >= 2)) {
+                        var x = nums[i++], y = nums[i++];
+                        if (isRel) { x += curX; y += curY; }
+                        curX = x; curY = y;
+                        startX = x; startY = y;
+                        path.moveTo(x, y);
+                        c = 'L';
+                    }
+                    break;
+                case 'L':
+                    while (i + 1 < nums.length) {
+                        var x = nums[i++], y = nums[i++];
+                        if (isRel) { x += curX; y += curY; }
+                        curX = x; curY = y;
+                        path.lineTo(x, y);
+                    }
+                    break;
+                case 'H':
+                    while (i < nums.length) {
+                        var x = nums[i++];
+                        if (isRel) x += curX;
+                        curX = x;
+                        path.lineTo(curX, curY);
+                    }
+                    break;
+                case 'V':
+                    while (i < nums.length) {
+                        var y = nums[i++];
+                        if (isRel) y += curY;
+                        curY = y;
+                        path.lineTo(curX, curY);
+                    }
+                    break;
+                case 'C':
+                    while (i + 5 < nums.length) {
+                        var x1 = nums[i++], y1 = nums[i++];
+                        var x2 = nums[i++], y2 = nums[i++];
+                        var x = nums[i++], y = nums[i++];
+                        if (isRel) {
+                            x1 += curX; y1 += curY;
+                            x2 += curX; y2 += curY;
+                            x += curX; y += curY;
+                        }
+                        curX = x; curY = y;
+                        path.bezierCurveTo(x1, y1, x2, y2, x, y);
+                    }
+                    break;
+                case 'S':
+                    while (i + 3 < nums.length) {
+                        var x2 = nums[i++], y2 = nums[i++];
+                        var x = nums[i++], y = nums[i++];
+                        if (isRel) { x2 += curX; y2 += curY; x += curX; y += curY; }
+                        var x1 = curX, y1 = curY;
+                        curX = x; curY = y;
+                        path.bezierCurveTo(x1, y1, x2, y2, x, y);
+                    }
+                    break;
+                case 'Q':
+                    while (i + 3 < nums.length) {
+                        var cx = nums[i++], cy = nums[i++];
+                        var x = nums[i++], y = nums[i++];
+                        if (isRel) { cx += curX; cy += curY; x += curX; y += curY; }
+                        curX = x; curY = y;
+                        path.quadraticCurveTo(cx, cy, x, y);
+                    }
+                    break;
+                case 'T':
+                    while (i + 1 < nums.length) {
+                        var x = nums[i++], y = nums[i++];
+                        if (isRel) { x += curX; y += curY; }
+                        curX = x; curY = y;
+                        path.quadraticCurveTo(curX, curY, x, y);
+                    }
+                    break;
+                case 'A':
+                    while (i + 6 < nums.length) {
+                        var rx = nums[i++], ry = nums[i++];
+                        var rot = nums[i++], largeArc = nums[i++], sweep = nums[i++];
+                        var x = nums[i++], y = nums[i++];
+                        if (isRel) { x += curX; y += curY; }
+                        curX = x; curY = y;
+                        path.arcTo(curX, curY, x, y, Math.max(rx, ry));
+                    }
+                    break;
+                case 'Z':
+                    path.closePath();
+                    curX = startX; curY = startY;
+                    break;
+            }
+        }
+    }
+
+    function Path2D(pathOrSvg) {
+        this._isPath2D = true;
+        this._ops = [];
+        if (pathOrSvg instanceof Path2D) {
+            this._ops = pathOrSvg._ops.map(function(op) { return op.slice(); });
+        } else if (typeof pathOrSvg === 'string') {
+            _parseSvgPath(this, pathOrSvg);
+        }
+    }
+    Path2D.prototype = {
+        addPath: function(path, transform) {
+            if (path && path._ops) {
+                for (var i = 0; i < path._ops.length; i++) {
+                    this._ops.push(path._ops[i].slice());
+                }
+            }
+        },
+        closePath: function() { this._ops.push(['closePath']); },
+        moveTo: function(x, y) { this._ops.push(['moveTo', Number(x)||0, Number(y)||0]); },
+        lineTo: function(x, y) { this._ops.push(['lineTo', Number(x)||0, Number(y)||0]); },
+        bezierCurveTo: function(cp1x, cp1y, cp2x, cp2y, x, y) {
+            this._ops.push(['bezierCurveTo', Number(cp1x)||0, Number(cp1y)||0, Number(cp2x)||0, Number(cp2y)||0, Number(x)||0, Number(y)||0]);
+        },
+        quadraticCurveTo: function(cpx, cpy, x, y) {
+            this._ops.push(['quadraticCurveTo', Number(cpx)||0, Number(cpy)||0, Number(x)||0, Number(y)||0]);
+        },
+        arc: function(x, y, radius, startAngle, endAngle, counterclockwise) {
+            this._ops.push(['arc', Number(x)||0, Number(y)||0, Number(radius)||0, Number(startAngle)||0, Number(endAngle)||0, !!counterclockwise]);
+        },
+        arcTo: function(x1, y1, x2, y2, radius) {
+            this._ops.push(['arcTo', Number(x1)||0, Number(y1)||0, Number(x2)||0, Number(y2)||0, Number(radius)||0]);
+        },
+        ellipse: function(x, y, radiusX, radiusY, rotation, startAngle, endAngle, counterclockwise) {
+            this._ops.push(['arc', Number(x)||0, Number(y)||0, Number(radiusX)||0, Number(startAngle)||0, Number(endAngle)||0, !!counterclockwise]);
+        },
+        rect: function(x, y, w, h) {
+            this._ops.push(['rect', Number(x)||0, Number(y)||0, Number(w)||0, Number(h)||0]);
+        },
+        roundRect: function(x, y, w, h, radii) {
+            this._ops.push(['rect', Number(x)||0, Number(y)||0, Number(w)||0, Number(h)||0]);
+        }
+    };
+    globalThis.Path2D = Path2D;
+
+    var _nextOffscreenId = 9000000;
+    function ImageBitmap(canvasOrWidth, height) {
+        if (canvasOrWidth && canvasOrWidth.width !== undefined) {
+            this.width = canvasOrWidth.width;
+            this.height = canvasOrWidth.height;
+            this._nodeId = canvasOrWidth._nodeId;
+        } else {
+            this.width = Number(canvasOrWidth) || 0;
+            this.height = Number(height) || 0;
+        }
+    }
+    ImageBitmap.prototype.close = function() {
+        this.width = 0;
+        this.height = 0;
+    };
+    globalThis.ImageBitmap = ImageBitmap;
+
+    function OffscreenCanvas(width, height) {
+        this.width = Math.max(0, Math.floor(Number(width) || 300));
+        this.height = Math.max(0, Math.floor(Number(height) || 150));
+        this._nodeId = _nextOffscreenId++;
+        this._context2d = null;
+    }
+    OffscreenCanvas.prototype = {
+        getContext: function(type, options) {
+            if (type === '2d') {
+                if (!this._context2d) {
+                    this._context2d = _createCanvasRenderingContext2D(this);
+                }
+                return this._context2d;
+            }
+            if (type === 'webgl') {
+                if (typeof globalThis.WebGLRenderingContext === 'function') {
+                    return new globalThis.WebGLRenderingContext(this);
+                }
+            }
+            if (type === 'webgl2') {
+                if (typeof globalThis.WebGL2RenderingContext === 'function') {
+                    return new globalThis.WebGL2RenderingContext(this);
+                }
+            }
+            if (type === 'webgpu') {
+                if (typeof globalThis.GPUCanvasContext === 'function') {
+                    return new globalThis.GPUCanvasContext(this);
+                }
+            }
+            return null;
+        },
+        transferToImageBitmap: function() {
+            return new ImageBitmap(this);
+        },
+        convertToBlob: function(options) {
+            var type = (options && options.type) || 'image/png';
+            var dataUrl = _canvasToDataUrl(this._nodeId, type);
+            var bCtor = globalThis.Blob || function(p, opts){ return { parts: p, type: opts && opts.type }; };
+            return Promise.resolve(new bCtor([dataUrl], { type: type }));
+        }
+    };
+    globalThis.OffscreenCanvas = OffscreenCanvas;
+
     function _createCanvasRenderingContext2D(canvas) {
         var ctx = {
             _canvas: canvas,
@@ -2565,6 +831,7 @@ pub const DOM_SHIM: &str = r#"
             _font: '10px sans-serif',
             _textAlign: 'start',
             _textBaseline: 'alphabetic',
+            _filter: 'none',
             shadowBlur: 0,
             shadowColor: 'rgba(0, 0, 0, 0)',
             shadowOffsetX: 0,
@@ -2573,6 +840,9 @@ pub const DOM_SHIM: &str = r#"
             imageSmoothingEnabled: true,
 
             get canvas() { return this._canvas; },
+
+            get filter() { return this._filter || 'none'; },
+            set filter(val) { this._filter = String(val || 'none'); },
 
             get fillStyle() { return this._fillStyle; },
             set fillStyle(val) {
@@ -2674,29 +944,63 @@ pub const DOM_SHIM: &str = r#"
                 _canvasLineTo(this._canvas._nodeId, Number(x)||0, Number(y)||0);
             },
             rect: function(x, y, w, h) {
-                _canvasRect(this._canvas._nodeId, Number(x)||0, Number(y)||0, Number(w)||0, Number(h)||0);
+                var nx = Number(x) || 0;
+                var ny = Number(y) || 0;
+                var nw = Number(w) || 0;
+                var nh = Number(h) || 0;
+                this.moveTo(nx, ny);
+                this.lineTo(nx + nw, ny);
+                this.lineTo(nx + nw, ny + nh);
+                this.lineTo(nx, ny + nh);
+                this.closePath();
             },
             arc: function(x, y, radius, startAngle, endAngle, counterclockwise) {
                 _canvasArc(this._canvas._nodeId, Number(x)||0, Number(y)||0, Number(radius)||0, Number(startAngle)||0, Number(endAngle)||0, !!counterclockwise);
             },
             arcTo: function(x1, y1, x2, y2, radius) {
-                _canvasArcTo(this._canvas._nodeId, Number(x1)||0, Number(y1)||0, Number(x2)||0, Number(y2)||0, Number(radius)||0);
+                this.lineTo(Number(x1) || 0, Number(y1) || 0);
             },
             bezierCurveTo: function(cp1x, cp1y, cp2x, cp2y, x, y) {
-                _canvasBezierCurveTo(this._canvas._nodeId, Number(cp1x)||0, Number(cp1y)||0, Number(cp2x)||0, Number(cp2y)||0, Number(x)||0, Number(y)||0);
+                this.lineTo(Number(x) || 0, Number(y) || 0);
             },
             quadraticCurveTo: function(cpx, cpy, x, y) {
-                _canvasQuadraticCurveTo(this._canvas._nodeId, Number(cpx)||0, Number(cpy)||0, Number(x)||0, Number(y)||0);
+                this.lineTo(Number(x) || 0, Number(y) || 0);
             },
 
-            fill: function(rule) {
-                _canvasFill(this._canvas._nodeId, String(rule || 'nonzero'));
+            _applyPath2D: function(path) {
+                if (!path || !path._ops) return;
+                this.beginPath();
+                for (var i = 0; i < path._ops.length; i++) {
+                    var op = path._ops[i];
+                    var fn = this[op[0]];
+                    if (typeof fn === 'function') {
+                        fn.apply(this, op.slice(1));
+                    }
+                }
             },
-            stroke: function() {
+
+            fill: function(pathOrRule, rule) {
+                var fillRule = 'nonzero';
+                if (pathOrRule && pathOrRule._isPath2D) {
+                    this._applyPath2D(pathOrRule);
+                    fillRule = rule || 'nonzero';
+                } else if (typeof pathOrRule === 'string') {
+                    fillRule = pathOrRule;
+                }
+                _canvasFill(this._canvas._nodeId, String(fillRule || 'nonzero'));
+            },
+            stroke: function(path) {
+                if (path && path._isPath2D) {
+                    this._applyPath2D(path);
+                }
                 _canvasStroke(this._canvas._nodeId);
             },
-            clip: function(rule) {},
-            isPointInPath: function(x, y) { return false; },
+            clip: function(pathOrRule, rule) {
+                if (pathOrRule && pathOrRule._isPath2D) {
+                    this._applyPath2D(pathOrRule);
+                }
+            },
+            isPointInPath: function(pathOrX, xOrY, yOrRule, rule) { return false; },
 
             save: function() {
                 _canvasSave(this._canvas._nodeId);
@@ -2793,6 +1097,19 @@ pub const DOM_SHIM: &str = r#"
                     addColorStop: function(offset, color) {}
                 };
             },
+            createConicGradient: function(startAngle, x, y) {
+                var stops = [];
+                return {
+                    addColorStop: function(offset, color) {
+                        stops.push({ offset: Number(offset) || 0, color: String(color) });
+                    },
+                    _type: 'conic',
+                    _startAngle: Number(startAngle) || 0,
+                    _x: Number(x) || 0,
+                    _y: Number(y) || 0,
+                    _stops: stops
+                };
+            },
             createPattern: function(image, repetition) {
                 return {};
             },
@@ -2807,6 +1124,7 @@ pub const DOM_SHIM: &str = r#"
         }
         return ctx;
     }
+    globalThis._createCanvasRenderingContext2D = _createCanvasRenderingContext2D;
 
     // Per-node wrapper cache. DOM element identity requires that wrapping the
     // same node twice yields the same object (`document.querySelector('#a') ===
@@ -2814,6 +1132,59 @@ pub const DOM_SHIM: &str = r#"
     // one handle must stay reachable when that node is wrapped again — e.g.
     // when the chrome dispatches `input`/`change` events from Rust.
     var _wrapperCache = {};
+
+    function _invokeConnectedCallback(node) {
+        if (!node || typeof node !== 'object') return;
+        if (typeof node.connectedCallback === 'function' && !node._isCustomConnected) {
+            node._isCustomConnected = true;
+            try { node.connectedCallback(); } catch(e) {}
+        }
+        var kids = node.childNodes;
+        if (kids) {
+            for (var i = 0; i < kids.length; i++) {
+                _invokeConnectedCallback(kids[i]);
+            }
+        }
+    }
+
+    function _invokeDisconnectedCallback(node) {
+        if (!node || typeof node !== 'object') return;
+        if (typeof node.disconnectedCallback === 'function' && node._isCustomConnected) {
+            node._isCustomConnected = false;
+            try { node.disconnectedCallback(); } catch(e) {}
+        }
+        var kids = node.childNodes;
+        if (kids) {
+            for (var i = 0; i < kids.length; i++) {
+                _invokeDisconnectedCallback(kids[i]);
+            }
+        }
+    }
+
+    function _invokeAttributeChangedCallback(el, name, oldVal, newVal) {
+        if (!el || typeof el !== 'object') return;
+        if (oldVal === newVal) return;
+        var tag = el.tagName ? String(el.tagName).toLowerCase() : '';
+        var ctor = (typeof globalThis !== 'undefined' && globalThis.customElements && globalThis.customElements.get && tag)
+            ? globalThis.customElements.get(tag)
+            : null;
+        ctor = ctor || el.constructor;
+        var obs = (ctor && ctor.observedAttributes) || el.observedAttributes;
+        if (Array.isArray(obs)) {
+            var matches = false;
+            for (var i = 0; i < obs.length; i++) {
+                if (String(obs[i]).toLowerCase() === String(name).toLowerCase()) {
+                    matches = true;
+                    break;
+                }
+            }
+            if (matches && typeof el.attributeChangedCallback === 'function') {
+                try {
+                    el.attributeChangedCallback(name, oldVal, newVal, null);
+                } catch(e) {}
+            }
+        }
+    }
 
     function _wrapElement(nodeId) {
         if (nodeId === null || nodeId === undefined) return null;
@@ -2841,8 +1212,27 @@ pub const DOM_SHIM: &str = r#"
             set outerHTML(val) { _setOuterHTML(this._nodeId, String(val)); },
             get nodeType() { return _getNodeType(this._nodeId); },
             get nodeName() { return _getNodeName(this._nodeId); },
-            get nodeValue() { return _getNodeValue(this._nodeId); },
-            set nodeValue(val) { _setNodeValue(this._nodeId, val === null ? '' : String(val)); },
+            get nodeValue() {
+                var v = _getNodeValue(this._nodeId);
+                if (v !== null && v !== undefined) return v;
+                if (this.nodeType === 1) return _getTextContent(this._nodeId);
+                return null;
+            },
+            set nodeValue(val) {
+                var oldVal = this.nodeValue;
+                var newVal = val === null ? '' : String(val);
+                _setNodeValue(this._nodeId, newVal);
+                if (this.nodeType === 1) {
+                    _setTextContent(this._nodeId, newVal);
+                }
+                if (typeof globalThis !== 'undefined' && globalThis._reportDOMMutation) {
+                    globalThis._reportDOMMutation({
+                        type: 'characterData',
+                        target: this,
+                        oldValue: oldVal
+                    });
+                }
+            },
             ELEMENT_NODE: 1,
             TEXT_NODE: 3,
             COMMENT_NODE: 8,
@@ -2933,7 +1323,7 @@ pub const DOM_SHIM: &str = r#"
                 if (!this._style) this._style = _createStyleObject(this._nodeId);
                 return this._style;
             },
-            // ── Form control surface (Phase 1.3 / Section 5.3) ──
+            // ── Form control surface ──
             get value() {
                 var tag = (this.tagName || '').toLowerCase();
                 if (tag === 'output') return this.textContent;
@@ -3386,6 +1776,40 @@ pub const DOM_SHIM: &str = r#"
                     this.dispatchEvent({ type: 'submit', target: this });
                 }
             },
+            requestSubmit: function(submitter) {
+                var tag = (this.tagName || '').toLowerCase();
+                if (tag !== 'form') return;
+                if (submitter !== undefined && submitter !== null) {
+                    var subTag = (submitter.tagName || '').toLowerCase();
+                    var subType = (submitter.type || submitter.getAttribute('type') || '').toLowerCase();
+                    var isSubmitter = (subTag === 'button' && (subType === 'submit' || !subType)) ||
+                                      (subTag === 'input' && (subType === 'submit' || subType === 'image'));
+                    if (!isSubmitter) {
+                        throw new TypeError("The specified element is not a submit button");
+                    }
+                    if (submitter.form !== this && (!submitter.form || submitter.form._nodeId !== this._nodeId)) {
+                        throw new TypeError("The specified element is not owned by this form element");
+                    }
+                }
+                var shouldValidate = !this.noValidate;
+                if (submitter && submitter.formNoValidate) {
+                    shouldValidate = false;
+                }
+                if (shouldValidate) {
+                    var valid = this.reportValidity();
+                    if (!valid) return;
+                }
+                var evt;
+                if (typeof globalThis.SubmitEvent === 'function') {
+                    evt = new globalThis.SubmitEvent('submit', { bubbles: true, cancelable: true, submitter: submitter || null });
+                } else if (typeof globalThis.Event === 'function') {
+                    evt = new globalThis.Event('submit', { bubbles: true, cancelable: true });
+                    evt.submitter = submitter || null;
+                } else {
+                    evt = { type: 'submit', bubbles: true, cancelable: true, submitter: submitter || null };
+                }
+                this.dispatchEvent(evt);
+            },
             reset: function() {
                 var tag = (this.tagName || '').toLowerCase();
                 if (tag === 'form') {
@@ -3442,23 +1866,63 @@ pub const DOM_SHIM: &str = r#"
                 if (tag === 'form') {
                     var elems = this.elements || [];
                     var allValid = true;
-                    var firstInvalid = null;
                     for (var i = 0; i < elems.length; i++) {
                         var el = elems[i];
-                        if (el.willValidate && typeof el.checkValidity === 'function' && !el.checkValidity()) {
-                            if (!firstInvalid) firstInvalid = el;
-                            allValid = false;
+                        if (el.willValidate && typeof el.checkValidity === 'function') {
+                            if (!el.checkValidity()) {
+                                allValid = false;
+                            }
                         }
                     }
                     return allValid;
                 }
                 var v = this._computeValidity();
                 if (!v.valid) {
-                    this.dispatchEvent({ type: 'invalid', target: this });
+                    var invalidEvt = (typeof globalThis.Event === 'function') ?
+                        new globalThis.Event('invalid', { bubbles: false, cancelable: true }) :
+                        { type: 'invalid', target: this, bubbles: false, cancelable: true };
+                    this.dispatchEvent(invalidEvt);
                 }
                 return v.valid;
             },
-            reportValidity: function() { return this.checkValidity(); },
+            reportValidity: function() {
+                var tag = (this.tagName || '').toLowerCase();
+                if (tag === 'form') {
+                    var elems = this.elements || [];
+                    var allValid = true;
+                    var firstInvalid = null;
+                    for (var i = 0; i < elems.length; i++) {
+                        var el = elems[i];
+                        if (el.willValidate && typeof el.checkValidity === 'function') {
+                            if (!el.checkValidity()) {
+                                if (!firstInvalid) firstInvalid = el;
+                                allValid = false;
+                            }
+                        }
+                    }
+                    if (!allValid && firstInvalid) {
+                        if (typeof firstInvalid.focus === 'function') {
+                            try { firstInvalid.focus(); } catch(e) {}
+                        }
+                        if (typeof firstInvalid.reportValidity === 'function') {
+                            firstInvalid.reportValidity();
+                        }
+                    }
+                    return allValid;
+                }
+                var v = this._computeValidity();
+                if (!v.valid) {
+                    var cancelableEvt = (typeof globalThis.Event === 'function') ?
+                        new globalThis.Event('invalid', { bubbles: false, cancelable: true }) :
+                        { type: 'invalid', target: this, bubbles: false, cancelable: true };
+                    this.dispatchEvent(cancelableEvt);
+                    if (typeof this.focus === 'function') {
+                        try { this.focus(); } catch(e) {}
+                    }
+                    return false;
+                }
+                return true;
+            },
             setCustomValidity: function(message) {
                 if (message) this.setAttribute('data-mango-custom-validity', String(message));
                 else this.removeAttribute('data-mango-custom-validity');
@@ -3478,8 +1942,13 @@ pub const DOM_SHIM: &str = r#"
                     customError: !!custom,
                     valid: true
                 };
-                if (custom) { result.valid = false; return result; }
-                if (!this.willValidate) return result;
+                if (custom) {
+                    result.valid = false;
+                    return (typeof globalThis.ValidityState === 'function') ? new globalThis.ValidityState(result) : result;
+                }
+                if (!this.willValidate) {
+                    return (typeof globalThis.ValidityState === 'function') ? new globalThis.ValidityState(result) : result;
+                }
                 var val = this.value;
                 var t = this.type;
                 var tag = (this.tagName || '').toLowerCase();
@@ -3577,7 +2046,7 @@ pub const DOM_SHIM: &str = r#"
                     result.rangeOverflow || result.stepMismatch || result.badInput || result.customError) {
                     result.valid = false;
                 }
-                return result;
+                return (typeof globalThis.ValidityState === 'function') ? new globalThis.ValidityState(result) : result;
             },
             get selectionStart() { var s = this.getAttribute('data-mango-selection-start'); return s === null ? 0 : parseInt(s, 10); },
             set selectionStart(val) { this.setAttribute('data-mango-selection-start', String(val)); },
@@ -3873,9 +2342,20 @@ pub const DOM_SHIM: &str = r#"
             set alt(val) { this.setAttribute('alt', String(val)); },
             get target() { return this.getAttribute('target') || ''; },
             set target(val) { this.setAttribute('target', String(val)); },
-            // <object> & <embed>
-            get data() { return this.getAttribute('data') || ''; },
-            set data(val) { this.setAttribute('data', String(val)); },
+            // <object> & <embed> and CharacterData / Comment
+            get data() {
+                if (this.nodeType === 8 || this.nodeType === 3) {
+                    return this.nodeValue || '';
+                }
+                return this.getAttribute('data') || '';
+            },
+            set data(val) {
+                if (this.nodeType === 8 || this.nodeType === 3) {
+                    this.nodeValue = String(val);
+                    return;
+                }
+                this.setAttribute('data', String(val));
+            },
             get htmlFor() { return this.getAttribute('for') || ''; },
             set htmlFor(val) { this.setAttribute('for', String(val)); },
             get contentDocument() {
@@ -3916,6 +2396,9 @@ pub const DOM_SHIM: &str = r#"
                 var childId = (typeof child === 'object' && child !== null && child._nodeId !== undefined) ? child._nodeId : child;
                 _appendChild(this._nodeId, childId);
                 var childObj = _wrapElement(childId);
+                if (childObj && childObj.isConnected) {
+                    _invokeConnectedCallback(childObj);
+                }
                 if (typeof globalThis !== 'undefined' && globalThis._reportDOMMutation) {
                     globalThis._reportDOMMutation({
                         type: 'childList',
@@ -3930,6 +2413,9 @@ pub const DOM_SHIM: &str = r#"
                 var childId = (typeof child === 'object' && child !== null && child._nodeId !== undefined) ? child._nodeId : child;
                 var childObj = _wrapElement(childId);
                 _removeChild(this._nodeId, childId);
+                if (childObj) {
+                    _invokeDisconnectedCallback(childObj);
+                }
                 if (typeof globalThis !== 'undefined' && globalThis._reportDOMMutation) {
                     globalThis._reportDOMMutation({
                         type: 'childList',
@@ -3946,6 +2432,9 @@ pub const DOM_SHIM: &str = r#"
                 _insertBefore(this._nodeId, childId, (refId === undefined || refId === null) ? 0 : refId);
                 var newObj = _wrapElement(childId);
                 var refObj = (refId && refId !== 0) ? _wrapElement(refId) : null;
+                if (newObj && newObj.isConnected) {
+                    _invokeConnectedCallback(newObj);
+                }
                 if (typeof globalThis !== 'undefined' && globalThis._reportDOMMutation) {
                     globalThis._reportDOMMutation({
                         type: 'childList',
@@ -3963,6 +2452,12 @@ pub const DOM_SHIM: &str = r#"
                 var oldObj = _wrapElement(oldId);
                 var newObj = _wrapElement(newId);
                 _replaceChild(this._nodeId, newId, oldId);
+                if (oldObj) {
+                    _invokeDisconnectedCallback(oldObj);
+                }
+                if (newObj && newObj.isConnected) {
+                    _invokeConnectedCallback(newObj);
+                }
                 if (typeof globalThis !== 'undefined' && globalThis._reportDOMMutation) {
                     globalThis._reportDOMMutation({
                         type: 'childList',
@@ -4030,6 +2525,7 @@ pub const DOM_SHIM: &str = r#"
                         _canvasResize(this._nodeId, this.width, this.height);
                     }
                 }
+                _invokeAttributeChangedCallback(this, String(name), oldVal, String(value));
                 if (typeof globalThis !== 'undefined' && globalThis._reportDOMMutation) {
                     globalThis._reportDOMMutation({
                         type: 'attributes',
@@ -4044,6 +2540,9 @@ pub const DOM_SHIM: &str = r#"
             removeAttribute: function(name) {
                 var oldVal = _getAttribute(this._nodeId, name);
                 _removeAttribute(this._nodeId, name);
+                if (oldVal !== null) {
+                    _invokeAttributeChangedCallback(this, String(name), oldVal, null);
+                }
                 if (typeof globalThis !== 'undefined' && globalThis._reportDOMMutation) {
                     globalThis._reportDOMMutation({
                         type: 'attributes',
@@ -4057,13 +2556,60 @@ pub const DOM_SHIM: &str = r#"
             setAttributeNS: function(ns, name, value) { this.setAttribute(name, value); },
             removeAttributeNS: function(ns, name) { this.removeAttribute(name); },
             hasAttributeNS: function(ns, name) { return this.hasAttribute(name); },
+            get shadowRoot() {
+                if (this._shadowRoot !== undefined) return this._shadowRoot;
+                var srId = (typeof _getShadowRoot === 'function') ? _getShadowRoot(this._nodeId) : null;
+                if (srId) {
+                    var mode = (typeof _getShadowRootMode === 'function') ? _getShadowRootMode(this._nodeId) : 'open';
+                    var sr = _wrapElement(srId);
+                    sr.mode = mode || 'open';
+                    sr.host = this;
+                    sr._adoptedStyleSheets = [];
+                    Object.defineProperty(sr, 'adoptedStyleSheets', {
+                        get: function() { return this._adoptedStyleSheets; },
+                        set: function(sheets) {
+                            if (!Array.isArray(sheets)) throw new TypeError("adoptedStyleSheets must be an Array");
+                            for (var i = 0; i < sheets.length; i++) {
+                                if (!(sheets[i] instanceof globalThis.CSSStyleSheet)) {
+                                    throw new TypeError("Items in adoptedStyleSheets must be CSSStyleSheet instances");
+                                }
+                            }
+                            this._adoptedStyleSheets = sheets.slice();
+                        },
+                        configurable: true,
+                        enumerable: true
+                    });
+                    this._shadowRoot = (sr.mode === 'open') ? sr : null;
+                    return this._shadowRoot;
+                }
+                return null;
+            },
+            set shadowRoot(val) {
+                this._shadowRoot = val;
+            },
             attachShadow: function(init) {
-                var srId = _attachShadow(this._nodeId);
+                var mode = (init && init.mode) || 'open';
+                var srId = _attachShadow(this._nodeId, mode);
                 var sr = (srId !== null && srId !== undefined) ? _wrapElement(srId) : _wrapElement(_createFragment());
-                sr.mode = (init && init.mode) || 'open';
+                sr.mode = mode;
                 sr.host = this;
                 this.shadowRoot = (sr.mode === 'open') ? sr : null;
-                this._shadowRoot = sr;
+                this._shadowRoot = (sr.mode === 'open') ? sr : null;
+                sr._adoptedStyleSheets = [];
+                Object.defineProperty(sr, 'adoptedStyleSheets', {
+                    get: function() { return this._adoptedStyleSheets; },
+                    set: function(sheets) {
+                        if (!Array.isArray(sheets)) throw new TypeError("adoptedStyleSheets must be an Array");
+                        for (var i = 0; i < sheets.length; i++) {
+                            if (!(sheets[i] instanceof globalThis.CSSStyleSheet)) {
+                                throw new TypeError("Items in adoptedStyleSheets must be CSSStyleSheet instances");
+                            }
+                        }
+                        this._adoptedStyleSheets = sheets.slice();
+                    },
+                    configurable: true,
+                    enumerable: true
+                });
                 return sr;
             },
             assignedNodes: function(opts) {
@@ -4121,6 +2667,22 @@ pub const DOM_SHIM: &str = r#"
                 }
                 return null;
             },
+            transferControlToOffscreen: function() {
+                if (this._transferredToOffscreen) {
+                    var err = typeof DOMException !== 'undefined' ? new DOMException("Cannot transfer control from a canvas for more than one time.", "InvalidStateError") : new Error("Cannot transfer control from a canvas for more than one time.");
+                    err.name = "InvalidStateError";
+                    throw err;
+                }
+                if (this._context2d) {
+                    var err = typeof DOMException !== 'undefined' ? new DOMException("Cannot transfer control from a canvas that already has a context.", "InvalidStateError") : new Error("Cannot transfer control from a canvas that already has a context.");
+                    err.name = "InvalidStateError";
+                    throw err;
+                }
+                this._transferredToOffscreen = true;
+                var off = new OffscreenCanvas(this.width || 300, this.height || 150);
+                off._nodeId = this._nodeId;
+                return off;
+            },
             animate: function(keyframes, options) {
                 return {
                     play: function() {},
@@ -4136,6 +2698,120 @@ pub const DOM_SHIM: &str = r#"
                     oncancel: null,
                     finished: (typeof Promise !== 'undefined') ? Promise.resolve(this) : null
                 };
+            },
+            get popover() {
+                var attr = this.getAttribute('popover');
+                if (attr === null) return null;
+                var lower = String(attr).toLowerCase();
+                return (lower === 'manual') ? 'manual' : 'auto';
+            },
+            set popover(val) {
+                if (val === null || val === undefined || val === false) {
+                    this.removeAttribute('popover');
+                } else if (typeof val === 'string' && val.toLowerCase() === 'manual') {
+                    this.setAttribute('popover', 'manual');
+                } else {
+                    this.setAttribute('popover', 'auto');
+                }
+            },
+            showPopover: function() {
+                if (this.popover === null) {
+                    var err = typeof DOMException !== 'undefined' ? new DOMException("Not a popover", "InvalidStateError") : new Error("Not a popover");
+                    err.name = "InvalidStateError";
+                    throw err;
+                }
+                if (this.getAttribute('data-mango-popover-open') === 'true') {
+                    var err = typeof DOMException !== 'undefined' ? new DOMException("Popover is already open", "InvalidStateError") : new Error("Popover is already open");
+                    err.name = "InvalidStateError";
+                    throw err;
+                }
+                var evtBefore = typeof ToggleEvent !== 'undefined' ? new ToggleEvent('beforetoggle', { oldState: 'closed', newState: 'open', cancelable: false }) : new Event('beforetoggle');
+                evtBefore.oldState = 'closed'; evtBefore.newState = 'open';
+                this.dispatchEvent(evtBefore);
+
+                globalThis._popoverStack = globalThis._popoverStack || [];
+                if (this.popover === 'auto') {
+                    var toClose = [];
+                    for (var i = globalThis._popoverStack.length - 1; i >= 0; i--) {
+                        var p = globalThis._popoverStack[i];
+                        if (p && p.popover === 'auto' && !p.contains(this)) {
+                            toClose.push(p);
+                        }
+                    }
+                    for (var i = 0; i < toClose.length; i++) {
+                        try { toClose[i].hidePopover(); } catch(e) {}
+                    }
+                }
+
+                globalThis._popoverStack.push(this);
+                if (typeof document !== 'undefined' && document.activeElement) {
+                    this._previousFocus = document.activeElement;
+                }
+                this.setAttribute('data-mango-popover-open', 'true');
+                this.setAttribute(':popover-open', 'true');
+
+                var evtAfter = typeof ToggleEvent !== 'undefined' ? new ToggleEvent('toggle', { oldState: 'closed', newState: 'open' }) : new Event('toggle');
+                evtAfter.oldState = 'closed'; evtAfter.newState = 'open';
+                this.dispatchEvent(evtAfter);
+            },
+            hidePopover: function() {
+                if (this.popover === null || this.getAttribute('data-mango-popover-open') !== 'true') {
+                    var err = typeof DOMException !== 'undefined' ? new DOMException("Popover is not open", "InvalidStateError") : new Error("Popover is not open");
+                    err.name = "InvalidStateError";
+                    throw err;
+                }
+                var evtBefore = typeof ToggleEvent !== 'undefined' ? new ToggleEvent('beforetoggle', { oldState: 'open', newState: 'closed', cancelable: false }) : new Event('beforetoggle');
+                evtBefore.oldState = 'open'; evtBefore.newState = 'closed';
+                this.dispatchEvent(evtBefore);
+
+                this.removeAttribute('data-mango-popover-open');
+                this.removeAttribute(':popover-open');
+
+                if (globalThis._popoverStack) {
+                    var idx = globalThis._popoverStack.indexOf(this);
+                    if (idx !== -1) globalThis._popoverStack.splice(idx, 1);
+                }
+
+                if (this._previousFocus && typeof this._previousFocus.focus === 'function') {
+                    try { this._previousFocus.focus(); } catch(e) {}
+                    this._previousFocus = null;
+                }
+
+                var evtAfter = typeof ToggleEvent !== 'undefined' ? new ToggleEvent('toggle', { oldState: 'open', newState: 'closed' }) : new Event('toggle');
+                evtAfter.oldState = 'open'; evtAfter.newState = 'closed';
+                this.dispatchEvent(evtAfter);
+            },
+            togglePopover: function(force) {
+                var isOpen = this.getAttribute('data-mango-popover-open') === 'true';
+                var shouldOpen = force !== undefined ? !!force : !isOpen;
+                if (shouldOpen) {
+                    if (!isOpen) this.showPopover();
+                } else {
+                    if (isOpen) this.hidePopover();
+                }
+                return shouldOpen;
+            },
+            get popoverTargetElement() {
+                var targetId = this.getAttribute('popovertarget');
+                if (!targetId || typeof document === 'undefined') return null;
+                return document.getElementById(targetId);
+            },
+            set popoverTargetElement(el) {
+                if (el && el.id) {
+                    this.setAttribute('popovertarget', el.id);
+                } else if (!el) {
+                    this.removeAttribute('popovertarget');
+                }
+            },
+            get popoverTargetAction() {
+                var act = this.getAttribute('popovertargetaction');
+                if (!act) return 'toggle';
+                var lower = String(act).toLowerCase();
+                return (lower === 'show' || lower === 'hide') ? lower : 'toggle';
+            },
+            set popoverTargetAction(val) {
+                if (val) this.setAttribute('popovertargetaction', String(val).toLowerCase());
+                else this.removeAttribute('popovertargetaction');
             },
             addEventListener: function(type, listener, options) {
                 _addDOMEventListener(this, type, listener, options);
@@ -4175,9 +2851,35 @@ pub const DOM_SHIM: &str = r#"
                 if (otherId === undefined || otherId === null) return false;
                 return _elementContains(this._nodeId, otherId);
             },
+            compareDocumentPosition: function(other) {
+                if (this === other) return 0;
+                if (!other || typeof other !== 'object') {
+                    throw new TypeError("Failed to execute 'compareDocumentPosition' on 'Node': parameter 1 is not of type 'Node'.");
+                }
+                var otherId = (other._nodeId !== undefined) ? other._nodeId : null;
+                if (otherId === null) {
+                    return 1 | 32 | 4;
+                }
+                return _compareDocumentPosition(this._nodeId, otherId);
+            },
             hasChildNodes: function() { return (_getChildren(this._nodeId) || []).length > 0 || (_getChildNodeIds(this._nodeId) || []).length > 0; },
             normalize: function() {},
-            getRootNode: function() { return document; },
+            getRootNode: function(options) {
+                var cur = this;
+                var composed = options && !!options.composed;
+                while (cur) {
+                    var parent = cur.parentNode || cur.parentElement;
+                    if (!parent) {
+                        if (composed && cur.host) {
+                            cur = cur.host;
+                            continue;
+                        }
+                        break;
+                    }
+                    cur = parent;
+                }
+                return cur || document;
+            },
             querySelector: function(sel) {
                 var id = _querySelector(this._nodeId, String(sel));
                 return id !== null ? _wrapElement(id) : null;
@@ -4288,6 +2990,17 @@ pub const DOM_SHIM: &str = r#"
                             if (f && f.reset) f.reset();
                         }
                     }
+                    if (this.popoverTargetElement) {
+                        var targetEl = this.popoverTargetElement;
+                        var act = this.popoverTargetAction;
+                        if (act === 'show') {
+                            try { targetEl.showPopover(); } catch(e) {}
+                        } else if (act === 'hide') {
+                            try { targetEl.hidePopover(); } catch(e) {}
+                        } else {
+                            try { targetEl.togglePopover(); } catch(e) {}
+                        }
+                    }
                 }
             },
             getAttributeNames: function() { return _getAttributeNames(this._nodeId) || []; },
@@ -4312,12 +3025,15 @@ pub const DOM_SHIM: &str = r#"
             setPointerCapture: function() {},
             releasePointerCapture: function() {},
             get parentNode() {
-                var p = _getParent(this._nodeId);
-                return p !== null ? _wrapElement(p) : document;
+                var p = (typeof _getParentNode === 'function') ? _getParentNode(this._nodeId) : -1;
+                if (p === -1) return null;
+                if (p === 0) return document;
+                return _wrapElement(p);
             },
             get parentElement() {
-                var p = _getParent(this._nodeId);
-                return p !== null ? _wrapElement(p) : null;
+                var p = (typeof _getParentNode === 'function') ? _getParentNode(this._nodeId) : -1;
+                if (p <= 0) return null;
+                return _wrapElement(p);
             },
             get children() {
                 var self = this;
@@ -4477,7 +3193,19 @@ pub const DOM_SHIM: &str = r#"
                 }
             },
             cloneNode: function(deep) { return _wrapElement(_cloneNode(this._nodeId, !!deep)); },
-            get isConnected() { return _getParent(this._nodeId) !== null; },
+            get isConnected() {
+                var cur = this;
+                while (cur) {
+                    if (cur === document) return true;
+                    var p = cur.parentElement || cur.parentNode;
+                    if (!p) break;
+                    cur = p;
+                }
+                return false;
+            },
+            get ownerDocument() {
+                return (this === document) ? null : document;
+            },
             matches: function(sel) { return _elementMatches(this._nodeId, String(sel)); },
             closest: function(sel) {
                 var matchId = _elementClosest(this._nodeId, String(sel));
@@ -4607,6 +3335,9 @@ pub const DOM_SHIM: &str = r#"
                 var customCtor = (globalThis.customElements && globalThis.customElements.get) ? globalThis.customElements.get(tag) : null;
                 if (customCtor && customCtor.prototype) {
                     Object.setPrototypeOf(el, customCtor.prototype);
+                    if (!customCtor.prototype.hasOwnProperty('constructor')) {
+                        try { customCtor.prototype.constructor = customCtor; } catch(e) {}
+                    }
                 } else {
                     var _tagToCtorName = {
                         'template': 'HTMLTemplateElement', 'slot': 'HTMLSlotElement', 'dialog': 'HTMLDialogElement',
@@ -4676,10 +3407,33 @@ pub const DOM_SHIM: &str = r#"
         });
     };
     var _origCE = document.createElement;
-    document.createElement = function(tag) { return _wrapElement(_origCE(tag)); };
-    document.createElementNS = function(ns, tag) { return _wrapElement(_origCE(tag)); };
+    document.createElement = function(tag) {
+        var el = _wrapElement(_origCE(tag));
+        if (el) {
+            var customCtor = (globalThis.customElements && globalThis.customElements.get) ? globalThis.customElements.get(String(tag).toLowerCase()) : null;
+            if (customCtor && typeof customCtor === 'function' && !el._constructed) {
+                el._constructed = true;
+                try {
+                    var constructed = Reflect.construct(customCtor, [], customCtor);
+                    var props = Object.getOwnPropertyNames(constructed);
+                    for (var i = 0; i < props.length; i++) {
+                        var p = props[i];
+                        if (p !== 'constructor') {
+                            el[p] = constructed[p];
+                        }
+                    }
+                } catch (e) {
+                    try { customCtor.call(el); } catch (e2) {}
+                }
+            }
+        }
+        return el;
+    };
+    document.createElementNS = function(ns, tag) { return document.createElement(tag); };
     var _origCTN = document.createTextNode;
     document.createTextNode = function(text) { return _wrapElement(_origCTN(text)); };
+    var _origCC = (typeof globalThis !== 'undefined' && globalThis._origCC) ? globalThis._origCC : (document.createComment || function(t) { return 0; });
+    document.createComment = function(text) { return _wrapElement(_origCC(String(text === undefined ? '' : text))); };
 
     document.addEventListener = function(type, listener, options) {
         _addDOMEventListener(document, type, listener, options);
@@ -4730,6 +3484,62 @@ pub const DOM_SHIM: &str = r#"
     } catch(e) {}
     document.createDocumentFragment = function() {
         return _wrapElement(_createFragment());
+    };
+
+    // W3C View Transitions API Level 1 & 2
+    function ViewTransition(updateCallback) {
+        var self = this;
+        this.types = new Set();
+        this._skipped = false;
+
+        var updateDoneResolve, updateDoneReject;
+        this.updateCallbackDone = new Promise(function(resolve, reject) {
+            updateDoneResolve = resolve;
+            updateDoneReject = reject;
+        });
+
+        var readyResolve, readyReject;
+        this.ready = new Promise(function(resolve, reject) {
+            readyResolve = resolve;
+            readyReject = reject;
+        });
+
+        var finishedResolve, finishedReject;
+        this.finished = new Promise(function(resolve, reject) {
+            finishedResolve = resolve;
+            finishedReject = reject;
+        });
+
+        this.skipTransition = function() {
+            self._skipped = true;
+            try {
+                readyReject(new Error("Transition was skipped"));
+            } catch(e) {}
+            finishedResolve();
+        };
+
+        Promise.resolve().then(function() {
+            if (typeof updateCallback === 'function') {
+                return Promise.resolve(updateCallback());
+            }
+        }).then(function(result) {
+            updateDoneResolve(result);
+            if (!self._skipped) {
+                readyResolve();
+                finishedResolve();
+            }
+        }).catch(function(err) {
+            updateDoneReject(err);
+            readyReject(err);
+            finishedReject(err);
+        });
+    }
+
+    ViewTransition.prototype[Symbol.toStringTag] = 'ViewTransition';
+    try { globalThis.ViewTransition = ViewTransition; } catch(e) {}
+
+    document.startViewTransition = function(updateCallback) {
+        return new ViewTransition(updateCallback);
     };
     Object.defineProperty(document, 'forms', {
         get: function() {
@@ -4814,6 +3624,9 @@ pub const DOM_SHIM: &str = r#"
         var childId = (typeof child === 'object' && child !== null && child._nodeId !== undefined) ? child._nodeId : child;
         _appendChild(0, childId);
         var childObj = _wrapElement(childId);
+        if (childObj && childObj.isConnected) {
+            _invokeConnectedCallback(childObj);
+        }
         if (typeof globalThis !== 'undefined' && globalThis._reportDOMMutation) {
             globalThis._reportDOMMutation({
                 type: 'childList',
@@ -4828,6 +3641,9 @@ pub const DOM_SHIM: &str = r#"
         var childId = (typeof child === 'object' && child !== null && child._nodeId !== undefined) ? child._nodeId : child;
         var childObj = _wrapElement(childId);
         _removeChild(0, childId);
+        if (childObj) {
+            _invokeDisconnectedCallback(childObj);
+        }
         if (typeof globalThis !== 'undefined' && globalThis._reportDOMMutation) {
             globalThis._reportDOMMutation({
                 type: 'childList',
@@ -4874,6 +3690,10 @@ pub const DOM_SHIM: &str = r#"
     document.cloneNode = function(deep) {
         return _wrapElement(_cloneNode(0, !!deep));
     };
+    document.ownerDocument = null;
+    document.getRootNode = function(options) {
+        return document;
+    };
     document.elementFromPoint = function(x, y) {
         var id = _elementFromPoint(Number(x), Number(y));
         return id === null ? null : _wrapElement(id);
@@ -4899,6 +3719,17 @@ pub const DOM_SHIM: &str = r#"
         if (!other) return false;
         var otherId = (other && other._nodeId !== undefined) ? other._nodeId : other;
         return _elementContains(0, otherId);
+    };
+    document.compareDocumentPosition = function(other) {
+        if (this === other) return 0;
+        if (!other || typeof other !== 'object') {
+            throw new TypeError("Failed to execute 'compareDocumentPosition' on 'Node': parameter 1 is not of type 'Node'.");
+        }
+        var otherId = (other._nodeId !== undefined) ? other._nodeId : null;
+        if (otherId === null) {
+            return 1 | 32 | 4;
+        }
+        return _compareDocumentPosition(0, otherId);
     };
 
     document.append = function() {
@@ -5282,11 +4113,35 @@ pub const DOM_SHIM: &str = r#"
     };
 
     Range.prototype.getBoundingClientRect = function() {
+        var startNode = this.startContainer;
+        while (startNode && startNode.nodeType !== 1) startNode = startNode.parentElement || startNode.parentNode;
+        var endNode = this.endContainer;
+        while (endNode && endNode.nodeType !== 1) endNode = endNode.parentElement || endNode.parentNode;
+
+        var startRect = (startNode && typeof startNode.getBoundingClientRect === 'function') ? startNode.getBoundingClientRect() : null;
+        var endRect = (endNode && typeof endNode.getBoundingClientRect === 'function') ? endNode.getBoundingClientRect() : null;
+
+        if (startRect && endRect && startRect !== endRect) {
+            var left = Math.min(startRect.left, endRect.left);
+            var top = Math.min(startRect.top, endRect.top);
+            var right = Math.max(startRect.right, endRect.right);
+            var bottom = Math.max(startRect.bottom, endRect.bottom);
+            var w = Math.max(0, right - left);
+            var h = Math.max(0, bottom - top);
+            return {
+                x: left, y: top, left: left, top: top, right: right, bottom: bottom, width: w, height: h,
+                toJSON: function() { return this; }
+            };
+        }
+        if (startRect) return startRect;
+        if (endRect) return endRect;
         return { x: 0, y: 0, top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, toJSON: function() { return this; } };
     };
 
     Range.prototype.getClientRects = function() {
-        return [this.getBoundingClientRect()];
+        var r = this.getBoundingClientRect();
+        if (r && (r.width > 0 || r.height > 0)) return [r];
+        return [];
     };
 
     Range.prototype.detach = function() {};
@@ -5425,7 +4280,7 @@ pub const DOM_SHIM: &str = r#"
         };
     }
     document.createComment = function(text) {
-        return _wrapElement(_createComment(String(text === undefined ? '' : text)));
+        return _wrapElement(_origCC(String(text === undefined ? '' : text)));
     };
     document.createEvent = function(type) {
         var evt = (typeof globalThis.Event !== 'undefined') ? new globalThis.Event(type || "") : { type: type || "" };
@@ -5533,10 +4388,44 @@ pub const DOM_SHIM: &str = r#"
         dispatchEvent: function() { return true; }
     };
 
+    var _docAdopted = [];
+    Object.defineProperty(document, 'adoptedStyleSheets', {
+        get: function() { return _docAdopted; },
+        set: function(sheets) {
+            if (!Array.isArray(sheets)) throw new TypeError("adoptedStyleSheets must be an Array");
+            for (var i = 0; i < sheets.length; i++) {
+                if (!(sheets[i] instanceof globalThis.CSSStyleSheet)) {
+                    throw new TypeError("Items in adoptedStyleSheets must be CSSStyleSheet instances");
+                }
+            }
+            _docAdopted = sheets.slice();
+        },
+        configurable: true,
+        enumerable: true
+    });
+
     document._nodeId = 0;
     document.nodeType = 9;
     document.nodeName = '#document';
-    if (typeof globalThis !== 'undefined' && globalThis.Document) {
+    if (typeof globalThis !== 'undefined' && globalThis.Document && globalThis.Document.prototype) {
+        Object.defineProperty(globalThis.Document.prototype, 'adoptedStyleSheets', {
+            get: function() { return this === document ? _docAdopted : (this._adoptedStyleSheets || []); },
+            set: function(sheets) {
+                if (!Array.isArray(sheets)) throw new TypeError("adoptedStyleSheets must be an Array");
+                for (var i = 0; i < sheets.length; i++) {
+                    if (!(sheets[i] instanceof globalThis.CSSStyleSheet)) {
+                        throw new TypeError("Items in adoptedStyleSheets must be CSSStyleSheet instances");
+                    }
+                }
+                if (this === document) {
+                    _docAdopted = sheets.slice();
+                } else {
+                    this._adoptedStyleSheets = sheets.slice();
+                }
+            },
+            configurable: true,
+            enumerable: true
+        });
         try { Object.setPrototypeOf(document, globalThis.Document.prototype); } catch(e) {}
     }
     globalThis._addDOMEventListener = _addDOMEventListener;
@@ -5660,51 +4549,6 @@ pub(crate) fn adopt_children_before(
             }
             _ => {}
         }
-    }
-}
-
-/// Converts a `dataset` property name to its `data-*` attribute name
-/// (`myValue` → `data-my-value`, per the HTML spec).
-fn dataset_prop_to_attribute(prop: &str) -> String {
-    let mut out = String::from("data-");
-    for ch in prop.chars() {
-        if ch.is_ascii_uppercase() {
-            out.push('-');
-            out.push(ch.to_ascii_lowercase());
-        } else {
-            out.push(ch);
-        }
-    }
-    out
-}
-
-/// Converts a `data-*` suffix back to a camelCase `dataset` key (`my-value` → `myValue`).
-fn camel_case_key(suffix: &str) -> String {
-    let mut out = String::with_capacity(suffix.len());
-    let mut upper_next = false;
-    for ch in suffix.chars() {
-        if ch == '-' {
-            upper_next = true;
-        } else if upper_next {
-            out.extend(ch.to_uppercase());
-            upper_next = false;
-        } else {
-            out.push(ch);
-        }
-    }
-    out
-}
-
-/// Sets (or replaces) an attribute on an element payload.
-fn set_element_attribute(el: &mut mango_html::dom::ElementData, name: &str, value: &str) {
-    if let Some(entry) = el
-        .attributes
-        .iter_mut()
-        .find(|(k, _)| k.eq_ignore_ascii_case(name))
-    {
-        entry.1 = value.to_string();
-    } else {
-        el.attributes.push((name.to_string(), value.to_string()));
     }
 }
 

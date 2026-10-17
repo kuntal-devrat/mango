@@ -1,4 +1,4 @@
-//! # Pure-Rust PDF & Print Rendering Pipeline (GAP-021)
+//! # Pure-Rust PDF & Print Rendering Pipeline
 //!
 //! Generates standard, compliant PDF 1.4 documents directly from a [`DisplayList`].
 //! Supports multi-page pagination, vector text with Type 1 font mapping (Helvetica,

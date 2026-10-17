@@ -1,6 +1,6 @@
 //! # mango_events
 //!
-//! W3C DOM Events with capture/bubble phases, decoupled from the browser chrome (ARCH-006).
+//! W3C DOM Events with capture/bubble phases, decoupled from the browser chrome.
 //!
 //! Implements the core W3C DOM Level 3 Events model:
 //! - `EventPhase`: Capture, AtTarget, Bubble
@@ -323,7 +323,11 @@ impl EventDispatcher {
         };
 
         // Listeners are appended in insertion order; avoid redundant O(N log N) sorting
-        if list.len() > 1 && !list.windows(2).all(|w| w[0].insertion_order <= w[1].insertion_order) {
+        if list.len() > 1
+            && !list
+                .windows(2)
+                .all(|w| w[0].insertion_order <= w[1].insertion_order)
+        {
             list.sort_by_key(|l| l.insertion_order);
         }
 

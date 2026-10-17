@@ -32,6 +32,7 @@ struct InlineAtom {
     width: f32,
     height: f32,
     link_target: Option<String>,
+    link_frame: Option<String>,
 }
 
 impl InlineAtom {
@@ -231,6 +232,78 @@ pub fn measure_text_width_with_style_and_spacing(
     width
 }
 
+/// Computes the balanced line width according to CSS Text 4 §7 (text-wrap: balance).
+/// Balances lines across inline flow by finding the line width that minimizes variance.
+fn compute_balanced_line_width(atoms: &[InlineAtom], container_width: f32) -> Option<f32> {
+    if atoms.is_empty() || container_width <= 0.0 {
+        return None;
+    }
+    let mut total_w = 0.0f32;
+    let mut max_atom_w = 0.0f32;
+    for atom in atoms {
+        if matches!(atom.kind, InlineAtomKind::LineBreak) {
+            return None;
+        }
+        total_w += atom.width;
+        if atom.width > max_atom_w {
+            max_atom_w = atom.width;
+        }
+    }
+    if total_w <= container_width {
+        return None;
+    }
+    let target_lines = ((total_w / container_width).ceil() as usize).max(1);
+    if target_lines > 10 {
+        return None;
+    }
+
+    let simulate = |w: f32| -> Vec<f32> {
+        let mut lines = Vec::new();
+        let mut cur = 0.0f32;
+        for a in atoms {
+            if cur > 0.0 && cur + a.width > w {
+                lines.push(cur);
+                cur = a.width;
+            } else {
+                cur += a.width;
+            }
+        }
+        if cur > 0.0 {
+            lines.push(cur);
+        }
+        lines
+    };
+
+    let variance = |lines: &[f32]| -> f32 {
+        if lines.is_empty() {
+            return 0.0;
+        }
+        let mean = lines.iter().sum::<f32>() / lines.len() as f32;
+        lines.iter().map(|&x| (x - mean).powi(2)).sum::<f32>() / lines.len() as f32
+    };
+
+    let mut low = max_atom_w;
+    let mut high = container_width;
+    let mut best_w = container_width;
+    let mut best_var = f32::MAX;
+
+    for _ in 0..20 {
+        let mid = (low + high) * 0.5;
+        let lines = simulate(mid);
+        if lines.len() <= target_lines {
+            let var = variance(&lines);
+            if var < best_var {
+                best_var = var;
+                best_w = mid;
+            }
+            high = mid;
+        } else {
+            low = mid;
+        }
+    }
+    Some(best_w)
+}
+
 /// Executes inline formatting context layout for the children of a block container.
 ///
 /// Converts the inline children into positioned line boxes, breaking lines at word boundaries
@@ -288,22 +361,24 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
         return layout_vertical_inline_children(container, float_ctx, writing_mode);
     }
 
-    // 1. Preserve unflattened source children for idempotent relayout passes (GAP-003)
-    let source_children = container
-        .raw_children
-        .get_or_insert_with(|| container.children.clone())
-        .clone();
+    // 1. Preserve unflattened source children for idempotent relayout passes
+    if container.raw_children.is_none() {
+        container.raw_children = Some(std::mem::take(&mut container.children));
+    }
 
     // Collect all inline atoms from children (no synthetic spaces between TextNodes)
     let mut atoms: Vec<InlineAtom> = Vec::new();
-    for child in &source_children {
-        collect_inline_atoms(
-            child,
-            &mut atoms,
-            child.link_target.as_deref(),
-            container_width,
-            container_height,
-        );
+    if let Some(source_children) = container.raw_children.as_deref() {
+        for child in source_children {
+            collect_inline_atoms(
+                child,
+                &mut atoms,
+                child.link_target.as_deref(),
+                child.link_frame.as_deref(),
+                container_width,
+                container_height,
+            );
+        }
     }
 
     // 1b. Prepend list marker atom if container is a list item
@@ -402,6 +477,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
                         width: m_w,
                         height: m_h,
                         link_target: None,
+                        link_frame: None,
                     },
                 );
             }
@@ -410,15 +486,17 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
 
     if atoms.is_empty() {
         let mut oof_children = Vec::new();
-        for sc in &source_children {
-            let is_oof = sc.style.as_ref().is_some_and(|s| {
-                matches!(
-                    s.position,
-                    mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
-                )
-            });
-            if is_oof {
-                oof_children.push(sc.clone());
+        if let Some(source_children) = container.raw_children.as_deref() {
+            for sc in source_children {
+                let is_oof = sc.style.as_ref().is_some_and(|s| {
+                    matches!(
+                        s.position,
+                        mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
+                    )
+                });
+                if is_oof {
+                    oof_children.push(sc.clone());
+                }
             }
         }
         container.children = oof_children;
@@ -442,9 +520,24 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
         .unwrap_or(0.0);
     let mut is_first_line = true;
 
+    let text_wrap = container
+        .style
+        .as_ref()
+        .map(|s| s.text_wrap)
+        .unwrap_or(mango_css::values::TextWrap::Wrap);
+
+    let balance_width = if text_wrap == mango_css::values::TextWrap::Balance && container_width > 0.0 {
+        compute_balanced_line_width(&atoms, container_width)
+    } else {
+        None
+    };
+
     let get_line_x_and_width = |min_x: f32, max_x: f32, is_first: bool| -> (f32, f32) {
         let line_indent = if is_first { text_indent } else { 0.0 };
-        let avail_w = (max_x - min_x - line_indent).max(0.0);
+        let mut avail_w = (max_x - min_x - line_indent).max(0.0);
+        if let Some(bw) = balance_width {
+            avail_w = avail_w.min(bw);
+        }
         let start_x = if is_container_rtl {
             min_x
         } else {
@@ -467,6 +560,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
             })
         });
     let mut line_count = 0;
+    let mut orphan_prevented = false;
 
     let mut line_atoms: Vec<InlineAtom> = Vec::new();
     let mut line_width = 0.0;
@@ -560,6 +654,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
                 available_width,
                 atom.height,
                 atom.link_target.as_deref(),
+                atom.link_frame.as_deref(),
                 container_width,
             );
             if !chunks.is_empty() {
@@ -603,6 +698,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
                     width: remaining_w,
                     height: atom.height,
                     link_target: atom.link_target.clone(),
+                    link_frame: atom.link_frame.clone(),
                 };
                 line_atoms.push(hyphen_atom);
                 let line_h = finalize_line(
@@ -662,6 +758,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
                     width: suffix_w,
                     height: atom.height,
                     link_target: atom.link_target,
+                    link_frame: atom.link_frame,
                 };
                 atom_queue.push_front(suffix_atom);
                 continue;
@@ -669,6 +766,48 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
         }
 
         if !line_atoms.is_empty() && !is_nowrap && (line_width + atom.width > available_width) {
+            // CSS Text 4 §7: text-wrap: pretty orphan prevention
+            if text_wrap == mango_css::values::TextWrap::Pretty && !orphan_prevented {
+                let remaining_words = (!atom.is_space() as usize)
+                    + atom_queue
+                        .iter()
+                        .take_while(|a| !matches!(a.kind, InlineAtomKind::LineBreak))
+                        .filter(|a| !a.is_space())
+                        .count();
+                let current_words = line_atoms.iter().filter(|a| !a.is_space()).count();
+                if remaining_words == 1 && current_words >= 2 {
+                    if let Some(last_word_idx) = line_atoms.iter().rposition(|a| !a.is_space()) {
+                        let pull_idx = if last_word_idx > 0 && line_atoms[last_word_idx - 1].is_space() {
+                            last_word_idx - 1
+                        } else {
+                            last_word_idx
+                        };
+                        let pulled: Vec<InlineAtom> = line_atoms.drain(pull_idx..).collect();
+                        atom_queue.push_front(atom);
+                        for p in pulled.into_iter().rev() {
+                            atom_queue.push_front(p);
+                        }
+                        orphan_prevented = true;
+
+                        let line_h = finalize_line(
+                            &line_atoms,
+                            line_x,
+                            available_width,
+                            current_y,
+                            text_align,
+                            &mut positioned_boxes,
+                            false,
+                        );
+                        current_y += line_h;
+                        is_first_line = false;
+                        line_atoms.clear();
+                        line_width = 0.0;
+                        line_count += 1;
+                        continue;
+                    }
+                }
+            }
+
             // Check if there was a SoftHyphen in line_atoms
             if let Some(sh_pos) = line_atoms
                 .iter()
@@ -776,15 +915,17 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
         current_y += line_h;
     }
 
-    for sc in &source_children {
-        let is_oof = sc.style.as_ref().is_some_and(|s| {
-            matches!(
-                s.position,
-                mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
-            )
-        });
-        if is_oof {
-            positioned_boxes.push(sc.clone());
+    if let Some(source_children) = container.raw_children.as_deref() {
+        for sc in source_children {
+            let is_oof = sc.style.as_ref().is_some_and(|s| {
+                matches!(
+                    s.position,
+                    mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
+                )
+            });
+            if is_oof {
+                positioned_boxes.push(sc.clone());
+            }
         }
     }
 
@@ -807,33 +948,37 @@ fn layout_vertical_inline_children(
         400.0
     };
 
-    let source_children = container
-        .raw_children
-        .get_or_insert_with(|| container.children.clone())
-        .clone();
+    if container.raw_children.is_none() {
+        container.raw_children = Some(std::mem::take(&mut container.children));
+    }
 
     let mut atoms: Vec<InlineAtom> = Vec::new();
-    for child in &source_children {
-        collect_inline_atoms(
-            child,
-            &mut atoms,
-            child.link_target.as_deref(),
-            container_width,
-            max_col_h,
-        );
+    if let Some(source_children) = container.raw_children.as_deref() {
+        for child in source_children {
+            collect_inline_atoms(
+                child,
+                &mut atoms,
+                child.link_target.as_deref(),
+                child.link_frame.as_deref(),
+                container_width,
+                max_col_h,
+            );
+        }
     }
 
     if atoms.is_empty() {
         let mut oof_children = Vec::new();
-        for sc in &source_children {
-            let is_oof = sc.style.as_ref().is_some_and(|s| {
-                matches!(
-                    s.position,
-                    mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
-                )
-            });
-            if is_oof {
-                oof_children.push(sc.clone());
+        if let Some(source_children) = container.raw_children.as_deref() {
+            for sc in source_children {
+                let is_oof = sc.style.as_ref().is_some_and(|s| {
+                    matches!(
+                        s.position,
+                        mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
+                    )
+                });
+                if is_oof {
+                    oof_children.push(sc.clone());
+                }
             }
         }
         container.children = oof_children;
@@ -950,15 +1095,17 @@ fn layout_vertical_inline_children(
         container.dimensions.content.size.width = total_width;
     }
 
-    for sc in &source_children {
-        let is_oof = sc.style.as_ref().is_some_and(|s| {
-            matches!(
-                s.position,
-                mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
-            )
-        });
-        if is_oof {
-            positioned_boxes.push(sc.clone());
+    if let Some(source_children) = container.raw_children.as_deref() {
+        for sc in source_children {
+            let is_oof = sc.style.as_ref().is_some_and(|s| {
+                matches!(
+                    s.position,
+                    mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
+                )
+            });
+            if is_oof {
+                positioned_boxes.push(sc.clone());
+            }
         }
     }
 
@@ -970,6 +1117,7 @@ fn collect_inline_atoms(
     box_node: &LayoutBox,
     out: &mut Vec<InlineAtom>,
     link_target: Option<&str>,
+    link_frame: Option<&str>,
     container_width: f32,
     container_height: f32,
 ) {
@@ -998,11 +1146,13 @@ fn collect_inline_atoms(
             width: 0.0,
             height: line_height,
             link_target: None,
+            link_frame: None,
         });
         return;
     }
 
     let current_link = box_node.link_target.as_deref().or(link_target);
+    let current_frame = box_node.link_frame.as_deref().or(link_frame);
 
     if box_node.tag_name.as_deref() == Some("wbr") {
         out.push(InlineAtom {
@@ -1011,6 +1161,7 @@ fn collect_inline_atoms(
             width: 0.0,
             height: 0.0,
             link_target: current_link.map(|s| s.to_string()),
+            link_frame: current_frame.map(|s| s.to_string()),
         });
         return;
     }
@@ -1069,6 +1220,7 @@ fn collect_inline_atoms(
                             width: w,
                             height: line_height,
                             link_target: current_link.map(|s| s.to_string()),
+                            link_frame: current_frame.map(|s| s.to_string()),
                         });
                     }
                 } else {
@@ -1088,6 +1240,7 @@ fn collect_inline_atoms(
                         width: w,
                         height: line_height,
                         link_target: current_link.map(|s| s.to_string()),
+                        link_frame: current_frame.map(|s| s.to_string()),
                     });
                 }
             };
@@ -1103,6 +1256,7 @@ fn collect_inline_atoms(
                             width: 0.0,
                             height: 0.0,
                             link_target: current_link.map(|s| s.to_string()),
+                            link_frame: current_frame.map(|s| s.to_string()),
                         });
                     }
                     continue;
@@ -1114,6 +1268,7 @@ fn collect_inline_atoms(
                         width: 0.0,
                         height: 0.0,
                         link_target: current_link.map(|s| s.to_string()),
+                        link_frame: current_frame.map(|s| s.to_string()),
                     });
                 } else if ch == '\n' {
                     push_word(std::mem::take(&mut current_word), out);
@@ -1124,6 +1279,7 @@ fn collect_inline_atoms(
                             width: 0.0,
                             height: line_height,
                             link_target: current_link.map(|s| s.to_string()),
+                            link_frame: current_frame.map(|s| s.to_string()),
                         });
                     } else if out.last().map(|a| !a.is_space()).unwrap_or(true) {
                         let space_w = (measure_text_width_with_style_and_spacing(
@@ -1143,6 +1299,7 @@ fn collect_inline_atoms(
                             width: space_w,
                             height: line_height,
                             link_target: current_link.map(|s| s.to_string()),
+                            link_frame: current_frame.map(|s| s.to_string()),
                         });
                     }
                 } else if ch.is_ascii_whitespace() {
@@ -1166,6 +1323,7 @@ fn collect_inline_atoms(
                             width: space_w,
                             height: line_height,
                             link_target: current_link.map(|s| s.to_string()),
+                            link_frame: current_frame.map(|s| s.to_string()),
                         });
                     } else if preserve_spaces || out.last().map(|a| !a.is_space()).unwrap_or(true) {
                         let space_char = if ch == '\t' { "    " } else { " " };
@@ -1186,6 +1344,7 @@ fn collect_inline_atoms(
                             width: space_w,
                             height: line_height,
                             link_target: current_link.map(|s| s.to_string()),
+                            link_frame: current_frame.map(|s| s.to_string()),
                         });
                     }
                 } else if is_cjk_closing_punct(ch)
@@ -1292,6 +1451,7 @@ fn collect_inline_atoms(
                 box_node,
                 out,
                 current_link,
+                current_frame,
                 container_width,
                 container_height,
             );
@@ -1317,11 +1477,19 @@ fn collect_inline_atoms(
                     width: lead_spacing,
                     height: 0.0,
                     link_target: current_link.map(|s| s.to_string()),
+                    link_frame: current_frame.map(|s| s.to_string()),
                 });
             }
 
             for child in &box_node.children {
-                collect_inline_atoms(child, out, current_link, container_width, container_height);
+                collect_inline_atoms(
+                    child,
+                    out,
+                    current_link,
+                    current_frame,
+                    container_width,
+                    container_height,
+                );
             }
 
             let trail_spacing = style
@@ -1340,6 +1508,7 @@ fn collect_inline_atoms(
                     width: trail_spacing,
                     height: 0.0,
                     link_target: current_link.map(|s| s.to_string()),
+                    link_frame: current_frame.map(|s| s.to_string()),
                 });
             }
         }
@@ -1369,6 +1538,7 @@ fn collect_inline_atoms(
                 width: outer_w,
                 height: outer_h,
                 link_target: current_link.map(|s| s.to_string()),
+                link_frame: current_frame.map(|s| s.to_string()),
             });
         }
 
@@ -1380,6 +1550,7 @@ fn collect_ruby_atoms(
     ruby_node: &LayoutBox,
     out: &mut Vec<InlineAtom>,
     current_link: Option<&str>,
+    current_frame: Option<&str>,
     _container_width: f32,
     _container_height: f32,
 ) {
@@ -1531,6 +1702,7 @@ fn collect_ruby_atoms(
             width: pair_w,
             height: pair_h,
             link_target: current_link.map(|s| s.to_string()),
+            link_frame: current_frame.map(|s| s.to_string()),
         });
     }
 }
@@ -1731,6 +1903,7 @@ fn finalize_line(
         start_x: f32,
         width: f32,
         link_target: Option<String>,
+        link_frame: Option<String>,
         /// Font ascent, in pixels, at this run's font size.
         ascent: f32,
         /// Font descent (positive), in pixels, at this run's font size.
@@ -1784,6 +1957,7 @@ fn finalize_line(
                 margin: EdgeSizes::ZERO,
             };
             box_node.link_target = run.link_target;
+            box_node.link_frame = run.link_frame;
             out.push(box_node);
         }
     };
@@ -1799,6 +1973,7 @@ fn finalize_line(
             InlineAtomKind::Text { text, .. } => {
                 let can_merge = if let Some(last_run) = runs.last_mut() {
                     last_run.link_target == atom.link_target
+                        && last_run.link_frame == atom.link_frame
                         && last_run.style.color == atom.style.color
                         && last_run.style.font_size == atom.style.font_size
                         && last_run.style.font_weight == atom.style.font_weight
@@ -1830,6 +2005,7 @@ fn finalize_line(
                         start_x: cursor_x,
                         width: atom_w,
                         link_target: atom.link_target.clone(),
+                        link_frame: atom.link_frame.clone(),
                         ascent,
                         descent,
                         style: atom.style.clone(),
@@ -1904,6 +2080,9 @@ fn finalize_line(
                 if placed.link_target.is_none() && atom.link_target.is_some() {
                     placed.link_target = atom.link_target.clone();
                 }
+                if placed.link_frame.is_none() && atom.link_frame.is_some() {
+                    placed.link_frame = atom.link_frame.clone();
+                }
 
                 out.push(placed);
                 cursor_x += atom.width;
@@ -1919,7 +2098,7 @@ fn finalize_line(
         }
     }
 
-    // Handle text-overflow: ellipsis (RND-003)
+    // Handle text-overflow: ellipsis
     let has_ellipsis = effective_atoms
         .iter()
         .any(|a| a.style.text_overflow == mango_css::values::TextOverflow::Ellipsis);
@@ -1969,6 +2148,7 @@ fn split_overflow_text(
     available_width: f32,
     height: f32,
     link_target: Option<&str>,
+    link_frame: Option<&str>,
     container_width: f32,
 ) -> Vec<InlineAtom> {
     let font_size = style.font_size;
@@ -1999,6 +2179,7 @@ fn split_overflow_text(
                 width: cur_w,
                 height,
                 link_target: link_target.map(|s| s.to_string()),
+                link_frame: link_frame.map(|s| s.to_string()),
             });
             cur_w = 0.0;
         }
@@ -2016,6 +2197,7 @@ fn split_overflow_text(
             width: cur_w,
             height,
             link_target: link_target.map(|s| s.to_string()),
+            link_frame: link_frame.map(|s| s.to_string()),
         });
     }
 
@@ -2950,6 +3132,79 @@ mod tests {
             );
         } else {
             panic!("Expected TextNode child");
+        }
+    }
+
+    #[test]
+    fn test_text_wrap_balance_and_pretty() {
+        // Test 1: text-wrap: balance balances lines
+        let mut container = LayoutBox::new(BoxType::BlockNode, None);
+        container.dimensions.content = Rect::new(0.0, 0.0, 300.0, 0.0);
+
+        let mut style = ComputedStyle::default();
+        style.font_size = 16.0;
+        style.text_wrap = mango_css::values::TextWrap::Balance;
+        container.style = Some(style.clone().into());
+
+        let text = LayoutBox::new(
+            BoxType::TextNode(
+                "Short heading that wraps across multiple balanced lines cleanly".to_string(),
+            ),
+            Some(style.into()),
+        );
+        container.children.push(text);
+
+        let mut float_ctx = FloatContext::new();
+        layout_inline_children(&mut container, &mut float_ctx);
+
+        // There should be lines produced
+        assert!(container.children.len() >= 2);
+        // Measure line boxes Y coordinates to group them by lines
+        let mut line_ys = Vec::new();
+        for child in &container.children {
+            let y = child.dimensions.content.y();
+            if !line_ys.iter().any(|&prev_y: &f32| (prev_y - y).abs() < 1.0) {
+                line_ys.push(y);
+            }
+        }
+        assert!(line_ys.len() >= 2, "Expected at least 2 lines");
+
+        // Test 2: text-wrap: pretty prevents single-word orphans
+        let mut pretty_container = LayoutBox::new(BoxType::BlockNode, None);
+        pretty_container.dimensions.content = Rect::new(0.0, 0.0, 220.0, 0.0);
+
+        let mut pretty_style = ComputedStyle::default();
+        pretty_style.font_size = 16.0;
+        pretty_style.text_wrap = mango_css::values::TextWrap::Pretty;
+        pretty_container.style = Some(pretty_style.clone().into());
+
+        let pretty_text = LayoutBox::new(
+            BoxType::TextNode(
+                "Quick brown fox jumps over dog".to_string(),
+            ),
+            Some(pretty_style.into()),
+        );
+        pretty_container.children.push(pretty_text);
+
+        let mut float_ctx2 = FloatContext::new();
+        layout_inline_children(&mut pretty_container, &mut float_ctx2);
+
+        // Group children by line Y
+        let mut lines: std::collections::BTreeMap<i32, Vec<String>> = std::collections::BTreeMap::new();
+        for child in &pretty_container.children {
+            if let BoxType::TextNode(ref t) = child.box_type {
+                let y_key = (child.dimensions.content.y() * 10.0).round() as i32;
+                lines.entry(y_key).or_default().push(t.clone());
+            }
+        }
+        if lines.len() >= 2 {
+            let last_line_words = lines.values().last().unwrap();
+            let non_empty_words: Vec<_> = last_line_words.iter().filter(|w| !w.trim().is_empty()).collect();
+            assert!(
+                non_empty_words.len() >= 2 || last_line_words.join(" ").split_whitespace().count() >= 2,
+                "Last line should have at least 2 words with text-wrap: pretty (prevent orphan), got: {:?}",
+                last_line_words
+            );
         }
     }
 }

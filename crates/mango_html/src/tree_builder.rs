@@ -333,16 +333,108 @@ impl<'a> TreeBuilder<'a> {
         child
     }
 
-    fn pop_until(&mut self, tag_name: &str) {
+    fn pop_until(&mut self, tag_name: &str) -> Option<NodeId> {
+        let mut matched = None;
         while let Some(&node_id) = self.open_elements.last() {
             if let Some(node) = self.doc.get(node_id)
                 && let NodeData::Element(el) = &node.data
                 && el.tag_name.eq_ignore_ascii_case(tag_name)
             {
+                matched = Some(node_id);
                 self.open_elements.pop();
                 break;
             }
             self.open_elements.pop();
+        }
+        matched
+    }
+
+    fn process_template_start(&mut self, attributes: Vec<(String, String)>) {
+        self.flush_text_buffer();
+
+        let shadow_mode = attributes.iter().find_map(|(k, v)| {
+            if k.eq_ignore_ascii_case("shadowrootmode") || k.eq_ignore_ascii_case("shadowroot") {
+                let lower = v.trim().to_ascii_lowercase();
+                if lower == "open" || lower == "closed" {
+                    Some(lower)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        });
+
+        let mut dsd_shadow_root = None;
+        if let Some(mode) = shadow_mode {
+            let parent_target = self.current_node();
+            if let Some(parent_node) = self.doc.get(parent_target)
+                && let NodeData::Element(pel) = &parent_node.data
+            {
+                // Disallow template hosting shadow root and ensure host doesn't already have one
+                if !pel.tag_name.eq_ignore_ascii_case("template") && pel.shadow_root.is_none() {
+                    let clonable = attributes
+                        .iter()
+                        .any(|(k, _)| k.eq_ignore_ascii_case("shadowrootclonable"));
+                    let delegates_focus = attributes
+                        .iter()
+                        .any(|(k, _)| k.eq_ignore_ascii_case("shadowrootdelegatesfocus"));
+                    dsd_shadow_root = self.doc.attach_shadow_with_options(
+                        parent_target,
+                        &mode,
+                        clonable,
+                        delegates_focus,
+                    );
+                }
+            }
+        }
+
+        let mut attrs = attributes;
+        let is_dsd = dsd_shadow_root.is_some();
+        if is_dsd {
+            attrs.push(("data-mango-dsd".to_string(), "true".to_string()));
+        }
+
+        let elem = self.insert_element("template", attrs);
+        if let Some(sr_id) = dsd_shadow_root {
+            // Repoint template_contents to the newly attached shadow root
+            if let Some(t_node) = self.doc.get_mut(elem)
+                && let NodeData::Element(el) = &mut t_node.data
+            {
+                el.template_contents = Some(sr_id);
+            }
+        }
+
+        self.open_elements.push(elem);
+        self.active_formatting_elements
+            .push(FormattingEntry::Marker);
+        self.template_insertion_modes
+            .push(InsertionMode::InTemplate);
+        self.mode = InsertionMode::InTemplate;
+    }
+
+    fn process_template_end(&mut self) {
+        self.flush_text_buffer();
+        if self.open_elements.iter().any(|&id| {
+            self.doc
+                .get(id)
+                .map(|n| {
+                    matches!(&n.data, NodeData::Element(el) if el.tag_name == "template")
+                })
+                .unwrap_or(false)
+        }) {
+            self.generate_implied_end_tags(None);
+            if let Some(popped_id) = self.pop_until("template") {
+                if let Some(node) = self.doc.get(popped_id)
+                    && let NodeData::Element(el) = &node.data
+                    && el.get_attribute("data-mango-dsd") == Some("true")
+                {
+                    self.doc.detach(popped_id);
+                }
+            }
+            self.clear_active_formatting_to_marker();
+            self.template_insertion_modes.pop();
+            self.reset_insertion_mode();
         }
     }
 
@@ -1298,14 +1390,7 @@ impl<'a> TreeBuilder<'a> {
             Token::StartTag {
                 name, attributes, ..
             } if name == "template" => {
-                self.flush_text_buffer();
-                let elem = self.insert_element(&name, attributes);
-                self.open_elements.push(elem);
-                self.active_formatting_elements
-                    .push(FormattingEntry::Marker);
-                self.template_insertion_modes
-                    .push(InsertionMode::InTemplate);
-                self.mode = InsertionMode::InTemplate;
+                self.process_template_start(attributes);
             }
             Token::StartTag {
                 name, attributes, ..
@@ -1334,16 +1419,7 @@ impl<'a> TreeBuilder<'a> {
                 self.mode = InsertionMode::AfterHead;
             }
             Token::EndTag { name } if name == "template" => {
-                self.flush_text_buffer();
-                if self.open_elements.iter().any(|&id| {
-                    self.doc.get(id).map(|n| matches!(&n.data, NodeData::Element(el) if el.tag_name == "template")).unwrap_or(false)
-                }) {
-                    self.generate_implied_end_tags(None);
-                    self.pop_until("template");
-                    self.clear_active_formatting_to_marker();
-                    self.template_insertion_modes.pop();
-                    self.reset_insertion_mode();
-                }
+                self.process_template_end();
             }
             Token::EndTag { name } if name == "title" || name == "style" || name == "script" => {
                 self.flush_text_buffer();
@@ -1521,13 +1597,7 @@ impl<'a> TreeBuilder<'a> {
                 }
 
                 if name == "template" {
-                    let elem = self.insert_element(&name, attributes);
-                    self.open_elements.push(elem);
-                    self.active_formatting_elements
-                        .push(FormattingEntry::Marker);
-                    self.template_insertion_modes
-                        .push(InsertionMode::InTemplate);
-                    self.mode = InsertionMode::InTemplate;
+                    self.process_template_start(attributes);
                     return;
                 }
 
@@ -1722,15 +1792,7 @@ impl<'a> TreeBuilder<'a> {
                         self.reset_insertion_mode();
                     }
                 } else if name == "template" {
-                    if self.open_elements.iter().any(|&id| {
-                        self.doc.get(id).map(|n| matches!(&n.data, NodeData::Element(el) if el.tag_name == "template")).unwrap_or(false)
-                    }) {
-                        self.generate_implied_end_tags(None);
-                        self.pop_until("template");
-                        self.clear_active_formatting_to_marker();
-                        self.template_insertion_modes.pop();
-                        self.reset_insertion_mode();
-                    }
+                    self.process_template_end();
                 } else if name == "p" {
                     if !self.is_in_button_scope("p") {
                         let p = self.insert_element("p", Vec::new());
@@ -1845,13 +1907,7 @@ impl<'a> TreeBuilder<'a> {
                     }
                 }
                 if name == "template" {
-                    let elem = self.insert_element(&name, attributes);
-                    self.open_elements.push(elem);
-                    self.active_formatting_elements
-                        .push(FormattingEntry::Marker);
-                    self.template_insertion_modes
-                        .push(InsertionMode::InTemplate);
-                    self.mode = InsertionMode::InTemplate;
+                    self.process_template_start(attributes);
                     return;
                 }
 
@@ -2516,16 +2572,9 @@ impl<'a> TreeBuilder<'a> {
                 });
             }
             Token::EndTag { name } => {
-                if name == "template"
-                    && self.open_elements.iter().any(|&id| {
-                        self.doc.get(id).map(|n| matches!(&n.data, NodeData::Element(el) if el.tag_name == "template")).unwrap_or(false)
-                    }) {
-                        self.generate_implied_end_tags(None);
-                        self.pop_until("template");
-                        self.clear_active_formatting_to_marker();
-                        self.template_insertion_modes.pop();
-                        self.reset_insertion_mode();
-                    }
+                if name == "template" {
+                    self.process_template_end();
+                }
             }
             Token::Character(c) => {
                 self.template_insertion_modes.pop();
@@ -2540,10 +2589,7 @@ impl<'a> TreeBuilder<'a> {
                 if self.open_elements.iter().any(|&id| {
                     self.doc.get(id).map(|n| matches!(&n.data, NodeData::Element(el) if el.tag_name == "template")).unwrap_or(false)
                 }) => {
-                    self.pop_until("template");
-                    self.clear_active_formatting_to_marker();
-                    self.template_insertion_modes.pop();
-                    self.reset_insertion_mode();
+                    self.process_template_end();
                     self.process_token(Token::EndOfFile);
                 }
             _ => {}
@@ -3556,5 +3602,46 @@ mod tests {
         let html_reverse = r#"<!DOCTYPE html><html><head><meta content="text/html; charset=utf-8" http-equiv="content-type"></head><body></body></html>"#;
         let doc2 = parse_html(html_reverse);
         assert_eq!(doc2.character_set, "UTF-8");
+    }
+
+    #[test]
+    fn test_declarative_shadow_dom_parsing() {
+        let html = r#"
+            <!DOCTYPE html>
+            <html>
+                <body>
+                    <my-card id="card">
+                        <template shadowrootmode="open" shadowrootclonable>
+                            <style>:host { display: block; }</style>
+                            <div class="card-inner">
+                                <h2>Shadow Title</h2>
+                                <slot name="desc"></slot>
+                            </div>
+                        </template>
+                        <p slot="desc" id="slotted-desc">Light DOM slotted content</p>
+                    </my-card>
+                </body>
+            </html>
+        "#;
+        let doc = parse_html(html);
+        let root = doc.root();
+        let body = doc.find_element_by_tag(root, "body").expect("body element exists");
+        let card = doc.find_element_by_id(body, "card").expect("card element exists");
+
+        // 1. Verify shadow root was attached to host
+        let sr_id = doc.get_shadow_root(card).expect("shadow root attached to host");
+        assert_eq!(doc.get_shadow_root_mode(card), Some("open"));
+
+        // 2. Verify shadow root contains the template contents
+        let inner_div = doc.find_element_by_tag(sr_id, "div").expect("card-inner div inside shadow root");
+        let title = doc.find_element_by_tag(inner_div, "h2").expect("h2 in shadow root");
+        assert_eq!(doc.text_content(title), "Shadow Title");
+
+        // 3. Verify template element was detached from light DOM (not present in card's light children)
+        assert!(doc.find_element_by_tag(card, "template").is_none());
+
+        // 4. Verify light DOM slotted content remains intact in host
+        let desc = doc.find_element_by_id(card, "slotted-desc").expect("slotted-desc in light DOM");
+        assert_eq!(doc.text_content(desc), "Light DOM slotted content");
     }
 }

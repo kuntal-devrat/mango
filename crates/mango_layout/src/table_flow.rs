@@ -13,7 +13,7 @@
 
 use mango_core::{Color, EdgeSizes, Point, Rect};
 use mango_css::values::{
-    BorderCollapse, BorderStyle, BoxSizing, CaptionSide, Display, Length, TableLayout,
+    BorderCollapse, BorderStyle, BoxSizing, CaptionSide, Display, Length, Position, TableLayout,
     VerticalAlign,
 };
 
@@ -90,13 +90,18 @@ pub fn layout_table(
     // 1. Calculate horizontal dimensions
     calculate_table_width(table_box, containing_block);
 
-    // 2. Calculate vertical position (respecting clearance) if not already positioned by float layout
+    // 2. Calculate vertical position (respecting clearance) if not already positioned by float or out-of-flow layout
     let is_floated = table_box
         .style
         .as_ref()
         .map(|s| s.float != mango_css::values::Float::None)
         .unwrap_or(false);
-    if !is_floated {
+    let is_pos = table_box
+        .style
+        .as_ref()
+        .map(|s| matches!(s.position, Position::Absolute | Position::Fixed))
+        .unwrap_or(false);
+    if !is_floated && !is_pos {
         let start_y = containing_block.content.y();
         calculate_table_position(table_box, containing_block, start_y, float_ctx);
     }
@@ -728,7 +733,8 @@ pub(crate) fn measure_box_intrinsic_widths(
     if matches!(
         node.tag_name.as_deref(),
         Some("img") | Some("svg") | Some("iframe") | Some("canvas") | Some("video")
-    ) || node.box_type.is_replaced() {
+    ) || node.box_type.is_replaced()
+    {
         let mut w = None;
         if let Some(w_attr) = node.get_attribute("width") {
             let trimmed = w_attr.trim().trim_end_matches("px");
@@ -750,11 +756,9 @@ pub(crate) fn measure_box_intrinsic_widths(
             node.dimensions.content.width()
         } else {
             match &node.box_type {
-                crate::box_model::BoxType::ReplacedElement { intrinsic_width, .. }
-                    if *intrinsic_width > 0.0 =>
-                {
-                    *intrinsic_width
-                }
+                crate::box_model::BoxType::ReplacedElement {
+                    intrinsic_width, ..
+                } if *intrinsic_width > 0.0 => *intrinsic_width,
                 _ => 16.0,
             }
         });

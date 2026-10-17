@@ -38,6 +38,17 @@ impl fmt::Display for NetworkError {
 
 impl std::error::Error for NetworkError {}
 
+/// Inserts an HTTP response header, combining duplicate headers with comma-separation per RFC 9110 §5.3.
+pub(crate) fn insert_response_header(map: &mut HashMap<String, String>, name: &str, value: &str) {
+    let key = name.to_ascii_lowercase();
+    map.entry(key)
+        .and_modify(|existing| {
+            existing.push_str(", ");
+            existing.push_str(value);
+        })
+        .or_insert_with(|| value.to_string());
+}
+
 /// Standard HTTP request methods.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpMethod {
@@ -60,7 +71,7 @@ impl HttpRequest {
         let mut headers = HashMap::new();
         headers.insert(
             "User-Agent".to_string(),
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Mango/0.2.2".to_string(),
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Mango/0.2.3".to_string(),
         );
         headers.insert(
             "Accept".to_string(),
@@ -91,7 +102,7 @@ pub struct HttpResponse {
     pub status_text: String,
     /// Response headers, keyed in lowercase.
     pub headers: HashMap<String, String>,
-    /// HTTP protocol version negotiated for this response (GAP-014).
+    /// HTTP protocol version negotiated for this response.
     pub version: crate::http2::HttpVersion,
     /// Response body bytes (automatically decompressed from gzip if applicable).
     pub body: Vec<u8>,
@@ -252,7 +263,7 @@ impl HttpClient {
     pub fn new() -> Self {
         let timeout = Duration::from_secs(30);
         Self {
-            user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Mango/0.2.2".to_string(),
+            user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Mango/0.2.3".to_string(),
             timeout,
             cookie_jar: std::sync::Arc::new(std::sync::Mutex::new(CookieJar::new())),
             referrer_policies: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
@@ -264,7 +275,7 @@ impl HttpClient {
     pub fn with_cookie_jar(cookie_jar: std::sync::Arc<std::sync::Mutex<CookieJar>>) -> Self {
         let timeout = Duration::from_secs(30);
         Self {
-            user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Mango/0.2.2".to_string(),
+            user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Mango/0.2.3".to_string(),
             timeout,
             cookie_jar,
             referrer_policies: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
@@ -392,7 +403,7 @@ impl HttpClient {
         let mut headers = HashMap::new();
         for (name, val) in response.headers() {
             if let Ok(v_str) = val.to_str() {
-                headers.insert(name.as_str().to_ascii_lowercase(), v_str.to_string());
+                insert_response_header(&mut headers, name.as_str(), v_str);
             }
         }
 
@@ -555,7 +566,7 @@ impl HttpClient {
             let mut headers = HashMap::new();
             for (name, val) in response.headers() {
                 if let Ok(v_str) = val.to_str() {
-                    headers.insert(name.as_str().to_ascii_lowercase(), v_str.to_string());
+                    insert_response_header(&mut headers, name.as_str(), v_str);
                 }
             }
 
@@ -695,7 +706,7 @@ impl HttpClient {
         let mut headers = HashMap::new();
         for (name, val) in resp.headers() {
             if let Ok(v_str) = val.to_str() {
-                headers.insert(name.as_str().to_ascii_lowercase(), v_str.to_string());
+                insert_response_header(&mut headers, name.as_str(), v_str);
             }
         }
 
@@ -840,6 +851,31 @@ impl HttpClient {
                 req = req.header(k.as_str(), v.as_str());
             }
             req.call()
+        } else if upper_method == "OPTIONS" {
+            let mut req = self
+                .agent
+                .options(&url_str)
+                .header("User-Agent", &self.user_agent)
+                .header("Accept", "*/*")
+                .header("Accept-Language", "en-US,en;q=0.9")
+                .header("Accept-Encoding", "gzip, deflate, br");
+            if let Ok(jar) = self.cookie_jar.lock()
+                && let Some(cookie_hdr) = jar.get_cookie_header_with_context(
+                    url,
+                    initiator_url,
+                    is_top_level,
+                    is_safe_method,
+                )
+            {
+                req = req.header("Cookie", &cookie_hdr);
+            }
+            if let Some(ref r) = auto_referer {
+                req = req.header("Referer", r);
+            }
+            for (k, v) in custom_headers {
+                req = req.header(k.as_str(), v.as_str());
+            }
+            req.call()
         } else {
             let mut req = match upper_method.as_str() {
                 "PUT" => self.agent.put(&url_str),
@@ -892,7 +928,7 @@ impl HttpClient {
         let mut headers = HashMap::new();
         for (name, val) in resp.headers() {
             if let Ok(v_str) = val.to_str() {
-                headers.insert(name.as_str().to_ascii_lowercase(), v_str.to_string());
+                insert_response_header(&mut headers, name.as_str(), v_str);
             }
         }
 
@@ -1001,5 +1037,55 @@ mod tests {
         assert_eq!(accumulated, fake_data);
         assert_eq!(total_bytes, 70000);
         assert!(chunks_received >= 2);
+    }
+
+    #[test]
+    fn test_multi_value_header_rfc9110_concatenation() {
+        let mut map = HashMap::new();
+        insert_response_header(&mut map, "Link", "<https://example.com/a>; rel=\"preload\"");
+        insert_response_header(&mut map, "Link", "<https://example.com/b>; rel=\"prefetch\"");
+        insert_response_header(&mut map, "Vary", "Accept-Encoding");
+        insert_response_header(&mut map, "vary", "User-Agent");
+
+        assert_eq!(
+            map.get("link").unwrap(),
+            "<https://example.com/a>; rel=\"preload\", <https://example.com/b>; rel=\"prefetch\""
+        );
+        assert_eq!(map.get("vary").unwrap(), "Accept-Encoding, User-Agent");
+    }
+
+    #[test]
+    fn test_options_request_method() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+        let port = listener.local_addr().expect("port").port();
+
+        let server_thread = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 1024];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let req_text = String::from_utf8_lossy(&buf[..n]);
+                let is_options = req_text.starts_with("OPTIONS ");
+                let resp = if is_options {
+                    "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\n\r\n"
+                } else {
+                    "HTTP/1.1 405 Method Not Allowed\r\n\r\n"
+                };
+                let _ = stream.write_all(resp.as_bytes());
+                is_options
+            } else {
+                false
+            }
+        });
+
+        let client = HttpClient::new();
+        let target_url = Url::parse(&format!("http://127.0.0.1:{}/preflight", port)).unwrap();
+        let resp = client.request("OPTIONS", &target_url, &[], None).expect("options request");
+        let server_saw_options = server_thread.join().unwrap();
+        assert!(server_saw_options, "Server must receive OPTIONS request method");
+        assert_eq!(resp.status, 204);
+        assert_eq!(resp.headers.get("access-control-allow-origin").unwrap(), "*");
     }
 }

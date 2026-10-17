@@ -1,7 +1,7 @@
 //! In-memory resource cache for HTTP responses (HTML, CSS, images).
 //!
 //! Provides a 50MB byte-limited LRU memory cache with conditional ETag /
-//! If-Modified-Since revalidation support (OPT-3.3.3).
+//! If-Modified-Since revalidation support.
 
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -14,6 +14,8 @@ const MAX_CACHE_ENTRIES: usize = 1000;
 /// Default maximum cache size in bytes (20 MB).
 pub const DEFAULT_MAX_CACHE_BYTES: usize = 20 * 1024 * 1024;
 
+static CACHE_ACCESS_TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 /// A cached HTTP resource.
 #[derive(Debug, Clone)]
 pub struct CachedResource {
@@ -25,6 +27,7 @@ pub struct CachedResource {
     pub inserted_at: Instant,
     pub last_accessed: Instant,
     pub ttl: Duration,
+    pub access_seq: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl CachedResource {
@@ -34,7 +37,7 @@ impl CachedResource {
     }
 
     /// Returns `true` if this cache entry requires origin server revalidation before use
-    /// (e.g. `Cache-Control: no-cache` or `must-revalidate` when expired) per RFC 9111 (M-04).
+    /// (e.g. `Cache-Control: no-cache` or `must-revalidate` when expired) per RFC 9111.
     pub fn requires_revalidation(&self) -> bool {
         if let Some(cc) = self.headers.get("cache-control") {
             let cc_lower = cc.to_ascii_lowercase();
@@ -111,27 +114,20 @@ impl ResourceCache {
     /// Looks up a resource in the cache by URL (excluding URL fragments).
     ///
     /// Returns `Some(resource)` if present, not expired, and not requiring revalidation.
-    /// Fast read-lock path avoids write contention on cache misses and expired checks (M-01).
-    /// Automatically updates the LRU access timestamp on hits.
+    /// Fast read-lock path avoids write contention on cache misses and expired checks.
+    /// Updates the atomic LRU access sequence on hits under the shared read lock.
     pub fn get(&self, url: &str) -> Option<CachedResource> {
         let key = normalize_cache_key(url);
-        // Fast path: take a read lock first so multiple readers don't serialize.
-        {
-            let inner = self.inner.read().ok()?;
-            let res = inner.entries.get(key)?;
-            if res.is_expired() || res.requires_revalidation() {
-                return None;
-            }
-        }
-        // Cache hit and valid: acquire write lock briefly to update last_accessed.
-        let mut inner = self.inner.write().ok()?;
-        let res = inner.entries.get_mut(key)?;
+        let inner = self.inner.read().ok()?;
+        let res = inner.entries.get(key)?;
         if res.is_expired() || res.requires_revalidation() {
-            None
-        } else {
-            res.last_accessed = Instant::now();
-            Some(res.clone())
+            return None;
         }
+        res.access_seq.store(
+            CACHE_ACCESS_TICK.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        Some(res.clone())
     }
 
     /// Returns HTTP conditional headers (`If-None-Match` / `If-Modified-Since`)
@@ -169,6 +165,10 @@ impl ResourceCache {
         }
         res.inserted_at = Instant::now();
         res.last_accessed = Instant::now();
+        res.access_seq.store(
+            CACHE_ACCESS_TICK.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            std::sync::atomic::Ordering::Relaxed,
+        );
 
         if let Some(cc) = new_headers.get("cache-control") {
             let cc_lower = cc.to_ascii_lowercase();
@@ -239,6 +239,9 @@ impl ResourceCache {
             inserted_at: now,
             last_accessed: now,
             ttl,
+            access_seq: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(
+                CACHE_ACCESS_TICK.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            )),
         };
 
         let new_bytes = resource.byte_size();
@@ -277,7 +280,7 @@ impl ResourceCache {
                 let oldest_key = inner
                     .entries
                     .iter()
-                    .min_by_key(|(_, v)| v.last_accessed)
+                    .min_by_key(|(_, v)| v.access_seq.load(std::sync::atomic::Ordering::Relaxed))
                     .map(|(k, _)| k.clone());
                 if let Some(k) = oldest_key {
                     if let Some(removed) = inner.entries.remove(&k) {
@@ -518,7 +521,10 @@ mod tests {
 
         // Revalidation headers are present for the network request
         let reval = cache.get_revalidation_headers(url).expect("etag present");
-        assert_eq!(reval, vec![("If-None-Match".to_string(), "\"v1\"".to_string())]);
+        assert_eq!(
+            reval,
+            vec![("If-None-Match".to_string(), "\"v1\"".to_string())]
+        );
 
         // When server replies 304, revalidate_304 refreshes and returns resource
         let revalidated = cache.revalidate_304(url, &HashMap::new());

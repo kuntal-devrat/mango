@@ -1,4 +1,4 @@
-//! Composable asynchronous resource loading pipeline (ARCH-005).
+//! Composable asynchronous resource loading pipeline.
 //!
 //! Provides a 6-stage async pipeline:
 //! 1. **DNS**: Hostname resolution with caching ([`resolve_dns_stage`])
@@ -389,7 +389,7 @@ pub async fn cache_stage(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// High-level resource loading pipeline orchestrating DNS, TLS, HTTP, decompression,
-/// decoding, and caching asynchronously (ARCH-005).
+/// decoding, and caching asynchronously.
 pub struct ResourcePipeline {
     dns_cache: Arc<DnsCache>,
     client: HttpClient,

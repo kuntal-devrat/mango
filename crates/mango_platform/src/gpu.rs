@@ -167,6 +167,7 @@ pub struct GpuCompositor {
     promoted_textures: HashMap<usize, GpuTexture>,
     chrome_texture: Option<GpuTexture>,
     overlay_texture: Option<GpuTexture>,
+    frame_texture: Option<GpuTexture>,
     pub width: u32,
     pub height: u32,
 }
@@ -178,7 +179,8 @@ impl GpuCompositor {
         let width = size.width.max(1);
         let height = size.height.max(1);
 
-        let instance = lgpu::Instance::new().map_err(|e| format!("Failed to create lgpu instance: {e}"))?;
+        let instance =
+            lgpu::Instance::new().map_err(|e| format!("Failed to create lgpu instance: {e}"))?;
         let adapters = instance
             .enumerate_adapters()
             .map_err(|e| format!("Failed to enumerate GPU adapters: {e}"))?;
@@ -225,8 +227,10 @@ impl GpuCompositor {
             .validate(&naga_module)
             .map_err(|e| format!("Failed to validate compositor shader: {e:?}"))?;
 
-        let mut spv_options = naga::back::spv::Options::default();
-        spv_options.lang_version = (1, 3);
+        let spv_options = naga::back::spv::Options {
+            lang_version: (1, 3),
+            ..Default::default()
+        };
         let spv_words = naga::back::spv::write_vec(&naga_module, &naga_info, &spv_options, None)
             .map_err(|e| format!("Failed to translate WGSL to SPIR-V: {e:?}"))?;
 
@@ -259,7 +263,6 @@ impl GpuCompositor {
                 mag_filter: lgpu::FilterMode::Nearest,
                 min_filter: lgpu::FilterMode::Nearest,
                 mipmap_filter: lgpu::FilterMode::Nearest,
-                ..Default::default()
             })
             .map_err(|e| format!("Failed to create compositor sampler: {e}"))?;
 
@@ -275,6 +278,7 @@ impl GpuCompositor {
             promoted_textures: HashMap::new(),
             chrome_texture: None,
             overlay_texture: None,
+            frame_texture: None,
             width,
             height,
         })
@@ -448,15 +452,8 @@ impl GpuCompositor {
                         tex
                     }
                     std::collections::hash_map::Entry::Vacant(entry) => {
-                        let tex = GpuTexture::new(
-                            &self.device,
-                            &self.queue,
-                            tf,
-                            lw,
-                            lh,
-                            pixels,
-                            false,
-                        )?;
+                        let tex =
+                            GpuTexture::new(&self.device, &self.queue, tf, lw, lh, pixels, false)?;
                         entry.insert(tex)
                     }
                 };
@@ -634,6 +631,113 @@ impl GpuCompositor {
                 pass.draw(&self.pipeline, 6, bytemuck::bytes_of(quad))
                     .map_err(|e| format!("Quad draw failed: {e}"))?;
             }
+        }
+
+        encoder.transition_to_present(&frame.texture);
+        self.queue
+            .submit_surface(encoder.finish(), frame)
+            .map_err(|e| format!("lgpu submit_surface failed: {e}"))?;
+
+        Ok(())
+    }
+
+    /// Rasterizes a full display list and presents it directly to the window surface via the GPU pipeline.
+    pub fn render_display_list(
+        &mut self,
+        dl: &mango_render::display_list::DisplayList,
+        bg_color: Color,
+    ) -> Result<(), String> {
+        let w = self.width;
+        let h = self.height;
+        if w == 0 || h == 0 {
+            return Ok(());
+        }
+
+        let frame = match self.surface.get_current_texture() {
+            Ok(f) => f,
+            Err(_) => {
+                if let Err(e) = self.surface.configure(&self.device, &self.config) {
+                    log::warn!("Surface reconfigure failed during frame acquire: {e}");
+                    return Ok(());
+                }
+                match self.surface.get_current_texture() {
+                    Ok(f) => f,
+                    Err(e) => {
+                        log::warn!("lgpu get_current_texture failed: {e}");
+                        return Ok(());
+                    }
+                }
+            }
+        };
+
+        let mut pixels = vec![bg_color.to_rgb_u32(); (w * h) as usize];
+        mango_render::painter::paint(dl, &mut pixels, w, h);
+
+        let tf = self.texture_format;
+        if let Some(tex) = &mut self.frame_texture {
+            if tex.width != w || tex.height != h {
+                *tex = GpuTexture::new(
+                    &self.device,
+                    &self.queue,
+                    tf,
+                    w,
+                    h,
+                    &pixels,
+                    true,
+                )?;
+            } else {
+                tex.upload_pixels(&self.queue, tf, &pixels, true)?;
+            }
+        } else {
+            self.frame_texture = Some(GpuTexture::new(
+                &self.device,
+                &self.queue,
+                tf,
+                w,
+                h,
+                &pixels,
+                true,
+            )?);
+        }
+
+        let clear_color = [
+            bg_color.r as f32 / 255.0,
+            bg_color.g as f32 / 255.0,
+            bg_color.b as f32 / 255.0,
+            1.0,
+        ];
+
+        let sampler_id = self.sampler.id().map(|id| id.0).unwrap_or(0);
+        let tex_id = self
+            .frame_texture
+            .as_ref()
+            .and_then(|t| t.texture.id())
+            .map(|id| id.0)
+            .unwrap_or(0);
+
+        let quad = QuadPush {
+            rect: [-1.0, 1.0, 1.0, -1.0],
+            uv_rect: [0.0, 0.0, 1.0, 1.0],
+            tex_index: tex_id,
+            sampler_index: sampler_id,
+            flags: 1,
+            opacity: 1.0,
+        };
+
+        let mut encoder = self
+            .device
+            .create_command_encoder()
+            .map_err(|e| format!("Failed to create lgpu command encoder: {e}"))?;
+
+        {
+            let pass_desc = lgpu::RenderPassDesc {
+                color_texture: &frame.texture,
+                color_load_op: lgpu::ColorLoadOp::Clear(clear_color),
+                depth_attachment: None,
+            };
+            let mut pass = encoder.begin_render_pass(pass_desc);
+            pass.draw(&self.pipeline, 6, bytemuck::bytes_of(&quad))
+                .map_err(|e| format!("Quad draw failed: {e}"))?;
         }
 
         encoder.transition_to_present(&frame.texture);

@@ -1,4 +1,4 @@
-//! Scroll and scrollbar management subsystem for Mango Browser (OPT-001).
+//! Scroll and scrollbar management subsystem for Mango Browser.
 //!
 //! Provides layout extent calculation, scroll offset clamping, scrollbar
 //! geometry calculation (track and thumb), drag interaction calculations,
@@ -11,8 +11,7 @@ use mango_render::display_list::DisplayCommand;
 /// Iteratively computes the true maximum scrollable bottom boundary of a layout box tree,
 /// excluding fixed-position overlays so sticky/fixed elements do not inflate scroll boundaries.
 ///
-/// Previously recursive — switched to an explicit stack to prevent stack overflows on
-/// deeply-nested DOM trees (pages with 10,000+ nested elements). (B-07)
+/// Uses an explicit stack to prevent stack overflows on deeply-nested DOM trees.
 pub fn compute_scrollable_extent(root: &LayoutBox) -> f32 {
     let mut max_y = 0.0f32;
     // Stack stores borrowed references; capacity pre-allocated for typical page depth.
@@ -26,14 +25,34 @@ pub fn compute_scrollable_extent(root: &LayoutBox) -> f32 {
             .is_some_and(|s| s.position == mango_css::values::Position::Fixed);
         if !is_fixed {
             max_y = max_y.max(node.dimensions.margin_box().bottom());
-            // Push children in reverse so that the first child is processed first.
-            for child in node.children.iter().rev() {
-                stack.push(child);
+            let is_root_or_body = node
+                .tag_name
+                .as_deref()
+                .is_some_and(|t| t.eq_ignore_ascii_case("html") || t.eq_ignore_ascii_case("body"));
+            let clips_y = !is_root_or_body
+                && node.style.as_ref().is_some_and(|s| {
+                    matches!(
+                        s.overflow_y,
+                        mango_css::values::Overflow::Hidden
+                            | mango_css::values::Overflow::Scroll
+                            | mango_css::values::Overflow::Auto
+                    ) || matches!(
+                        s.contain,
+                        mango_css::values::Contain::Paint | mango_css::values::Contain::Strict
+                    )
+                });
+
+            if !clips_y {
+                // Push children in reverse so that the first child is processed first.
+                for child in node.children.iter().rev() {
+                    stack.push(child);
+                }
             }
         }
     }
     max_y
 }
+
 
 /// Returns the true scrollable document height scanning all layout boxes in the root.
 pub fn compute_scrollable_height(root_box: Option<&LayoutBox>) -> f32 {
@@ -123,7 +142,7 @@ impl SmoothScrollAnimation {
     /// Retargets an active animation to a new target while maintaining current velocity.
     ///
     /// Applies the same minimum 50ms duration clamp as `new()` so a zero-duration
-    /// call cannot cause division by zero in `step()`. (B-05)
+    /// call cannot cause division by zero in `step()`.
     pub fn update_target(&mut self, new_target: f64, duration: std::time::Duration) {
         let clamped = new_target.clamp(0.0, self.max_scroll);
         self.start_y = self.current_y;
@@ -311,4 +330,3 @@ mod tests {
         assert_eq!(y_end, 100_000.125);
     }
 }
-
