@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>CSS Flexbox Test: justify-content center</title>
+    <link rel="author" title="W3C">
+    <link rel="help" href="https://drafts.csswg.org/css-flexbox-1/#justify-content-property">
+    <link rel="match" href="flex-justify-content-center-001-ref.html">
+    <style>
+        body { margin: 0; padding: 0; }
+        .container {
+            display: flex;
+            justify-content: center;
+            width: 300px;
+            height: 100px;
+            background: blue;
+        }
+        .item {
+            width: 100px;
+            height: 100px;
+            background: green;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="item"></div>
+    </div>
+</body>
+</html>

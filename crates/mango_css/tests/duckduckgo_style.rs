@@ -1,0 +1,178 @@
+//! Regression checks for DuckDuckGo styling (logo positioning and search button styling).
+
+use mango_core::Color;
+use mango_css::compute_style;
+use mango_css::parser::CssParser;
+use mango_html::parse_html;
+
+#[test]
+fn test_ddg_logo_style() {
+    let html = r#"<div class="header header--html"><a class="header__logo-wrap"></a></div>"#;
+    let doc = parse_html(html);
+    let root = doc.root();
+    let a_id = doc.find_element_by_tag(root, "a").unwrap();
+
+    let css = r#"
+        .logo--dax, .header__logo-wrap, .logo_homepage {
+            background-position: 50% 50%;
+            background-repeat: no-repeat;
+            background-size: 100%;
+        }
+        .header__logo-wrap {
+            position: absolute;
+            left: 0;
+            margin-top: -8px;
+            width: 101px;
+            height: 60px;
+            background-size: 36px 36px;
+            background-image: url("/assets/logo_header.v109.svg");
+        }
+        .header--html .header__logo-wrap {
+            display: block;
+            background: no-repeat center url("/assets/logo_header.v109.png");
+        }
+    "#;
+    let sheet = CssParser::parse_stylesheet(css);
+    let style = compute_style(a_id, &doc, &[&sheet], None);
+
+    assert_eq!(
+        style.background_image.as_deref(),
+        Some("/assets/logo_header.v109.png"),
+        "the later `background:` shorthand must win over the earlier background-image"
+    );
+    assert_eq!(style.width, mango_css::values::Length::Px(101.0));
+    assert_eq!(style.height, mango_css::values::Length::Px(60.0));
+    assert_eq!(style.display, mango_css::values::Display::Block);
+    assert!(style.position == mango_css::values::Position::Absolute);
+}
+
+#[test]
+fn test_ddg_button_style() {
+    let html = r#"<form class="search has-text search--focus"><input id="search_button_homepage" class="search__button search__button--html" value="" title="Search" alt="Search" type="submit" /></form>"#;
+    let doc = parse_html(html);
+    let root = doc.root();
+    let btn_id = doc.find_element_by_tag(root, "input").unwrap();
+
+    let css = r#"
+        .search__button {
+            --default-border-radius: 4px;
+            border-radius: 0 4px 4px 0;
+            border-radius: 0 var(--default-border-radius) var(--default-border-radius) 0;
+            background-color: #5b9e4d;
+        }
+    "#;
+    let sheet = CssParser::parse_stylesheet(css);
+    let style = compute_style(btn_id, &doc, &[&sheet], None);
+
+    assert_eq!(style.background_color, Color::rgb(91, 158, 77));
+    assert_eq!(style.border_top_left_radius, 0.0);
+    assert_eq!(style.border_top_right_radius, 4.0);
+    assert_eq!(style.border_bottom_right_radius, 4.0);
+    assert_eq!(style.border_bottom_left_radius, 0.0);
+}
+
+#[test]
+fn test_ddg_actual_header_logo_style() {
+    let html = r#"<div class="header header--html"><a class="header__logo-wrap"></a></div>"#;
+    let doc = parse_html(html);
+    let root = doc.root();
+    let a_id = doc.find_element_by_tag(root, "a").unwrap();
+
+    let css = r#"
+        .logo--dax, .header__logo-wrap, .logo_homepage {
+            background-position: 50% 50%;
+            background-repeat: no-repeat;
+            background-size: 100%;
+        }
+        .header__logo-wrap {
+            position: absolute;
+            left: 0;
+            margin-top: -8px;
+            width: 101px;
+            height: 60px;
+            background-size: 36px 36px;
+            background-image: url("/assets/logo_header.v109.svg");
+        }
+        .header--html .header__logo-wrap {
+            display: block;
+            background: no-repeat center url("/assets/logo_header.v109.png");
+            background: no-repeat center/auto 36px url("/assets/logo_header.v109.svg"), linear-gradient(transparent, transparent);
+        }
+    "#;
+    let sheet = CssParser::parse_stylesheet(css);
+    let style = compute_style(a_id, &doc, &[&sheet], None);
+
+    assert_eq!(
+        style.background_position,
+        (
+            mango_css::values::Length::Percent(50.0),
+            mango_css::values::Length::Percent(50.0)
+        )
+    );
+    assert_eq!(
+        style.background_size,
+        mango_css::values::BackgroundSize::Explicit(
+            mango_css::values::Length::Auto,
+            mango_css::values::Length::Px(36.0)
+        )
+    );
+    assert_eq!(
+        style.background_image.as_deref(),
+        Some("/assets/logo_header.v109.svg")
+    );
+}
+
+#[test]
+fn test_github_dark_theme_attributes() {
+    let html = r#"<html lang="en" data-color-mode="dark" data-dark-theme="dark" data-color-mode="light" data-light-theme="light" data-dark-theme="dark"><head></head><body></body></html>"#;
+    let doc = parse_html(html);
+    let root = doc.root();
+    let html_id = doc.find_element_by_tag(root, "html").unwrap();
+    let body_id = doc.find_element_by_tag(root, "body").unwrap();
+
+    let css = r#"
+        [data-color-mode=dark][data-dark-theme=dark] {
+            --bgColor-default: #0d1117;
+        }
+        [data-color-mode=light][data-light-theme=light] {
+            --bgColor-default: #ffffff;
+        }
+        body {
+            background-color: var(--bgColor-default);
+        }
+    "#;
+    let sheet = CssParser::parse_stylesheet(css);
+    let html_style = compute_style(html_id, &doc, &[&sheet], None);
+    let body_style = compute_style(body_id, &doc, &[&sheet], Some(&html_style));
+
+    assert_eq!(
+        body_style.background_color,
+        Color::rgb(13, 17, 23),
+        "GitHub body should inherit dark background color"
+    );
+}
+
+#[test]
+fn test_wikipedia_lang_list_style() {
+    let html = r#"<html lang="en" class="js-enabled"><body id="www-wikipedia-org" class=" jsl10n-visible"><main><div class="lang-list-container"></div></main></body></html>"#;
+    let doc = parse_html(html);
+    let root = doc.root();
+    let div_id = doc.find_element_by_tag(root, "div").unwrap();
+
+    let css = r#"
+        .lang-list-container {
+            overflow: hidden;
+            max-height: 0px;
+        }
+        .js-enabled .lang-list-container {
+            visibility: hidden;
+        }
+        .lang-list-active .lang-list-container, .no-js .lang-list-container {
+            visibility: visible;
+            max-height: 10000px;
+        }
+    "#;
+    let sheet = CssParser::parse_stylesheet(css);
+    let style = compute_style(div_id, &doc, &[&sheet], None);
+    assert_eq!(style.max_height, mango_css::values::Length::Px(0.0));
+}

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>CSS Box Model Test: vertical margin collapsing</title>
+    <link rel="author" title="W3C">
+    <link rel="help" href="https://www.w3.org/TR/CSS21/box.html#collapsing-margins">
+    <link rel="match" href="margin-collapse-adjacent-001-ref.html">
+    <style>
+        body { margin: 0; padding: 0; }
+        .container {
+            width: 100px;
+            background: red;
+        }
+        .b1 {
+            width: 100px;
+            height: 50px;
+            background: green;
+            margin-bottom: 30px;
+        }
+        .b2 {
+            width: 100px;
+            height: 50px;
+            background: green;
+            margin-top: 20px;
+        }
+        .filler {
+            position: absolute;
+            left: 0px;
+            top: 50px;
+            width: 100px;
+            height: 30px;
+            background: green;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="b1"></div>
+        <div class="b2"></div>
+    </div>
+    <div class="filler"></div>
+</body>
+</html>

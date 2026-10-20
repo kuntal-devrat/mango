@@ -1,0 +1,13 @@
+[package]
+name = "mango_ipc"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "High-throughput zero-copy IPC and shared memory ring buffers for Mango browser multi-process architecture"
+
+[dependencies]
+mango_core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }

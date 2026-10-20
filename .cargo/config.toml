@@ -1,0 +1,11 @@
+# Stack size configuration for Mango Browser executable
+# Modern browser layout, CSS cascade, and JS engines (Boa/V8/SpiderMonkey)
+# require sufficient stack space for deep AST and DOM traversals.
+# Windows default is 1MB; we set 16MB (industry standard for browser layout/JS threads).
+
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "link-arg=/STACK:16777216"]
+
+[target.'cfg(all(windows, target_env = "gnu"))']
+rustflags = ["-C", "link-arg=-Wl,--stack,16777216"]
+

@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>CSS Box Model Test: solid border layout</title>
+    <link rel="author" title="W3C">
+    <link rel="help" href="https://www.w3.org/TR/CSS21/box.html#border-properties">
+    <link rel="match" href="border-solid-colors-001-ref.html">
+    <style>
+        body { margin: 0; padding: 0; }
+        .box {
+            box-sizing: content-box;
+            width: 80px;
+            height: 80px;
+            border: 10px solid green;
+            background: green;
+        }
+    </style>
+</head>
+<body>
+    <div class="box"></div>
+</body>
+</html>

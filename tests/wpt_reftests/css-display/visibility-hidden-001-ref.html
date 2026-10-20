@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>CSS Display Reference: visibility hidden preserves layout space</title>
+    <style>
+        body { margin: 0; padding: 0; }
+        .container {
+            position: relative;
+            width: 100px;
+            height: 300px;
+            background: blue;
+        }
+        .box1 {
+            position: absolute;
+            left: 0px;
+            top: 0px;
+            width: 100px;
+            height: 100px;
+            background: green;
+        }
+        .box2 {
+            position: absolute;
+            left: 0px;
+            top: 200px;
+            width: 100px;
+            height: 100px;
+            background: green;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="box1"></div>
+        <div class="box2"></div>
+    </div>
+</body>
+</html>
