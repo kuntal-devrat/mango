@@ -88,9 +88,46 @@
         return el;
     };
     var _origCTN = document.createTextNode;
-    document.createTextNode = function(text) { return _wrapElement(_origCTN(text)); };
+    document.createTextNode = function(text) {
+        var str = String(text === undefined ? '' : text);
+        var el = _wrapElement(_origCTN(str));
+        if (el) el._nodeValue = str;
+        return el;
+    };
     var _origCC = (typeof globalThis !== 'undefined' && globalThis._origCC) ? globalThis._origCC : (document.createComment || function(t) { return 0; });
-    document.createComment = function(text) { return _wrapElement(_origCC(String(text === undefined ? '' : text))); };
+    document.createComment = function(text) {
+        var str = String(text === undefined ? '' : text);
+        var el = _wrapElement(_origCC(str));
+        if (el) el._nodeValue = str;
+        return el;
+    };
+    document.createProcessingInstruction = function(target, data) {
+        var targetStr = String(target === undefined ? '' : target);
+        var dataStr = String(data === undefined ? '' : data);
+        if (!targetStr || /[\s<>]/.test(targetStr)) {
+            var err = typeof DOMException !== 'undefined'
+                ? new DOMException("The provided name is not a valid name.", "InvalidCharacterError")
+                : new Error("InvalidCharacterError");
+            throw err;
+        }
+        if (dataStr.indexOf("?>") !== -1) {
+            var err = typeof DOMException !== 'undefined'
+                ? new DOMException("The data contains invalid characters.", "InvalidCharacterError")
+                : new Error("InvalidCharacterError");
+            throw err;
+        }
+        var piId = _origCC(dataStr);
+        var el = _wrapElement(piId);
+        if (el) {
+            el._isPI = true;
+            el._target = targetStr;
+            el._nodeValue = dataStr;
+            if (globalThis.ProcessingInstruction && globalThis.ProcessingInstruction.prototype) {
+                Object.setPrototypeOf(el, globalThis.ProcessingInstruction.prototype);
+            }
+        }
+        return el;
+    };
 
     document.addEventListener = function(type, listener, options) {
         _addDOMEventListener(document, type, listener, options);

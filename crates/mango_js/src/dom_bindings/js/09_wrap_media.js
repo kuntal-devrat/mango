@@ -111,32 +111,90 @@
             set coords(val) { this.setAttribute('coords', String(val)); },
             get alt() { return this.getAttribute('alt') || ''; },
             set alt(val) { this.setAttribute('alt', String(val)); },
-            get target() { return this.getAttribute('target') || ''; },
-            set target(val) { this.setAttribute('target', String(val)); },
+            get target() {
+                if (this._isPI) return this._target || '';
+                return (typeof this.getAttribute === 'function') ? (this.getAttribute('target') || '') : '';
+            },
+            set target(val) {
+                if (this._isPI) { this._target = String(val); return; }
+                if (typeof this.setAttribute === 'function') this.setAttribute('target', String(val));
+            },
             // <object> & <embed> and CharacterData / Comment
             get data() {
                 if (this._customData !== undefined) {
                     return this._customData;
                 }
-                if (this.nodeType === 8 || this.nodeType === 3) {
+                if (this.nodeType === 8 || this.nodeType === 3 || this.nodeType === 7 || this.nodeType === 4) {
                     return this.nodeValue || '';
                 }
                 var tag = (this.tagName || '').toLowerCase();
                 if (tag === 'object') {
-                    return this.getAttribute('data') || '';
+                    return (typeof this.getAttribute === 'function') ? (this.getAttribute('data') || '') : '';
                 }
                 return undefined;
             },
             set data(val) {
-                if (this.nodeType === 8 || this.nodeType === 3) {
-                    this.nodeValue = String(val);
+                if (this.nodeType === 8 || this.nodeType === 3 || this.nodeType === 7 || this.nodeType === 4) {
+                    this.nodeValue = val === null ? "" : String(val);
                     return;
                 }
                 var tag = (this.tagName || '').toLowerCase();
                 if (tag === 'object' && typeof val === 'string') {
-                    this.setAttribute('data', val);
+                    if (typeof this.setAttribute === 'function') this.setAttribute('data', val);
                 }
                 this._customData = val;
+            },
+            substringData: function(offset, count) {
+                if (arguments.length < 2) {
+                    throw new TypeError("Failed to execute 'substringData': 2 arguments required, but only " + arguments.length + " present.");
+                }
+                var str = this.data || '';
+                var uOffset = offset >>> 0;
+                var uCount = count >>> 0;
+                if (uOffset > str.length) {
+                    var err = typeof DOMException !== 'undefined'
+                        ? new DOMException("The index is not in the allowed range.", "IndexSizeError")
+                        : new Error("IndexSizeError");
+                    throw err;
+                }
+                return str.substring(uOffset, uOffset + uCount);
+            },
+            appendData: function(data) {
+                if (arguments.length < 1) {
+                    throw new TypeError("Failed to execute 'appendData': 1 argument required, but only " + arguments.length + " present.");
+                }
+                this.data = (this.data || '') + String(data);
+            },
+            insertData: function(offset, data) {
+                if (arguments.length < 2) {
+                    throw new TypeError("Failed to execute 'insertData': 2 arguments required, but only " + arguments.length + " present.");
+                }
+                this.replaceData(offset, 0, data);
+            },
+            deleteData: function(offset, count) {
+                if (arguments.length < 2) {
+                    throw new TypeError("Failed to execute 'deleteData': 2 arguments required, but only " + arguments.length + " present.");
+                }
+                this.replaceData(offset, count, '');
+            },
+            replaceData: function(offset, count, data) {
+                if (arguments.length < 3) {
+                    throw new TypeError("Failed to execute 'replaceData': 3 arguments required, but only " + arguments.length + " present.");
+                }
+                var str = this.data || '';
+                var uOffset = offset >>> 0;
+                var uCount = count >>> 0;
+                if (uOffset > str.length) {
+                    var err = typeof DOMException !== 'undefined'
+                        ? new DOMException("The index is not in the allowed range.", "IndexSizeError")
+                        : new Error("IndexSizeError");
+                    throw err;
+                }
+                if (uOffset + uCount > str.length) {
+                    uCount = str.length - uOffset;
+                }
+                var strData = String(data);
+                this.data = str.substring(0, uOffset) + strData + str.substring(uOffset + uCount);
             },
             get htmlFor() { return this.getAttribute('for') || ''; },
             set htmlFor(val) { this.setAttribute('for', String(val)); },

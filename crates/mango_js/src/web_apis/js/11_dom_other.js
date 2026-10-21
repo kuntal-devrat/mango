@@ -493,6 +493,67 @@
     globalThis.DOMImplementation = function() {};
     globalThis.CharacterData = function() {};
     globalThis.CharacterData.prototype = Object.create(globalThis.Node.prototype);
+    Object.defineProperty(globalThis.CharacterData.prototype, 'data', {
+        get: function() { return this.nodeValue || ''; },
+        set: function(val) { this.nodeValue = val === null ? '' : String(val); },
+        configurable: true
+    });
+    Object.defineProperty(globalThis.CharacterData.prototype, 'length', {
+        get: function() { return (this.data || '').length; },
+        configurable: true
+    });
+    globalThis.CharacterData.prototype.substringData = function(offset, count) {
+        if (arguments.length < 2) {
+            throw new TypeError("Failed to execute 'substringData': 2 arguments required, but only " + arguments.length + " present.");
+        }
+        var str = this.data || '';
+        var uOffset = offset >>> 0;
+        var uCount = count >>> 0;
+        if (uOffset > str.length) {
+            var err = typeof DOMException !== 'undefined'
+                ? new DOMException("The index is not in the allowed range.", "IndexSizeError")
+                : new Error("IndexSizeError");
+            throw err;
+        }
+        return str.substring(uOffset, uOffset + uCount);
+    };
+    globalThis.CharacterData.prototype.appendData = function(data) {
+        if (arguments.length < 1) {
+            throw new TypeError("Failed to execute 'appendData': 1 argument required, but only " + arguments.length + " present.");
+        }
+        this.data = (this.data || '') + String(data);
+    };
+    globalThis.CharacterData.prototype.insertData = function(offset, data) {
+        if (arguments.length < 2) {
+            throw new TypeError("Failed to execute 'insertData': 2 arguments required, but only " + arguments.length + " present.");
+        }
+        this.replaceData(offset, 0, data);
+    };
+    globalThis.CharacterData.prototype.deleteData = function(offset, count) {
+        if (arguments.length < 2) {
+            throw new TypeError("Failed to execute 'deleteData': 2 arguments required, but only " + arguments.length + " present.");
+        }
+        this.replaceData(offset, count, '');
+    };
+    globalThis.CharacterData.prototype.replaceData = function(offset, count, data) {
+        if (arguments.length < 3) {
+            throw new TypeError("Failed to execute 'replaceData': 3 arguments required, but only " + arguments.length + " present.");
+        }
+        var str = this.data || '';
+        var uOffset = offset >>> 0;
+        var uCount = count >>> 0;
+        if (uOffset > str.length) {
+            var err = typeof DOMException !== 'undefined'
+                ? new DOMException("The index is not in the allowed range.", "IndexSizeError")
+                : new Error("IndexSizeError");
+            throw err;
+        }
+        if (uOffset + uCount > str.length) {
+            uCount = str.length - uOffset;
+        }
+        var strData = String(data);
+        this.data = str.substring(0, uOffset) + strData + str.substring(uOffset + uCount);
+    };
     globalThis.Text = function() {};
     globalThis.Text.prototype = Object.create(globalThis.CharacterData.prototype);
     globalThis.Comment = function() {};

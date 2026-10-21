@@ -557,7 +557,8 @@
                 }
                 this.appendChild(frag);
             },
-            remove: function(index) {
+            remove: function() {
+                var index = arguments[0];
                 var tag = (this.tagName || '').toLowerCase();
                 if (tag === 'select' && arguments.length > 0 && typeof index === 'number') {
                     var opts = this.options || [];
@@ -601,7 +602,13 @@
             } else if (nt === 3 && globalThis.Text) {
                 Object.setPrototypeOf(el, globalThis.Text.prototype);
             } else if (nt === 8 && globalThis.Comment) {
-                Object.setPrototypeOf(el, globalThis.Comment.prototype);
+                if (el._isPI && globalThis.ProcessingInstruction) {
+                    Object.setPrototypeOf(el, globalThis.ProcessingInstruction.prototype);
+                } else {
+                    Object.setPrototypeOf(el, globalThis.Comment.prototype);
+                }
+            } else if (nt === 7 && globalThis.ProcessingInstruction) {
+                Object.setPrototypeOf(el, globalThis.ProcessingInstruction.prototype);
             } else {
                 var customCtor = (globalThis.customElements && globalThis.customElements.get) ? globalThis.customElements.get(tag) : null;
                 if (customCtor && customCtor.prototype) {

@@ -37,9 +37,16 @@
             },
             get outerHTML() { return _getOuterHTML(this._nodeId); },
             set outerHTML(val) { _setOuterHTML(this._nodeId, String(val)); },
-            get nodeType() { return _getNodeType(this._nodeId); },
-            get nodeName() { return _getNodeName(this._nodeId); },
+            get nodeType() {
+                if (this._isPI) return 7;
+                return _getNodeType(this._nodeId);
+            },
+            get nodeName() {
+                if (this._isPI) return this._target || '';
+                return _getNodeName(this._nodeId);
+            },
             get nodeValue() {
+                if (this._nodeValue !== undefined) return this._nodeValue;
                 var v = _getNodeValue(this._nodeId);
                 if (v !== null && v !== undefined) return v;
                 if (this.nodeType === 1) return _getTextContent(this._nodeId);
@@ -48,6 +55,7 @@
             set nodeValue(val) {
                 var oldVal = this.nodeValue;
                 var newVal = val === null ? '' : String(val);
+                this._nodeValue = newVal;
                 _setNodeValue(this._nodeId, newVal);
                 if (this.nodeType === 1) {
                     _setTextContent(this._nodeId, newVal);

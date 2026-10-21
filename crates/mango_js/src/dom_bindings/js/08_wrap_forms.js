@@ -88,6 +88,9 @@
                 return undefined;
             },
             get length() {
+                if (this.nodeType === 3 || this.nodeType === 8 || this.nodeType === 7 || this.nodeType === 4) {
+                    return (this.data || '').length;
+                }
                 var tag = (this.tagName || '').toLowerCase();
                 if (tag === 'form') {
                     return (this.elements || []).length;
@@ -95,7 +98,7 @@
                 if (tag === 'select') {
                     return (this.options || []).length;
                 }
-                var l = this.getAttribute('length');
+                var l = (typeof this.getAttribute === 'function') ? this.getAttribute('length') : null;
                 return l === null ? 0 : parseInt(l, 10) || 0;
             },
             stepUp: function(n) {

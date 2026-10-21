@@ -40,6 +40,18 @@ const UPSTREAM_DOM_TESTS: &[(&str, &str)] = &[
         "CharacterData.substringData",
         "dom/nodes/CharacterData-substringData.html",
     ),
+    (
+        "CharacterData.appendChild",
+        "dom/nodes/CharacterData-appendChild.html",
+    ),
+    (
+        "CharacterData.remove",
+        "dom/nodes/CharacterData-remove.html",
+    ),
+    (
+        "CharacterData.surrogates",
+        "dom/nodes/CharacterData-surrogates.html",
+    ),
     ("Element.tagName", "dom/nodes/Element-tagName.html"),
     (
         "Document.createComment",
@@ -50,6 +62,78 @@ const UPSTREAM_DOM_TESTS: &[(&str, &str)] = &[
         "dom/nodes/Document-createAttribute.html",
     ),
 ];
+
+/// Canonical upstream WPT tests dedicated to WHATWG DOM § 4.4 CharacterData.
+const CHARACTER_DATA_TESTS: &[(&str, &str)] = &[
+    ("CharacterData.data", "dom/nodes/CharacterData-data.html"),
+    (
+        "CharacterData.appendData",
+        "dom/nodes/CharacterData-appendData.html",
+    ),
+    (
+        "CharacterData.deleteData",
+        "dom/nodes/CharacterData-deleteData.html",
+    ),
+    (
+        "CharacterData.insertData",
+        "dom/nodes/CharacterData-insertData.html",
+    ),
+    (
+        "CharacterData.replaceData",
+        "dom/nodes/CharacterData-replaceData.html",
+    ),
+    (
+        "CharacterData.substringData",
+        "dom/nodes/CharacterData-substringData.html",
+    ),
+    (
+        "CharacterData.appendChild",
+        "dom/nodes/CharacterData-appendChild.html",
+    ),
+    (
+        "CharacterData.remove",
+        "dom/nodes/CharacterData-remove.html",
+    ),
+    (
+        "CharacterData.surrogates",
+        "dom/nodes/CharacterData-surrogates.html",
+    ),
+];
+
+#[test]
+fn test_character_data_w3c_100_percent_pass() {
+    let base_dir = Path::new("tests/wpt");
+    let mut total_tests = 0;
+    let mut passed_tests = 0;
+    let mut failed_tests = 0;
+
+    for (label, test_rel_path) in CHARACTER_DATA_TESTS {
+        let results = run_wpt_html_file(base_dir, test_rel_path)
+            .unwrap_or_else(|e| panic!("Failed to execute {label} ({test_rel_path}): {e}"));
+        for t in &results.tests {
+            if t.status == "PASS" {
+                passed_tests += 1;
+            } else {
+                failed_tests += 1;
+                eprintln!("FAIL in {label}: {} ({:?})", t.name, t.message);
+            }
+            total_tests += 1;
+        }
+    }
+
+    assert_eq!(
+        failed_tests, 0,
+        "All CharacterData assertions must pass 100%"
+    );
+    assert_eq!(
+        passed_tests, total_tests,
+        "Every assertion must pass cleanly"
+    );
+    assert_eq!(
+        total_tests, 157,
+        "Expected exactly 157 assertions across all 9 CharacterData tests"
+    );
+}
 
 #[test]
 fn test_run_official_wpt_suites() {

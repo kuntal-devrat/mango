@@ -173,6 +173,13 @@
 
     function _defaultAppendChild(node, child) {
         if (!node || node._nodeId === undefined) return child;
+        var pNt = node.nodeType;
+        if (pNt !== 1 && pNt !== 9 && pNt !== 11) {
+            var err = typeof DOMException !== 'undefined'
+                ? new DOMException("Node cannot have children.", "HierarchyRequestError")
+                : new Error("HierarchyRequestError");
+            throw err;
+        }
         var childId = (typeof child === 'object' && child !== null && child._nodeId !== undefined) ? child._nodeId : child;
         var childObj = _wrapElement(childId);
         var isFrag = childObj && childObj.nodeType === 11;
@@ -226,6 +233,13 @@
 
     function _defaultInsertBefore(node, newChild, refChild) {
         if (!node || node._nodeId === undefined) return newChild;
+        var pNt = node.nodeType;
+        if (pNt !== 1 && pNt !== 9 && pNt !== 11) {
+            var err = typeof DOMException !== 'undefined'
+                ? new DOMException("Node cannot have children.", "HierarchyRequestError")
+                : new Error("HierarchyRequestError");
+            throw err;
+        }
         var childId = (typeof newChild === 'object' && newChild !== null && newChild._nodeId !== undefined) ? newChild._nodeId : newChild;
         var refId = (typeof refChild === 'object' && refChild !== null && refChild._nodeId !== undefined) ? refChild._nodeId : refChild;
         var newObj = _wrapElement(childId);
@@ -263,6 +277,13 @@
 
     function _defaultReplaceChild(node, newChild, oldChild) {
         if (!node || node._nodeId === undefined) return oldChild;
+        var pNt = node.nodeType;
+        if (pNt !== 1 && pNt !== 9 && pNt !== 11) {
+            var err = typeof DOMException !== 'undefined'
+                ? new DOMException("Node cannot have children.", "HierarchyRequestError")
+                : new Error("HierarchyRequestError");
+            throw err;
+        }
         var newId = (typeof newChild === 'object' && newChild !== null && newChild._nodeId !== undefined) ? newChild._nodeId : newChild;
         var oldId = (typeof oldChild === 'object' && oldChild !== null && oldChild._nodeId !== undefined) ? oldChild._nodeId : oldChild;
         var oldObj = _wrapElement(oldId);
