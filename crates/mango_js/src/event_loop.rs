@@ -52,6 +52,7 @@ impl EventLoop {
         if let Ok(mut q) = self.tasks.lock() {
             q.push(source);
         }
+        mango_core::wake_event_loop();
     }
 
     /// Schedules a one-shot timeout. Returns the timer ID.

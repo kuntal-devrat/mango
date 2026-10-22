@@ -24,7 +24,7 @@ pub fn parse_font_shorthand(tokens: &[Token], important: bool) -> Vec<Declaratio
         let lower = kw.to_ascii_lowercase();
         if matches!(
             lower.as_str(),
-            "inherit" | "initial" | "unset" | "revert" | "revert-layer"
+            "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "revert-rule"
         ) {
             return vec![Declaration::new("font", Value::Keyword(lower), important)];
         }
@@ -47,7 +47,9 @@ pub fn parse_font_shorthand(tokens: &[Token], important: bool) -> Vec<Declaratio
                         _ => FontStyle::Oblique,
                     });
                     idx += 1;
-                } else if font_weight.is_none() && matches!(lower.as_str(), "bold" | "bolder" | "lighter") {
+                } else if font_weight.is_none()
+                    && matches!(lower.as_str(), "bold" | "bolder" | "lighter")
+                {
                     font_weight = Some(match lower.as_str() {
                         "bold" => FontWeight::Bold,
                         "bolder" => FontWeight::Bolder,
@@ -222,11 +224,11 @@ pub fn normalize_unitless_zero_lengths(prop: &str, val: Value) -> Value {
         return val;
     }
     match val {
-        Value::Number(n) if n == 0.0 => Value::Length(Length::Px(0.0)),
+        Value::Number(0.0) => Value::Length(Length::Px(0.0)),
         Value::List(list) => Value::List(
             list.into_iter()
                 .map(|item| match item {
-                    Value::Number(n) if n == 0.0 => Value::Length(Length::Px(0.0)),
+                    Value::Number(0.0) => Value::Length(Length::Px(0.0)),
                     other => other,
                 })
                 .collect(),

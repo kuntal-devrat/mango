@@ -114,7 +114,7 @@ pub(crate) fn matches_pseudo_class(
         "root" => el.tag_name.eq_ignore_ascii_case("html"),
         "scope" => {
             if let Some(scope_id) = current_scope_root() {
-                node_id == scope_id
+                node_id.raw() == scope_id.raw()
             } else {
                 el.tag_name.eq_ignore_ascii_case("html")
             }
@@ -396,14 +396,14 @@ pub(crate) fn matches_pseudo_class(
         }
         "host" => {
             if let Some(host_id) = current_host_element() {
-                node_id == host_id
+                node_id.raw() == host_id.raw()
             } else {
                 el.shadow_root.is_some()
             }
         }
         s if s.starts_with("host(") && s.ends_with(')') => {
             let host_matches = if let Some(host_id) = current_host_element() {
-                node_id == host_id
+                node_id.raw() == host_id.raw()
             } else {
                 el.shadow_root.is_some()
             };
@@ -422,7 +422,7 @@ pub(crate) fn matches_pseudo_class(
         }
         s if s.starts_with("host-context(") && s.ends_with(')') => {
             let host_matches = if let Some(host_id) = current_host_element() {
-                node_id == host_id
+                node_id.raw() == host_id.raw()
             } else {
                 el.shadow_root.is_some()
             };

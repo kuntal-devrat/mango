@@ -198,7 +198,21 @@ impl GpuCompositor {
             return Err("No compatible GPU adapter found".to_string());
         }
 
-        let adapter = &adapters[0];
+        // Prioritize discrete GPU, then integrated GPU, then virtual GPU, over software fallback
+        let adapter = adapters
+            .iter()
+            .find(|a| a.info().device_type == lgpu::DeviceType::DiscreteGpu)
+            .or_else(|| {
+                adapters
+                    .iter()
+                    .find(|a| a.info().device_type == lgpu::DeviceType::IntegratedGpu)
+            })
+            .or_else(|| {
+                adapters
+                    .iter()
+                    .find(|a| a.info().device_type == lgpu::DeviceType::VirtualGpu)
+            })
+            .unwrap_or(&adapters[0]);
         let info = adapter.info();
         log::info!(
             "lgpu device selected: {} ({:?}) via {:?}",

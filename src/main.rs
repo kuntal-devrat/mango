@@ -103,6 +103,10 @@ fn main() {
 
     // Create the winit event loop
     let event_loop = EventLoop::new().expect("failed to create event loop");
+    let proxy = event_loop.create_proxy();
+    mango_core::register_event_loop_waker(std::sync::Arc::new(move || {
+        let _ = proxy.send_event(());
+    }));
     event_loop.set_control_flow(winit::event_loop::ControlFlow::Wait);
 
     // Create and run the application

@@ -5,7 +5,7 @@ impl CssParser {
     pub(crate) fn eval_supports_condition(&self, tokens: &[Token]) -> bool {
         let filtered: Vec<&Token> = tokens
             .iter()
-            .filter(|t| !matches!(t, Token::Whitespace | Token::Comment(_)))
+            .filter(|t| !matches!(t, Token::Whitespace | Token::Comment(_) | Token::Eof))
             .collect();
         self.eval_supports_tokens(&filtered, 0)
     }

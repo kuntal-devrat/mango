@@ -1,79 +1,93 @@
-    function XMLSerializer() {}
-    XMLSerializer.prototype.serializeToString = function(node) {
-        if (!node) return "";
-        if (node.nodeType === 3) {
-            var val = (node.nodeValue !== null && node.nodeValue !== undefined) ? String(node.nodeValue) : (node.textContent || "");
-            return val.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        }
-        if (node.nodeType === 8) {
-            return "<!--" + (node.nodeValue || "") + "-->";
-        }
-        if (node.nodeType === 11) {
-            var s = "";
-            if (node.childNodes) {
-                for (var i = 0; i < node.childNodes.length; i++) {
-                    s += this.serializeToString(node.childNodes[i]);
-                }
+    (function() {
+        function XMLSerializer() {}
+        XMLSerializer.prototype.serializeToString = function(node) {
+            if (!node) return "";
+            if (node.nodeType === 3) {
+                var val = (node.nodeValue !== null && node.nodeValue !== undefined) ? String(node.nodeValue) : (node.textContent || "");
+                return val.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
             }
-            return s;
-        }
-        if (node.nodeType === 9) {
-            return (node.documentElement ? this.serializeToString(node.documentElement) : "");
-        }
-        if (node.nodeType === 1) {
-            var tag = (node.tagName || node.nodeName || "").toLowerCase();
-            var res = "<" + tag;
-            if (node.attributes) {
-                for (var j = 0; j < node.attributes.length; j++) {
-                    var attr = node.attributes[j];
-                    if (attr && attr.name) {
-                        var attrVal = String(attr.value || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;");
-                        res += " " + attr.name + '="' + attrVal + '"';
+            if (node.nodeType === 8) {
+                return "<!--" + (node.nodeValue || "") + "-->";
+            }
+            if (node.nodeType === 11) {
+                var s = "";
+                if (node.childNodes) {
+                    for (var i = 0; i < node.childNodes.length; i++) {
+                        s += this.serializeToString(node.childNodes[i]);
                     }
                 }
+                return s;
             }
-            var voidTags = /^(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)$/i;
-            if (voidTags.test(tag) && (!node.childNodes || node.childNodes.length === 0)) {
-                return res + ">";
+            if (node.nodeType === 9) {
+                return (node.documentElement ? this.serializeToString(node.documentElement) : "");
             }
-            res += ">";
-            if (node.childNodes && node.childNodes.length > 0) {
-                for (var k = 0; k < node.childNodes.length; k++) {
-                    res += this.serializeToString(node.childNodes[k]);
+            if (node.nodeType === 1) {
+                var tag = (node.tagName || node.nodeName || "").toLowerCase();
+                var res = "<" + tag;
+                if (node.attributes) {
+                    for (var j = 0; j < node.attributes.length; j++) {
+                        var attr = node.attributes[j];
+                        if (attr && attr.name) {
+                            var attrVal = String(attr.value || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+                            res += " " + attr.name + '="' + attrVal + '"';
+                        }
+                    }
                 }
-            } else if (node.innerHTML !== undefined && node.innerHTML !== "") {
-                res += node.innerHTML;
+                var voidTags = /^(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)$/i;
+                if (voidTags.test(tag) && (!node.childNodes || node.childNodes.length === 0)) {
+                    return res + ">";
+                }
+                res += ">";
+                if (node.childNodes && node.childNodes.length > 0) {
+                    for (var k = 0; k < node.childNodes.length; k++) {
+                        res += this.serializeToString(node.childNodes[k]);
+                    }
+                } else if (node.innerHTML !== undefined && node.innerHTML !== "") {
+                    res += node.innerHTML;
+                }
+                res += "</" + tag + ">";
+                return res;
             }
-            res += "</" + tag + ">";
-            return res;
-        }
-        if (node.outerHTML !== undefined) {
-            return node.outerHTML;
-        }
-        return "";
-    };
-    globalThis.XMLSerializer = XMLSerializer;
+            if (node.outerHTML !== undefined) {
+                return node.outerHTML;
+            }
+            return "";
+        };
+        Object.defineProperty(globalThis, 'XMLSerializer', {
+            value: XMLSerializer,
+            writable: true,
+            enumerable: false,
+            configurable: true
+        });
+    })();
 
-    function DOMParser() {}
-    DOMParser.prototype.parseFromString = function(str, type) {
-        var t = String(type || 'text/html').toLowerCase();
-        if (t === 'text/xml' || t === 'application/xml' || t === 'application/xhtml+xml' || t === 'image/svg+xml') {
-            var doc = document.implementation.createDocument(null, "");
-            doc._contentType = t;
-            doc.contentType = t;
-            doc._isXml = true;
-            if (typeof _parseXmlToDoc === 'function') {
-                return _parseXmlToDoc(String(str), doc, t === 'application/xhtml+xml');
+    (function() {
+        function DOMParser() {}
+        DOMParser.prototype.parseFromString = function(str, type) {
+            var t = String(type || 'text/html').toLowerCase();
+            if (t === 'text/xml' || t === 'application/xml' || t === 'application/xhtml+xml' || t === 'image/svg+xml') {
+                var doc = document.implementation.createDocument(null, "");
+                doc._contentType = t;
+                doc.contentType = t;
+                doc._isXml = true;
+                if (typeof _parseXmlToDoc === 'function') {
+                    return _parseXmlToDoc(String(str), doc, t === 'application/xhtml+xml');
+                }
+                return doc;
+            }
+            var doc = document.implementation.createHTMLDocument("");
+            if (doc && doc.body) {
+                doc.body.innerHTML = String(str);
             }
             return doc;
-        }
-        var doc = document.implementation.createHTMLDocument("");
-        if (doc && doc.body) {
-            doc.body.innerHTML = String(str);
-        }
-        return doc;
-    };
-    globalThis.DOMParser = DOMParser;
+        };
+        Object.defineProperty(globalThis, 'DOMParser', {
+            value: DOMParser,
+            writable: true,
+            enumerable: false,
+            configurable: true
+        });
+    })();
 
     document.createRange = function() {
         return new Range();
@@ -111,31 +125,6 @@
             this.cancelable = !!c;
         };
         return evt;
-    };
-    document.createTreeWalker = function(root, whatToShow, filter) {
-        return {
-            root: root,
-            currentNode: root,
-            whatToShow: whatToShow || -1,
-            filter: filter,
-            nextNode: function() { return null; },
-            previousNode: function() { return null; },
-            parentNode: function() { return null; },
-            firstChild: function() { return null; },
-            lastChild: function() { return null; },
-            nextSibling: function() { return null; },
-            previousSibling: function() { return null; }
-        };
-    };
-    document.createNodeIterator = function(root, whatToShow, filter) {
-        return {
-            root: root,
-            whatToShow: whatToShow || -1,
-            filter: filter,
-            nextNode: function() { return null; },
-            previousNode: function() { return null; },
-            detach: function() {}
-        };
     };
     document.importNode = function(node, deep) {
         if (!node) return null;
@@ -276,6 +265,7 @@
         return el;
     }
 
+    (function() {
     function DOMImplementation() {
         throw new TypeError("Illegal constructor");
     }
@@ -507,41 +497,54 @@
         }
         return doc;
     };
-    globalThis.DOMImplementation = DOMImplementation;
+    Object.defineProperty(globalThis, 'DOMImplementation', {
+        value: DOMImplementation,
+        writable: true,
+        enumerable: false,
+        configurable: true
+    });
     document.implementation = Object.create(DOMImplementation.prototype);
     document.implementation._document = document;
+    })();
 
-    function Attr() {
-        throw new TypeError("Illegal constructor");
-    }
-    Attr.prototype = Object.create(globalThis.Node ? globalThis.Node.prototype : Object.prototype);
-    Attr.prototype.nodeType = 2;
-    Object.defineProperty(Attr.prototype, 'specified', { value: true, writable: false, enumerable: true, configurable: true });
-    Object.defineProperty(Attr.prototype, 'value', {
-        get: function() { return (this.ownerElement && this.ownerElement.getAttribute) ? (this.ownerElement.getAttribute(this.name) || "") : (this._value || ""); },
-        set: function(v) {
-            var strVal = String(v != null ? v : "");
-            this._value = strVal;
-            if (this.ownerElement && this.ownerElement.setAttribute) {
-                this.ownerElement.setAttribute(this.name, strVal);
-            }
-        },
-        enumerable: true,
-        configurable: true
-    });
-    Object.defineProperty(Attr.prototype, 'nodeValue', {
-        get: function() { return this.value; },
-        set: function(v) { this.value = v; },
-        enumerable: true,
-        configurable: true
-    });
-    Object.defineProperty(Attr.prototype, 'textContent', {
-        get: function() { return this.value; },
-        set: function(v) { this.value = v; },
-        enumerable: true,
-        configurable: true
-    });
-    globalThis.Attr = Attr;
+    (function() {
+        function Attr() {
+            throw new TypeError("Illegal constructor");
+        }
+        Attr.prototype = Object.create(globalThis.Node ? globalThis.Node.prototype : Object.prototype);
+        Attr.prototype.nodeType = 2;
+        Object.defineProperty(Attr.prototype, 'specified', { value: true, writable: false, enumerable: true, configurable: true });
+        Object.defineProperty(Attr.prototype, 'value', {
+            get: function() { return (this.ownerElement && this.ownerElement.getAttribute) ? (this.ownerElement.getAttribute(this.name) || "") : (this._value || ""); },
+            set: function(v) {
+                var strVal = String(v != null ? v : "");
+                this._value = strVal;
+                if (this.ownerElement && this.ownerElement.setAttribute) {
+                    this.ownerElement.setAttribute(this.name, strVal);
+                }
+            },
+            enumerable: true,
+            configurable: true
+        });
+        Object.defineProperty(Attr.prototype, 'nodeValue', {
+            get: function() { return this.value; },
+            set: function(v) { this.value = v; },
+            enumerable: true,
+            configurable: true
+        });
+        Object.defineProperty(Attr.prototype, 'textContent', {
+            get: function() { return this.value; },
+            set: function(v) { this.value = v; },
+            enumerable: true,
+            configurable: true
+        });
+        Object.defineProperty(globalThis, 'Attr', {
+            value: Attr,
+            writable: true,
+            enumerable: false,
+            configurable: true
+        });
+    })();
 
     function _docCreateAttribute(localName) {
         if (arguments.length < 1) throw new TypeError("Failed to execute 'createAttribute': 1 argument required");
@@ -552,7 +555,7 @@
         }
         var isHtml = !(this && (this.contentType === 'application/xml' || this.contentType === 'application/xhtml+xml' || this.contentType === 'image/svg+xml' || this._isXml));
         var finalName = isHtml ? (typeof _toAsciiLower === 'function' ? _toAsciiLower(name) : name.toLowerCase()) : name;
-        var attr = Object.create(Attr.prototype);
+        var attr = Object.create(globalThis.Attr.prototype);
         attr.nodeType = 2;
         attr.name = finalName;
         attr.localName = finalName;
@@ -572,7 +575,7 @@
     function _docCreateAttributeNS(namespace, qualifiedName) {
         if (arguments.length < 2) throw new TypeError("Failed to execute 'createAttributeNS': 2 arguments required");
         var info = _validateAndExtractNamespace(namespace, qualifiedName);
-        var attr = Object.create(Attr.prototype);
+        var attr = Object.create(globalThis.Attr.prototype);
         attr.nodeType = 2;
         attr.name = info.qualifiedName;
         attr.localName = info.localName;
@@ -613,12 +616,18 @@
             return attr;
         };
         globalThis.Element.prototype.getAttributeNodeNS = function(ns, localName) {
-            var val = this.getAttributeNS ? this.getAttributeNS(ns, localName) : this.getAttribute(localName);
-            if (val === null) return null;
-            var attr = document.createAttributeNS(ns, localName);
-            attr.value = val;
-            attr.ownerElement = this;
-            return attr;
+            var targetNs = (ns === "" || ns === undefined) ? null : (ns === null ? null : String(ns));
+            var targetLocal = String(localName);
+            var attrs = this.attributes;
+            if (attrs) {
+                for (var i = 0; i < attrs.length; i++) {
+                    var a = attrs[i];
+                    if (a && a.namespaceURI === targetNs && a.localName === targetLocal) {
+                        return a;
+                    }
+                }
+            }
+            return null;
         };
         globalThis.Element.prototype.setAttributeNode = function(attr) {
             if (!attr || attr.nodeType !== 2) throw new TypeError("parameter 1 is not of type 'Attr'");
@@ -680,11 +689,12 @@
             this._title = strVal;
         }
     });
+    var _currentScriptNode = null;
+    globalThis.__setCurrentScript = function(nodeOrId) {
+        _currentScriptNode = (nodeOrId && typeof nodeOrId === 'number') ? _wrapElement(nodeOrId) : (nodeOrId || null);
+    };
     Object.defineProperty(document, 'currentScript', {
-        get: function() {
-            var s = document.getElementsByTagName('script');
-            return s && s.length > 0 ? s[s.length - 1] : null;
-        },
+        get: function() { return _currentScriptNode; },
         configurable: true
     });
     Object.defineProperty(document, 'baseURI', {

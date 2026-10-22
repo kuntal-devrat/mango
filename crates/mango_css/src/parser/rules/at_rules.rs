@@ -396,8 +396,7 @@ impl CssParser {
                     // 3. Nested style rules block: { ... }
                     if *self.peek() == Token::OpenCurly {
                         self.advance();
-                        let mut scope_rules = Vec::new();
-                        self.parse_nested_style_rules_into(&mut scope_rules, 0);
+                        let scope_rules = self.parse_rule_list(true);
                         if *self.peek() == Token::CloseCurly {
                             self.advance();
                         }
@@ -480,8 +479,95 @@ impl CssParser {
                     continue;
                 }
 
+                if kw.eq_ignore_ascii_case("property") {
+                    self.skip_whitespace_and_comments();
+                    let mut prop_name = String::new();
+                    while *self.peek() != Token::Eof
+                        && *self.peek() != Token::OpenCurly
+                        && *self.peek() != Token::Semicolon
+                    {
+                        match self.advance() {
+                            Token::Ident(id) => prop_name.push_str(&id),
+                            Token::Delim(c) => prop_name.push(c),
+                            Token::Whitespace => {}
+                            _ => {}
+                        }
+                    }
+                    self.skip_whitespace_and_comments();
+                    let prop_name = prop_name.trim().to_string();
+                    if prop_name.starts_with("--") && *self.peek() == Token::OpenCurly {
+                        self.advance();
+                        let decls = self.parse_declarations_until(Token::CloseCurly);
+                        let mut syntax = None;
+                        let mut inherits = false;
+                        let mut initial_value = None;
+                        for d in decls {
+                            if d.name.eq_ignore_ascii_case("syntax") {
+                                match &d.value {
+                                    Value::String(s) | Value::Keyword(s) => {
+                                        syntax = Some(s.clone());
+                                    }
+                                    _ => syntax = Some(d.value.to_css_string()),
+                                }
+                            } else if d.name.eq_ignore_ascii_case("inherits") {
+                                if let Value::Keyword(k) = &d.value {
+                                    inherits = k.eq_ignore_ascii_case("true");
+                                }
+                            } else if d.name.eq_ignore_ascii_case("initial-value") {
+                                initial_value = Some(d.value);
+                            }
+                        }
+                        rules.push(Rule::Property(Box::new(PropertyRule {
+                            name: prop_name,
+                            syntax,
+                            inherits,
+                            initial_value,
+                        })));
+                    } else {
+                        self.skip_unknown_rule_or_block();
+                    }
+                    continue;
+                }
+
                 // Unknown at-rule, skip until semicolon or block
                 self.skip_unknown_rule_or_block();
+                continue;
+            }
+
+            if is_nested_block && !self.is_nested_style_rule_ahead() {
+                let mut decl_parser_tokens = Vec::new();
+                let mut depth = 0;
+                while *self.peek() != Token::CloseCurly && *self.peek() != Token::Eof {
+                    if *self.peek() == Token::OpenCurly {
+                        depth += 1;
+                    } else if *self.peek() == Token::CloseCurly {
+                        if depth > 0 {
+                            depth -= 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    if depth == 0 && self.is_nested_style_rule_ahead() {
+                        break;
+                    }
+                    decl_parser_tokens.push(self.advance());
+                }
+                let mut sub_parser = CssParser::new(decl_parser_tokens);
+                let decls = sub_parser.parse_declarations_until(Token::Eof);
+                if !decls.is_empty() {
+                    let amp_sel = crate::selectors::SelectorList::new(vec![
+                        crate::selectors::ComplexSelector::new(
+                            crate::selectors::CompoundSelector::new(vec![
+                                crate::selectors::SimpleSelector::Nesting,
+                            ]),
+                            vec![],
+                        ),
+                    ]);
+                    rules.push(Rule::Style(StyleRule {
+                        selectors: amp_sel,
+                        declarations: decls,
+                    }));
+                }
                 continue;
             }
 

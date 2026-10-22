@@ -1,6 +1,6 @@
 use crate::properties::Declaration;
 use crate::selectors::SelectorList;
-use crate::values::{FontDisplay, FontStyle, FontWeight};
+use crate::values::{FontDisplay, FontStyle, FontWeight, Value};
 
 /// A parsed CSS stylesheet containing style rules and at-rules.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -30,6 +30,8 @@ pub enum Rule {
     PositionTry(PositionTryRule),
     /// `@view-transition { navigation: auto; }` cross-document transition rule.
     ViewTransition(ViewTransitionRule),
+    /// `@property --name { syntax: ...; inherits: ...; initial-value: ...; }` CSS Properties and Values API rule.
+    Property(Box<PropertyRule>),
 }
 
 /// A single keyframe rule inside `@keyframes`.
@@ -92,7 +94,7 @@ pub struct LayerRule {
 pub struct ScopeRule {
     pub root: Option<SelectorList>,
     pub limit: Option<SelectorList>,
-    pub rules: Vec<StyleRule>,
+    pub rules: Vec<Rule>,
 }
 
 /// An `@position-try <dashed-ident>` at-rule for CSS Anchor Positioning fallbacks.
@@ -107,4 +109,13 @@ pub struct PositionTryRule {
 pub struct ViewTransitionRule {
     pub navigation: String,
     pub types: Vec<String>,
+}
+
+/// An `@property <custom-property-name>` at-rule (CSS Properties and Values API Level 1).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PropertyRule {
+    pub name: String,
+    pub syntax: Option<String>,
+    pub inherits: bool,
+    pub initial_value: Option<Value>,
 }

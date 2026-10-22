@@ -1,7 +1,9 @@
 //! Shorthand expansion for typography, columns, masks, and containers.
 
 use crate::properties::Declaration;
-use crate::values::Value;
+use crate::values::{
+    Length, TextDecorationLine, TextDecorationStyle, TextDecorationThickness, Value,
+};
 
 fn serialize_value_for_font(value: &Value) -> String {
     match value {
@@ -339,5 +341,238 @@ pub(crate) fn expand_mask_shorthand(
         vec![Declaration::new(prefix, value.clone(), important)]
     } else {
         decls
+    }
+}
+
+pub(crate) fn split_shorthand_tokens(text: &str) -> Vec<String> {
+    let mut items = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0;
+    for ch in text.chars() {
+        if ch == '(' {
+            depth += 1;
+            current.push(ch);
+        } else if ch == ')' {
+            if depth > 0 {
+                depth -= 1;
+            }
+            current.push(ch);
+        } else if ch.is_whitespace() && depth == 0 {
+            let trimmed = current.trim();
+            if !trimmed.is_empty() {
+                items.push(trimmed.to_string());
+            }
+            current.clear();
+        } else {
+            current.push(ch);
+        }
+    }
+    let trimmed = current.trim();
+    if !trimmed.is_empty() {
+        items.push(trimmed.to_string());
+    }
+    items
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParsedTextDecorationShorthand {
+    pub line: TextDecorationLine,
+    pub thickness: TextDecorationThickness,
+    pub style: TextDecorationStyle,
+    pub color: Value,
+}
+
+pub fn parse_text_decoration_shorthand(text: &str) -> Option<ParsedTextDecorationShorthand> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let items = split_shorthand_tokens(trimmed);
+    if items.is_empty() {
+        return None;
+    }
+
+    let mut line_flags = 0u8;
+    let mut line_special: Option<TextDecorationLine> = None;
+    let mut has_line = false;
+
+    let mut style: Option<TextDecorationStyle> = None;
+    let mut thickness: Option<TextDecorationThickness> = None;
+    let mut color: Option<Value> = None;
+
+    for item in items {
+        let lower = item.to_ascii_lowercase();
+        // Check line keywords
+        match lower.as_str() {
+            "none" => {
+                if has_line || line_flags != 0 || line_special.is_some() {
+                    return None;
+                }
+                line_special = Some(TextDecorationLine::NONE);
+                has_line = true;
+                continue;
+            }
+            "spelling-error" => {
+                if has_line || line_flags != 0 || line_special.is_some() {
+                    return None;
+                }
+                line_special = Some(TextDecorationLine::SPELLING_ERROR);
+                has_line = true;
+                continue;
+            }
+            "grammar-error" => {
+                if has_line || line_flags != 0 || line_special.is_some() {
+                    return None;
+                }
+                line_special = Some(TextDecorationLine::GRAMMAR_ERROR);
+                has_line = true;
+                continue;
+            }
+            "underline" => {
+                if line_special.is_some() || (line_flags & TextDecorationLine::UNDERLINE.0) != 0 {
+                    return None;
+                }
+                line_flags |= TextDecorationLine::UNDERLINE.0;
+                has_line = true;
+                continue;
+            }
+            "overline" => {
+                if line_special.is_some() || (line_flags & TextDecorationLine::OVERLINE.0) != 0 {
+                    return None;
+                }
+                line_flags |= TextDecorationLine::OVERLINE.0;
+                has_line = true;
+                continue;
+            }
+            "line-through" => {
+                if line_special.is_some() || (line_flags & TextDecorationLine::LINE_THROUGH.0) != 0
+                {
+                    return None;
+                }
+                line_flags |= TextDecorationLine::LINE_THROUGH.0;
+                has_line = true;
+                continue;
+            }
+            "blink" => {
+                if line_special.is_some() || (line_flags & TextDecorationLine::BLINK.0) != 0 {
+                    return None;
+                }
+                line_flags |= TextDecorationLine::BLINK.0;
+                has_line = true;
+                continue;
+            }
+            _ => {}
+        }
+
+        // Check style keywords
+        if let Some(s) = TextDecorationStyle::parse(&item) {
+            if style.is_some() {
+                return None;
+            }
+            style = Some(s);
+            continue;
+        }
+
+        // Check thickness
+        if lower == "auto" {
+            if thickness.is_some() {
+                return None;
+            }
+            thickness = Some(TextDecorationThickness::Auto);
+            continue;
+        }
+        if lower == "from-font" {
+            if thickness.is_some() {
+                return None;
+            }
+            thickness = Some(TextDecorationThickness::FromFont);
+            continue;
+        }
+        if let Some(len) = Length::parse(&item) {
+            if thickness.is_some() {
+                return None;
+            }
+            thickness = Some(TextDecorationThickness::Length(len));
+            continue;
+        }
+
+        // Check color
+        if lower == "currentcolor" {
+            if color.is_some() {
+                return None;
+            }
+            color = Some(Value::CurrentColor);
+            continue;
+        }
+        if Value::parse_color(&item).is_some() {
+            if color.is_some() {
+                return None;
+            }
+            color = Some(Value::Keyword(item.clone()));
+            continue;
+        }
+
+        // Unrecognized token
+        return None;
+    }
+
+    let line = if let Some(sp) = line_special {
+        sp
+    } else {
+        TextDecorationLine(line_flags)
+    };
+
+    Some(ParsedTextDecorationShorthand {
+        line,
+        thickness: thickness.unwrap_or(TextDecorationThickness::Auto),
+        style: style.unwrap_or(TextDecorationStyle::Solid),
+        color: color.unwrap_or(Value::CurrentColor),
+    })
+}
+
+/// Expands `text-decoration` shorthand into text-decoration-line, text-decoration-thickness, text-decoration-style, text-decoration-color.
+pub(crate) fn expand_text_decoration_shorthand(value: &Value, important: bool) -> Vec<Declaration> {
+    if crate::properties::validation::is_css_wide_keyword(value) {
+        return vec![
+            Declaration::new("text-decoration-line", value.clone(), important),
+            Declaration::new("text-decoration-thickness", value.clone(), important),
+            Declaration::new("text-decoration-style", value.clone(), important),
+            Declaration::new("text-decoration-color", value.clone(), important),
+        ];
+    }
+    if let Value::Var { .. } = value {
+        return vec![Declaration::new(
+            "text-decoration",
+            value.clone(),
+            important,
+        )];
+    }
+    let text = match value {
+        Value::String(s) | Value::Keyword(s) => s.clone(),
+        Value::TextDecoration(td) => td.to_css_string(),
+        Value::List(_) => value.to_css_string(),
+        _ => return vec![],
+    };
+    if let Some(parsed) = parse_text_decoration_shorthand(&text) {
+        vec![
+            Declaration::new(
+                "text-decoration-line",
+                Value::TextDecoration(parsed.line),
+                important,
+            ),
+            Declaration::new(
+                "text-decoration-thickness",
+                Value::TextDecorationThickness(parsed.thickness),
+                important,
+            ),
+            Declaration::new(
+                "text-decoration-style",
+                Value::TextDecorationStyle(parsed.style),
+                important,
+            ),
+            Declaration::new("text-decoration-color", parsed.color, important),
+        ]
+    } else {
+        vec![]
     }
 }

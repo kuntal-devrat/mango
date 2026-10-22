@@ -136,7 +136,9 @@ impl ModuleLoader for MangoModuleLoader {
             // 3. Fallback: NEVER block the UI loop on synchronous network I/O.
             // Dispatch a background worker fetch to warm the cache for subsequent ticks,
             // and return a non-blocking proxy stub so V8 never starves the compositor heartbeat.
-            log::warn!("Module {url_str} not in memory cache on UI thread; pre-fetching on background worker");
+            log::warn!(
+                "Module {url_str} not in memory cache on UI thread; pre-fetching on background worker"
+            );
             let client = self.client.clone();
             let cache_store = self.cache.clone();
             let rcache_opt = self.resource_cache.clone();
@@ -165,12 +167,12 @@ impl ModuleLoader for MangoModuleLoader {
                 });
 
             let stub_code = "const _p = new Proxy({}, { get: () => _p, apply: () => _p }); export default _p; export const __esModule = true;";
-            return ModuleLoadResponse::Sync(Ok(ModuleSource::new(
+            ModuleLoadResponse::Sync(Ok(ModuleSource::new(
                 ModuleType::JavaScript,
                 ModuleSourceCode::String(stub_code.to_string().into()),
                 &spec,
                 None,
-            )));
+            )))
         } else if spec.scheme() == "mango" {
             // Internal synthetic/empty stub module with Proxy exports
             let stub_code = "const _p = new Proxy({}, { get: () => _p, apply: () => _p }); export default _p; export const __esModule = true;";

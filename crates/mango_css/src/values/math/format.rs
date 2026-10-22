@@ -112,7 +112,11 @@ pub fn format_math_inner(expr: &MathExpr) -> String {
                 (_, MathExpr::Length(Length::Px(_))) => (b.as_ref(), a.as_ref()),
                 _ => (a.as_ref(), b.as_ref()),
             };
-            format!("{} * {}", format_math_inner(first), format_math_inner(second))
+            format!(
+                "{} * {}",
+                format_math_inner(first),
+                format_math_inner(second)
+            )
         }
         MathExpr::Div(a, b) => {
             format!("{} / {}", format_math_inner(a), format_math_inner(b))
@@ -124,11 +128,19 @@ pub fn format_math_inner(expr: &MathExpr) -> String {
             format!("abs({})", format_math_inner(a))
         }
         MathExpr::Min(args) => {
-            let inner = args.iter().map(format_math_inner).collect::<Vec<_>>().join(", ");
+            let inner = args
+                .iter()
+                .map(format_math_inner)
+                .collect::<Vec<_>>()
+                .join(", ");
             format!("min({inner})")
         }
         MathExpr::Max(args) => {
-            let inner = args.iter().map(format_math_inner).collect::<Vec<_>>().join(", ");
+            let inner = args
+                .iter()
+                .map(format_math_inner)
+                .collect::<Vec<_>>()
+                .join(", ");
             format!("max({inner})")
         }
         MathExpr::Clamp { min, val, max } => {

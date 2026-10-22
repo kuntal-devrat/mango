@@ -27,7 +27,8 @@ pub use animation::{
 };
 pub use cascade::{
     ColorSchemePreference, ContrastPreference, HoverType, IndexedContainerRule, IndexedRule,
-    MatchedDeclaration, MediaEnvironment, Origin, PointerType, ReducedMotionPreference, RuleIndex,
+    MatchedDeclaration, MediaEnvironment, Origin, PointerType, ReducedMotionPreference,
+    RegisteredKeyframes, RegisteredProperty, RuleIndex, compare_layer_paths,
     current_media_environment, find_container_size_for_node, matches_container_query,
     matches_media_query, matches_media_query_env, matches_media_query_size, resolve_cascade,
     resolve_cascade_with_index, resolve_cascade_with_shadow_index, resolve_pseudo_element_cascade,
@@ -43,7 +44,8 @@ pub use computed::{
 };
 pub use parser::{
     ContainerRule, CssParser, FontFaceRule, KeyframeRule, KeyframesRule, LayerRule, MediaRule,
-    Rule, StyleRule, Stylesheet, parse_declaration_list, parse_selectors, parse_stylesheet,
+    PropertyRule, Rule, StyleRule, Stylesheet, parse_declaration_list, parse_selectors,
+    parse_stylesheet,
 };
 pub use properties::{Declaration, is_valid_property_value};
 pub use property_id::{CSS_PROPERTY_COUNT, CssPropertyId, PropertyMap};
@@ -83,9 +85,9 @@ pub use values::{
     ContentVisibility, CounterAction, Display, Float, FontDisplay, FontFeatureSettings, FontStyle,
     FontVariationSettings, FontWeight, GridAutoFlow, GridPlacement, GridTrackSize, Hyphens,
     JustifyContent, JustifyItems, JustifySelf, Length, LineClamp, OverflowWrap, Position, Resize,
-    ScrollbarWidth, TableLayout, TextAlign, TextDecoration, TextDecorationThickness,
-    TextEmphasisStyle, TextTransform, Value, WordBreak, WritingMode, get_current_viewport,
-    set_current_viewport,
+    ScrollbarWidth, TableLayout, TextAlign, TextDecoration, TextDecorationLine,
+    TextDecorationStyle, TextDecorationThickness, TextEmphasisStyle, TextTransform, Value,
+    WordBreak, WritingMode, get_current_viewport, set_current_viewport,
 };
 
 // ── Compile-time thread-safety assertions ──────────────────────────────

@@ -49,7 +49,7 @@ impl CssParser {
                 self.advance();
                 self.skip_whitespace_and_comments();
                 (
-                    CompoundSelector::new(vec![SimpleSelector::Universal]),
+                    CompoundSelector::new(vec![SimpleSelector::Nesting]),
                     Some(Combinator::Child),
                 )
             }
@@ -57,7 +57,7 @@ impl CssParser {
                 self.advance();
                 self.skip_whitespace_and_comments();
                 (
-                    CompoundSelector::new(vec![SimpleSelector::Universal]),
+                    CompoundSelector::new(vec![SimpleSelector::Nesting]),
                     Some(Combinator::NextSibling),
                 )
             }
@@ -65,7 +65,7 @@ impl CssParser {
                 self.advance();
                 self.skip_whitespace_and_comments();
                 (
-                    CompoundSelector::new(vec![SimpleSelector::Universal]),
+                    CompoundSelector::new(vec![SimpleSelector::Nesting]),
                     Some(Combinator::SubsequentSibling),
                 )
             }

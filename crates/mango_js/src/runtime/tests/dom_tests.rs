@@ -509,3 +509,95 @@ fn test_selectors_level_4_dom_bindings() {
         panic!("test_selectors_level_4_dom_bindings failed: {}", e);
     }
 }
+
+#[test]
+fn test_scope_computed_style() {
+    let html = r#"
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <style>
+          :where(main *) {
+            background-color: black;
+          }
+        </style>
+        </head>
+        <body>
+        <main id="main">
+          <div class="a"><span>green</span></div>
+          <div class="b"><span>not green</span></div>
+          <span>not green</span>
+        </main>
+        </body>
+        </html>
+    "#;
+    let doc = parse_html(html);
+    let mut rt = JsRuntime::new(doc, 800.0, 600.0);
+    let script = r#"
+        var main = document.getElementById("main");
+        var b_span = main.querySelector(".b > span");
+        var scope_span = main.querySelector(":scope > span");
+        if (!b_span) throw new Error("b_span is null");
+        if (!scope_span) throw new Error("scope_span is null");
+        var b_cs = getComputedStyle(b_span).backgroundColor;
+        var scope_cs = getComputedStyle(scope_span).backgroundColor;
+        if (b_cs !== "rgb(0, 0, 0)") throw new Error("b_cs: " + b_cs);
+        if (scope_cs !== "rgb(0, 0, 0)") throw new Error("scope_cs: " + scope_cs);
+    "#;
+    if let Err(e) = rt.execute_script(script) {
+        panic!("test_scope_computed_style failed: {}", e);
+    }
+}
+
+#[test]
+fn test_scope_template_clone() {
+    let html = r#"
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <style>
+          :where(main *) {
+            background-color: black;
+          }
+        </style>
+        </head>
+        <body>
+        <main id="main">
+        </main>
+        <template id="tmpl">
+          <style>
+            @scope (.a) {
+              span { background-color: green; }
+            }
+          </style>
+          <div class="a">
+            <span>green</span>
+          </div>
+          <div class="b">
+            <span>not green</span>
+          </div>
+          <span>not green</span>
+        </template>
+        </body>
+        </html>
+    "#;
+    let doc = parse_html(html);
+    let mut rt = JsRuntime::new(doc, 800.0, 600.0);
+    let script = r#"
+        var main = document.getElementById("main");
+        var tmpl = document.getElementById("tmpl");
+        main.append(tmpl.content.cloneNode(true));
+        var info = [];
+        for (var i = 0; i < main.childNodes.length; i++) {
+            var c = main.childNodes[i];
+            info.push((c.tagName || c.nodeName) + '#' + (c.id || '') + '.' + (c.className || ''));
+        }
+        var a_span = main.querySelector(".a > span");
+        var b_span = main.querySelector(".b > span");
+        var scope_span = main.querySelector(":scope > span");
+        if (!scope_span) throw new Error("scope_span is null, main has " + main.childNodes.length + " kids: " + info.join(", ") + "; innerHTML: " + main.innerHTML);
+    "#;
+    if let Err(e) = rt.execute_script(script) {
+        panic!("test_scope_template_clone failed: {}", e);
+    }
+}

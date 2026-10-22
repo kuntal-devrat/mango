@@ -156,7 +156,10 @@ impl Document {
                 return;
             }
             if matches!(c_node.data, NodeData::DocumentType { .. })
-                && !matches!(self.arena.get(parent).map(|p| &p.data), Some(NodeData::Document))
+                && !matches!(
+                    self.arena.get(parent).map(|p| &p.data),
+                    Some(NodeData::Document)
+                )
             {
                 return;
             }
@@ -252,7 +255,10 @@ impl Document {
                     return Err(DomError::HierarchyRequestError);
                 }
                 if matches!(c_node.data, NodeData::DocumentType { .. })
-                    && !matches!(self.arena.get(parent).map(|p| &p.data), Some(NodeData::Document))
+                    && !matches!(
+                        self.arena.get(parent).map(|p| &p.data),
+                        Some(NodeData::Document)
+                    )
                 {
                     return Err(DomError::HierarchyRequestError);
                 }

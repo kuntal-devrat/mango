@@ -33,16 +33,16 @@ impl MathExpr {
             MathExpr::Abs(a) => a.is_dimensionless_number(),
             MathExpr::Round { val, .. } => val.is_dimensionless_number(),
             MathExpr::Mod(a, _) | MathExpr::Rem(a, _) => a.is_dimensionless_number(),
-            MathExpr::Min(list) | MathExpr::Max(list) => {
-                list.first().map_or(false, |item| item.is_dimensionless_number())
-            }
+            MathExpr::Min(list) | MathExpr::Max(list) => list
+                .first()
+                .is_some_and(|item| item.is_dimensionless_number()),
             MathExpr::Clamp { val, .. } => val.is_dimensionless_number(),
-            MathExpr::Hypot(list) => {
-                list.first().map_or(true, |item| item.is_dimensionless_number())
-            }
-            MathExpr::Var { fallback, .. } => {
-                fallback.as_ref().map_or(false, |fb| fb.is_dimensionless_number())
-            }
+            MathExpr::Hypot(list) => list
+                .first()
+                .is_none_or(|item| item.is_dimensionless_number()),
+            MathExpr::Var { fallback, .. } => fallback
+                .as_ref()
+                .is_some_and(|fb| fb.is_dimensionless_number()),
         }
     }
 
@@ -169,7 +169,11 @@ impl MathExpr {
                 let max_v = max.try_fold_px()?;
                 Some(v.max(min_v).min(max_v))
             }
-            MathExpr::Round { strategy, val, step } => {
+            MathExpr::Round {
+                strategy,
+                val,
+                step,
+            } => {
                 let v = val.try_fold_px()?;
                 let s = step.try_fold_px()?;
                 if s.abs() < 1e-6 {
@@ -217,11 +221,19 @@ impl MathExpr {
             MathExpr::Tan(a) => Some(a.try_fold_px()?.tan()),
             MathExpr::Asin(a) => {
                 let v = a.try_fold_px()?;
-                Some(if (-1.0..=1.0).contains(&v) { v.asin() } else { 0.0 })
+                Some(if (-1.0..=1.0).contains(&v) {
+                    v.asin()
+                } else {
+                    0.0
+                })
             }
             MathExpr::Acos(a) => {
                 let v = a.try_fold_px()?;
-                Some(if (-1.0..=1.0).contains(&v) { v.acos() } else { 0.0 })
+                Some(if (-1.0..=1.0).contains(&v) {
+                    v.acos()
+                } else {
+                    0.0
+                })
             }
             MathExpr::Atan(a) => Some(a.try_fold_px()?.atan()),
             MathExpr::Atan2(y, x) => Some(y.try_fold_px()?.atan2(x.try_fold_px()?)),

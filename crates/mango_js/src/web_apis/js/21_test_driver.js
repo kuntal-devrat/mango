@@ -106,4 +106,22 @@
 
     globalThis.test_driver = test_driver;
     globalThis.test_driver_internal = test_driver;
+
+    var _allDomInterfaces = [
+        "Event", "CustomEvent", "EventTarget", "AbortController", "AbortSignal",
+        "Node", "Document", "DOMImplementation", "DocumentFragment", "ProcessingInstruction",
+        "DocumentType", "Element", "Attr", "CharacterData", "Text", "Comment",
+        "NodeIterator", "TreeWalker", "NodeFilter", "NodeList", "HTMLCollection", "DOMTokenList"
+    ];
+    for (var _j = 0; _j < _allDomInterfaces.length; _j++) {
+        var _ifName = _allDomInterfaces[_j];
+        if (globalThis[_ifName] !== undefined) {
+            Object.defineProperty(globalThis, _ifName, {
+                value: globalThis[_ifName],
+                writable: true,
+                enumerable: false,
+                configurable: true
+            });
+        }
+    }
 })();

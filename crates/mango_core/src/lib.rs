@@ -20,3 +20,22 @@ pub use arena::{Arena, Id};
 pub use color::Color;
 pub use geometry::{CornerRadii, EdgeSizes, Point, Rect, Size};
 pub use string_interner::{InternedString, StringInterner};
+
+use std::sync::{Arc, OnceLock};
+
+/// Thread-safe callback to wake up the browser event loop.
+pub type EventLoopWaker = Arc<dyn Fn() + Send + Sync>;
+
+static EVENT_LOOP_WAKER: OnceLock<EventLoopWaker> = OnceLock::new();
+
+/// Registers the global event loop waker.
+pub fn register_event_loop_waker(waker: EventLoopWaker) {
+    let _ = EVENT_LOOP_WAKER.set(waker);
+}
+
+/// Wakes up the main UI thread's event loop immediately from any background thread.
+pub fn wake_event_loop() {
+    if let Some(waker) = EVENT_LOOP_WAKER.get() {
+        waker();
+    }
+}

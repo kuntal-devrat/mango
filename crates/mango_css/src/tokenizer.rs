@@ -220,7 +220,10 @@ impl<'a> CssTokenizer<'a> {
             while let Some(next) = self.peek() {
                 if next.is_ascii_digit() {
                     num_str.push(self.advance().unwrap());
-                } else if next == '.' && !has_dot && self.peek2().map(|p| p.is_ascii_digit()).unwrap_or(false) {
+                } else if next == '.'
+                    && !has_dot
+                    && self.peek2().map(|p| p.is_ascii_digit()).unwrap_or(false)
+                {
                     has_dot = true;
                     num_str.push(self.advance().unwrap());
                 } else {

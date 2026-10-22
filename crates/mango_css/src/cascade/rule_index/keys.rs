@@ -82,7 +82,7 @@ pub fn extract_subject_keys_from_is_where(pseudo_str: &str) -> Option<Vec<KeySel
                 tag_end = idx + c.len_utf8();
             }
             let tag_name = subject[..tag_end].trim();
-            if !tag_name.is_empty() && tag_name != "*" {
+            if !tag_name.is_empty() && tag_name != "*" && tag_name != "&" {
                 key = Some(KeySelector::Tag(tag_name.to_ascii_lowercase()));
             }
 

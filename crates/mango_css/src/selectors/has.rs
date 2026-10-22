@@ -72,8 +72,9 @@ pub(crate) fn matches_simple_pattern(
 pub(crate) fn matches_has(node_id: NodeId, selectors: &[ComplexSelector], doc: &Document) -> bool {
     for sel in selectors {
         // Check if selector starts with a relative combinator (e.g. > img, + p, ~ p)
-        let is_rel =
-            sel.head.simple_selectors == vec![SimpleSelector::Universal] && !sel.tail.is_empty();
+        let is_rel = (sel.head.simple_selectors == vec![SimpleSelector::Universal]
+            || sel.head.simple_selectors == vec![SimpleSelector::Nesting])
+            && !sel.tail.is_empty();
 
         if is_rel {
             let first_comb = sel.tail[0].0;
@@ -153,17 +154,18 @@ pub(crate) fn leftmost_origin_within(
     scope_id: NodeId,
     doc: &Document,
 ) -> bool {
-    can_reach_origin_within(curr, &sel.tail, scope_id, doc)
+    can_reach_origin_within(curr, &sel.tail, &sel.head, scope_id, doc)
 }
 
 pub(crate) fn can_reach_origin_within(
     curr: NodeId,
     tail_slice: &[(Combinator, CompoundSelector)],
+    head: &CompoundSelector,
     scope_id: NodeId,
     doc: &Document,
 ) -> bool {
     let Some(((comb, _), remaining)) = tail_slice.split_last() else {
-        return curr == scope_id || is_descendant_of(curr, scope_id, doc);
+        return is_descendant_of(curr, scope_id, doc) && head.matches(curr, doc);
     };
 
     match comb {
@@ -171,12 +173,17 @@ pub(crate) fn can_reach_origin_within(
             let Some(parent) = parent_element(curr, doc) else {
                 return false;
             };
-            can_reach_origin_within(parent, remaining, scope_id, doc)
+            if !is_descendant_of(parent, scope_id, doc) {
+                return false;
+            }
+            can_reach_origin_within(parent, remaining, head, scope_id, doc)
         }
         Combinator::Descendant => {
             let mut p = curr;
             while let Some(parent) = parent_element(p, doc) {
-                if can_reach_origin_within(parent, remaining, scope_id, doc) {
+                if is_descendant_of(parent, scope_id, doc)
+                    && can_reach_origin_within(parent, remaining, head, scope_id, doc)
+                {
                     return true;
                 }
                 p = parent;
@@ -187,12 +194,17 @@ pub(crate) fn can_reach_origin_within(
             let Some(sib) = prev_element_sibling(curr, doc) else {
                 return false;
             };
-            can_reach_origin_within(sib, remaining, scope_id, doc)
+            if !is_descendant_of(sib, scope_id, doc) {
+                return false;
+            }
+            can_reach_origin_within(sib, remaining, head, scope_id, doc)
         }
         Combinator::SubsequentSibling => {
             let mut sib = curr;
             while let Some(prev) = prev_element_sibling(sib, doc) {
-                if can_reach_origin_within(prev, remaining, scope_id, doc) {
+                if is_descendant_of(prev, scope_id, doc)
+                    && can_reach_origin_within(prev, remaining, head, scope_id, doc)
+                {
                     return true;
                 }
                 sib = prev;

@@ -93,9 +93,14 @@ impl<'a> TreeBuilder<'a> {
             Token::EndTag { name } => {
                 if name == "template" {
                     self.process_template_end();
+                } else if matches!(name.as_str(), "title" | "style" | "script") {
+                    self.process_token_in_head(Token::EndTag { name });
                 }
             }
             Token::Character(c) => {
+                if c.is_ascii_whitespace() {
+                    return;
+                }
                 self.template_insertion_modes.pop();
                 self.template_insertion_modes.push(InsertionMode::InBody);
                 self.mode = InsertionMode::InBody;

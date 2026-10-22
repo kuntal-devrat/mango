@@ -15,9 +15,10 @@ use crate::values::{
     GridPlacement, GridTrackSize, Hyphens, Isolation, JustifyContent, JustifyItems, JustifySelf,
     Length, LineClamp, ListStylePosition, ListStyleType, MaskComposite, MaskMode, ObjectFit,
     Overflow, OverflowWrap, PointerEvents, Position, Resize, ScrollBehavior, ScrollTimelineAxis,
-    ScrollbarWidth, TableLayout, TextAlign, TextDecoration, TextDecorationThickness,
-    TextEmphasisStyle, TextOverflow, TextShadow, TextTransform, TextWrap, Transform, Transition,
-    UnicodeBidi, UserSelect, Value, VerticalAlign, Visibility, WhiteSpace, WordBreak, WritingMode,
+    ScrollbarWidth, TableLayout, TextAlign, TextDecoration, TextDecorationStyle,
+    TextDecorationThickness, TextEmphasisStyle, TextOverflow, TextShadow, TextTransform, TextWrap,
+    Transform, Transition, UnicodeBidi, UserSelect, Value, VerticalAlign, Visibility, WhiteSpace,
+    WordBreak, WritingMode,
 };
 
 /// Fully resolved, typed computed styles for a single DOM element.
@@ -61,6 +62,8 @@ pub struct ComputedStyle {
     pub line_height: Option<f32>,
     pub text_align: TextAlign,
     pub text_decoration: TextDecoration,
+    pub text_decoration_style: TextDecorationStyle,
+    pub text_decoration_color: Option<Color>,
     pub text_transform: TextTransform,
     pub letter_spacing: Length,
     pub word_spacing: Length,
@@ -257,6 +260,12 @@ pub struct ComputedStyle {
 }
 
 impl ComputedStyle {
+    /// Returns the resolved text decoration color (`text_decoration_color` or `color` if unset).
+    #[inline]
+    pub fn resolved_text_decoration_color(&self) -> Color {
+        self.text_decoration_color.unwrap_or(self.color)
+    }
+
     /// Returns all declared text shadows. If `text_shadows` is populated, returns it;
     /// otherwise falls back to `text_shadow` if present.
     #[inline]
@@ -396,6 +405,8 @@ impl Default for ComputedStyle {
             line_height: None,
             text_align: TextAlign::Left,
             text_decoration: TextDecoration::None,
+            text_decoration_style: TextDecorationStyle::Solid,
+            text_decoration_color: None,
             text_transform: TextTransform::None,
             letter_spacing: Length::Px(0.0),
             word_spacing: Length::Px(0.0),

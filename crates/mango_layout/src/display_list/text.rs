@@ -21,7 +21,10 @@ pub(crate) fn paint_text(
         && let Some(s) = style
         && !text.is_empty()
         && s.font_size > 0.5
-        && s.color.a > 0
+        && (s.color.a > 0
+            || !s.text_decoration.is_none()
+            || s.text_emphasis_style.mark_char().is_some()
+            || !s.all_text_shadows().is_empty())
     {
         let is_bold = crate::inline_flow::is_bold_weight(s.font_weight, s.font_size);
         let family = mango_render::FontFamily::from_css_name(&s.font_family);
@@ -30,46 +33,62 @@ pub(crate) fn paint_text(
             mango_css::values::FontStyle::Oblique => mango_render::FontStyle::Oblique,
             mango_css::values::FontStyle::Normal => mango_render::FontStyle::Normal,
         };
-        let mut decoration = match s.text_decoration {
-            mango_css::values::TextDecoration::Underline => mango_render::TextDecoration::Underline,
-            mango_css::values::TextDecoration::LineThrough => {
-                mango_render::TextDecoration::LineThrough
-            }
-            mango_css::values::TextDecoration::Overline => mango_render::TextDecoration::Overline,
-            mango_css::values::TextDecoration::None => mango_render::TextDecoration::None,
+        let decoration = if s.text_decoration.has_underline() {
+            mango_render::TextDecoration::Underline
+        } else if s.text_decoration.has_line_through() {
+            mango_render::TextDecoration::LineThrough
+        } else if s.text_decoration.has_overline() {
+            mango_render::TextDecoration::Overline
+        } else {
+            mango_render::TextDecoration::None
         };
 
-        // Custom text-underline-offset and text-decoration-thickness handling
-        if s.text_decoration == mango_css::values::TextDecoration::Underline
-            && (s.text_underline_offset != mango_css::values::Length::Auto
-                || !matches!(
-                    s.text_decoration_thickness,
-                    mango_css::values::TextDecorationThickness::Auto
-                ))
-        {
-            let text_w = box_node.dimensions.content.width();
-            if text_w > 0.0 {
+        // Custom text-decoration rendering (underline, overline, line-through, thickness, color)
+        let text_w = box_node.dimensions.content.width();
+        if text_w > 0.0 && !s.text_decoration.is_none() {
+            let decor_color = apply_opacity(s.resolved_text_decoration_color(), opacity);
+            let thickness_px = match s.text_decoration_thickness {
+                mango_css::values::TextDecorationThickness::Auto
+                | mango_css::values::TextDecorationThickness::FromFont => {
+                    (s.font_size / 14.0).max(1.0)
+                }
+                mango_css::values::TextDecorationThickness::Length(len) => {
+                    len.to_px(s.font_size, 16.0, text_w).max(1.0)
+                }
+            };
+            if s.text_decoration.has_underline() {
                 let offset_px = s.text_underline_offset.to_px(s.font_size, 16.0, text_w);
-                let thickness_px = match s.text_decoration_thickness {
-                    mango_css::values::TextDecorationThickness::Auto
-                    | mango_css::values::TextDecorationThickness::FromFont => {
-                        (s.font_size / 14.0).max(1.0)
-                    }
-                    mango_css::values::TextDecorationThickness::Length(len) => {
-                        len.to_px(s.font_size, 16.0, text_w).max(1.0)
-                    }
-                };
                 let line_y = content_y + (s.font_size * 0.8) + 2.0 + offset_px;
                 list.push(DisplayCommand::DrawLine {
                     x1: content_x,
                     y1: line_y,
                     x2: content_x + text_w,
                     y2: line_y,
-                    color: apply_opacity(s.color, opacity),
+                    color: decor_color,
                     thickness: thickness_px,
                 });
-                // Suppress default underline in DrawText so it isn't drawn twice
-                decoration = mango_render::TextDecoration::None;
+            }
+            if s.text_decoration.has_overline() {
+                let line_y = content_y + 1.0;
+                list.push(DisplayCommand::DrawLine {
+                    x1: content_x,
+                    y1: line_y,
+                    x2: content_x + text_w,
+                    y2: line_y,
+                    color: decor_color,
+                    thickness: thickness_px,
+                });
+            }
+            if s.text_decoration.has_line_through() {
+                let line_y = content_y + (s.font_size * 0.5);
+                list.push(DisplayCommand::DrawLine {
+                    x1: content_x,
+                    y1: line_y,
+                    x2: content_x + text_w,
+                    y2: line_y,
+                    color: decor_color,
+                    thickness: thickness_px,
+                });
             }
         }
 
@@ -168,15 +187,34 @@ pub(crate) fn paint_text(
                     box_node.dimensions.content.width(),
                 ),
             });
-        } else if s.writing_mode == mango_css::values::WritingMode::VerticalRl
-            || s.writing_mode == mango_css::values::WritingMode::VerticalLr
-        {
-            let glyph_advance = s.font_size * 1.1;
-            for (idx, ch) in text.chars().enumerate() {
+        } else if s.color.a > 0 {
+            if s.writing_mode == mango_css::values::WritingMode::VerticalRl
+                || s.writing_mode == mango_css::values::WritingMode::VerticalLr
+            {
+                let glyph_advance = s.font_size * 1.1;
+                for (idx, ch) in text.chars().enumerate() {
+                    list.push(DisplayCommand::DrawText {
+                        text: ch.to_string(),
+                        x: content_x,
+                        y: content_y + idx as f32 * glyph_advance,
+                        color: apply_opacity(s.color, opacity),
+                        font_size: s.font_size,
+                        weight: if is_bold {
+                            mango_render::FontWeight::Bold
+                        } else {
+                            mango_render::FontWeight::Regular
+                        },
+                        family,
+                        style: style_font,
+                        decoration,
+                        letter_spacing: 0.0,
+                    });
+                }
+            } else {
                 list.push(DisplayCommand::DrawText {
-                    text: ch.to_string(),
+                    text: text.clone(),
                     x: content_x,
-                    y: content_y + idx as f32 * glyph_advance,
+                    y: content_y,
                     color: apply_opacity(s.color, opacity),
                     font_size: s.font_size,
                     weight: if is_bold {
@@ -187,30 +225,13 @@ pub(crate) fn paint_text(
                     family,
                     style: style_font,
                     decoration,
-                    letter_spacing: 0.0,
+                    letter_spacing: s.letter_spacing.to_px(
+                        s.font_size,
+                        16.0,
+                        box_node.dimensions.content.width(),
+                    ),
                 });
             }
-        } else {
-            list.push(DisplayCommand::DrawText {
-                text: text.clone(),
-                x: content_x,
-                y: content_y,
-                color: apply_opacity(s.color, opacity),
-                font_size: s.font_size,
-                weight: if is_bold {
-                    mango_render::FontWeight::Bold
-                } else {
-                    mango_render::FontWeight::Regular
-                },
-                family,
-                style: style_font,
-                decoration,
-                letter_spacing: s.letter_spacing.to_px(
-                    s.font_size,
-                    16.0,
-                    box_node.dimensions.content.width(),
-                ),
-            });
         }
     }
 }

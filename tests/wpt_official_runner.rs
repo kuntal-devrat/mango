@@ -21,6 +21,8 @@
 
 #[path = "wpt/discovery.rs"]
 pub mod discovery;
+#[path = "wpt/expectations.rs"]
+pub mod expectations;
 #[path = "wpt/harness.rs"]
 pub mod harness;
 #[path = "wpt/isolation.rs"]
@@ -30,11 +32,19 @@ pub mod report;
 
 use harness::{WptFileStatus, WptSuiteResult};
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The vendored, byte-exact upstream WPT root.
 fn upstream_root() -> std::path::PathBuf {
     harness::upstream_root()
+}
+
+/// The root directory for modular WPT expectation baselines.
+pub fn expectations_root() -> std::path::PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("wpt")
+        .join("expectations")
 }
 
 /// Runs every test in `subdir` of the vendored upstream tree.
@@ -85,9 +95,13 @@ fn run_category(subdir: &str) -> WptSuiteResult {
 /// Prints the conformance scorecard for a suite.
 fn print_scorecard(title: &str, suite: &WptSuiteResult) {
     let mut out = String::new();
-    out.push_str("\n================================================================================\n");
+    out.push_str(
+        "\n================================================================================\n",
+    );
     out.push_str(&format!("📊 {title}\n"));
-    out.push_str("================================================================================\n");
+    out.push_str(
+        "================================================================================\n",
+    );
     out.push_str(&format!(
         "Files run          : {} ({} passed, {} errored, {} timed out)\n",
         suite.files_total(),
@@ -102,8 +116,13 @@ fn print_scorecard(title: &str, suite: &WptSuiteResult) {
         suite.failed(),
         suite.results.iter().map(|r| r.skipped()).sum::<usize>()
     ));
-    out.push_str(&format!("Assertion pass rate: {:.2}%\n", suite.pass_percentage()));
-    out.push_str("================================================================================\n");
+    out.push_str(&format!(
+        "Assertion pass rate: {:.2}%\n",
+        suite.pass_percentage()
+    ));
+    out.push_str(
+        "================================================================================\n",
+    );
     isolation::stream_write(&out);
     println!("{out}");
 }
@@ -135,7 +154,10 @@ fn print_failures(suite: &WptSuiteResult, limit: usize) {
         .filter(|r| r.counts_as_run() && r.status != WptFileStatus::Pass)
         .count();
     if failing > shown {
-        out.push_str(&format!("  … and {} more non-passing files\n", failing - shown));
+        out.push_str(&format!(
+            "  … and {} more non-passing files\n",
+            failing - shown
+        ));
     }
     isolation::stream_write(&out);
     println!("{out}");
@@ -210,6 +232,21 @@ fn wpt_official_dom_category() {
         "DOM category pass rate regressed to {:.2}% (floor: 45%)",
         suite.pass_percentage()
     );
+
+    let exp_dir = expectations_root();
+    if let Ok(store) = expectations::ExpectationStore::load_from_dir(&exp_dir)
+        && !store.suites.is_empty()
+    {
+        let audit = store.audit_suite(&suite);
+        let summary = audit.summary("DOM CATEGORY");
+        isolation::stream_write(&summary);
+        println!("{summary}");
+        assert!(
+            audit.regressions.is_empty(),
+            "Regressions detected in DOM category:\n{}",
+            audit.regressions.join("\n")
+        );
+    }
 }
 
 /// The whole vendored `css/` category.
@@ -228,6 +265,21 @@ fn wpt_official_css_category() {
         "CSS category pass rate regressed to {:.2}% (floor: 5%)",
         suite.pass_percentage()
     );
+
+    let exp_dir = expectations_root();
+    if let Ok(store) = expectations::ExpectationStore::load_from_dir(&exp_dir)
+        && !store.suites.is_empty()
+    {
+        let audit = store.audit_suite(&suite);
+        let summary = audit.summary("CSS CATEGORY");
+        isolation::stream_write(&summary);
+        println!("{summary}");
+        assert!(
+            audit.regressions.is_empty(),
+            "Regressions detected in CSS category:\n{}",
+            audit.regressions.join("\n")
+        );
+    }
 }
 
 /// Writes a machine-readable conformance report next to the build artifacts.
@@ -267,7 +319,9 @@ fn wpt_compliance_report_is_generated() {
 
     let out_dir = Path::new("target");
     let path = out_dir.join("wpt_compliance.json");
-    report.write_json(&path).expect("failed to write WPT report");
+    report
+        .write_json(&path)
+        .expect("failed to write WPT report");
     let wrote_msg = format!("Wrote {}\n", path.display());
     isolation::stream_write(&wrote_msg);
     println!("{wrote_msg}");

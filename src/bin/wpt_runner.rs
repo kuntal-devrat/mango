@@ -13,6 +13,8 @@
 //!       tests to isolate each WPT file in its own process, exactly like
 //!       `wptrunner` does, so that a runaway test cannot abort the whole run.
 
+#[path = "../../tests/wpt/expectations.rs"]
+mod expectations;
 #[path = "../../tests/wpt/harness.rs"]
 mod harness;
 
@@ -33,15 +35,15 @@ fn main() {
         return;
     }
 
-    if let Some(idx) = args.iter().position(|a| a == "--json") {
-        if let Some(rel) = args.get(idx + 1) {
-            let result = harness::run_wpt_file(&root, rel, harness::DEFAULT_FILE_TIMEOUT);
-            println!(
-                "{}",
-                serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string())
-            );
-            return;
-        }
+    if let Some(idx) = args.iter().position(|a| a == "--json")
+        && let Some(rel) = args.get(idx + 1)
+    {
+        let result = harness::run_wpt_file(&root, rel, harness::DEFAULT_FILE_TIMEOUT);
+        println!(
+            "{}",
+            serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string())
+        );
+        return;
     }
 
     print_banner();
@@ -61,10 +63,18 @@ fn main() {
             let dir = root.join(&t);
             if dir.is_dir() {
                 for rel in harness::discover_tests(&root, &dir) {
-                    s.push(harness::run_wpt_file(&root, &rel, harness::DEFAULT_FILE_TIMEOUT));
+                    s.push(harness::run_wpt_file(
+                        &root,
+                        &rel,
+                        harness::DEFAULT_FILE_TIMEOUT,
+                    ));
                 }
             } else {
-                s.push(harness::run_wpt_file(&root, &t, harness::DEFAULT_FILE_TIMEOUT));
+                s.push(harness::run_wpt_file(
+                    &root,
+                    &t,
+                    harness::DEFAULT_FILE_TIMEOUT,
+                ));
             }
         }
         s
@@ -72,6 +82,40 @@ fn main() {
 
     print_scorecard(&suite);
     print_failures(&suite, 40);
+
+    let update_expectations = args.iter().any(|a| a == "--update-expectations");
+    let check_expectations = args.iter().any(|a| a == "--check-expectations");
+    let expectations_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("wpt")
+        .join("expectations");
+
+    if update_expectations {
+        let mut store =
+            expectations::ExpectationStore::load_from_dir(&expectations_dir).unwrap_or_default();
+        for res in &suite.results {
+            if res.counts_as_run() {
+                store.record_result(res);
+            }
+        }
+        if let Err(e) = store.save_to_dir(&expectations_dir) {
+            eprintln!("Failed to save expectations: {e}");
+        } else {
+            println!(
+                "✨ Successfully updated modular WPT expectations in {}",
+                expectations_dir.display()
+            );
+        }
+    } else if check_expectations {
+        let store =
+            expectations::ExpectationStore::load_from_dir(&expectations_dir).unwrap_or_default();
+        let audit = store.audit_suite(&suite);
+        let summary = audit.summary("MANGO WPT SUITE");
+        println!("{summary}");
+        if !audit.is_clean() {
+            std::process::exit(1);
+        }
+    }
 }
 
 fn print_banner() {
@@ -87,7 +131,11 @@ fn print_banner() {
 fn run_all(root: &Path) -> WptSuiteResult {
     let mut suite = WptSuiteResult::default();
     for rel in harness::discover_tests(root, root) {
-        suite.push(harness::run_wpt_file(root, &rel, harness::DEFAULT_FILE_TIMEOUT));
+        suite.push(harness::run_wpt_file(
+            root,
+            &rel,
+            harness::DEFAULT_FILE_TIMEOUT,
+        ));
     }
     suite
 }

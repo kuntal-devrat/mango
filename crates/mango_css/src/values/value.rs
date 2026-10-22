@@ -35,6 +35,7 @@ pub enum Value {
     FontStyle(FontStyle),
     BoxSizing(BoxSizing),
     TextDecoration(TextDecoration),
+    TextDecorationStyle(TextDecorationStyle),
     TextTransform(TextTransform),
     FlexDirection(FlexDirection),
     FlexWrap(FlexWrap),
@@ -367,6 +368,13 @@ impl Value {
             }
             .to_string(),
             Value::CurrentColor => "currentcolor".to_string(),
+            Value::TextDecoration(td) => td.to_css_string(),
+            Value::TextDecorationStyle(tds) => tds.as_str().to_string(),
+            Value::TextDecorationThickness(tdt) => match tdt {
+                TextDecorationThickness::Auto => "auto".to_string(),
+                TextDecorationThickness::FromFont => "from-font".to_string(),
+                TextDecorationThickness::Length(l) => Value::Length(*l).to_css_string(),
+            },
             Value::List(list) => list
                 .iter()
                 .map(|v| v.to_css_string())

@@ -135,6 +135,7 @@ impl BroadcastChannelHub {
                 if let Ok(mut q) = tasks.lock() {
                     q.push(js_eval);
                 }
+                mango_core::wake_event_loop();
             }
         }
 

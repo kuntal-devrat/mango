@@ -7,7 +7,7 @@
 //! Design notes
 //! ------------
 //! * The harness speaks the **toHarness** protocol (`testharness.js` +
-//! `add_result_callback` / `add_completion_callback`), which is what the vast
+//!   `add_result_callback` / `add_completion_callback`), which is what the vast
 //!   majority of WPT's DOM/CSS `.html` files use.
 //! * The harness is **asynchronous**: after the synchronous script phase it
 //!   pumps Mango's event loop (`JsRuntime::tick`) until the upstream harness
@@ -127,9 +127,7 @@ impl WptFileResult {
     pub fn counts_as_run(&self) -> bool {
         !matches!(
             self.status,
-            WptFileStatus::Skipped
-                | WptFileStatus::NotToHarness
-                | WptFileStatus::Missing
+            WptFileStatus::Skipped | WptFileStatus::NotToHarness | WptFileStatus::Missing
         )
     }
 }
@@ -158,10 +156,7 @@ impl WptSuiteResult {
     }
 
     pub fn files_total(&self) -> usize {
-        self.results
-            .iter()
-            .filter(|r| r.counts_as_run())
-            .count()
+        self.results.iter().filter(|r| r.counts_as_run()).count()
     }
 
     pub fn files_passed(&self) -> usize {
@@ -200,7 +195,7 @@ impl WptSuiteResult {
 fn collect_scripts_in_order(
     doc: &Document,
     root_id: NodeId,
-    out: &mut Vec<(Option<String>, String)>,
+    out: &mut Vec<(NodeId, Option<String>, String)>,
 ) {
     let mut stack = vec![root_id];
     while let Some(node_id) = stack.pop() {
@@ -210,7 +205,7 @@ fn collect_scripts_in_order(
             {
                 let src = elem.get_attribute("src").map(|s| s.trim().to_string());
                 let inline = doc.text_content(node_id);
-                out.push((src, inline));
+                out.push((node_id, src, inline));
             }
             let mut kids: Vec<NodeId> = doc.children(node_id).map(|c| c.id).collect();
             kids.reverse();
@@ -226,16 +221,19 @@ fn collect_scripts_in_order(
 /// * `/dir/foo.js`         -> `<root>/dir/foo.js`
 /// * `foo.js`              -> relative to the directory of the test file
 pub fn resolve_script_path(root: &Path, test_path: &Path, src: &str) -> PathBuf {
-    let src = src.split('#').next().unwrap_or(src).split('?').next().unwrap_or(src);
+    let src = src
+        .split('#')
+        .next()
+        .unwrap_or(src)
+        .split('?')
+        .next()
+        .unwrap_or(src);
     if let Some(stripped) = src.strip_prefix("/resources/") {
         root.join("resources").join(stripped)
     } else if let Some(stripped) = src.strip_prefix('/') {
         root.join(stripped)
     } else {
-        test_path
-            .parent()
-            .unwrap_or(root)
-            .join(src)
+        test_path.parent().unwrap_or(root).join(src)
     }
 }
 
@@ -252,14 +250,13 @@ fn collect_iframes_in_order(
         if let Some(node) = doc.get(node_id) {
             if let NodeData::Element(ref elem) = node.data
                 && elem.tag_name.eq_ignore_ascii_case("iframe")
+                && let Some(src) = elem.get_attribute("src")
             {
-                if let Some(src) = elem.get_attribute("src") {
-                    let sub_path = resolve_script_path(root, test_path, &src);
-                    if sub_path.exists() {
-                        if let Ok(c) = std::fs::read_to_string(&sub_path) {
-                            out.push((src.trim().to_string(), c));
-                        }
-                    }
+                let sub_path = resolve_script_path(root, test_path, src);
+                if sub_path.exists()
+                    && let Ok(c) = std::fs::read_to_string(&sub_path)
+                {
+                    out.push((src.trim().to_string(), c));
                 }
             }
             let mut kids: Vec<NodeId> = doc.children(node_id).map(|c| c.id).collect();
@@ -295,7 +292,16 @@ pub fn run_wpt_file(root: &Path, rel_path: &str, timeout: Duration) -> WptFileRe
         }
     };
 
-    let doc = parse_html(&content);
+    let mut doc = parse_html(&content);
+    if rel_path.ends_with(".xhtml") || rel_path.ends_with(".xht") {
+        doc.content_type = "application/xhtml+xml".to_string();
+    } else if rel_path.ends_with(".xml") {
+        doc.content_type = "application/xml".to_string();
+    } else if rel_path.ends_with(".svg") {
+        doc.content_type = "image/svg+xml".to_string();
+    } else {
+        doc.content_type = "text/html".to_string();
+    }
     let mut scripts = Vec::new();
     collect_scripts_in_order(&doc, doc.root(), &mut scripts);
 
@@ -303,10 +309,10 @@ pub fn run_wpt_file(root: &Path, rel_path: &str, timeout: Duration) -> WptFileRe
     // "manual" tests have their own protocols and are executed by the reftest
     // runner instead. Detect them up front so they are reported instantly
     // rather than burning the whole timeout.
-    if !scripts.iter().any(|(src, _)| {
-        src.as_deref()
-            .is_some_and(|s| s.contains("testharness.js"))
-    }) {
+    if !scripts
+        .iter()
+        .any(|(_, src, _)| src.as_deref().is_some_and(|s| s.contains("testharness.js")))
+    {
         return WptFileResult {
             path: rel_path.to_string(),
             status: WptFileStatus::NotToHarness,
@@ -380,25 +386,29 @@ pub fn run_wpt_file(root: &Path, rel_path: &str, timeout: Duration) -> WptFileRe
     let mut script_errors: Vec<String> = Vec::new();
     let mut missing_resources: Vec<String> = Vec::new();
 
-    for (src_opt, inline_code) in scripts {
+    for (script_id, src_opt, inline_code) in scripts {
         // The upstream harness exposes named properties on `window`; Mango needs
         // a nudge to re-sync them after each script block.
         let _ = rt.execute_script(
             "if (typeof _syncWindowNamedProperties === 'function') { _syncWindowNamedProperties(); }",
         );
+        let _ = rt.execute_script(&format!(
+            "if (typeof __setCurrentScript === 'function') {{ __setCurrentScript({}); }}",
+            script_id.raw()
+        ));
         match src_opt {
             Some(src) => {
                 if src.contains("testharness.js") || src.contains("testharnessreport.js") {
+                    let _ = rt.execute_script("if (typeof __setCurrentScript === 'function') { __setCurrentScript(null); }");
                     continue;
                 }
                 let script_path = resolve_script_path(root, &test_path, &src);
-                if script_path.exists() {
-                    if let Ok(code) = std::fs::read_to_string(&script_path) {
-                        if let Err(e) = rt.execute_script(&code) {
-                            script_errors.push(format!("{src}: {e}"));
-                        }
-                    }
-                } else {
+                if script_path.exists()
+                    && let Ok(code) = std::fs::read_to_string(&script_path)
+                    && let Err(e) = rt.execute_script(&code)
+                {
+                    script_errors.push(format!("{src}: {e}"));
+                } else if !script_path.exists() {
                     missing_resources.push(src.clone());
                 }
             }
@@ -410,6 +420,9 @@ pub fn run_wpt_file(root: &Path, rel_path: &str, timeout: Duration) -> WptFileRe
                 }
             }
         }
+        let _ = rt.execute_script(
+            "if (typeof __setCurrentScript === 'function') { __setCurrentScript(null); }",
+        );
     }
 
     // ── 3. Dispatch `load`, then pump the event loop until the harness ends ─
@@ -605,10 +618,10 @@ fn collect_tests_recursive(root: &Path, dir: &Path, out: &mut Vec<String>) {
                 continue;
             }
             collect_tests_recursive(root, &path, out);
-        } else if is_test_file(&name) {
-            if let Ok(rel) = path.strip_prefix(root) {
-                out.push(rel.to_string_lossy().replace('\\', "/"));
-            }
+        } else if is_test_file(&name)
+            && let Ok(rel) = path.strip_prefix(root)
+        {
+            out.push(rel.to_string_lossy().replace('\\', "/"));
         }
     }
 }

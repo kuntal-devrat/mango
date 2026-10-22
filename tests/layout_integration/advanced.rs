@@ -236,10 +236,7 @@ fn test_table_rowspan_layout_and_stretch() {
 }
 
 /// Recursively searches the layout tree for the first box with the given tag name.
-fn find_box<'a>(
-    root: &'a LayoutBox,
-    tag: &str,
-) -> Option<&'a LayoutBox> {
+fn find_box<'a>(root: &'a LayoutBox, tag: &str) -> Option<&'a LayoutBox> {
     if root.tag_name.as_deref() == Some(tag) {
         return Some(root);
     }

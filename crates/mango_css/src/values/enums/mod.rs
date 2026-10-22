@@ -23,6 +23,7 @@ pub use misc::{
 };
 pub use typography::{
     Direction, FontDisplay, FontFeatureSettings, FontStyle, FontVariationSettings, FontWeight,
-    Hyphens, LineClamp, OverflowWrap, TextAlign, TextDecoration, TextDecorationThickness,
-    TextEmphasisStyle, TextOverflow, TextTransform, TextWrap, UnicodeBidi, WhiteSpace, WordBreak,
+    Hyphens, LineClamp, OverflowWrap, TextAlign, TextDecoration, TextDecorationLine,
+    TextDecorationStyle, TextDecorationThickness, TextEmphasisStyle, TextOverflow, TextTransform,
+    TextWrap, UnicodeBidi, WhiteSpace, WordBreak,
 };

@@ -125,6 +125,7 @@
         var el = _wrapElement(_origCE(t));
         if (el) {
             var tagLower = _toAsciiLower(t);
+            if (tagLower === 'script') el._dynamicallyInserted = true;
             var tagUpper = _toAsciiUpper(t);
             el._localName = tagLower;
             el.localName = tagLower;
@@ -504,33 +505,26 @@
         if (!iframe || (iframe.tagName && iframe.tagName.toLowerCase() !== 'iframe')) return null;
         if (!iframe.ownerDocument || !iframe.ownerDocument.defaultView) return null;
         if (!iframe._contentWindow) {
-            var win = {
-                frameElement: iframe,
-                DOMException: (typeof globalThis !== 'undefined' && globalThis.DOMException) ? globalThis.DOMException : null,
-                Element: (typeof globalThis !== 'undefined' && globalThis.Element) ? globalThis.Element : null,
-                Node: (typeof globalThis !== 'undefined' && globalThis.Node) ? globalThis.Node : null,
-                Document: (typeof globalThis !== 'undefined' && globalThis.Document) ? globalThis.Document : null,
-                Text: (typeof globalThis !== 'undefined' && globalThis.Text) ? globalThis.Text : null,
-                Comment: (typeof globalThis !== 'undefined' && globalThis.Comment) ? globalThis.Comment : null,
-                Event: (typeof globalThis !== 'undefined' && globalThis.Event) ? globalThis.Event : null,
-                postMessage: function(msg, targetOrigin) {},
-                addEventListener: function(type, listener, opt) {
-                    var d = _getIframeContentDocument(iframe);
-                    if (d && d.addEventListener) d.addEventListener(type, listener, opt);
-                },
-                removeEventListener: function(type, listener, opt) {
-                    var d = _getIframeContentDocument(iframe);
-                    if (d && d.removeEventListener) d.removeEventListener(type, listener, opt);
-                },
-                dispatchEvent: function(evt) {
-                    var d = _getIframeContentDocument(iframe);
-                    return (d && d.dispatchEvent) ? d.dispatchEvent(evt) : true;
-                }
-            };
+            var win = Object.create(globalThis);
+            win.frameElement = iframe;
             win.window = win;
             win.self = win;
             win.top = (typeof globalThis !== 'undefined' && globalThis.window) ? globalThis.window : win;
             win.parent = (typeof globalThis !== 'undefined' && globalThis.window) ? globalThis.window : win;
+            win.customElements = (typeof globalThis.CustomElementRegistry === 'function') ? new globalThis.CustomElementRegistry() : null;
+            win.postMessage = function(msg, targetOrigin) {};
+            win.addEventListener = function(type, listener, opt) {
+                var d = _getIframeContentDocument(iframe);
+                if (d && d.addEventListener) d.addEventListener(type, listener, opt);
+            };
+            win.removeEventListener = function(type, listener, opt) {
+                var d = _getIframeContentDocument(iframe);
+                if (d && d.removeEventListener) d.removeEventListener(type, listener, opt);
+            };
+            win.dispatchEvent = function(evt) {
+                var d = _getIframeContentDocument(iframe);
+                return (d && d.dispatchEvent) ? d.dispatchEvent(evt) : true;
+            };
             Object.defineProperty(win, 'document', {
                 get: function() { return _getIframeContentDocument(iframe); },
                 configurable: true
@@ -547,12 +541,30 @@
         if (!iframe._contentDocument) {
             var src = iframe.getAttribute ? iframe.getAttribute('src') : null;
             var doc = null;
+            var mime = 'text/html';
+            var s = String(src || '').toLowerCase();
+            var qMatch = /[?&]type=([^&]+)&subtype=([^&]+)/.exec(s);
+            if (qMatch) {
+                mime = decodeURIComponent(qMatch[1]) + '/' + decodeURIComponent(qMatch[2]);
+            } else if (s.indexOf('.bmp') !== -1) mime = 'image/bmp';
+            else if (s.indexOf('.png') !== -1) mime = 'image/png';
+            else if (s.indexOf('.gif') !== -1) mime = 'image/gif';
+            else if (s.indexOf('.jpg') !== -1 || s.indexOf('.jpeg') !== -1) mime = 'image/jpeg';
+            else if (s.indexOf('.webp') !== -1) mime = 'image/webp';
+            else if (s.indexOf('.svg') !== -1) mime = 'image/svg+xml';
+            else if (s.indexOf('.css') !== -1) mime = 'text/css';
+            else if (s.indexOf('.txt') !== -1) mime = 'text/plain';
+            else if (s.indexOf('.xhtml') !== -1) mime = 'application/xhtml+xml';
+            else if (s.indexOf('.xml') !== -1) mime = 'application/xml';
+
+            var jsRes = undefined;
+            var isJsUri = src && String(src).toLowerCase().indexOf('javascript:') === 0;
+            if (isJsUri) {
+                try { jsRes = (1, eval)(String(src).substring(11)); } catch(e) {}
+            }
+
             if (src && globalThis.__subresourceMap && globalThis.__subresourceMap[src]) {
                 var text = globalThis.__subresourceMap[src];
-                var mime = 'text/html';
-                if (src.indexOf('.xhtml') !== -1) mime = 'application/xhtml+xml';
-                else if (src.indexOf('.xml') !== -1) mime = 'application/xml';
-                else if (src.indexOf('.svg') !== -1) mime = 'image/svg+xml';
                 if (typeof DOMParser !== 'undefined') {
                     doc = new DOMParser().parseFromString(text, mime);
                 }
@@ -563,8 +575,14 @@
                     : null;
             }
             if (doc) {
+                if (typeof jsRes === 'string') {
+                    if (doc.body) doc.body.textContent = jsRes;
+                    else if (doc.documentElement) doc.documentElement.textContent = jsRes;
+                }
                 doc.readyState = 'complete';
                 doc.defaultView = _getIframeContentWindow(iframe);
+                doc.contentType = mime;
+                doc._contentType = mime;
                 if (typeof globalThis.Document !== 'undefined') {
                     try { Object.setPrototypeOf(doc, globalThis.Document.prototype); } catch(e) {}
                 }

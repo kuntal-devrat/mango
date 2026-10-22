@@ -34,14 +34,18 @@ pub fn op_mango_query_selector(
     } else {
         NodeId::from_raw(root_id)
     };
-    if let Some(selectors) = mango_css::parse_selectors(&selector)
+    mango_css::selectors::set_current_scope_root(Some(root));
+    let res = if let Some(selectors) = mango_css::parse_selectors(&selector)
         && let Some(found) = find_first_matching_element(&d, root, &selectors)
     {
-        return found.raw();
-    }
-    query_selector_simple(&d, root, &selector)
-        .map(|id| id.raw())
-        .unwrap_or(0)
+        found.raw()
+    } else {
+        query_selector_simple(&d, root, &selector)
+            .map(|id| id.raw())
+            .unwrap_or(0)
+    };
+    mango_css::selectors::set_current_scope_root(None);
+    res
 }
 
 #[op2]
@@ -60,6 +64,7 @@ pub fn op_mango_query_selector_all(
     } else {
         NodeId::from_raw(root_id)
     };
+    mango_css::selectors::set_current_scope_root(Some(root));
     let mut out = Vec::new();
     if let Some(selectors) = mango_css::parse_selectors(&selector) {
         collect_matching_elements(&d, root, &selectors, &mut out);
@@ -67,6 +72,7 @@ pub fn op_mango_query_selector_all(
     if out.is_empty() {
         collect_elements_by_kind(&d, root, &selector, &mut out);
     }
+    mango_css::selectors::set_current_scope_root(None);
     out.into_iter().map(|id| id.raw()).collect()
 }
 

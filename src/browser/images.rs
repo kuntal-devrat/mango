@@ -109,6 +109,7 @@ impl BrowserChrome {
                         }
                         if get_cached_image(&src).is_some() {
                             let _ = tx.send(src);
+                            mango_core::wake_event_loop();
                             continue;
                         }
                         let fetch_res = loader.fetch_image_bytes(&base, &src);
@@ -117,6 +118,7 @@ impl BrowserChrome {
                             Err(e) => {
                                 log::debug!("[mango-img] Image fetch failed for {src}: {e:?}");
                                 let _ = tx.send(src);
+                                mango_core::wake_event_loop();
                                 continue;
                             }
                         };
@@ -130,6 +132,7 @@ impl BrowserChrome {
                             }
                         }
                         let _ = tx.send(src);
+                        mango_core::wake_event_loop();
                     }
                 })
             {
@@ -222,6 +225,7 @@ impl BrowserChrome {
                                         cache_image(&resolved.as_str(), decoded);
                                     }
                                     let _ = tx.send(src);
+                                    mango_core::wake_event_loop();
                                 }
                             }
                         })

@@ -120,20 +120,20 @@ pub(crate) fn expand_four_sides(prefix: &str, value: &Value, important: bool) ->
                 _ => false,
             },
             "margin" => match v {
-                Value::Length(len) => match len {
+                Value::Length(len) => matches!(
+                    len,
                     crate::values::Length::Px(_)
-                    | crate::values::Length::Percent(_)
-                    | crate::values::Length::Auto => true,
-                    crate::values::Length::Calc(_)
-                    | crate::values::Length::Math(_)
-                    | crate::values::Length::Em(_)
-                    | crate::values::Length::Rem(_)
-                    | crate::values::Length::Vw(_)
-                    | crate::values::Length::Vh(_)
-                    | crate::values::Length::Vmin(_)
-                    | crate::values::Length::Vmax(_) => true,
-                    _ => false,
-                },
+                        | crate::values::Length::Percent(_)
+                        | crate::values::Length::Auto
+                        | crate::values::Length::Calc(_)
+                        | crate::values::Length::Math(_)
+                        | crate::values::Length::Em(_)
+                        | crate::values::Length::Rem(_)
+                        | crate::values::Length::Vw(_)
+                        | crate::values::Length::Vh(_)
+                        | crate::values::Length::Vmin(_)
+                        | crate::values::Length::Vmax(_)
+                ),
                 _ => false,
             },
             _ => true,

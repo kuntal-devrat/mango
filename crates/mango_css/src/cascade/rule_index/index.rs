@@ -1,16 +1,62 @@
 //! Rule index structure and rule addition methods.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use mango_html::dom::{Document, ElementData, NodeId};
 
 use crate::cascade::media::{MediaEnvironment, current_media_environment, matches_media_query_env};
 use crate::cascade::types::{
     IndexedContainerRule, IndexedRule, KeySelector, MatchedDeclaration, Origin, PseudoRuleBucket,
+    RegisteredKeyframes, RegisteredProperty, ScopeDef, compare_layer_paths,
 };
-use crate::parser::{Rule, StyleRule, Stylesheet};
+use crate::parser::{KeyframesRule, PropertyRule, Rule, StyleRule, Stylesheet};
 
 use super::keys::extract_subject_keys_from_is_where;
+
+/// A hierarchical scope for CSS cascade layer ordering (CSS Cascade Level 5 § 6.4).
+#[derive(Debug, Clone, Default)]
+pub struct LayerScope {
+    pub count: u32,
+    pub sublayers: HashMap<String, LayerScopeEntry>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LayerScopeEntry {
+    pub order: u32,
+    pub children: LayerScope,
+}
+
+impl LayerScope {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Resolves or declares a hierarchical layer path like `["A", "B"]` or `["A"]`.
+    pub fn resolve_path(&mut self, parts: &[&str]) -> Vec<u32> {
+        let mut path = Vec::with_capacity(parts.len());
+        let mut current_scope = self;
+        for &part in parts {
+            let next_order = if let Some(entry) = current_scope.sublayers.get(part) {
+                entry.order
+            } else {
+                current_scope.count += 1;
+                let order = current_scope.count;
+                current_scope.sublayers.insert(
+                    part.to_string(),
+                    LayerScopeEntry {
+                        order,
+                        children: LayerScope::default(),
+                    },
+                );
+                order
+            };
+            path.push(next_order);
+            current_scope = &mut current_scope.sublayers.get_mut(part).unwrap().children;
+        }
+        path
+    }
+}
 
 /// An index of CSS rules grouped by the key selector (ID, class, tag, attribute, universal, pseudo)
 /// to reduce cascade resolution complexity from O(Rules) to O(1) candidate lookup per element.
@@ -20,6 +66,10 @@ pub struct RuleIndex<'a> {
     pub viewport_height: f32,
     pub layer_count: u32,
     pub layer_map: HashMap<String, u32>,
+    pub layer_scope: LayerScope,
+    pub anon_layer_counter: usize,
+    pub property_rules: HashMap<String, RegisteredProperty>,
+    pub keyframe_rules: HashMap<String, RegisteredKeyframes>,
     pub(crate) id_rules: HashMap<String, Vec<IndexedRule<'a>>>,
     pub(crate) class_rules: HashMap<String, Vec<IndexedRule<'a>>>,
     pub(crate) tag_rules: HashMap<String, Vec<IndexedRule<'a>>>,
@@ -58,6 +108,10 @@ impl<'a> RuleIndex<'a> {
             viewport_height: env.viewport_height,
             layer_count: 0,
             layer_map: HashMap::new(),
+            layer_scope: LayerScope::default(),
+            anon_layer_counter: 0,
+            property_rules: HashMap::new(),
+            keyframe_rules: HashMap::new(),
             id_rules: HashMap::new(),
             class_rules: HashMap::new(),
             tag_rules: HashMap::new(),
@@ -139,31 +193,27 @@ impl<'a> RuleIndex<'a> {
                     }
                 }
                 Rule::Layer(layer_rule) => {
-                    let layer_id = if let Some(ref name) = layer_rule.name {
-                        if let Some(&existing_id) = self.layer_map.get(name) {
-                            existing_id
-                        } else {
-                            self.layer_count += 1;
-                            self.layer_map.insert(name.clone(), self.layer_count);
-                            self.layer_count
-                        }
-                    } else {
-                        self.layer_count += 1;
-                        self.layer_count
-                    };
-                    self.add_layer_rules(&layer_rule.rules, layer_id, origin, order);
+                    let (layer_path, names) =
+                        self.resolve_layer_path(layer_rule.name.as_deref(), &[]);
+                    self.add_layer_rules(
+                        &layer_rule.rules,
+                        layer_path,
+                        &names,
+                        origin,
+                        order,
+                        Arc::from([]),
+                    );
+                }
+                Rule::Property(prop_rule) => {
+                    *order += 1;
+                    self.add_property_rule(prop_rule, Arc::from([]), *order);
                 }
                 Rule::Scope(scope_rule) => {
-                    for style_rule in &scope_rule.rules {
-                        self.add_style_rule_with_layer_and_scope(
-                            style_rule,
-                            origin,
-                            order,
-                            None,
-                            scope_rule.root.as_ref(),
-                            scope_rule.limit.as_ref(),
-                        );
-                    }
+                    self.add_scope_rules(scope_rule, origin, order, Arc::from([]), &[]);
+                }
+                Rule::Keyframes(kf) => {
+                    *order += 1;
+                    self.add_keyframes_rule(kf, Arc::from([]), *order);
                 }
                 Rule::PositionTry(pos_try) => {
                     self.position_try_rules
@@ -177,12 +227,109 @@ impl<'a> RuleIndex<'a> {
         }
     }
 
+    fn resolve_layer_path(
+        &mut self,
+        name: Option<&str>,
+        parent_names: &[String],
+    ) -> (Arc<[u32]>, Vec<String>) {
+        let mut full_names: Vec<String> = parent_names.to_vec();
+        if let Some(n) = name {
+            for part in n.split('.') {
+                let trimmed = part.trim();
+                if !trimmed.is_empty() {
+                    full_names.push(trimmed.to_string());
+                }
+            }
+        } else {
+            self.anon_layer_counter += 1;
+            full_names.push(format!("$anon_{}", self.anon_layer_counter));
+        }
+
+        let parts: Vec<&str> = full_names.iter().map(|s| s.as_str()).collect();
+        let path = self.layer_scope.resolve_path(&parts);
+        (Arc::from(path), full_names)
+    }
+
+    pub fn add_property_rule(
+        &mut self,
+        rule: &'a PropertyRule,
+        layer_path: Arc<[u32]>,
+        order: usize,
+    ) {
+        if let Some(existing) = self.property_rules.get(&rule.name) {
+            let layer_cmp = compare_layer_paths(&layer_path, &existing.layer_path);
+            if layer_cmp == std::cmp::Ordering::Greater
+                || (layer_cmp == std::cmp::Ordering::Equal && order >= existing.source_order)
+            {
+                self.property_rules.insert(
+                    rule.name.clone(),
+                    RegisteredProperty {
+                        name: rule.name.clone(),
+                        syntax: rule.syntax.clone(),
+                        inherits: rule.inherits,
+                        initial_value: rule.initial_value.clone(),
+                        layer_path,
+                        source_order: order,
+                    },
+                );
+            }
+        } else {
+            self.property_rules.insert(
+                rule.name.clone(),
+                RegisteredProperty {
+                    name: rule.name.clone(),
+                    syntax: rule.syntax.clone(),
+                    inherits: rule.inherits,
+                    initial_value: rule.initial_value.clone(),
+                    layer_path,
+                    source_order: order,
+                },
+            );
+        }
+    }
+
+    pub fn add_keyframes_rule(
+        &mut self,
+        rule: &'a KeyframesRule,
+        layer_path: Arc<[u32]>,
+        order: usize,
+    ) {
+        if let Some(existing) = self.keyframe_rules.get(&rule.name) {
+            let layer_cmp = compare_layer_paths(&layer_path, &existing.layer_path);
+            if layer_cmp == std::cmp::Ordering::Greater
+                || (layer_cmp == std::cmp::Ordering::Equal && order >= existing.source_order)
+            {
+                self.keyframe_rules.insert(
+                    rule.name.clone(),
+                    RegisteredKeyframes {
+                        name: rule.name.clone(),
+                        keyframes: rule.clone(),
+                        layer_path,
+                        source_order: order,
+                    },
+                );
+            }
+        } else {
+            self.keyframe_rules.insert(
+                rule.name.clone(),
+                RegisteredKeyframes {
+                    name: rule.name.clone(),
+                    keyframes: rule.clone(),
+                    layer_path,
+                    source_order: order,
+                },
+            );
+        }
+    }
+
     fn add_layer_rules(
         &mut self,
         rules: &'a [Rule],
-        layer_id: u32,
+        layer_path: Arc<[u32]>,
+        parent_names: &[String],
         origin: Origin,
         order: &mut usize,
+        scope_chain: Arc<[ScopeDef<'a>]>,
     ) {
         for rule in rules {
             match rule {
@@ -191,9 +338,8 @@ impl<'a> RuleIndex<'a> {
                         style_rule,
                         origin,
                         order,
-                        Some(layer_id),
-                        None,
-                        None,
+                        layer_path.clone(),
+                        scope_chain.clone(),
                     );
                 }
                 Rule::Media(media_rule)
@@ -209,9 +355,8 @@ impl<'a> RuleIndex<'a> {
                             style_rule,
                             origin,
                             order,
-                            Some(layer_id),
-                            None,
-                            None,
+                            layer_path.clone(),
+                            scope_chain.clone(),
                         );
                     }
                 }
@@ -227,32 +372,35 @@ impl<'a> RuleIndex<'a> {
                         });
                     }
                 }
+                Rule::Property(prop_rule) => {
+                    *order += 1;
+                    self.add_property_rule(prop_rule, layer_path.clone(), *order);
+                }
                 Rule::Layer(nested_layer_rule) => {
-                    let nested_layer_id = if let Some(ref name) = nested_layer_rule.name {
-                        if let Some(&existing_id) = self.layer_map.get(name) {
-                            existing_id
-                        } else {
-                            self.layer_count += 1;
-                            self.layer_map.insert(name.clone(), self.layer_count);
-                            self.layer_count
-                        }
-                    } else {
-                        self.layer_count += 1;
-                        self.layer_count
-                    };
-                    self.add_layer_rules(&nested_layer_rule.rules, nested_layer_id, origin, order);
+                    let (nested_path, nested_names) =
+                        self.resolve_layer_path(nested_layer_rule.name.as_deref(), parent_names);
+                    self.add_layer_rules(
+                        &nested_layer_rule.rules,
+                        nested_path,
+                        &nested_names,
+                        origin,
+                        order,
+                        scope_chain.clone(),
+                    );
                 }
                 Rule::Scope(scope_rule) => {
-                    for style_rule in &scope_rule.rules {
-                        self.add_style_rule_with_layer_and_scope(
-                            style_rule,
-                            origin,
-                            order,
-                            Some(layer_id),
-                            scope_rule.root.as_ref(),
-                            scope_rule.limit.as_ref(),
-                        );
-                    }
+                    let parent_scopes: Vec<ScopeDef<'a>> = scope_chain.iter().cloned().collect();
+                    self.add_scope_rules(
+                        scope_rule,
+                        origin,
+                        order,
+                        layer_path.clone(),
+                        &parent_scopes,
+                    );
+                }
+                Rule::Keyframes(kf) => {
+                    *order += 1;
+                    self.add_keyframes_rule(kf, layer_path.clone(), *order);
                 }
                 Rule::PositionTry(pos_try) => {
                     self.position_try_rules
@@ -267,7 +415,83 @@ impl<'a> RuleIndex<'a> {
     }
 
     fn add_style_rule(&mut self, style_rule: &'a StyleRule, origin: Origin, order: &mut usize) {
-        self.add_style_rule_with_layer_and_scope(style_rule, origin, order, None, None, None);
+        self.add_style_rule_with_layer_and_scope(
+            style_rule,
+            origin,
+            order,
+            Arc::from([]),
+            Arc::from([]),
+        );
+    }
+
+    fn add_scope_rules(
+        &mut self,
+        scope_rule: &'a crate::parser::ScopeRule,
+        origin: Origin,
+        order: &mut usize,
+        layer_path: Arc<[u32]>,
+        parent_scopes: &[ScopeDef<'a>],
+    ) {
+        let mut current_scopes = parent_scopes.to_vec();
+        current_scopes.push(ScopeDef {
+            root: scope_rule.root.as_ref(),
+            limit: scope_rule.limit.as_ref(),
+        });
+        let scope_chain: Arc<[ScopeDef<'a>]> = Arc::from(current_scopes.as_slice());
+
+        for rule in &scope_rule.rules {
+            match rule {
+                Rule::Style(style_rule) => {
+                    self.add_style_rule_with_layer_and_scope(
+                        style_rule,
+                        origin,
+                        order,
+                        layer_path.clone(),
+                        scope_chain.clone(),
+                    );
+                }
+                Rule::Layer(layer_rule) => {
+                    let (new_layer_path, names) =
+                        self.resolve_layer_path(layer_rule.name.as_deref(), &[]);
+                    self.add_layer_rules(
+                        &layer_rule.rules,
+                        new_layer_path,
+                        &names,
+                        origin,
+                        order,
+                        scope_chain.clone(),
+                    );
+                }
+                Rule::Media(media_rule)
+                    if matches_media_query_env(
+                        &media_rule.query,
+                        self.viewport_width,
+                        self.viewport_height,
+                        &self.env,
+                    ) =>
+                {
+                    for style_rule in &media_rule.rules {
+                        self.add_style_rule_with_layer_and_scope(
+                            style_rule,
+                            origin,
+                            order,
+                            layer_path.clone(),
+                            scope_chain.clone(),
+                        );
+                    }
+                }
+                Rule::Scope(nested_scope) => {
+                    self.add_scope_rules(
+                        nested_scope,
+                        origin,
+                        order,
+                        layer_path.clone(),
+                        &current_scopes,
+                    );
+                }
+                _ => {}
+            }
+        }
     }
 
     #[allow(dead_code)]
@@ -276,15 +500,14 @@ impl<'a> RuleIndex<'a> {
         style_rule: &'a StyleRule,
         origin: Origin,
         order: &mut usize,
-        layer_order: Option<u32>,
+        layer_path: Arc<[u32]>,
     ) {
         self.add_style_rule_with_layer_and_scope(
             style_rule,
             origin,
             order,
-            layer_order,
-            None,
-            None,
+            layer_path,
+            Arc::from([]),
         );
     }
 
@@ -293,9 +516,8 @@ impl<'a> RuleIndex<'a> {
         style_rule: &'a StyleRule,
         origin: Origin,
         order: &mut usize,
-        layer_order: Option<u32>,
-        scope_root: Option<&'a crate::selectors::SelectorList>,
-        scope_limit: Option<&'a crate::selectors::SelectorList>,
+        layer_path: Arc<[u32]>,
+        scope_chain: Arc<[ScopeDef<'a>]>,
     ) {
         *order += 1;
         let rule_order = *order;
@@ -311,9 +533,8 @@ impl<'a> RuleIndex<'a> {
                 style_rule,
                 origin,
                 source_order: rule_order,
-                layer_order,
-                scope_root,
-                scope_limit,
+                layer_path: layer_path.clone(),
+                scope_chain: scope_chain.clone(),
             };
 
             // 1. Check if subject targets a pseudo-element
@@ -321,7 +542,7 @@ impl<'a> RuleIndex<'a> {
             for s in &subject.simple_selectors {
                 if let crate::selectors::SimpleSelector::PseudoElement(p) = s {
                     let plower = p.to_ascii_lowercase();
-                    if !plower.starts_with("slotted") {
+                    if !plower.starts_with("slotted") && !plower.starts_with("part") {
                         pseudo_target = Some(plower);
                         break;
                     }
@@ -420,6 +641,18 @@ impl<'a> RuleIndex<'a> {
                 continue;
             }
 
+            let has_part = subject.simple_selectors.iter().any(|s| match s {
+                crate::selectors::SimpleSelector::PseudoElement(p) => {
+                    p.to_ascii_lowercase().starts_with("part(")
+                }
+                _ => false,
+            });
+
+            if has_part {
+                self.universal_rules.push(indexed);
+                continue;
+            }
+
             // 2. Classify key selector: ID > Class > Tag > Attr > Root > :is/:where > Universal
             let mut key_id = None;
             let mut key_class = None;
@@ -506,9 +739,8 @@ impl<'a> RuleIndex<'a> {
                 style_rule,
                 origin,
                 source_order: rule_order,
-                layer_order,
-                scope_root,
-                scope_limit,
+                layer_path: layer_path.clone(),
+                scope_chain: scope_chain.clone(),
             });
         }
     }

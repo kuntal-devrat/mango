@@ -57,18 +57,20 @@ impl<'a> TreeBuilder<'a> {
 
         let text = std::mem::take(&mut self.text_buffer);
 
-        let is_in_head_container = self.mode == InsertionMode::InHead
+        let is_in_head_container = (self.mode == InsertionMode::InHead
+            || self.mode == InsertionMode::InTemplate)
             && self
                 .current_tag_name()
                 .map(|t| t == "title" || t == "style" || t == "script")
                 .unwrap_or(false);
 
-        // In Initial, BeforeHtml, BeforeHead, AfterHead, and InHead (outside text container) modes, ignore whitespace text
+        // In Initial, BeforeHtml, BeforeHead, AfterHead, and InHead/InTemplate (outside text container) modes, ignore whitespace text
         if (self.mode == InsertionMode::Initial
             || self.mode == InsertionMode::BeforeHtml
             || self.mode == InsertionMode::BeforeHead
             || self.mode == InsertionMode::AfterHead
-            || (self.mode == InsertionMode::InHead && !is_in_head_container))
+            || ((self.mode == InsertionMode::InHead || self.mode == InsertionMode::InTemplate)
+                && !is_in_head_container))
             && text.chars().all(|c| c.is_ascii_whitespace())
         {
             return;

@@ -270,6 +270,7 @@ fn op_worker_native_post_message(state: &mut OpState, #[string] text: String) {
         if let Ok(mut q) = ws.main_tasks.lock() {
             q.push(cmd);
         }
+        mango_core::wake_event_loop();
     }
 }
 
@@ -473,6 +474,7 @@ fn run_worker_thread(
                 if let Ok(mut q) = main_tasks.lock() {
                     q.push(cmd);
                 }
+                mango_core::wake_event_loop();
             } else {
                 deno_core::v8::scope!(scope, runtime.v8_isolate());
                 scope.perform_microtask_checkpoint();
@@ -488,6 +490,7 @@ fn run_worker_thread(
             if let Ok(mut q) = main_tasks.lock() {
                 q.push(cmd);
             }
+            mango_core::wake_event_loop();
         }
     }
 

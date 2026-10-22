@@ -406,72 +406,13 @@
         }
     };
 
-    function _wrapShadowRootProto(ctor) {
-        if (!ctor || !ctor.prototype) return;
-        var proto = ctor.prototype;
-        var origQS = proto.querySelector;
-        proto.querySelector = function(sel) {
-            var res = origQS ? origQS.apply(this, arguments) : null;
-            if (res) return res;
-            var s = String(sel);
-            if (s.indexOf('button') !== -1) {
-                var btn = (typeof document !== 'undefined' && document.createElement) ? document.createElement('div') : {};
-                btn.id = 'button';
-                btn.addEventListener = function() {};
-                btn.removeEventListener = function() {};
-                btn.dispatchEvent = function() { return true; };
-                btn.children = [];
-                btn.childNodes = [];
-                btn.querySelector = function() { return null; };
-                btn.querySelectorAll = function() { return []; };
-                btn.style = (typeof _createStyleObject === 'function') ? _createStyleObject() : {};
-                return btn;
-            }
-            if (s.indexOf('info-skeleton') !== -1 || s.indexOf('meta-skeleton') !== -1 || s.indexOf('related-skeleton') !== -1) {
-                var skel = (typeof document !== 'undefined' && document.createElement) ? document.createElement('div') : {};
-                var idName = s.indexOf('info-skeleton') !== -1 ? 'info-skeleton' : (s.indexOf('meta-skeleton') !== -1 ? 'meta-skeleton' : 'related-skeleton');
-                skel.id = idName;
-                skel.appendChild = function(c) { return c; };
-                skel.removeChild = function(c) { return c; };
-                skel.insertBefore = function(c) { return c; };
-                skel.addEventListener = function() {};
-                skel.removeEventListener = function() {};
-                skel.style = (typeof _createStyleObject === 'function') ? _createStyleObject() : {};
-                return skel;
-            }
-            if (s.indexOf('engagement-panel-scrim') !== -1) {
-                var scrim = (typeof document !== 'undefined' && document.createElement) ? document.createElement('div') : {};
-                scrim.id = 'engagement-panel-scrim';
-                scrim.addEventListener = function() {};
-                scrim.removeEventListener = function() {};
-                scrim.dispatchEvent = function() { return true; };
-                scrim.classList = { add: function(){}, remove: function(){}, toggle: function(){}, contains: function(){ return false; } };
-                scrim.style = (typeof _createStyleObject === 'function') ? _createStyleObject() : {};
-                return scrim;
-            }
-            if (s.indexOf('query') !== -1) {
-                var qel = (typeof document !== 'undefined' && document.createElement) ? document.createElement('div') : {};
-                qel.query = '';
-                qel.queryMatches = false;
-                qel.addEventListener = function() {};
-                qel.removeEventListener = function() {};
-                qel.dispatchEvent = function() { return true; };
-                qel.style = (typeof _createStyleObject === 'function') ? _createStyleObject() : {};
-                return qel;
-            }
-            return null;
-        };
-    }
-
     var _shadowRootCtor = function ShadowRoot() {};
     _shadowRootCtor.prototype = Object.create(globalThis.DocumentFragment.prototype);
-    _wrapShadowRootProto(_shadowRootCtor);
 
     Object.defineProperty(globalThis, 'ShadowRoot', {
         get: function() { return _shadowRootCtor; },
         set: function(c) {
             _shadowRootCtor = c;
-            _wrapShadowRootProto(c);
         },
         configurable: true
     });

@@ -218,6 +218,7 @@ fn op_shared_worker_post_port_message(state: &mut OpState, port_id: u32, #[strin
         if let Ok(mut q) = ws.main_tasks.lock() {
             q.push(cmd);
         }
+        mango_core::wake_event_loop();
     }
 }
 

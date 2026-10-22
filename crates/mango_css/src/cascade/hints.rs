@@ -43,7 +43,9 @@ fn push_hint(
         specificity: Specificity(0, 0, 0),
         origin: Origin::PresentationalHint,
         source_order: *source_order,
-        layer_order: None,
+        layer_path: std::sync::Arc::from([]),
+        rule_id: *source_order,
+        scope_proximity: None,
     });
 }
 
