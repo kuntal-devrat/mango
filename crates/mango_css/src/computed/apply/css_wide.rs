@@ -205,6 +205,7 @@ fn copy_single_property(style: &mut ComputedStyle, source: &ComputedStyle, prop:
         "margin-right" | "margin-inline-end" => style.margin_right = source.margin_right,
         "margin-bottom" | "margin-block-end" => style.margin_bottom = source.margin_bottom,
         "margin-left" | "margin-inline-start" => style.margin_left = source.margin_left,
+        "margin-trim" => style.margin_trim = source.margin_trim.clone(),
         "padding-top" | "padding-block-start" => style.padding_top = source.padding_top,
         "padding-right" | "padding-inline-end" => style.padding_right = source.padding_right,
         "padding-bottom" | "padding-block-end" => style.padding_bottom = source.padding_bottom,

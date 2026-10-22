@@ -382,8 +382,10 @@ pub(crate) fn format_dom_tree(
         NodeData::Text(text) => {
             let trimmed = text.trim();
             if !trimmed.is_empty() {
-                let preview = if trimmed.len() > 24 {
-                    format!("\"{}...\"", &trimmed[..24])
+                let char_count = trimmed.chars().count();
+                let preview = if char_count > 24 {
+                    let s: String = trimmed.chars().take(24).collect();
+                    format!("\"{s}...\"")
                 } else {
                     format!("\"{trimmed}\"")
                 };

@@ -1,6 +1,7 @@
 pub mod animation;
 #[allow(clippy::module_inception)]
 pub mod declarations;
+pub mod font;
 pub mod functions;
 pub mod gradient;
 pub mod grid_shadow;

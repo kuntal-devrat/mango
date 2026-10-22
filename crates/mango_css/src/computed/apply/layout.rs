@@ -5,9 +5,9 @@ use crate::computed::custom_props::is_current_color;
 use crate::computed::style::ComputedStyle;
 use crate::values::{
     AlignContent, AlignItems, AlignSelf, Appearance, BorderCollapse, CaptionSide, Cursor,
-    GridAutoFlow, GridPlacement, GridTrackSize, JustifyContent, JustifyItems, JustifySelf, Length,
-    ListStylePosition, ListStyleType, Overflow, Position, TableLayout, TextAlign, Value,
-    VerticalAlign, Visibility,
+    FlexDirection, FlexWrap, GridAutoFlow, GridPlacement, GridTrackSize, JustifyContent,
+    JustifyItems, JustifySelf, Length, ListStylePosition, ListStyleType, Overflow, Position,
+    TableLayout, TextAlign, Value, VerticalAlign, Visibility,
 };
 
 pub(crate) fn parse_intrinsic_length(val: &Value) -> Option<Length> {
@@ -120,20 +120,32 @@ pub(crate) fn apply_layout_property(style: &mut ComputedStyle, prop: &str, val: 
         },
 
         // Flexbox & positioning
-        "flex-direction" => {
-            if let Value::FlexDirection(fd) = val {
-                style.flex_direction = *fd;
-            }
-        }
-        "flex-wrap" => {
-            if let Value::FlexWrap(fw) = val {
-                style.flex_wrap = *fw;
-            }
-        }
+        "flex-direction" => match val {
+            Value::FlexDirection(fd) => style.flex_direction = *fd,
+            Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
+                "row" => style.flex_direction = FlexDirection::Row,
+                "row-reverse" => style.flex_direction = FlexDirection::RowReverse,
+                "column" => style.flex_direction = FlexDirection::Column,
+                "column-reverse" => style.flex_direction = FlexDirection::ColumnReverse,
+                _ => {}
+            },
+            _ => {}
+        },
+        "flex-wrap" => match val {
+            Value::FlexWrap(fw) => style.flex_wrap = *fw,
+            Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
+                "nowrap" => style.flex_wrap = FlexWrap::NoWrap,
+                "wrap" => style.flex_wrap = FlexWrap::Wrap,
+                "wrap-reverse" => style.flex_wrap = FlexWrap::WrapReverse,
+                _ => {}
+            },
+            _ => {}
+        },
         "justify-content" => match val {
             Value::JustifyContent(jc) => style.justify_content = *jc,
             Value::TextAlign(TextAlign::Center) => style.justify_content = JustifyContent::Center,
             Value::Keyword(kw) => match kw.to_ascii_lowercase().as_str() {
+                "normal" => style.justify_content = JustifyContent::Normal,
                 "center" => style.justify_content = JustifyContent::Center,
                 "flex-start" => style.justify_content = JustifyContent::FlexStart,
                 "flex-end" => style.justify_content = JustifyContent::FlexEnd,
@@ -147,7 +159,7 @@ pub(crate) fn apply_layout_property(style: &mut ComputedStyle, prop: &str, val: 
         "justify-items" => match val {
             Value::JustifyItems(ji) => style.justify_items = *ji,
             Value::TextAlign(TextAlign::Center) => style.justify_items = JustifyItems::Center,
-            Value::JustifyContent(JustifyContent::FlexStart) => {
+            Value::JustifyContent(JustifyContent::Normal | JustifyContent::FlexStart) => {
                 style.justify_items = JustifyItems::FlexStart
             }
             Value::JustifyContent(JustifyContent::FlexEnd) => {
@@ -178,7 +190,7 @@ pub(crate) fn apply_layout_property(style: &mut ComputedStyle, prop: &str, val: 
                 };
             }
             Value::TextAlign(TextAlign::Center) => style.justify_self = JustifySelf::Center,
-            Value::JustifyContent(JustifyContent::FlexStart) => {
+            Value::JustifyContent(JustifyContent::Normal | JustifyContent::FlexStart) => {
                 style.justify_self = JustifySelf::FlexStart
             }
             Value::JustifyContent(JustifyContent::FlexEnd) => {
@@ -201,13 +213,14 @@ pub(crate) fn apply_layout_property(style: &mut ComputedStyle, prop: &str, val: 
         "align-items" => match val {
             Value::AlignItems(ai) => style.align_items = *ai,
             Value::TextAlign(TextAlign::Center) => style.align_items = AlignItems::Center,
-            Value::JustifyContent(JustifyContent::FlexStart) => {
+            Value::JustifyContent(JustifyContent::Normal | JustifyContent::FlexStart) => {
                 style.align_items = AlignItems::FlexStart
             }
             Value::JustifyContent(JustifyContent::FlexEnd) => {
                 style.align_items = AlignItems::FlexEnd
             }
             Value::Keyword(kw) => match kw.to_ascii_lowercase().as_str() {
+                "normal" => style.align_items = AlignItems::Normal,
                 "center" => style.align_items = AlignItems::Center,
                 "flex-start" => style.align_items = AlignItems::FlexStart,
                 "flex-end" => style.align_items = AlignItems::FlexEnd,
@@ -221,7 +234,7 @@ pub(crate) fn apply_layout_property(style: &mut ComputedStyle, prop: &str, val: 
             Value::AlignSelf(as_val) => style.align_self = *as_val,
             Value::AlignItems(ai) => {
                 style.align_self = match ai {
-                    AlignItems::Stretch => AlignSelf::Stretch,
+                    AlignItems::Normal | AlignItems::Stretch => AlignSelf::Stretch,
                     AlignItems::FlexStart => AlignSelf::FlexStart,
                     AlignItems::FlexEnd => AlignSelf::FlexEnd,
                     AlignItems::Center => AlignSelf::Center,
@@ -229,7 +242,7 @@ pub(crate) fn apply_layout_property(style: &mut ComputedStyle, prop: &str, val: 
                 };
             }
             Value::TextAlign(TextAlign::Center) => style.align_self = AlignSelf::Center,
-            Value::JustifyContent(JustifyContent::FlexStart) => {
+            Value::JustifyContent(JustifyContent::Normal | JustifyContent::FlexStart) => {
                 style.align_self = AlignSelf::FlexStart
             }
             Value::JustifyContent(JustifyContent::FlexEnd) => style.align_self = AlignSelf::FlexEnd,
@@ -248,6 +261,7 @@ pub(crate) fn apply_layout_property(style: &mut ComputedStyle, prop: &str, val: 
             Value::AlignContent(ac) => style.align_content = *ac,
             Value::JustifyContent(jc) => {
                 style.align_content = match jc {
+                    JustifyContent::Normal => AlignContent::Normal,
                     JustifyContent::FlexStart => AlignContent::FlexStart,
                     JustifyContent::FlexEnd => AlignContent::FlexEnd,
                     JustifyContent::Center => AlignContent::Center,
@@ -258,6 +272,7 @@ pub(crate) fn apply_layout_property(style: &mut ComputedStyle, prop: &str, val: 
             }
             Value::AlignItems(ai) => {
                 style.align_content = match ai {
+                    AlignItems::Normal => AlignContent::Normal,
                     AlignItems::Stretch => AlignContent::Stretch,
                     AlignItems::FlexStart => AlignContent::FlexStart,
                     AlignItems::FlexEnd => AlignContent::FlexEnd,
@@ -267,7 +282,8 @@ pub(crate) fn apply_layout_property(style: &mut ComputedStyle, prop: &str, val: 
             }
             Value::TextAlign(TextAlign::Center) => style.align_content = AlignContent::Center,
             Value::Keyword(kw) => match kw.to_ascii_lowercase().as_str() {
-                "stretch" | "normal" => style.align_content = AlignContent::Stretch,
+                "normal" => style.align_content = AlignContent::Normal,
+                "stretch" => style.align_content = AlignContent::Stretch,
                 "flex-start" | "start" => style.align_content = AlignContent::FlexStart,
                 "flex-end" | "end" => style.align_content = AlignContent::FlexEnd,
                 "center" => style.align_content = AlignContent::Center,
@@ -281,15 +297,17 @@ pub(crate) fn apply_layout_property(style: &mut ComputedStyle, prop: &str, val: 
         "flex-grow" => {
             if let Value::Number(n) = val {
                 style.flex_grow = (*n).max(0.0);
-            } else if let Value::Length(Length::Px(px)) = val {
-                style.flex_grow = (*px).max(0.0);
+            } else if let Value::Length(l) = val {
+                let num = l.to_px(style.font_size, style.root_font_size, 0.0);
+                style.flex_grow = num.max(0.0);
             }
         }
         "flex-shrink" => {
             if let Value::Number(n) = val {
                 style.flex_shrink = (*n).max(0.0);
-            } else if let Value::Length(Length::Px(px)) = val {
-                style.flex_shrink = (*px).max(0.0);
+            } else if let Value::Length(l) = val {
+                let num = l.to_px(style.font_size, style.root_font_size, 0.0);
+                style.flex_shrink = num.max(0.0);
             }
         }
         "flex-basis" => match val {
@@ -335,7 +353,11 @@ pub(crate) fn apply_layout_property(style: &mut ComputedStyle, prop: &str, val: 
         }
         "z-index" => match val {
             Value::Number(n) => style.z_index = Some(*n as i32),
-            Value::Length(Length::Px(px)) => style.z_index = Some(*px as i32),
+            Value::Length(Length::Auto) => style.z_index = None,
+            Value::Length(len) => {
+                let px = len.to_px(style.font_size, style.root_font_size, 0.0);
+                style.z_index = Some(px.round() as i32);
+            }
             Value::Keyword(k) if k == "auto" => style.z_index = None,
             _ => {}
         },

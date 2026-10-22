@@ -199,19 +199,13 @@ pub fn parse_single_value(token: &Token) -> Option<Value> {
                 "pc" => Length::Px(*value * 16.0),
                 "q" => Length::Px(*value * 96.0 / 101.6),
                 "ch" => Length::Em(*value * 0.5),
-                "ex" => Length::Em(*value * 0.5),
+                "ex" => Length::Ex(*value),
                 _ => return None, // CSS spec requires dropping unknown units
             };
             Some(Value::Length(len))
         }
         Token::Percentage(pct) => Some(Value::Length(Length::Percent(*pct))),
-        Token::Number(n) => {
-            if *n == 0.0 {
-                Some(Value::Length(Length::Px(0.0)))
-            } else {
-                Some(Value::Number(*n))
-            }
-        }
+        Token::Number(n) => Some(Value::Number(*n)),
         Token::Hash(hex) => {
             let hex_str = format!("#{hex}");
             Value::parse_color(&hex_str).map(Value::Color)

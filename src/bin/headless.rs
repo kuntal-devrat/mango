@@ -304,6 +304,7 @@ fn main() {
             if browser.has_pending_image_fetches() && browser.drain_pending_images() {
                 loaded_any_images = true;
             }
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }
 
@@ -312,11 +313,13 @@ fn main() {
     while browser.has_pending_scripts() && drained_scripts < 64 {
         drained_scripts += 1;
         browser.tick_js();
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
     // Allow promises, microtasks, and framework mounts (React/Vue/Svelte) to settle
-    for _ in 0..20 {
+    for _ in 0..10 {
         let _ = browser.tick_animations(tick_interval_ms);
         let _ = browser.tick_js();
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
     // Drain pending images so remote and data URI images are loaded and decoded

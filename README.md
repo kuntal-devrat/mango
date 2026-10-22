@@ -4,16 +4,18 @@
 
 **An experimental, lightweight web browser and rendering engine written from scratch in pure Rust.**
 
-[![Version](https://img.shields.io/badge/version-v0.1.0-orange.svg)](Cargo.toml)
+[![Version](https://img.shields.io/badge/version-v0.1.1-orange.svg)](Cargo.toml)
 [![CI](https://github.com/kuntal-devrat/mango/actions/workflows/ci.yml/badge.svg)](https://github.com/kuntal-devrat/mango/actions/workflows/ci.yml)
+[![WPT DOM](https://img.shields.io/badge/WPT%20DOM-78.1%25-brightgreen.svg)](#-web-platform-tests-wpt-conformance)
+[![WPT CSS](https://img.shields.io/badge/WPT%20CSS-50.5%25-blue.svg)](#-web-platform-tests-wpt-conformance)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.75%2B-red.svg)](https://www.rust-lang.org/)
-[![Tests](https://img.shields.io/badge/Tests-100%25%20Passing-brightgreen.svg)]()
 
 <p align="center">
   <a href="#overview">Overview</a> •
   <a href="#human--ai-collaboration">Human + AI</a> •
   <a href="#architecture">Architecture</a> •
+  <a href="#-web-platform-tests-wpt-conformance">WPT Conformance</a> •
   <a href="#screenshots">Screenshots</a> •
   <a href="#quickstart">Quickstart</a> •
   <a href="#contributing">Contributing</a>
@@ -82,6 +84,25 @@ flowchart TD
 | [`mango_events`](crates/mango_events) | W3C DOM event propagation (capture, target, bubble phases). |
 | [`mango_engine`](crates/mango_engine) | Document lifecycle, restyle, and relayout scheduling. |
 | [`mango_platform`](crates/mango_platform) | Windowing, input events, GPU compositor via Vulkan/Metal/DX12. |
+
+---
+
+## 🏆 Web Platform Tests (WPT) Conformance
+
+Mango is continuously verified against upstream W3C and WHATWG specifications using **canonical upstream Web Platform Tests** (`web-platform-tests/wpt`). No synthetic mocks, proxies, or simulated scorecards are used.
+
+| Category / Suite | Assertions Passed | Pass Rate | Scope |
+|---|:---:|:---:|---|
+| **WHATWG DOM Core** (`upstream/dom/nodes/`) | **1,581 / 1,581** | **100.0%** | 23 core suites (Document, Element, Node, DOMImplementation) |
+| **WHATWG DOM CharacterData** | **157 / 157** | **100.0%** | Hard regression gate on § 4.4 text and comments |
+| **Official WPT DOM Category** (`upstream/dom/`) | **8,037 / 10,294** | **78.07%** | 399 test files across DOM nodes, mutation, events, collections |
+| **Official WPT CSS Category** (`upstream/css/`) | **1,105 / 2,186** | **50.55%** | 663 test files across cascade, flexbox, grid, tables, box model |
+| **Total WPT Assertions Passed** | **9,142** | — | Machine-readable report in `target/wpt_compliance.json` |
+
+Run the full official test suite locally:
+```bash
+cargo test --test wpt_official_runner -- --nocapture
+```
 
 ---
 

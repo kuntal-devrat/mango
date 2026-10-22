@@ -62,6 +62,38 @@ pub fn op_mango_get_node_name(state: &mut OpState, node_id: u32) -> String {
 
 #[op2]
 #[string]
+pub fn op_mango_get_doctype_public_id(state: &mut OpState, node_id: u32) -> String {
+    let doc = match state.try_borrow::<SharedDocument>() {
+        Some(d) => d,
+        None => return String::new(),
+    };
+    let d = doc.borrow();
+    d.get(NodeId::from_raw(node_id))
+        .and_then(|n| match &n.data {
+            NodeData::DocumentType { public_id, .. } => Some(public_id.clone()),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+#[op2]
+#[string]
+pub fn op_mango_get_doctype_system_id(state: &mut OpState, node_id: u32) -> String {
+    let doc = match state.try_borrow::<SharedDocument>() {
+        Some(d) => d,
+        None => return String::new(),
+    };
+    let d = doc.borrow();
+    d.get(NodeId::from_raw(node_id))
+        .and_then(|n| match &n.data {
+            NodeData::DocumentType { system_id, .. } => Some(system_id.clone()),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+#[op2]
+#[string]
 pub fn op_mango_get_node_value(state: &mut OpState, node_id: u32) -> Option<String> {
     let doc = state.try_borrow::<SharedDocument>()?;
     let d = doc.borrow();

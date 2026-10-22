@@ -109,12 +109,15 @@ pub fn get_math(id: MathId) -> Option<MathExpr> {
 
 /// Creates a Length from a MathExpr, performing constant folding to Length::Px or CalcLength if possible.
 pub fn make_math_length(expr: MathExpr) -> Length {
-    if let Some(px) = expr.try_fold_px() {
-        Length::Px(px)
-    } else if let Some(calc) = expr.try_into_calc_length() {
+    let simplified = expr.simplify();
+    if simplified.is_dimensionless_number() {
+        Length::Math(intern_math(simplified))
+    } else if let Some(calc) = simplified.try_into_calc_length() {
         Length::Calc(calc)
+    } else if let Some(px) = simplified.try_fold_px() {
+        Length::Px(px)
     } else {
-        Length::Math(intern_math(expr))
+        Length::Math(intern_math(simplified))
     }
 }
 

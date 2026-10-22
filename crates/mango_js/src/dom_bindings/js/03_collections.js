@@ -1,23 +1,29 @@
+    function _getNamedMap(items) {
+        var map = {};
+        var names = [];
+        for (var i = 0; i < items.length; i++) {
+            var it = items[i];
+            if (!it) continue;
+            var id = (it.getAttribute && typeof it.getAttribute === 'function') ? it.getAttribute('id') : it.id;
+            if (id && !map.hasOwnProperty(id)) {
+                map[id] = it;
+                names.push(id);
+            }
+            var itNs = it.namespaceURI !== undefined ? it.namespaceURI : 'http://www.w3.org/1999/xhtml';
+            if (itNs === 'http://www.w3.org/1999/xhtml' && it.getAttribute && typeof it.getAttribute === 'function') {
+                var nm = it.getAttribute('name');
+                if (nm && !map.hasOwnProperty(nm)) {
+                    map[nm] = it;
+                    names.push(nm);
+                }
+            }
+        }
+        return { map: map, names: names };
+    }
+
     function _createHTMLCollection(getItemsFn) {
         var proto = (typeof globalThis.HTMLCollection !== 'undefined') ? globalThis.HTMLCollection.prototype : Object.prototype;
         var base = Object.create(proto);
-        base.item = function(index) {
-            var items = getItemsFn() || [];
-            var i = Number(index);
-            if (isNaN(i) || i < 0 || i >= items.length) return null;
-            return items[i];
-        };
-        base.namedItem = function(name) {
-            var items = getItemsFn() || [];
-            var str = String(name);
-            for (var i = 0; i < items.length; i++) {
-                var it = items[i];
-                if (it && (it.id === str || (it.getAttribute && it.getAttribute('name') === str))) {
-                    return it;
-                }
-            }
-            return null;
-        };
         base[Symbol.iterator] = function() {
             var items = getItemsFn() || [];
             var i = 0;
@@ -37,10 +43,10 @@
                 if (prop === 'length') {
                     return (getItemsFn() || []).length;
                 }
+                var items = getItemsFn() || [];
                 if (typeof prop === 'string') {
                     var idx = Number(prop);
                     if (Number.isInteger(idx) && idx >= 0 && String(idx) === prop) {
-                        var items = getItemsFn() || [];
                         return items[idx];
                     }
                 }
@@ -48,40 +54,66 @@
                     return target[prop];
                 }
                 if (typeof prop === 'string') {
-                    return target.namedItem(prop) || undefined;
+                    var named = _getNamedMap(items);
+                    if (named.map.hasOwnProperty(prop)) return named.map[prop];
                 }
                 return undefined;
             },
+            set: function(target, prop, value, receiver) {
+                if (typeof prop === 'string') {
+                    var idx = Number(prop);
+                    if (Number.isInteger(idx) && idx >= 0 && String(idx) === prop) {
+                        return false;
+                    }
+                }
+                target[prop] = value;
+                return true;
+            },
             has: function(target, prop) {
+                var items = getItemsFn() || [];
                 if (prop === 'length') return true;
                 if (typeof prop === 'string') {
                     var idx = Number(prop);
                     if (Number.isInteger(idx) && idx >= 0 && String(idx) === prop) {
-                        return idx < (getItemsFn() || []).length;
+                        return idx < items.length;
                     }
-                    if (target.namedItem(prop) !== null) return true;
+                    var named = _getNamedMap(items);
+                    if (named.map.hasOwnProperty(prop)) return true;
                 }
                 return prop in target;
             },
             ownKeys: function(target) {
-                var keys = Reflect.ownKeys(target);
                 var items = getItemsFn() || [];
+                var keys = [];
                 for (var i = 0; i < items.length; i++) {
-                    var s = String(i);
-                    if (keys.indexOf(s) === -1) keys.push(s);
+                    keys.push(String(i));
                 }
-                if (keys.indexOf('length') === -1) keys.push('length');
+                var named = _getNamedMap(items);
+                for (var n = 0; n < named.names.length; n++) {
+                    if (keys.indexOf(named.names[n]) === -1) keys.push(named.names[n]);
+                }
+                var targetKeys = Object.getOwnPropertyNames(target);
+                for (var t = 0; t < targetKeys.length; t++) {
+                    if (keys.indexOf(targetKeys[t]) === -1) keys.push(targetKeys[t]);
+                }
                 return keys;
             },
             getOwnPropertyDescriptor: function(target, prop) {
+                var items = getItemsFn() || [];
                 if (prop === 'length') {
-                    return { value: (getItemsFn() || []).length, writable: false, enumerable: false, configurable: true };
+                    return { value: items.length, writable: false, enumerable: false, configurable: true };
                 }
-                var idx = Number(prop);
-                if (Number.isInteger(idx) && idx >= 0 && String(idx) === prop) {
-                    var items = getItemsFn() || [];
-                    if (idx < items.length) {
-                        return { value: items[idx], writable: false, enumerable: true, configurable: true };
+                if (typeof prop === 'string') {
+                    var idx = Number(prop);
+                    if (Number.isInteger(idx) && idx >= 0 && String(idx) === prop) {
+                        if (idx < items.length) {
+                            return { value: items[idx], writable: false, enumerable: true, configurable: true };
+                        }
+                        return undefined;
+                    }
+                    var named = _getNamedMap(items);
+                    if (named.map.hasOwnProperty(prop)) {
+                        return { value: named.map[prop], writable: false, enumerable: false, configurable: true };
                     }
                 }
                 return Object.getOwnPropertyDescriptor(target, prop);
@@ -92,61 +124,6 @@
     function _createNodeList(getItemsFn) {
         var proto = (typeof globalThis.NodeList !== 'undefined') ? globalThis.NodeList.prototype : Object.prototype;
         var base = Object.create(proto);
-        base.item = function(index) {
-            var items = getItemsFn() || [];
-            var i = Number(index);
-            if (isNaN(i) || i < 0 || i >= items.length) return null;
-            return items[i];
-        };
-        base.forEach = function(callback, thisArg) {
-            var items = getItemsFn() || [];
-            for (var i = 0; i < items.length; i++) {
-                callback.call(thisArg, items[i], i, this);
-            }
-        };
-        base.entries = function() {
-            var items = getItemsFn() || [];
-            var i = 0;
-            return {
-                next: function() {
-                    if (i < items.length) {
-                        return { value: [i, items[i++]], done: false };
-                    }
-                    return { value: undefined, done: true };
-                },
-                [Symbol.iterator]: function() { return this; }
-            };
-        };
-        base.keys = function() {
-            var items = getItemsFn() || [];
-            var i = 0;
-            return {
-                next: function() {
-                    if (i < items.length) {
-                        return { value: i++, done: false };
-                    }
-                    return { value: undefined, done: true };
-                },
-                [Symbol.iterator]: function() { return this; }
-            };
-        };
-        base.values = function() {
-            var items = getItemsFn() || [];
-            var i = 0;
-            return {
-                next: function() {
-                    if (i < items.length) {
-                        return { value: items[i++], done: false };
-                    }
-                    return { value: undefined, done: true };
-                },
-                [Symbol.iterator]: function() { return this; }
-            };
-        };
-        base[Symbol.iterator] = function() {
-            return this.values();
-        };
-        base[Symbol.toStringTag] = 'NodeList';
 
         return new Proxy(base, {
             get: function(target, prop, receiver) {
@@ -160,6 +137,14 @@
                         return items[idx];
                     }
                 }
+                if (prop === 'item') {
+                    return function(index) {
+                        var items = getItemsFn() || [];
+                        var i = Number(index);
+                        if (isNaN(i) || i < 0 || i >= items.length) return null;
+                        return items[i];
+                    };
+                }
                 if (prop in target) {
                     return target[prop];
                 }
@@ -176,13 +161,12 @@
                 return prop in target;
             },
             ownKeys: function(target) {
-                var keys = Reflect.ownKeys(target);
                 var items = getItemsFn() || [];
+                var keys = [];
                 for (var i = 0; i < items.length; i++) {
-                    var s = String(i);
-                    if (keys.indexOf(s) === -1) keys.push(s);
+                    keys.push(String(i));
                 }
-                if (keys.indexOf('length') === -1) keys.push('length');
+                keys.push('length');
                 return keys;
             },
             getOwnPropertyDescriptor: function(target, prop) {

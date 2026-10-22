@@ -122,10 +122,19 @@ pub enum ScriptToRun {
 impl ScriptToRun {
     pub fn is_defer(&self) -> bool {
         match self {
-            ScriptToRun::External { is_defer, .. } | ScriptToRun::Preloaded { is_defer, .. } => {
-                *is_defer
+            ScriptToRun::External {
+                is_defer,
+                is_async,
+                is_module,
+                ..
             }
-            _ => false,
+            | ScriptToRun::Preloaded {
+                is_defer,
+                is_async,
+                is_module,
+                ..
+            } => *is_defer || (*is_module && !*is_async),
+            ScriptToRun::Inline { is_module, .. } => *is_module,
         }
     }
     pub fn is_async(&self) -> bool {

@@ -87,6 +87,8 @@ extension!(
         dom::op_mango_get_tag_name,
         dom::op_mango_get_node_type,
         dom::op_mango_get_node_name,
+        dom::op_mango_get_doctype_public_id,
+        dom::op_mango_get_doctype_system_id,
         dom::op_mango_get_node_value,
         dom::op_mango_set_node_value,
         dom::op_mango_get_parent,
@@ -119,6 +121,8 @@ extension!(
         dom::op_mango_elements_from_point,
         dom::op_mango_set_focus_state,
         dom::op_mango_get_computed_style,
+        dom::op_mango_css_parse_declaration,
+        dom::op_mango_css_supports,
         // Cookies
         dom::op_mango_cookie_get,
         dom::op_mango_cookie_set,
@@ -176,6 +180,46 @@ pub const PRELUDE_JS: &str = r##"
             nextTick: (typeof queueMicrotask === 'function') ? queueMicrotask : function(cb) { setTimeout(cb, 0); }
         };
     }
+    if (typeof globalThis.DOMException === 'undefined') {
+        var _DOM_EXCEPTION_CODES = {
+            IndexSizeError: 1, DOMStringSizeError: 2, HierarchyRequestError: 3,
+            WrongDocumentError: 4, InvalidCharacterError: 5, NoDataAllowedError: 6,
+            NoModificationAllowedError: 7, NotFoundError: 8, NotSupportedError: 9,
+            InUseAttributeError: 10, InvalidStateError: 11, SyntaxError: 12,
+            InvalidModificationError: 13, NamespaceError: 14, InvalidAccessError: 15,
+            ValidationError: 16, TypeMismatchError: 17, SecurityError: 18,
+            NetworkError: 19, AbortError: 20, URLMismatchError: 21,
+            QuotaExceededError: 22, TimeoutError: 23, InvalidNodeTypeError: 24,
+            DataCloneError: 25
+        };
+        function DOMException(message, name) {
+            var err = new Error(message || '');
+            this.message = message ? String(message) : '';
+            this.name = name ? String(name) : 'Error';
+            this.code = _DOM_EXCEPTION_CODES[this.name] || 0;
+            this.stack = err.stack;
+        }
+        DOMException.prototype = Object.create(Error.prototype);
+        DOMException.prototype.constructor = DOMException;
+        DOMException.prototype.name = 'DOMException';
+        var _CONSTANTS = {
+            INDEX_SIZE_ERR: 1, DOMSTRING_SIZE_ERR: 2, HIERARCHY_REQUEST_ERR: 3,
+            WRONG_DOCUMENT_ERR: 4, INVALID_CHARACTER_ERR: 5, NO_DATA_ALLOWED_ERR: 6,
+            NO_MODIFICATION_ALLOWED_ERR: 7, NOT_FOUND_ERR: 8, NOT_SUPPORTED_ERR: 9,
+            INUSE_ATTRIBUTE_ERR: 10, INVALID_STATE_ERR: 11, SYNTAX_ERR: 12,
+            INVALID_MODIFICATION_ERR: 13, NAMESPACE_ERR: 14, INVALID_ACCESS_ERR: 15,
+            VALIDATION_ERR: 16, TYPE_MISMATCH_ERR: 17, SECURITY_ERR: 18,
+            NETWORK_ERR: 19, ABORT_ERR: 20, URL_MISMATCH_ERR: 21,
+            QUOTA_EXCEEDED_ERR: 22, TIMEOUT_ERR: 23, INVALID_NODE_TYPE_ERR: 24,
+            DATA_CLONE_ERR: 25
+        };
+        for (var k in _CONSTANTS) {
+            DOMException[k] = _CONSTANTS[k];
+            DOMException.prototype[k] = _CONSTANTS[k];
+        }
+        globalThis.DOMException = DOMException;
+        if (globalThis.window) globalThis.window.DOMException = DOMException;
+    }
     const ops = Deno.core.ops;
     globalThis._origCE = (tag) => ops.op_mango_create_element(String(tag));
     globalThis._origCTN = (text) => ops.op_mango_create_text_node(String(text));
@@ -219,6 +263,8 @@ pub const PRELUDE_JS: &str = r##"
     globalThis._getTemplateContent = (id) => { const r = ops.op_mango_get_template_content(Number(id)); return r > 0 ? r : null; };
     globalThis._getNodeType = (id) => ops.op_mango_get_node_type(Number(id));
     globalThis._getNodeName = (id) => ops.op_mango_get_node_name(Number(id));
+    globalThis._getDoctypePublicId = (id) => ops.op_mango_get_doctype_public_id(Number(id));
+    globalThis._getDoctypeSystemId = (id) => ops.op_mango_get_doctype_system_id(Number(id));
     globalThis._getNodeValue = (id) => ops.op_mango_get_node_value(Number(id));
     globalThis._setNodeValue = (id, val) => ops.op_mango_set_node_value(Number(id), val != null ? String(val) : null);
     globalThis._getAttributeNames = (id) => ops.op_mango_get_attribute_names(Number(id));
@@ -230,6 +276,8 @@ pub const PRELUDE_JS: &str = r##"
     globalThis._setFocusState = (id, f) => ops.op_mango_set_focus_state(Number(id), !!f);
     globalThis._getElementRect = (id) => ops.op_mango_get_element_rect(Number(id));
     globalThis._getComputedStyle = (id) => ops.op_mango_get_computed_style(Number(id));
+    globalThis._parseCssDeclaration = (p, v) => ops.op_mango_css_parse_declaration(String(p), String(v));
+    globalThis._cssSupports = (p, v) => ops.op_mango_css_supports(String(p), v != null ? String(v) : null);
     globalThis._elementFromPoint = (x, y) => { const r = ops.op_mango_element_from_point(Number(x), Number(y)); return r > 0 ? r : null; };
     globalThis._elementsFromPoint = (x, y) => ops.op_mango_elements_from_point(Number(x), Number(y));
     globalThis._elementContains = (p, c) => ops.op_mango_element_contains(Number(p), Number(c));

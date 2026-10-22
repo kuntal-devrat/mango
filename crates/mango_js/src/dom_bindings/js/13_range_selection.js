@@ -82,6 +82,49 @@
         return idxA < idxB ? -1 : 1;
     }
 
+    var _docPositionUid = 1;
+    function _compareDocumentPositionNodes(nodeA, nodeB) {
+        if (nodeA === nodeB) return 0;
+        if (!nodeB || typeof nodeB !== 'object') {
+            throw new TypeError("Failed to execute 'compareDocumentPosition' on 'Node': parameter 1 is not of type 'Node'.");
+        }
+        var rootA = nodeA;
+        while (rootA.parentNode) rootA = rootA.parentNode;
+        var rootB = nodeB;
+        while (rootB.parentNode) rootB = rootB.parentNode;
+
+        if (rootA !== rootB) {
+            if (!nodeA._docPosUid) nodeA._docPosUid = _docPositionUid++;
+            if (!nodeB._docPosUid) nodeB._docPosUid = _docPositionUid++;
+            var isFollowing = nodeA._docPosUid < nodeB._docPosUid;
+            return 1 | 32 | (isFollowing ? 4 : 2);
+        }
+
+        if (_isDescendantOf(nodeA, nodeB)) {
+            return 8 | 2;
+        }
+        if (_isDescendantOf(nodeB, nodeA)) {
+            return 16 | 4;
+        }
+
+        var common = _getCommonAncestor(nodeA, nodeB);
+        var childA = nodeA;
+        while (childA.parentNode && childA.parentNode !== common && !(childA.parentNode._nodeId !== undefined && childA.parentNode._nodeId === common._nodeId)) {
+            childA = childA.parentNode;
+        }
+        var childB = nodeB;
+        while (childB.parentNode && childB.parentNode !== common && !(childB.parentNode._nodeId !== undefined && childB.parentNode._nodeId === common._nodeId)) {
+            childB = childB.parentNode;
+        }
+        var idxA = _getNodeIndex(childA);
+        var idxB = _getNodeIndex(childB);
+        return idxB < idxA ? 2 : 4;
+    }
+    globalThis._compareDocumentPositionNodes = _compareDocumentPositionNodes;
+
+    var _liveRanges = new Set();
+    globalThis._liveRanges = _liveRanges;
+
     function Range() {
         this.startContainer = (typeof document !== 'undefined') ? (document.body || document) : null;
         this.startOffset = 0;
@@ -89,6 +132,7 @@
         this.endOffset = 0;
         this.collapsed = true;
         this.commonAncestorContainer = this.startContainer;
+        _liveRanges.add(this);
     }
 
     Range.START_TO_START = 0;
@@ -309,19 +353,45 @@
 
     Range.prototype.toString = function() {
         if (this.collapsed) return '';
-        var isSame = (this.startContainer === this.endContainer || (this.startContainer && this.endContainer && this.startContainer._nodeId !== undefined && this.startContainer._nodeId === this.endContainer._nodeId));
-        if (isSame) {
-            if (this.startContainer.nodeType === 3 || this.startContainer.nodeType === 8) {
-                return (this.startContainer.nodeValue || '').substring(this.startOffset, this.endOffset);
+        var sc = this.startContainer, so = this.startOffset;
+        var ec = this.endContainer, eo = this.endOffset;
+        var isSame = (sc === ec || (sc && ec && sc._nodeId !== undefined && sc._nodeId === ec._nodeId));
+        if (isSame && (sc.nodeType === 3 || sc.nodeType === 4)) {
+            return (sc.data || sc.nodeValue || '').substring(so, eo);
+        }
+        var s = '';
+        if (sc.nodeType === 3 || sc.nodeType === 4) {
+            s += (sc.data || sc.nodeValue || '').substring(so);
+        }
+        var root = this.commonAncestorContainer || sc;
+        if (root) {
+            var cur = root.firstChild;
+            while (cur) {
+                var curSameAsStart = (cur === sc || (cur && sc && cur._nodeId !== undefined && cur._nodeId === sc._nodeId));
+                var curSameAsEnd = (cur === ec || (cur && ec && cur._nodeId !== undefined && cur._nodeId === ec._nodeId));
+                if ((cur.nodeType === 3 || cur.nodeType === 4) && !curSameAsStart && !curSameAsEnd) {
+                    var curLen = _getNodeLength(cur);
+                    var afterStart = _comparePoints(cur, 0, sc, so) > 0;
+                    var beforeEnd = _comparePoints(cur, curLen, ec, eo) < 0;
+                    if (afterStart && beforeEnd) {
+                        s += (cur.data || cur.nodeValue || '');
+                    }
+                }
+                if (cur.firstChild && !(cur.nodeType === 3 || cur.nodeType === 4)) {
+                    cur = cur.firstChild;
+                } else {
+                    while (cur && cur !== root && !cur.nextSibling) {
+                        cur = cur.parentNode;
+                    }
+                    if (!cur || cur === root) break;
+                    cur = cur.nextSibling;
+                }
             }
-            return (this.startContainer.textContent || '');
         }
-        if (this.startContainer.nodeType === 3 && this.endContainer.nodeType === 3) {
-            var s1 = (this.startContainer.nodeValue || '').substring(this.startOffset);
-            var s2 = (this.endContainer.nodeValue || '').substring(0, this.endOffset);
-            return s1 + s2;
+        if ((ec.nodeType === 3 || ec.nodeType === 4) && !isSame) {
+            s += (ec.data || ec.nodeValue || '').substring(0, eo);
         }
-        return (this.commonAncestorContainer && this.commonAncestorContainer.textContent) ? this.commonAncestorContainer.textContent : '';
+        return s;
     };
 
     Range.prototype.isPointInRange = function(node, offset) {
@@ -374,7 +444,9 @@
         return [];
     };
 
-    Range.prototype.detach = function() {};
+    Range.prototype.detach = function() {
+        if (_liveRanges) _liveRanges.delete(this);
+    };
 
     function Selection() {
         this._range = null;
@@ -494,4 +566,142 @@
 
     globalThis.Range = Range;
     globalThis.Selection = Selection;
+
+    function _notifyRangeNodeRemoved(parent, node, index) {
+        if (!_liveRanges || _liveRanges.size === 0) return;
+        _liveRanges.forEach(function(range) {
+            var updated = false;
+            if (range.startContainer === node || _isDescendantOf(range.startContainer, node)) {
+                range.startContainer = parent;
+                range.startOffset = index;
+                updated = true;
+            } else if (range.startContainer === parent && range.startOffset > index) {
+                range.startOffset--;
+                updated = true;
+            }
+            if (range.endContainer === node || _isDescendantOf(range.endContainer, node)) {
+                range.endContainer = parent;
+                range.endOffset = index;
+                updated = true;
+            } else if (range.endContainer === parent && range.endOffset > index) {
+                range.endOffset--;
+                updated = true;
+            }
+            if (updated && range._updateState) range._updateState();
+        });
+    }
+    globalThis._notifyRangeNodeRemoved = _notifyRangeNodeRemoved;
+
+    function _notifyRangeSplitText(node, newNode, offset) {
+        if (!_liveRanges || _liveRanges.size === 0) return;
+        var parent = node.parentNode || node._parentNode;
+        var nodeIndex = -1;
+        if (parent && parent._childNodes) {
+            nodeIndex = parent._childNodes.indexOf(node);
+        }
+        if (nodeIndex === -1 && typeof _getNodeIndex === 'function') {
+            nodeIndex = _getNodeIndex(node);
+        }
+        _liveRanges.forEach(function(range) {
+            var updated = false;
+            if (range.startContainer === node && range.startOffset > offset) {
+                range.startContainer = newNode;
+                range.startOffset -= offset;
+                updated = true;
+            }
+            if (range.endContainer === node && range.endOffset > offset) {
+                range.endContainer = newNode;
+                range.endOffset -= offset;
+                updated = true;
+            }
+            if (parent && (range.startContainer === parent || (range.startContainer && parent && range.startContainer._nodeId !== undefined && range.startContainer._nodeId === parent._nodeId)) && range.startOffset === nodeIndex + 1) {
+                range.startOffset++;
+                updated = true;
+            }
+            if (parent && (range.endContainer === parent || (range.endContainer && parent && range.endContainer._nodeId !== undefined && range.endContainer._nodeId === parent._nodeId)) && range.endOffset === nodeIndex + 1) {
+                range.endOffset++;
+                updated = true;
+            }
+            if (updated && range._updateState) range._updateState();
+        });
+    }
+    globalThis._notifyRangeSplitText = _notifyRangeSplitText;
+
+    function _notifyRangeNormalizeMerge(node, prevLength, sibling) {
+        if (!_liveRanges || _liveRanges.size === 0) return;
+        var parent = sibling.parentNode || sibling._parentNode;
+        var siblingIndex = -1;
+        if (parent && parent._childNodes) {
+            siblingIndex = parent._childNodes.indexOf(sibling);
+        }
+        if (siblingIndex === -1 && typeof _getNodeIndex === 'function') {
+            siblingIndex = _getNodeIndex(sibling);
+        }
+        _liveRanges.forEach(function(range) {
+            var updated = false;
+            if (range.startContainer === sibling || (range.startContainer && sibling && range.startContainer._nodeId !== undefined && range.startContainer._nodeId === sibling._nodeId)) {
+                range.startContainer = node;
+                range.startOffset = prevLength + range.startOffset;
+                updated = true;
+            }
+            if (range.endContainer === sibling || (range.endContainer && sibling && range.endContainer._nodeId !== undefined && range.endContainer._nodeId === sibling._nodeId)) {
+                range.endContainer = node;
+                range.endOffset = prevLength + range.endOffset;
+                updated = true;
+            }
+            if (parent && (range.startContainer === parent || (range.startContainer && parent && range.startContainer._nodeId !== undefined && range.startContainer._nodeId === parent._nodeId)) && range.startOffset === siblingIndex) {
+                range.startContainer = node;
+                range.startOffset = prevLength;
+                updated = true;
+            }
+            if (parent && (range.endContainer === parent || (range.endContainer && parent && range.endContainer._nodeId !== undefined && range.endContainer._nodeId === parent._nodeId)) && range.endOffset === siblingIndex) {
+                range.endContainer = node;
+                range.endOffset = prevLength;
+                updated = true;
+            }
+            if (updated && range._updateState) range._updateState();
+        });
+    }
+    globalThis._notifyRangeNormalizeMerge = _notifyRangeNormalizeMerge;
+
+    function _isExclusiveTextNode(node) {
+        if (!node) return false;
+        if (node.nodeType !== 3) return false;
+        if (node._isCDATA) return false;
+        if (node.nodeName !== "#text") return false;
+        if (typeof CDATASection !== 'undefined' && node instanceof CDATASection) return false;
+        return true;
+    }
+    globalThis._isExclusiveTextNode = _isExclusiveTextNode;
+
+    function _normalizeNode(root) {
+        if (!root) return;
+        var child = root.firstChild;
+        while (child) {
+            var next = child.nextSibling;
+            if (_isExclusiveTextNode(child)) {
+                var dataLen = (child.data !== undefined && child.data !== null) ? child.data.length : ((child.nodeValue !== undefined && child.nodeValue !== null) ? child.nodeValue.length : 0);
+                if (dataLen === 0) {
+                    root.removeChild(child);
+                    child = next;
+                    continue;
+                }
+                var sib = child.nextSibling;
+                while (sib && _isExclusiveTextNode(sib)) {
+                    var sibNext = sib.nextSibling;
+                    var sibData = (sib.data !== undefined && sib.data !== null) ? sib.data : (sib.nodeValue || "");
+                    var prevLen = (child.data !== undefined && child.data !== null) ? child.data.length : (child.nodeValue ? child.nodeValue.length : 0);
+                    _notifyRangeNormalizeMerge(child, prevLen, sib);
+                    child.data = (child.data || "") + sibData;
+                    root.removeChild(sib);
+                    sib = sibNext;
+                }
+                child = sib;
+            } else {
+                _normalizeNode(child);
+                child = next;
+            }
+        }
+    }
+    globalThis._normalizeNode = _normalizeNode;
 

@@ -1,7 +1,9 @@
 //! Box model, sizing, borders, margins, padding, and display properties.
 
 use crate::computed::style::ComputedStyle;
-use crate::values::{BorderStyle, Clear, Display, Float, Length, Overflow, Value, Visibility};
+use crate::values::{
+    BorderCollapse, BorderStyle, Clear, Display, Float, Length, Overflow, Value, Visibility,
+};
 
 /// Parses a border-style keyword or value.
 pub(crate) fn parse_border_style_value(val: &Value) -> Option<BorderStyle> {
@@ -319,22 +321,22 @@ pub(crate) fn apply_box_model_property(style: &mut ComputedStyle, prop: &str, va
         },
 
         // Positioning offsets
-        "top" => {
+        "top" | "inset-block-start" => {
             if let Value::Length(l) = val {
                 style.top = *l;
             }
         }
-        "right" => {
+        "right" | "inset-inline-end" => {
             if let Value::Length(l) = val {
                 style.right = *l;
             }
         }
-        "bottom" => {
+        "bottom" | "inset-block-end" => {
             if let Value::Length(l) = val {
                 style.bottom = *l;
             }
         }
-        "left" => {
+        "left" | "inset-inline-start" => {
             if let Value::Length(l) = val {
                 style.left = *l;
             }
@@ -403,6 +405,9 @@ pub(crate) fn apply_box_model_property(style: &mut ComputedStyle, prop: &str, va
         },
         "visibility" => match val {
             Value::Visibility(v) => style.visibility = *v,
+            Value::BorderCollapse(BorderCollapse::Collapse) => {
+                style.visibility = Visibility::Collapse
+            }
             Value::Overflow(Overflow::Hidden) => style.visibility = Visibility::Hidden,
             Value::Overflow(Overflow::Visible) => style.visibility = Visibility::Visible,
             Value::Keyword(k) => match k.as_str() {
@@ -411,6 +416,12 @@ pub(crate) fn apply_box_model_property(style: &mut ComputedStyle, prop: &str, va
                 "collapse" => style.visibility = Visibility::Collapse,
                 _ => {}
             },
+            _ => {}
+        },
+        "margin-trim" => match val {
+            Value::Keyword(k) | Value::String(k) => style.margin_trim = k.clone(),
+            Value::Display(Display::Block) => style.margin_trim = "block".to_string(),
+            Value::Display(Display::Inline) => style.margin_trim = "inline".to_string(),
             _ => {}
         },
         "opacity" => match val {

@@ -646,12 +646,9 @@ impl GpuCompositor {
         encoder.transition_to_present(&frame.texture);
         if let Err(e) = self.queue.submit_surface(encoder.finish(), frame) {
             let err_str = e.to_string();
-            if err_str.contains("OUT_OF_DATE") || err_str.contains("Suboptimal") {
-                log::warn!("Swapchain out of date during submit_surface, reconfiguring: {err_str}");
-                let _ = self.surface.configure(&self.device, &self.config);
-                return Ok(());
-            }
-            return Err(format!("lgpu submit_surface failed: {err_str}"));
+            log::warn!("Swapchain submit_surface error, reconfiguring surface: {err_str}");
+            let _ = self.surface.configure(&self.device, &self.config);
+            return Ok(());
         }
 
         Ok(())
@@ -751,12 +748,9 @@ impl GpuCompositor {
         encoder.transition_to_present(&frame.texture);
         if let Err(e) = self.queue.submit_surface(encoder.finish(), frame) {
             let err_str = e.to_string();
-            if err_str.contains("OUT_OF_DATE") || err_str.contains("Suboptimal") {
-                log::warn!("Swapchain out of date during submit_surface, reconfiguring: {err_str}");
-                let _ = self.surface.configure(&self.device, &self.config);
-                return Ok(());
-            }
-            return Err(format!("lgpu submit_surface failed: {err_str}"));
+            log::warn!("Swapchain submit_surface error, reconfiguring surface: {err_str}");
+            let _ = self.surface.configure(&self.device, &self.config);
+            return Ok(());
         }
 
         Ok(())

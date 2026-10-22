@@ -113,12 +113,21 @@ impl CssParser {
                         return !val_tokens.is_empty();
                     }
 
-                    if crate::property_id::CssPropertyId::from_name(&prop_name).is_some() {
-                        let owned_val_tokens: Vec<Token> =
-                            val_tokens.iter().map(|&t| (*t).clone()).collect();
-                        return self.parse_value_from_tokens(&owned_val_tokens).is_some();
+                    // CSS Conditional Rules Level 3 § 3.1: a declaration condition
+                    // is true only if the UA supports that property *and* that
+                    // value. An unsupported property makes the condition false
+                    // (so `not (...)` is true).
+                    if !crate::properties::is_supported_property(&prop_name) {
+                        return false;
                     }
-                    return false;
+
+                    let mut val_str = String::new();
+                    for t in val_tokens {
+                        val_str.push_str(&self.token_to_string(t));
+                    }
+                    let decls =
+                        crate::parser::parse_declaration_list(&format!("{prop_name}: {val_str}"));
+                    return !decls.is_empty();
                 }
 
                 return self.eval_supports_tokens(inner, depth + 1);

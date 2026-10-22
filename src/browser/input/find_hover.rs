@@ -47,7 +47,7 @@ impl BrowserChrome {
                     let bbox = b.dimensions.border_box();
                     while let Some(pos) = text_lower[start..].find(q) {
                         let absolute_byte_idx = start + pos;
-                        let char_start = text[..absolute_byte_idx].chars().count();
+                        let char_start = text_lower[..absolute_byte_idx].chars().count();
                         let char_len = q.chars().count();
                         let start_frac = (char_start as f32 / total_chars).clamp(0.0, 1.0);
                         let len_frac = (char_len as f32 / total_chars).clamp(0.01, 1.0);

@@ -152,10 +152,12 @@ impl Document {
         }
 
         if let Some(c_node) = self.arena.get(child) {
-            if matches!(
-                c_node.data,
-                NodeData::Document | NodeData::DocumentType { .. }
-            ) {
+            if matches!(c_node.data, NodeData::Document) {
+                return;
+            }
+            if matches!(c_node.data, NodeData::DocumentType { .. })
+                && !matches!(self.arena.get(parent).map(|p| &p.data), Some(NodeData::Document))
+            {
                 return;
             }
         } else {
@@ -246,10 +248,12 @@ impl Document {
         match self.arena.get(child) {
             None => return Err(DomError::NotFoundError),
             Some(c_node) => {
-                if matches!(
-                    c_node.data,
-                    NodeData::Document | NodeData::DocumentType { .. }
-                ) {
+                if matches!(c_node.data, NodeData::Document) {
+                    return Err(DomError::HierarchyRequestError);
+                }
+                if matches!(c_node.data, NodeData::DocumentType { .. })
+                    && !matches!(self.arena.get(parent).map(|p| &p.data), Some(NodeData::Document))
+                {
                     return Err(DomError::HierarchyRequestError);
                 }
             }

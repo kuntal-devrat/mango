@@ -619,6 +619,11 @@ impl ResourceLoader {
         &self.cache
     }
 
+    /// Returns a cloned Arc handle to the underlying resource cache.
+    pub fn cache_arc(&self) -> Arc<ResourceCache> {
+        self.cache.clone()
+    }
+
     /// Executes the fast preload scanner on an HTML document (PRD 10.3)
     /// and pre-resolves DNS for preconnect/dns-prefetch targets.
     pub fn scan_and_preload(

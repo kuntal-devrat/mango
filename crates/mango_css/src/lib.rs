@@ -45,8 +45,31 @@ pub use parser::{
     ContainerRule, CssParser, FontFaceRule, KeyframeRule, KeyframesRule, LayerRule, MediaRule,
     Rule, StyleRule, Stylesheet, parse_declaration_list, parse_selectors, parse_stylesheet,
 };
-pub use properties::Declaration;
+pub use properties::{Declaration, is_valid_property_value};
 pub use property_id::{CSS_PROPERTY_COUNT, CssPropertyId, PropertyMap};
+
+/// Evaluates a CSS `@supports` condition or property-value pair.
+pub fn supports(prop_or_condition: &str, value: Option<&str>) -> bool {
+    if let Some(val) = value {
+        let trimmed_prop = prop_or_condition.trim();
+        let trimmed_val = val.trim();
+        if trimmed_prop.starts_with("--") {
+            return !trimmed_val.is_empty();
+        }
+        let decls = parse_declaration_list(&format!("{trimmed_prop}: {trimmed_val}"));
+        !decls.is_empty()
+    } else {
+        let cond = prop_or_condition.trim();
+        let cond_with_parens = if cond.starts_with('(') {
+            cond.to_string()
+        } else {
+            format!("({cond})")
+        };
+        let tokens = CssTokenizer::tokenize(&cond_with_parens);
+        let parser = CssParser::new(tokens.clone());
+        parser.eval_supports_condition(&tokens)
+    }
+}
 pub use selectors::{
     AttributeOperator, Combinator, ComplexSelector, CompoundSelector, SelectorList, SimpleSelector,
     current_host_element, current_scope_root, expand_nested_selectors, set_current_host_element,

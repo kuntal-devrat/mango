@@ -70,7 +70,7 @@ impl FloatContext {
     pub fn apply_clearance(&self, current_y: f32, clear: Clear) -> f32 {
         match clear {
             Clear::None => current_y,
-            Clear::Left => {
+            Clear::Left | Clear::InlineStart => {
                 let max_bottom = self
                     .left_floats
                     .iter()
@@ -78,7 +78,7 @@ impl FloatContext {
                     .fold(current_y, f32::max);
                 max_bottom.max(current_y)
             }
-            Clear::Right => {
+            Clear::Right | Clear::InlineEnd => {
                 let max_bottom = self
                     .right_floats
                     .iter()
@@ -115,10 +115,10 @@ impl FloatContext {
     ) -> (f32, bool) {
         match clear {
             Clear::None => (current_y, false),
-            Clear::Left | Clear::Right | Clear::Both => {
+            Clear::Left | Clear::Right | Clear::Both | Clear::InlineStart | Clear::InlineEnd => {
                 let max_bottom = match clear {
-                    Clear::Left => self.left_bottom(),
-                    Clear::Right => self.right_bottom(),
+                    Clear::Left | Clear::InlineStart => self.left_bottom(),
+                    Clear::Right | Clear::InlineEnd => self.right_bottom(),
                     Clear::Both => self.max_bottom(),
                     Clear::None => unreachable!(),
                 };

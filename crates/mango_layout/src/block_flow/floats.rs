@@ -68,7 +68,7 @@ pub(crate) fn layout_single_float(
     let margin_box_h = child.dimensions.margin_box().height().max(1.0);
 
     // Step down until the float fits horizontally or clears all active floats (CSS 2.1 §9.5.1 Rules 1-9)
-    let is_right = float_type == Float::Right;
+    let is_right = matches!(float_type, Float::Right | Float::InlineEnd);
     let (margin_box_x, margin_box_y) = float_ctx.find_float_position(
         is_right,
         float_y,
@@ -113,7 +113,7 @@ pub(crate) fn layout_single_float(
     // If final height changed the available horizontal span, adjust child_x
     let final_margin_box_h = child.dimensions.margin_box().height();
     let final_child_x = match float_type {
-        Float::Left => {
+        Float::Left | Float::InlineStart => {
             let (min_x, _max_x) = float_ctx.available_span(
                 float_y,
                 final_margin_box_h,
@@ -125,7 +125,7 @@ pub(crate) fn layout_single_float(
                 + child.dimensions.border.left
                 + child.dimensions.padding.left
         }
-        Float::Right => {
+        Float::Right | Float::InlineEnd => {
             let (_min_x, max_x) = float_ctx.available_span(
                 float_y,
                 final_margin_box_h,
@@ -148,8 +148,8 @@ pub(crate) fn layout_single_float(
 
     // Register into outer float_ctx
     match float_type {
-        Float::Left => float_ctx.add_left_float(child.dimensions.margin_box()),
-        Float::Right => float_ctx.add_right_float(child.dimensions.margin_box()),
+        Float::Left | Float::InlineStart => float_ctx.add_left_float(child.dimensions.margin_box()),
+        Float::Right | Float::InlineEnd => float_ctx.add_right_float(child.dimensions.margin_box()),
         Float::None => {}
     }
 }

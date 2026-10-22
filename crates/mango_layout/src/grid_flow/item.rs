@@ -255,7 +255,7 @@ pub fn position_grid_items_in_cells(
                 AlignItems::FlexEnd => {
                     child_y += remaining_h;
                 }
-                AlignItems::Stretch if child_style.height == Length::Auto => {
+                AlignItems::Normal | AlignItems::Stretch if child_style.height == Length::Auto => {
                     let p = child.dimensions.padding;
                     let b = child.dimensions.border;
                     let m = child.dimensions.margin;

@@ -129,20 +129,56 @@
     globalThis.Element.prototype.scroll        = globalThis.Element.prototype.scrollTo;
     globalThis.Element.prototype.prepend       = function() {
         if (this.prepend && this.prepend !== globalThis.Element.prototype.prepend) return this.prepend.apply(this, arguments);
-        var first = this.firstChild;
+        if (arguments.length === 0) return;
+        var nodes = [];
         for (var i = 0; i < arguments.length; i++) {
             var arg = arguments[i];
-            var node = (arg && (arg.nodeType !== undefined || arg._nodeId !== undefined)) ? arg : (typeof document !== 'undefined' && document.createTextNode ? document.createTextNode(String(arg)) : String(arg));
-            if (first) this.insertBefore(node, first);
-            else if (this.appendChild) this.appendChild(node);
+            nodes.push((arg && (arg.nodeType !== undefined || arg._nodeId !== undefined)) ? arg : (typeof document !== 'undefined' && document.createTextNode ? document.createTextNode(String(arg)) : String(arg)));
+        }
+        var first = this.firstChild;
+        if (nodes.length === 1) {
+            if (first) this.insertBefore(nodes[0], first);
+            else if (this.appendChild) this.appendChild(nodes[0]);
+        } else {
+            if (typeof _ensurePreInsertionValidity === 'function') {
+                for (var i = 0; i < nodes.length; i++) _ensurePreInsertionValidity(this, nodes[i], first);
+            }
+            var frag = (typeof document !== 'undefined' && document.createDocumentFragment) ? document.createDocumentFragment() : null;
+            if (frag) {
+                for (var i = 0; i < nodes.length; i++) frag.appendChild(nodes[i]);
+                if (first) this.insertBefore(frag, first);
+                else if (this.appendChild) this.appendChild(frag);
+            } else {
+                for (var i = 0; i < nodes.length; i++) {
+                    if (first) this.insertBefore(nodes[i], first);
+                    else if (this.appendChild) this.appendChild(nodes[i]);
+                }
+            }
         }
     };
     globalThis.Element.prototype.append        = function() {
         if (this.append && this.append !== globalThis.Element.prototype.append) return this.append.apply(this, arguments);
+        if (arguments.length === 0) return;
+        var nodes = [];
         for (var i = 0; i < arguments.length; i++) {
             var arg = arguments[i];
-            var node = (arg && (arg.nodeType !== undefined || arg._nodeId !== undefined)) ? arg : (typeof document !== 'undefined' && document.createTextNode ? document.createTextNode(String(arg)) : String(arg));
-            if (this.appendChild) this.appendChild(node);
+            nodes.push((arg && (arg.nodeType !== undefined || arg._nodeId !== undefined)) ? arg : (typeof document !== 'undefined' && document.createTextNode ? document.createTextNode(String(arg)) : String(arg)));
+        }
+        if (nodes.length === 1) {
+            if (this.appendChild) this.appendChild(nodes[0]);
+        } else {
+            if (typeof _ensurePreInsertionValidity === 'function') {
+                for (var i = 0; i < nodes.length; i++) _ensurePreInsertionValidity(this, nodes[i], null);
+            }
+            var frag = (typeof document !== 'undefined' && document.createDocumentFragment) ? document.createDocumentFragment() : null;
+            if (frag) {
+                for (var i = 0; i < nodes.length; i++) frag.appendChild(nodes[i]);
+                if (this.appendChild) this.appendChild(frag);
+            } else {
+                for (var i = 0; i < nodes.length; i++) {
+                    if (this.appendChild) this.appendChild(nodes[i]);
+                }
+            }
         }
     };
     globalThis.Element.prototype.before        = function() {
@@ -179,17 +215,10 @@
     };
     globalThis.Element.prototype.replaceChildren = function() {
         if (this.replaceChildren && this.replaceChildren !== globalThis.Element.prototype.replaceChildren) return this.replaceChildren.apply(this, arguments);
-        var nodes = [];
-        for (var i = 0; i < arguments.length; i++) {
-            var arg = arguments[i];
-            var node = (arg && (arg.nodeType !== undefined || arg._nodeId !== undefined)) ? arg : (typeof document !== 'undefined' && document.createTextNode ? document.createTextNode(String(arg)) : String(arg));
-            nodes.push(node);
-        }
-        while (this.firstChild && this.removeChild) {
-            this.removeChild(this.firstChild);
-        }
-        for (var j = 0; j < nodes.length; j++) {
-            if (this.appendChild) this.appendChild(nodes[j]);
+        if (typeof _doReplaceChildren === 'function') {
+            return _doReplaceChildren(this, arguments, false);
+        } else if (typeof globalThis !== 'undefined' && globalThis._doReplaceChildren) {
+            return globalThis._doReplaceChildren(this, arguments, false);
         }
     };
     globalThis.Element.prototype.remove        = function() {
@@ -529,6 +558,9 @@
     globalThis.SVGSVGElement.prototype = Object.create(globalThis.SVGElement.prototype);
     globalThis.SVGSVGElement.prototype.createSVGPoint = function() { return { x:0, y:0, matrixTransform: function() { return this; } }; };
     globalThis.SVGSVGElement.prototype.getScreenCTM   = function() { return { a:1, b:0, c:0, d:1, e:0, f:0, inverse: function() { return this; } }; };
+    ['SVGUseElement','SVGGElement','SVGPathElement','SVGCircleElement','SVGRectElement','SVGGraphicsElement'].forEach(function(s) {
+        globalThis[s] = function() {}; globalThis[s].prototype = Object.create(globalThis.SVGElement.prototype);
+    });
 
     // Specialised HTML element subclasses
     var _htmlSubclasses = [
@@ -549,7 +581,8 @@
         'HTMLTimeElement','HTMLDataElement','HTMLRubyElement','HTMLTableSectionElement',
         'HTMLTableColElement','HTMLTableCaptionElement','HTMLDListElement',
         'HTMLQuoteElement','HTMLModElement','HTMLUnknownElement','HTMLCanvasElement',
-        'HTMLMediaElement','HTMLVideoElement','HTMLAudioElement'
+        'HTMLMediaElement','HTMLVideoElement','HTMLAudioElement',
+        'HTMLDirectoryElement','HTMLFontElement','HTMLFrameElement','HTMLFrameSetElement','HTMLParamElement'
     ];
     _htmlSubclasses.forEach(function(name) {
         globalThis[name] = function() {};
@@ -564,13 +597,36 @@
         globalThis.HTMLAudioElement.prototype = Object.create(globalThis.HTMLMediaElement.prototype);
         globalThis.HTMLAudioElement.prototype.constructor = globalThis.HTMLAudioElement;
     }
+    if (globalThis.HTMLStyleElement) {
+        Object.defineProperty(globalThis.HTMLStyleElement.prototype, 'sheet', {
+            get: function() {
+                if (!this._sheet) {
+                    if (typeof globalThis.CSSStyleSheet === 'function') {
+                        this._sheet = new globalThis.CSSStyleSheet();
+                        var text = this.textContent || "";
+                        if (text && typeof this._sheet.replaceSync === 'function') {
+                            try { this._sheet.replaceSync(text); } catch(e) {}
+                        }
+                    } else {
+                        this._sheet = {
+                            cssRules: [],
+                            rules: [],
+                            insertRule: function(rule, idx) { return 0; },
+                            deleteRule: function(idx) {}
+                        };
+                    }
+                }
+                return this._sheet;
+            },
+            configurable: true,
+            enumerable: true
+        });
+    }
 
     function _setupHyperlinkUtils(proto) {
         function _getURL(el) {
             var raw = el.getAttribute ? (el.getAttribute('href') || '') : (el._href || '');
-            var base = (typeof window !== 'undefined' && window.location && window.location.href)
-                ? window.location.href
-                : 'https://www.youtube.com/';
+            var base = (el && el.ownerDocument && el.ownerDocument.baseURI) || ((typeof window !== 'undefined' && window.location && window.location.href) ? window.location.href : 'about:blank');
             try {
                 return new URL(raw, base);
             } catch(e) {
@@ -642,3 +698,83 @@
             }
         });
     }
+
+    globalThis.Element.prototype.getAttributeNode = function(name) {
+        var val = this.getAttribute(name);
+        if (val === null) return null;
+        if (!this._attrNodes) this._attrNodes = {};
+        var n = String(name);
+        if (this._attrNodes[n]) { this._attrNodes[n].value = val; return this._attrNodes[n]; }
+        var doc = this.ownerDocument || (typeof document !== 'undefined' ? document : null);
+        var attr = (doc && doc.createAttribute) ? doc.createAttribute(name) : { name: name, value: val, specified: true, nodeType: 2, nodeName: name, nodeValue: val };
+        attr.value = val; attr.ownerElement = this; attr.ownerDocument = doc; attr._ownerDocument = doc;
+        if (globalThis.Attr) Object.setPrototypeOf(attr, globalThis.Attr.prototype);
+        this._attrNodes[n] = attr;
+        return attr;
+    };
+
+    globalThis.Element.prototype.getAttributeNodeNS = function(ns, localName) {
+        var val = this.getAttributeNS ? this.getAttributeNS(ns, localName) : this.getAttribute(localName);
+        if (val === null) return null;
+        if (!this._attrNodes) this._attrNodes = {};
+        var ln = String(localName), key = (ns || '') + ':' + ln;
+        if (this._attrNodes[key]) { this._attrNodes[key].value = val; return this._attrNodes[key]; }
+        var doc = this.ownerDocument || (typeof document !== 'undefined' ? document : null);
+        var attr = (doc && doc.createAttributeNS) ? doc.createAttributeNS(ns, localName) : { name: localName, localName: localName, namespaceURI: ns || null, value: val, specified: true, nodeType: 2, nodeName: localName, nodeValue: val };
+        attr.value = val; attr.ownerElement = this; attr.ownerDocument = doc; attr._ownerDocument = doc;
+        if (globalThis.Attr) Object.setPrototypeOf(attr, globalThis.Attr.prototype);
+        this._attrNodes[key] = attr; this._attrNodes[ln] = attr;
+        return attr;
+    };
+
+    globalThis.Element.prototype.setAttributeNode = function(attr) {
+        if (!attr || attr.nodeType !== 2) throw new TypeError("parameter 1 is not of type 'Attr'");
+        if (attr.ownerElement && attr.ownerElement !== this) {
+            var DomEx = (globalThis && globalThis.DOMException) ? globalThis.DOMException : (typeof DOMException !== 'undefined' ? DOMException : Error);
+            throw new DomEx("The attribute is in use by another element.", "InUseAttributeError");
+        }
+        if (!this._attrNodes) this._attrNodes = {};
+        var old = this.getAttributeNode ? this.getAttributeNode(attr.name) : null;
+        this.setAttribute(attr.name, attr.value);
+        attr.ownerElement = this; attr.ownerDocument = this.ownerDocument; attr._ownerDocument = this.ownerDocument;
+        this._attrNodes[attr.name] = attr;
+        return old;
+    };
+
+    globalThis.Element.prototype.setAttributeNodeNS = function(attr) {
+        if (!attr || attr.nodeType !== 2) throw new TypeError("parameter 1 is not of type 'Attr'");
+        if (attr.ownerElement && attr.ownerElement !== this) {
+            var DomEx = (globalThis && globalThis.DOMException) ? globalThis.DOMException : (typeof DOMException !== 'undefined' ? DOMException : Error);
+            throw new DomEx("The attribute is in use by another element.", "InUseAttributeError");
+        }
+        if (!this._attrNodes) this._attrNodes = {};
+        var old = this.getAttributeNodeNS ? this.getAttributeNodeNS(attr.namespaceURI, attr.localName) : null;
+        if (this.setAttributeNS) {
+            this.setAttributeNS(attr.namespaceURI, attr.name, attr.value);
+        } else {
+            this.setAttribute(attr.name, attr.value);
+        }
+        attr.ownerElement = this; attr.ownerDocument = this.ownerDocument; attr._ownerDocument = this.ownerDocument;
+        var key = (attr.namespaceURI || '') + ':' + attr.localName;
+        this._attrNodes[key] = attr; this._attrNodes[attr.localName] = attr; this._attrNodes[attr.name] = attr;
+        return old;
+    };
+
+    globalThis.Element.prototype.removeAttributeNode = function(attr) {
+        if (!attr || attr.nodeType !== 2) throw new TypeError("parameter 1 is not of type 'Attr'");
+        if (attr.ownerElement !== this) {
+            var DomEx = (globalThis && globalThis.DOMException) ? globalThis.DOMException : (typeof DOMException !== 'undefined' ? DOMException : Error);
+            throw new DomEx("The attribute is not associated with this element.", "NotFoundError");
+        }
+        if (this._attrNodes) {
+            delete this._attrNodes[attr.name]; delete this._attrNodes[attr.localName];
+            delete this._attrNodes[(attr.namespaceURI || '') + ':' + attr.localName];
+        }
+        attr.ownerElement = null;
+        if (attr.namespaceURI && this.removeAttributeNS) {
+            this.removeAttributeNS(attr.namespaceURI, attr.localName);
+        } else {
+            this.removeAttribute(attr.name);
+        }
+        return attr;
+    };

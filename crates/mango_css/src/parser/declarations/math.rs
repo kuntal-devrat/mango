@@ -422,8 +422,19 @@ impl CssParser {
             let left = Self::parse_calc_product(&tokens[..i], depth + 1)?;
             let right = Self::parse_calc_atom(&tokens[i + 1..], depth + 1)?;
             if is_div {
+                if !right.is_dimensionless_number() {
+                    return None;
+                }
+                if let MathExpr::Number(n) = right {
+                    if n == 0.0 {
+                        return None;
+                    }
+                }
                 Some(MathExpr::Div(Box::new(left), Box::new(right)))
             } else {
+                if !left.is_dimensionless_number() && !right.is_dimensionless_number() {
+                    return None;
+                }
                 Some(MathExpr::Mul(Box::new(left), Box::new(right)))
             }
         } else {
@@ -585,7 +596,7 @@ impl CssParser {
                         "mm" => Length::Px(*value * 9.6 / 2.54),
                         "q" => Length::Px(*value * 96.0 / 101.6),
                         "ch" => Length::Em(*value * 0.5),
-                        "ex" => Length::Em(*value * 0.5),
+                        "ex" => Length::Ex(*value),
                         _ => Length::Px(*value),
                     };
                     return Some(MathExpr::Length(len));
@@ -594,11 +605,7 @@ impl CssParser {
                     return Some(MathExpr::Length(Length::Percent(*pct)));
                 }
                 Token::Number(n) => {
-                    if *n == 0.0 {
-                        return Some(MathExpr::Length(Length::Px(0.0)));
-                    } else {
-                        return Some(MathExpr::Number(*n));
-                    }
+                    return Some(MathExpr::Number(*n));
                 }
                 _ => return None,
             }

@@ -92,91 +92,138 @@ pub(crate) fn expand_grid_template_shorthand(value: &Value, important: bool) -> 
     }
 }
 
-/// Expands flex shorthand into flex-grow, flex-shrink, and flex-basis.
+fn is_flex_basis_value(val: &Value) -> bool {
+    match val {
+        Value::Length(len) => match len {
+            Length::Percent(_)
+            | Length::Em(_)
+            | Length::Ex(_)
+            | Length::Rem(_)
+            | Length::Vw(_)
+            | Length::Vh(_)
+            | Length::Vmin(_)
+            | Length::Vmax(_)
+            | Length::Cqw(_)
+            | Length::Cqh(_)
+            | Length::Cqi(_)
+            | Length::Cqb(_)
+            | Length::Cqmin(_)
+            | Length::Cqmax(_)
+            | Length::Auto
+            | Length::Content
+            | Length::MinContent
+            | Length::MaxContent
+            | Length::FitContent => true,
+            Length::Px(_) => true,
+            Length::Calc(calc) => {
+                calc.has_percent
+                    || calc.px != 0.0
+                    || calc.em != 0.0
+                    || calc.ex != 0.0
+                    || calc.rem != 0.0
+                    || calc.vw != 0.0
+                    || calc.vh != 0.0
+            }
+            Length::Math(id) => {
+                !crate::values::get_math(*id).map_or(false, |m| m.is_dimensionless_number())
+            }
+            Length::Anchor { .. } => false,
+        },
+        Value::Keyword(k) => matches!(
+            k.to_ascii_lowercase().as_str(),
+            "auto" | "content" | "fit-content" | "min-content" | "max-content"
+        ),
+        _ => false,
+    }
+}
+
+/// Expands flex shorthand into flex-grow, flex-shrink, and flex-basis according to CSS Flexbox Level 1 § 7.1.
 pub(crate) fn expand_flex_shorthand(value: &Value, important: bool) -> Vec<Declaration> {
     let items = match value {
         Value::List(list) => list.as_slice(),
         single => std::slice::from_ref(single),
     };
 
+    if items.is_empty() || items.len() > 3 {
+        return Vec::new();
+    }
+
     if items.len() == 1 {
-        match items[0] {
-            Value::Keyword(ref k) if k == "none" => {
+        if let Value::Keyword(ref k) = items[0] {
+            if k.eq_ignore_ascii_case("none") {
                 return vec![
                     Declaration::new("flex-grow", Value::Number(0.0), important),
                     Declaration::new("flex-shrink", Value::Number(0.0), important),
                     Declaration::new("flex-basis", Value::Length(Length::Auto), important),
                 ];
             }
-            Value::Keyword(ref k) if k == "auto" => {
-                return vec![
-                    Declaration::new("flex-grow", Value::Number(1.0), important),
-                    Declaration::new("flex-shrink", Value::Number(1.0), important),
-                    Declaration::new("flex-basis", Value::Length(Length::Auto), important),
-                ];
-            }
-            Value::Number(n) => {
-                return vec![
-                    Declaration::new("flex-grow", Value::Number(n), important),
-                    Declaration::new("flex-shrink", Value::Number(1.0), important),
-                    Declaration::new("flex-basis", Value::Length(Length::Px(0.0)), important),
-                ];
-            }
-            Value::Length(Length::Px(0.0)) => {
-                return vec![
-                    Declaration::new("flex-grow", Value::Number(0.0), important),
-                    Declaration::new("flex-shrink", Value::Number(1.0), important),
-                    Declaration::new("flex-basis", Value::Length(Length::Px(0.0)), important),
-                ];
-            }
-            Value::Length(len) => {
-                return vec![
-                    Declaration::new("flex-grow", Value::Number(1.0), important),
-                    Declaration::new("flex-shrink", Value::Number(1.0), important),
-                    Declaration::new("flex-basis", Value::Length(len), important),
-                ];
-            }
-            _ => {}
         }
-    } else if items.len() == 2 {
-        let grow = match items[0] {
-            Value::Number(n) => n,
-            Value::Length(Length::Px(px)) => px,
-            _ => 1.0,
-        };
-        let shrink = match items[1] {
-            Value::Number(n) => n,
-            Value::Length(Length::Px(px)) => px,
-            _ => 1.0,
-        };
-        return vec![
-            Declaration::new("flex-grow", Value::Number(grow), important),
-            Declaration::new("flex-shrink", Value::Number(shrink), important),
-            Declaration::new("flex-basis", Value::Length(Length::Px(0.0)), important),
-        ];
-    } else if items.len() >= 3 {
-        let grow = match items[0] {
-            Value::Number(n) => n,
-            Value::Length(Length::Px(px)) => px,
-            _ => 1.0,
-        };
-        let shrink = match items[1] {
-            Value::Number(n) => n,
-            Value::Length(Length::Px(px)) => px,
-            _ => 1.0,
-        };
-        let basis = match items[2] {
-            Value::Length(len) => len,
-            _ => Length::Auto,
-        };
-        return vec![
-            Declaration::new("flex-grow", Value::Number(grow), important),
-            Declaration::new("flex-shrink", Value::Number(shrink), important),
-            Declaration::new("flex-basis", Value::Length(basis), important),
-        ];
     }
 
-    vec![Declaration::new("flex", value.clone(), important)]
+    // "none" is invalid if combined with any other token
+    for it in items {
+        if let Value::Keyword(k) = it {
+            if k.eq_ignore_ascii_case("none") {
+                return Vec::new();
+            }
+        }
+    }
+
+    let mut grow: Option<Value> = None;
+    let mut shrink: Option<Value> = None;
+    let mut basis: Option<Value> = None;
+
+    for it in items {
+        if is_flex_basis_value(it) {
+            if basis.is_some() {
+                return Vec::new(); // Duplicate basis
+            }
+            let b = match it {
+                Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
+                    "auto" => Value::Length(Length::Auto),
+                    "content" => Value::Length(Length::Content),
+                    "fit-content" => Value::Length(Length::FitContent),
+                    "min-content" => Value::Length(Length::MinContent),
+                    "max-content" => Value::Length(Length::MaxContent),
+                    _ => it.clone(),
+                },
+                _ => it.clone(),
+            };
+            basis = Some(b);
+        } else if let Value::Number(n) = it {
+            if grow.is_none() {
+                grow = Some(Value::Number(*n));
+            } else if shrink.is_none() {
+                shrink = Some(Value::Number(*n));
+            } else if basis.is_none() && *n == 0.0 {
+                // Unitless zero preceded by two flex factors is interpreted as flex-basis: 0px
+                basis = Some(Value::Length(Length::Px(0.0)));
+            } else {
+                return Vec::new(); // Too many numbers
+            }
+        } else if let Value::Length(Length::Calc(_) | Length::Math(_)) = it {
+            // Math expression without length units: treated as a flex factor
+            if grow.is_none() {
+                grow = Some(it.clone());
+            } else if shrink.is_none() {
+                shrink = Some(it.clone());
+            } else {
+                return Vec::new(); // Too many numbers
+            }
+        } else {
+            return Vec::new(); // Invalid token in flex shorthand
+        }
+    }
+
+    let final_grow = grow.unwrap_or(Value::Number(1.0));
+    let final_shrink = shrink.unwrap_or(Value::Number(1.0));
+    let final_basis = basis.unwrap_or(Value::Length(Length::Percent(0.0)));
+
+    vec![
+        Declaration::new("flex-grow", final_grow, important),
+        Declaration::new("flex-shrink", final_shrink, important),
+        Declaration::new("flex-basis", final_basis, important),
+    ]
 }
 
 /// Expands `flex-flow: <'flex-direction'> || <'flex-wrap'>`
@@ -186,43 +233,88 @@ pub(crate) fn expand_flex_flow_shorthand(value: &Value, important: bool) -> Vec<
         single => std::slice::from_ref(single),
     };
 
-    let mut dir = None;
-    let mut wrap = None;
+    let words: Vec<String> = items
+        .iter()
+        .filter_map(|it| match it {
+            Value::Keyword(k) => Some(k.to_ascii_lowercase()),
+            Value::FlexDirection(fd) => Some(match fd {
+                crate::values::FlexDirection::Row => "row".to_string(),
+                crate::values::FlexDirection::RowReverse => "row-reverse".to_string(),
+                crate::values::FlexDirection::Column => "column".to_string(),
+                crate::values::FlexDirection::ColumnReverse => "column-reverse".to_string(),
+            }),
+            Value::FlexWrap(fw) => Some(match fw {
+                crate::values::FlexWrap::NoWrap => "nowrap".to_string(),
+                crate::values::FlexWrap::Wrap => "wrap".to_string(),
+                crate::values::FlexWrap::WrapReverse => "wrap-reverse".to_string(),
+            }),
+            _ => None,
+        })
+        .collect();
 
-    for item in items {
-        match item {
-            Value::FlexDirection(fd) => dir = Some(Value::FlexDirection(*fd)),
-            Value::FlexWrap(fw) => wrap = Some(Value::FlexWrap(*fw)),
-            Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
-                "row" => dir = Some(Value::FlexDirection(crate::values::FlexDirection::Row)),
-                "row-reverse" => {
-                    dir = Some(Value::FlexDirection(
-                        crate::values::FlexDirection::RowReverse,
-                    ))
-                }
-                "column" => dir = Some(Value::FlexDirection(crate::values::FlexDirection::Column)),
-                "column-reverse" => {
-                    dir = Some(Value::FlexDirection(
-                        crate::values::FlexDirection::ColumnReverse,
-                    ))
-                }
-                "nowrap" => wrap = Some(Value::FlexWrap(crate::values::FlexWrap::NoWrap)),
-                "wrap" => wrap = Some(Value::FlexWrap(crate::values::FlexWrap::Wrap)),
-                "wrap-reverse" => {
-                    wrap = Some(Value::FlexWrap(crate::values::FlexWrap::WrapReverse))
-                }
-                _ => {}
-            },
-            _ => {}
+    if words.len() != items.len() || words.is_empty() || words.len() > 3 {
+        return Vec::new();
+    }
+
+    let is_dir = |w: &str| matches!(w, "row" | "row-reverse" | "column" | "column-reverse");
+    let mut dir: Option<&str> = None;
+    let mut wrap_indices = Vec::new();
+
+    for (i, w) in words.iter().enumerate() {
+        if is_dir(w) {
+            if dir.is_some() {
+                return Vec::new(); // Duplicate direction
+            }
+            dir = Some(w.as_str());
+        } else {
+            wrap_indices.push(i);
         }
     }
 
-    let dir_val = dir.unwrap_or(Value::FlexDirection(crate::values::FlexDirection::Row));
-    let wrap_val = wrap.unwrap_or(Value::FlexWrap(crate::values::FlexWrap::NoWrap));
+    let wrap_val: String = match wrap_indices.len() {
+        0 => "nowrap".to_string(),
+        1 => {
+            let w = words[wrap_indices[0]].as_str();
+            match w {
+                "nowrap" | "wrap" | "wrap-reverse" | "balance" => w.to_string(),
+                _ => return Vec::new(),
+            }
+        }
+        2 => {
+            // Two-keyword wrap must be contiguous!
+            if wrap_indices[1] != wrap_indices[0] + 1 {
+                return Vec::new();
+            }
+            let w1 = words[wrap_indices[0]].as_str();
+            let w2 = words[wrap_indices[1]].as_str();
+            match (w1, w2) {
+                ("wrap", "balance") | ("balance", "wrap") => "balance".to_string(),
+                ("wrap-reverse", "balance") | ("balance", "wrap-reverse") => {
+                    "wrap-reverse balance".to_string()
+                }
+                _ => return Vec::new(),
+            }
+        }
+        _ => return Vec::new(),
+    };
 
+    let dir_val = dir.unwrap_or("row");
+    let dir_value = match dir_val {
+        "row" => Value::FlexDirection(crate::values::FlexDirection::Row),
+        "row-reverse" => Value::FlexDirection(crate::values::FlexDirection::RowReverse),
+        "column" => Value::FlexDirection(crate::values::FlexDirection::Column),
+        "column-reverse" => Value::FlexDirection(crate::values::FlexDirection::ColumnReverse),
+        other => Value::Keyword(other.to_string()),
+    };
+    let wrap_value = match wrap_val.as_str() {
+        "nowrap" => Value::FlexWrap(crate::values::FlexWrap::NoWrap),
+        "wrap" => Value::FlexWrap(crate::values::FlexWrap::Wrap),
+        "wrap-reverse" => Value::FlexWrap(crate::values::FlexWrap::WrapReverse),
+        other => Value::Keyword(other.to_string()),
+    };
     vec![
-        Declaration::new("flex-direction", dir_val, important),
-        Declaration::new("flex-wrap", wrap_val, important),
+        Declaration::new("flex-direction", dir_value, important),
+        Declaration::new("flex-wrap", wrap_value, important),
     ]
 }
 

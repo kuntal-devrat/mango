@@ -1,57 +1,339 @@
-    function _createStyleObject(nodeId) {
-        var obj = {};
-        Object.defineProperty(obj, '_props', {
-            value: {},
-            writable: true,
+    function _createStyleObject(nodeId, el) {
+        var proto = (typeof globalThis.CSSStyleDeclaration !== 'undefined')
+            ? globalThis.CSSStyleDeclaration.prototype
+            : Object.prototype;
+        var base = Object.create(proto);
+        base._nodeId = nodeId;
+        base._el = el || null;
+        base._props = {};
+        base._syncing = false;
+
+        function syncToDom() {
+            if (base._syncing) return;
+            base._syncing = true;
+            try {
+                var str = "";
+                for (var k in base._props) {
+                    if (base._props.hasOwnProperty(k) && base._props[k] !== undefined && base._props[k] !== null && base._props[k] !== "") {
+                        str += k + ": " + base._props[k] + "; ";
+                    }
+                }
+                var trimmed = str.trim();
+                if (nodeId !== undefined && nodeId !== null && typeof _setAttribute === 'function') {
+                    _setAttribute(nodeId, "style", trimmed);
+                }
+                if (el && typeof el.setAttribute === 'function') {
+                    el.setAttribute("style", trimmed);
+                }
+            } finally {
+                base._syncing = false;
+            }
+        }
+
+        var WEBKIT_ALIASES = {
+            '-webkit-align-content': 'align-content',
+            '-webkit-align-items': 'align-items',
+            '-webkit-align-self': 'align-self',
+            '-webkit-flex': 'flex',
+            '-webkit-flex-basis': 'flex-basis',
+            '-webkit-flex-direction': 'flex-direction',
+            '-webkit-flex-flow': 'flex-flow',
+            '-webkit-flex-grow': 'flex-grow',
+            '-webkit-flex-shrink': 'flex-shrink',
+            '-webkit-flex-wrap': 'flex-wrap',
+            '-webkit-justify-content': 'justify-content',
+            '-webkit-order': 'order'
+        };
+
+        base.getPropertyValue = function(p) {
+            if (!p) return "";
+            var kebab = String(p).trim().replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+            kebab = WEBKIT_ALIASES[kebab] || kebab;
+            if (kebab === 'all') {
+                return base._all || (base._props && base._props['all']) || "";
+            }
+            if (kebab === 'flex') {
+                if (!base._props) return "";
+                var grow = base._props['flex-grow'];
+                var shrink = base._props['flex-shrink'];
+                var basis = base._props['flex-basis'];
+                if (grow !== undefined && shrink !== undefined && basis !== undefined) {
+                    return grow + " " + shrink + " " + basis;
+                }
+                return base._props['flex'] || "";
+            }
+            if (kebab === 'margin') {
+                if (base._props && base._props['margin-top'] !== undefined
+                    && base._props['margin-right'] !== undefined
+                    && base._props['margin-bottom'] !== undefined
+                    && base._props['margin-left'] !== undefined) {
+                    var t = base._props['margin-top'];
+                    var r = base._props['margin-right'];
+                    var b = base._props['margin-bottom'];
+                    var l = base._props['margin-left'];
+                    if (t === r && t === b && t === l) return t;
+                    if (t === b && r === l) return t + " " + r;
+                    if (r === l) return t + " " + r + " " + b;
+                    return t + " " + r + " " + b + " " + l;
+                }
+                return "";
+            }
+            if (kebab === 'padding') {
+                if (base._props && base._props['padding-top'] !== undefined
+                    && base._props['padding-right'] !== undefined
+                    && base._props['padding-bottom'] !== undefined
+                    && base._props['padding-left'] !== undefined) {
+                    var t = base._props['padding-top'];
+                    var r = base._props['padding-right'];
+                    var b = base._props['padding-bottom'];
+                    var l = base._props['padding-left'];
+                    if (t === r && t === b && t === l) return t;
+                    if (t === b && r === l) return t + " " + r;
+                    if (r === l) return t + " " + r + " " + b;
+                    return t + " " + r + " " + b + " " + l;
+                }
+                return "";
+            }
+            if (kebab === 'overflow') {
+                if (base._props) {
+                    var ox = base._props['overflow-x'];
+                    var oy = base._props['overflow-y'];
+                    if (ox !== undefined && oy !== undefined) {
+                        return ox === oy ? ox : ox + " " + oy;
+                    }
+                    if (ox !== undefined) return ox;
+                    if (oy !== undefined) return oy;
+                    return base._props['overflow'] || "";
+                }
+                return "";
+            }
+            if (kebab === 'flex-flow') {
+                if (!base._props || (base._props['flex-direction'] === undefined && base._props['flex-wrap'] === undefined)) {
+                    return base._props ? (base._props['flex-flow'] || "") : "";
+                }
+                var dir = base._props['flex-direction'] || 'row';
+                var wrap = base._props['flex-wrap'] || 'nowrap';
+                if (dir === 'row' && wrap === 'nowrap') return 'row';
+                if (dir === 'row') return wrap;
+                if (wrap === 'nowrap') return dir;
+                return dir + " " + wrap;
+            }
+            if (kebab === 'margin-trim') {
+                var mt = base._props && base._props['margin-trim'];
+                if (mt === 'block-start block-end' || mt === 'block-end block-start') return 'block';
+                return mt || "";
+            }
+            if (kebab === 'inset-block') {
+                var s = base._props && base._props['inset-block-start'];
+                var e = base._props && base._props['inset-block-end'];
+                if (s !== undefined && e !== undefined) {
+                    if (s === e) return s;
+                    return s + " " + e;
+                }
+                return "";
+            }
+            if (kebab === 'inset-inline') {
+                var s = base._props && base._props['inset-inline-start'];
+                var e = base._props && base._props['inset-inline-end'];
+                if (s !== undefined && e !== undefined) {
+                    if (s === e) return s;
+                    return s + " " + e;
+                }
+                return "";
+            }
+            if (kebab === 'inset') {
+                var t = base._props && (base._props['top'] || base._props['inset-block-start']);
+                var r = base._props && (base._props['right'] || base._props['inset-inline-end']);
+                var b = base._props && (base._props['bottom'] || base._props['inset-block-end']);
+                var l = base._props && (base._props['left'] || base._props['inset-inline-start']);
+                if (t !== undefined && r !== undefined && b !== undefined && l !== undefined) {
+                    if (t === r && t === b && t === l) return t;
+                    if (t === b && r === l) return t + " " + r;
+                    if (r === l) return t + " " + r + " " + b;
+                    return t + " " + r + " " + b + " " + l;
+                }
+                return "";
+            }
+            if (base._props && base._props[kebab] !== undefined) return String(base._props[kebab]);
+            var camel = kebab.replace(/-([a-z])/g, function(g) { return g[1].toUpperCase(); });
+            if (base[camel] !== undefined && typeof base[camel] !== 'function') return String(base[camel]);
+            if (base[kebab] !== undefined && typeof base[kebab] !== 'function') return String(base[kebab]);
+            return "";
+        };
+
+        base.getPropertyPriority = function(p) {
+            return "";
+        };
+
+        base.setProperty = function(p, v, priority) {
+            if (!p) return;
+            var kebab = String(p).trim().replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+            kebab = WEBKIT_ALIASES[kebab] || kebab;
+            var camel = kebab.replace(/-([a-z])/g, function(g) { return g[1].toUpperCase(); });
+            var sVal = (v === null || v === undefined) ? "" : String(v).trim();
+            if (!base._props) base._props = {};
+
+            if (sVal === "") {
+                if (kebab === 'all') {
+                    base._all = "";
+                } else if (kebab === 'flex') {
+                    delete base._props['flex-grow'];
+                    delete base._props['flex-shrink'];
+                    delete base._props['flex-basis'];
+                    delete base.flexGrow; delete base.flexShrink; delete base.flexBasis;
+                    delete base['flex-grow']; delete base['flex-shrink']; delete base['flex-basis'];
+                } else if (kebab === 'flex-flow') {
+                    delete base._props['flex-direction'];
+                    delete base._props['flex-wrap'];
+                    delete base.flexDirection; delete base.flexWrap;
+                    delete base['flex-direction']; delete base['flex-wrap'];
+                } else if (kebab === 'margin') {
+                    delete base._props['margin-top'];
+                    delete base._props['margin-right'];
+                    delete base._props['margin-bottom'];
+                    delete base._props['margin-left'];
+                    delete base.marginTop; delete base.marginRight; delete base.marginBottom; delete base.marginLeft;
+                    delete base['margin-top']; delete base['margin-right']; delete base['margin-bottom']; delete base['margin-left'];
+                } else if (kebab === 'padding') {
+                    delete base._props['padding-top'];
+                    delete base._props['padding-right'];
+                    delete base._props['padding-bottom'];
+                    delete base._props['padding-left'];
+                    delete base.paddingTop; delete base.paddingRight; delete base.paddingBottom; delete base.paddingLeft;
+                    delete base['padding-top']; delete base['padding-right']; delete base['padding-bottom']; delete base['padding-left'];
+                } else if (kebab === 'overflow') {
+                    delete base._props['overflow-x'];
+                    delete base._props['overflow-y'];
+                    delete base.overflowX; delete base.overflowY;
+                    delete base['overflow-x']; delete base['overflow-y'];
+                } else if (kebab === 'inset-block') {
+                    delete base._props['inset-block-start'];
+                    delete base._props['inset-block-end'];
+                    delete base.insetBlockStart; delete base.insetBlockEnd;
+                    delete base['inset-block-start']; delete base['inset-block-end'];
+                } else if (kebab === 'inset-inline') {
+                    delete base._props['inset-inline-start'];
+                    delete base._props['inset-inline-end'];
+                    delete base.insetInlineStart; delete base.insetInlineEnd;
+                    delete base['inset-inline-start']; delete base['inset-inline-end'];
+                } else if (kebab === 'inset') {
+                    delete base._props['top']; delete base._props['right']; delete base._props['bottom']; delete base._props['left'];
+                    delete base._props['inset-block-start']; delete base._props['inset-block-end'];
+                    delete base._props['inset-inline-start']; delete base._props['inset-inline-end'];
+                }
+                delete base._props[kebab];
+                delete base[camel];
+                delete base[kebab];
+                syncToDom();
+                return;
+            }
+
+            if (sVal === 'inherit' || sVal === 'initial' || sVal === 'unset' || sVal.startsWith('var(')) {
+                if (kebab === 'all') {
+                    base._all = sVal;
+                }
+                if (kebab === 'flex') {
+                    delete base._props['flex-grow'];
+                    delete base._props['flex-shrink'];
+                    delete base._props['flex-basis'];
+                }
+                base._props[kebab] = sVal;
+                base[camel] = sVal;
+                base[kebab] = sVal;
+                syncToDom();
+                return;
+            }
+
+            if (typeof _parseCssDeclaration === 'function') {
+                var decls = _parseCssDeclaration(kebab, sVal);
+                if (!decls || decls.length === 0) {
+                    // Invalid CSS declaration under W3C grammar: ignore silently
+                    return;
+                }
+                if (kebab === 'all') {
+                    base._all = sVal;
+                }
+                if (kebab === 'flex' || kebab === 'margin' || kebab === 'padding' || kebab === 'flex-flow' || kebab === 'inset' || kebab === 'inset-block' || kebab === 'inset-inline' || kebab === 'overflow') {
+                    delete base._props[kebab];
+                    delete base[camel];
+                    delete base[kebab];
+                }
+                for (var i = 0; i < decls.length; i++) {
+                    var dName = decls[i][0];
+                    var dVal = decls[i][1];
+                    base._props[dName] = dVal;
+                    var dCamel = dName.replace(/-([a-z])/g, function(g) { return g[1].toUpperCase(); });
+                    base[dCamel] = dVal;
+                    base[dName] = dVal;
+                }
+            } else {
+                base._props[kebab] = sVal;
+                base[camel] = sVal;
+                base[kebab] = sVal;
+            }
+            syncToDom();
+        };
+
+        base.removeProperty = function(p) {
+            if (!p) return "";
+            var kebab = String(p).trim().replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+            kebab = WEBKIT_ALIASES[kebab] || kebab;
+            var prev = base.getPropertyValue(kebab);
+            base.setProperty(kebab, "");
+            return prev;
+        };
+
+        base.item = function(idx) {
+            var keys = base._props ? Object.keys(base._props) : [];
+            var i = Number(idx);
+            return (i >= 0 && i < keys.length) ? keys[i] : "";
+        };
+
+        Object.defineProperty(base, 'cssText', {
+            get: function() {
+                var str = "";
+                if (base._props) {
+                    for (var k in base._props) {
+                        if (base._props.hasOwnProperty(k) && base._props[k] !== undefined && base._props[k] !== null && base._props[k] !== "") {
+                            str += k + ": " + base._props[k] + "; ";
+                        }
+                    }
+                }
+                return str.trim();
+            },
+            set: function(val) {
+                base._props = {};
+                var s = (val === null || val === undefined) ? "" : String(val);
+                if (s) {
+                    var decls = s.split(';');
+                    for (var i = 0; i < decls.length; i++) {
+                        var d = decls[i].trim();
+                        if (!d) continue;
+                        var colon = d.indexOf(':');
+                        if (colon !== -1) {
+                            var k = d.slice(0, colon).trim().toLowerCase();
+                            var v = d.slice(colon + 1).trim();
+                            base._props[k] = v;
+                            var camel = k.replace(/-([a-z])/g, function(g) { return g[1].toUpperCase(); });
+                            base[camel] = v;
+                            base[k] = v;
+                        }
+                    }
+                }
+                syncToDom();
+            },
+            configurable: true,
+            enumerable: true
+        });
+
+        Object.defineProperty(base, 'length', {
+            get: function() {
+                return base._props ? Object.keys(base._props).length : 0;
+            },
             configurable: true,
             enumerable: false
         });
-        Object.defineProperties(obj, {
-            getPropertyValue: {
-                value: function(p) {
-                    if (!this._props) this._props = {};
-                    if (!p) return "";
-                    var val = this._props[p];
-                    if (val !== undefined) return val;
-                    var camel = p.replace(/-([a-z])/g, function(g) { return g[1].toUpperCase(); });
-                    if (this[camel] !== undefined && typeof this[camel] !== 'function') return String(this[camel]);
-                    if (this[p] !== undefined && typeof this[p] !== 'function') return String(this[p]);
-                    return "";
-                },
-                writable: true,
-                configurable: true,
-                enumerable: false
-            },
-            setProperty: {
-                value: function(p, v) {
-                    if (!this._props) this._props = {};
-                    if (!p) return;
-                    var sVal = String(v);
-                    this._props[p] = sVal;
-                    var camel = p.replace(/-([a-z])/g, function(g) { return g[1].toUpperCase(); });
-                    this[camel] = sVal;
-                    this[p] = sVal;
-                },
-                writable: true,
-                configurable: true,
-                enumerable: false
-            },
-            removeProperty: {
-                value: function(p) {
-                    if (!this._props) this._props = {};
-                    if (!p) return "";
-                    var prev = this.getPropertyValue(p);
-                    delete this._props[p];
-                    var camel = p.replace(/-([a-z])/g, function(g) { return g[1].toUpperCase(); });
-                    delete this[camel];
-                    delete this[p];
-                    return prev;
-                },
-                writable: true,
-                configurable: true,
-                enumerable: false
-            }
-        });
+
         if (nodeId !== undefined && typeof _getAttribute === 'function') {
             var rawStyle = _getAttribute(nodeId, "style");
             if (rawStyle) {
@@ -61,14 +343,59 @@
                     if (!d) continue;
                     var colon = d.indexOf(':');
                     if (colon !== -1) {
-                        var prop = d.slice(0, colon).trim();
+                        var prop = d.slice(0, colon).trim().toLowerCase();
                         var val = d.slice(colon + 1).trim();
-                        obj.setProperty(prop, val);
+                        base._props[prop] = val;
+                        var camel = prop.replace(/-([a-z])/g, function(g) { return g[1].toUpperCase(); });
+                        base[camel] = val;
+                        base[prop] = val;
                     }
                 }
             }
         }
-        return obj;
+
+        return new Proxy(base, {
+            get: function(target, prop, receiver) {
+                if (typeof prop === 'string') {
+                    if (prop in target && typeof target[prop] === 'function') return target[prop];
+                    var kebab = prop.replace(/([A-Z])/g, '-$1').toLowerCase();
+                    var val = target.getPropertyValue(kebab);
+                    if (val !== "") return val;
+                    if (target._props && target._props[prop] !== undefined) return target._props[prop];
+                    if (prop in target) return target[prop];
+                    var idx = Number(prop);
+                    if (Number.isInteger(idx) && idx >= 0 && String(idx) === prop) {
+                        var keys = target._props ? Object.keys(target._props) : [];
+                        return keys[idx] || "";
+                    }
+                }
+                if (prop === Symbol.iterator) {
+                    return function*() {
+                        var keys = target._props ? Object.keys(target._props) : [];
+                        for (var i = 0; i < keys.length; i++) {
+                            yield keys[i];
+                        }
+                    };
+                }
+                return target[prop];
+            },
+            set: function(target, prop, value, receiver) {
+                if (prop === 'cssText') {
+                    target.cssText = value;
+                    return true;
+                }
+                if (typeof prop === 'string') {
+                    if (prop.startsWith('_') || typeof target[prop] === 'function') {
+                        target[prop] = value;
+                        return true;
+                    }
+                    target.setProperty(prop, value);
+                    return true;
+                }
+                target[prop] = value;
+                return true;
+            }
+        });
     }
 
     function _createClassList(nodeId, el) {

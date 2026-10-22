@@ -143,7 +143,7 @@ impl BrowserChrome {
             .get(self.active_tab_idx)
             .map(|t| t.session_storage.clone())
             .unwrap_or_else(|| std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())));
-        let mut js_rt = JsRuntime::new_with_url_storage_session_and_cookies(
+        let mut js_rt = JsRuntime::new_with_full_context(
             doc,
             w,
             content_h,
@@ -151,6 +151,7 @@ impl BrowserChrome {
             self.local_storage.clone(),
             session_storage,
             self.cookie_jar.clone(),
+            Some(self.loader.cache_arc()),
         );
 
         // Register import maps if any are defined in <script type="importmap">
@@ -306,10 +307,10 @@ impl BrowserChrome {
         // the background pipeline (`prepare_document_pipeline`); blocking the
         // UI on a network fetch here would freeze the page.
         let script_timeout = |code_len: usize| -> std::time::Duration {
-            // Provide at least 1.5s for normal scripts, plus ~100ms per 10KB for large bundles, capped at 4.0s
+            // Provide at least 1.5s for normal scripts, plus ~100ms per 10KB for large bundles, capped at 3.0s
             let extra_ms = (code_len / 10_000) as u64 * 100;
             std::time::Duration::from_millis(1500 + extra_ms)
-                .min(std::time::Duration::from_millis(4000))
+                .min(std::time::Duration::from_millis(3000))
         };
         let run_script = |s: ScriptToRun, rt: &mut mango_js::JsRuntime, ext_cnt: &mut usize| match s
         {
@@ -350,7 +351,6 @@ impl BrowserChrome {
             ScriptToRun::External {
                 src,
                 is_module,
-                nonce,
                 ..
             } => {
                 const MAX_EXTERNAL_SCRIPTS: usize = 128;
@@ -367,16 +367,8 @@ impl BrowserChrome {
                 let script_code = if let Some(cached) = self.loader.cache().get(&key) {
                     Some(String::from_utf8_lossy(&cached.body).into_owned())
                 } else {
-                    match self
-                        .loader
-                        .fetch_script_with_nonce(base, &src, nonce.as_deref())
-                    {
-                        Ok(code) => Some(code),
-                        Err(e) => {
-                            log::warn!("Failed to fetch external script {src}: {e}");
-                            None
-                        }
-                    }
+                    log::warn!("External script not in cache, skipping sync fetch on UI thread: {src}");
+                    None
                 };
                 if let Some(code) = script_code {
                     *ext_cnt += 1;
@@ -395,37 +387,45 @@ impl BrowserChrome {
 
         self.pending_scripts.clear();
 
-        // 1. Run synchronous inline and external scripts with 50ms budget on UI thread
-        let sync_start = std::time::Instant::now();
-        let mut sync_iter = sync_scripts.into_iter();
-        while let Some(s) = sync_iter.next() {
-            run_script(s, &mut js_rt, &mut external_count);
-            if sync_start.elapsed() > std::time::Duration::from_millis(50) {
-                for remaining in sync_iter {
-                    self.pending_scripts.push_back(remaining);
-                }
-                break;
+        if self.async_navigation {
+            // Interactive UI mode: Queue ALL scripts for non-blocking incremental execution in tick_js.
+            // This guarantees the UI thread renders the initial visual frame and flushes Wayland
+            // events/pings IMMEDIATELY (<16ms) without locking up the OS event loop.
+            for s in sync_scripts {
+                self.pending_scripts.push_back(s);
             }
-        }
-
-        // 2. Queue defer and async scripts for non-blocking incremental execution in tick_js
-        for s in defer_scripts {
-            self.pending_scripts.push_back(s);
-        }
-        for s in async_scripts {
-            self.pending_scripts.push_back(s);
-        }
-
-        // 3. Run extension content scripts
-        for js_code in ext_js {
-            let to = script_timeout(js_code.len());
-            let _ = js_rt.execute_script_with_timeout(&js_code, to);
-        }
-
-        // 4. Dispatch DOMContentLoaded and window load events if no scripts are pending
-        if self.pending_scripts.is_empty() {
-            let _ = js_rt.dispatch_dom_content_loaded();
-            let _ = js_rt.dispatch_load();
+            for s in defer_scripts {
+                self.pending_scripts.push_back(s);
+            }
+            for s in async_scripts {
+                self.pending_scripts.push_back(s);
+            }
+            for js_code in ext_js {
+                self.pending_scripts.push_back(ScriptToRun::Inline {
+                    code: js_code,
+                    is_module: false,
+                });
+            }
+        } else {
+            // Synchronous / test mode: execute synchronous scripts inline
+            for s in sync_scripts {
+                run_script(s, &mut js_rt, &mut external_count);
+            }
+            for s in defer_scripts {
+                self.pending_scripts.push_back(s);
+            }
+            for s in async_scripts {
+                self.pending_scripts.push_back(s);
+            }
+            for js_code in ext_js {
+                let to = script_timeout(js_code.len());
+                let _ = js_rt.execute_script_with_timeout(&js_code, to);
+            }
+            // Dispatch DOMContentLoaded and window load if no scripts pending
+            if self.pending_scripts.is_empty() {
+                let _ = js_rt.dispatch_dom_content_loaded();
+                let _ = js_rt.dispatch_load();
+            }
         }
 
         if let Some(alert_msg) = js_rt.take_status_text() {
@@ -523,8 +523,8 @@ impl BrowserChrome {
         };
         let script_timeout = |code_len: usize| -> std::time::Duration {
             let extra_ms = (code_len / 10_000) as u64 * 100;
-            std::time::Duration::from_millis(2500 + extra_ms)
-                .min(std::time::Duration::from_secs(120))
+            std::time::Duration::from_millis(1500 + extra_ms)
+                .min(std::time::Duration::from_millis(3000))
         };
         match s {
             ScriptToRun::Inline { code, is_module } => {
@@ -563,7 +563,6 @@ impl BrowserChrome {
             ScriptToRun::External {
                 src,
                 is_module,
-                nonce,
                 ..
             } => {
                 let Some(ref base) = self.base_url else {
@@ -576,16 +575,8 @@ impl BrowserChrome {
                 let script_code = if let Some(cached) = self.loader.cache().get(&key) {
                     Some(String::from_utf8_lossy(&cached.body).into_owned())
                 } else {
-                    match self
-                        .loader
-                        .fetch_script_with_nonce(base, &src, nonce.as_deref())
-                    {
-                        Ok(code) => Some(code),
-                        Err(e) => {
-                            log::warn!("Failed to fetch external script {src}: {e}");
-                            None
-                        }
-                    }
+                    log::warn!("Pending external script not in cache, skipping sync fetch on UI thread: {src}");
+                    None
                 };
                 if let Some(code) = script_code {
                     let to = script_timeout(code.len());

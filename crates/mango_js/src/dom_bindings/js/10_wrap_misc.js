@@ -63,18 +63,13 @@
                 return _elementContains(this._nodeId, otherId);
             },
             compareDocumentPosition: function(other) {
+                if (typeof _compareDocumentPositionNodes === 'function') {
+                    return _compareDocumentPositionNodes(this, other);
+                }
                 if (this === other) return 0;
-                if (!other || typeof other !== 'object') {
-                    throw new TypeError("Failed to execute 'compareDocumentPosition' on 'Node': parameter 1 is not of type 'Node'.");
-                }
-                var otherId = (other._nodeId !== undefined) ? other._nodeId : null;
-                if (otherId === null) {
-                    return 1 | 32 | 4;
-                }
-                return _compareDocumentPosition(this._nodeId, otherId);
+                return 1 | 32 | 4;
             },
             hasChildNodes: function() { return (_getChildren(this._nodeId) || []).length > 0 || (_getChildNodeIds(this._nodeId) || []).length > 0; },
-            normalize: function() {},
             getRootNode: function(options) {
                 var cur = this;
                 var composed = options && !!options.composed;
@@ -98,18 +93,13 @@
                 return _defaultQuerySelectorAll(this, sel);
             },
             getElementsByTagName: function(tag) {
-                var self = this;
-                return _createHTMLCollection(function() {
-                    var ids = _querySelectorAll(self._nodeId, String(tag)) || [];
-                    return ids.map(_wrapElement);
-                });
+                return (typeof _defaultGetElementsByTagName === 'function') ? _defaultGetElementsByTagName(this, tag) : [];
+            },
+            getElementsByTagNameNS: function(ns, tag) {
+                return (typeof _defaultGetElementsByTagNameNS === 'function') ? _defaultGetElementsByTagNameNS(this, ns, tag) : [];
             },
             getElementsByClassName: function(cls) {
-                var self = this;
-                return _createHTMLCollection(function() {
-                    var ids = _querySelectorAll(self._nodeId, "." + String(cls)) || [];
-                    return ids.map(_wrapElement);
-                });
+                return (typeof _defaultGetElementsByClassName === 'function') ? _defaultGetElementsByClassName(this, cls) : [];
             },
             focus: function(options) {
                 if (this.disabled) return;
@@ -220,14 +210,23 @@
                 for (var i = 0; i < names.length; i++) {
                     var n = names[i];
                     var v = self.getAttribute ? (self.getAttribute(n) || '') : '';
+                    var nsInfo = (self._nsAttrs && self._nsAttrs[n]) || null;
+                    var colon = String(n).indexOf(':');
+                    var prefix = nsInfo ? nsInfo.prefix : (colon !== -1 ? String(n).substring(0, colon) : null);
+                    var localName = nsInfo ? nsInfo.localName : (colon !== -1 ? String(n).substring(colon + 1) : n);
+                    var nsUri = nsInfo ? nsInfo.namespaceURI : null;
+                    if (!nsUri) {
+                        if (prefix === 'xmlns' || n === 'xmlns') nsUri = 'http://www.w3.org/2000/xmlns/';
+                        else if (prefix === 'xlink') nsUri = 'http://www.w3.org/1999/xlink';
+                        else if (prefix === 'xml') nsUri = 'http://www.w3.org/XML/1998/namespace';
+                    }
                     var attrNode = {
-                        name: n,
-                        value: v,
-                        specified: true,
-                        ownerElement: self,
-                        nodeName: n,
-                        nodeValue: v
+                        name: n, _value: v, specified: true, ownerElement: self, nodeName: n, nodeType: 2,
+                        get ownerDocument() { return this.ownerElement ? this.ownerElement.ownerDocument : (this._ownerDocument || (typeof document !== 'undefined' ? document : null)); },
+                        set ownerDocument(val) { this._ownerDocument = val; },
+                        namespaceURI: nsUri, prefix: prefix, localName: localName
                     };
+                    if (globalThis.Attr) Object.setPrototypeOf(attrNode, globalThis.Attr.prototype);
                     list.push(attrNode);
                     list[n] = attrNode;
                 }
@@ -253,8 +252,30 @@
                 });
             },
             getAttributeNode: function(name) {
-                var v = _getAttribute(this._nodeId, name);
-                return v === null ? null : { name: name, value: v, specified: true };
+                var v = this.getAttribute ? this.getAttribute(name) : _getAttribute(this._nodeId, name);
+                if (v === null) return null;
+                if (!this._attrNodes) this._attrNodes = {};
+                var n = String(name);
+                if (this._attrNodes[n]) { this._attrNodes[n].value = v; return this._attrNodes[n]; }
+                var doc = this.ownerDocument || (typeof document !== 'undefined' ? document : null);
+                var attr = (doc && doc.createAttribute) ? doc.createAttribute(n) : { name: n, value: v, specified: true, nodeType: 2, nodeName: n, nodeValue: v };
+                attr.value = v; attr.ownerElement = this; attr.ownerDocument = doc; attr._ownerDocument = doc;
+                if (globalThis.Attr) Object.setPrototypeOf(attr, globalThis.Attr.prototype);
+                this._attrNodes[n] = attr;
+                return attr;
+            },
+            getAttributeNodeNS: function(ns, localName) {
+                var v = this.getAttributeNS ? this.getAttributeNS(ns, localName) : this.getAttribute(localName);
+                if (v === null) return null;
+                if (!this._attrNodes) this._attrNodes = {};
+                var ln = String(localName), key = (ns || '') + ':' + ln;
+                if (this._attrNodes[key]) { this._attrNodes[key].value = v; return this._attrNodes[key]; }
+                var doc = this.ownerDocument || (typeof document !== 'undefined' ? document : null);
+                var attr = (doc && doc.createAttributeNS) ? doc.createAttributeNS(ns, localName) : { name: localName, localName: localName, namespaceURI: ns || null, value: v, specified: true, nodeType: 2, nodeName: localName, nodeValue: v };
+                attr.value = v; attr.ownerElement = this; attr.ownerDocument = doc; attr._ownerDocument = doc;
+                if (globalThis.Attr) Object.setPrototypeOf(attr, globalThis.Attr.prototype);
+                this._attrNodes[key] = attr; this._attrNodes[ln] = attr;
+                return attr;
             },
             toggleAttribute: function(name, force) {
                 var has = this.hasAttribute(name);
@@ -267,14 +288,13 @@
             releasePointerCapture: function() {},
             get parentNode() {
                 var p = (typeof _getParentNode === 'function') ? _getParentNode(this._nodeId) : -1;
-                if (p === -1) return null;
+                if (p === -1) return this._parentNode || null;
                 if (p === 0) return document;
                 return _wrapElement(p);
             },
             get parentElement() {
-                var p = (typeof _getParentNode === 'function') ? _getParentNode(this._nodeId) : -1;
-                if (p <= 0) return null;
-                return _wrapElement(p);
+                var p = this.parentNode;
+                return (p && p.nodeType === 1) ? p : null;
             },
             get children() {
                 var self = this;
@@ -284,11 +304,13 @@
                 });
             },
             get childNodes() {
+                if (this._cachedChildNodes) return this._cachedChildNodes;
                 var self = this;
-                return _createNodeList(function() {
+                this._cachedChildNodes = _createNodeList(function() {
                     var arr = _getChildNodeIds(self._nodeId) || [];
                     return arr.map(_wrapElement);
                 });
+                return this._cachedChildNodes;
             },
             get firstChild() {
                 var id = _getFirstChild(this._nodeId);
@@ -299,12 +321,32 @@
                 return id !== null ? _wrapElement(id) : null;
             },
             get nextSibling() {
-                var id = _getNextSibling(this._nodeId);
-                return id !== null ? _wrapElement(id) : null;
+                var id = (typeof _getNextSibling === 'function') ? _getNextSibling(this._nodeId) : null;
+                if (id !== null && id !== undefined && id !== -1) return _wrapElement(id);
+                var p = this.parentNode || this._parentNode;
+                if (p) {
+                    var k = p.childNodes || p._childNodes;
+                    if (k) {
+                        for (var i = 0; i < k.length; i++) {
+                            if (k[i] === this || (k[i] && k[i]._nodeId !== undefined && k[i]._nodeId === this._nodeId)) return i + 1 < k.length ? k[i + 1] : null;
+                        }
+                    }
+                }
+                return null;
             },
             get previousSibling() {
-                var id = _getPreviousSibling(this._nodeId);
-                return id !== null ? _wrapElement(id) : null;
+                var id = (typeof _getPreviousSibling === 'function') ? _getPreviousSibling(this._nodeId) : null;
+                if (id !== null && id !== undefined && id !== -1) return _wrapElement(id);
+                var p = this.parentNode || this._parentNode;
+                if (p) {
+                    var k = p.childNodes || p._childNodes;
+                    if (k) {
+                        for (var i = 0; i < k.length; i++) {
+                            if (k[i] === this || (k[i] && k[i]._nodeId !== undefined && k[i]._nodeId === this._nodeId)) return i > 0 ? k[i - 1] : null;
+                        }
+                    }
+                }
+                return null;
             },
             get childElementCount() {
                 return (_getChildren(this._nodeId) || []).length;
@@ -436,23 +478,42 @@
             cloneNode: function(deep) {
                 var cloneId = _cloneNode(this._nodeId, !!deep);
                 var cloned = _wrapElement(cloneId);
-                if (cloned && typeof globalThis !== 'undefined' && globalThis._upgradeTree) {
-                    globalThis._upgradeTree(cloned, null, null);
+                if (cloned) {
+                    if (this._prefix !== undefined) cloned._prefix = this._prefix;
+                    if (this.namespaceURI !== undefined) { cloned._namespaceURI = this.namespaceURI; cloned.namespaceURI = this.namespaceURI; }
+                    if (this._localName !== undefined) cloned._localName = this._localName;
+                    if (this._tagName !== undefined) cloned._tagName = this._tagName;
+                    if (this._nodeName !== undefined) cloned._nodeName = this._nodeName;
+                    if (this._isPI) {
+                        cloned._isPI = true;
+                        cloned._target = this._target;
+                        if (globalThis.ProcessingInstruction) Object.setPrototypeOf(cloned, globalThis.ProcessingInstruction.prototype);
+                    }
+                    if (typeof globalThis !== 'undefined' && globalThis._upgradeTree) {
+                        globalThis._upgradeTree(cloned, null, null);
+                    }
                 }
                 return cloned;
             },
             get isConnected() {
                 var cur = this;
-                while (cur) {
-                    if (cur === document) return true;
+                var depth = 0;
+                while (cur && depth++ < 1000) {
+                    if (cur === document || cur.nodeType === 9) return true;
+                    if (cur.nodeType === 11 && cur.host) { cur = cur.host; continue; }
                     var p = cur.parentElement || cur.parentNode || cur.host;
-                    if (!p) break;
+                    if (!p || p === cur) break;
                     cur = p;
                 }
                 return false;
             },
             get ownerDocument() {
-                return (this === document) ? null : document;
+                if (this._ownerDocument !== undefined) return this._ownerDocument;
+                if (this.nodeType === 9 || this === document) return null;
+                return typeof document !== 'undefined' ? document : null;
+            },
+            set ownerDocument(val) {
+                this._ownerDocument = val;
             },
             get polymerController() { return this._polymerController; },
             set polymerController(val) {
@@ -486,22 +547,36 @@
                 return _wrapElement(_origCTN(String(item)));
             },
             append: function() {
-                var frag = _wrapElement(_createFragment());
-                for (var i = 0; i < arguments.length; i++) {
-                    frag.appendChild(this._toNode(arguments[i]));
+                if (arguments.length === 0) return;
+                var nodes = [];
+                for (var i = 0; i < arguments.length; i++) nodes.push(this._toNode(arguments[i]));
+                if (nodes.length === 1) {
+                    this.appendChild(nodes[0]);
+                } else {
+                    if (typeof _ensurePreInsertionValidity === 'function') {
+                        for (var i = 0; i < nodes.length; i++) _ensurePreInsertionValidity(this, nodes[i], null);
+                    }
+                    var frag = _wrapElement(_createFragment());
+                    for (var i = 0; i < nodes.length; i++) frag.appendChild(nodes[i]);
+                    this.appendChild(frag);
                 }
-                this.appendChild(frag);
             },
             prepend: function() {
-                var frag = _wrapElement(_createFragment());
-                for (var i = 0; i < arguments.length; i++) {
-                    frag.appendChild(this._toNode(arguments[i]));
-                }
+                if (arguments.length === 0) return;
+                var nodes = [];
+                for (var i = 0; i < arguments.length; i++) nodes.push(this._toNode(arguments[i]));
                 var first = this.firstChild;
-                if (first) {
-                    this.insertBefore(frag, first);
+                if (nodes.length === 1) {
+                    if (first) this.insertBefore(nodes[0], first);
+                    else this.appendChild(nodes[0]);
                 } else {
-                    this.appendChild(frag);
+                    if (typeof _ensurePreInsertionValidity === 'function') {
+                        for (var i = 0; i < nodes.length; i++) _ensurePreInsertionValidity(this, nodes[i], first);
+                    }
+                    var frag = _wrapElement(_createFragment());
+                    for (var i = 0; i < nodes.length; i++) frag.appendChild(nodes[i]);
+                    if (first) this.insertBefore(frag, first);
+                    else this.appendChild(frag);
                 }
             },
             before: function() {
@@ -512,11 +587,14 @@
                     parent = _wrapElement(pId);
                 }
                 if (!parent) return;
+                var marker = _wrapElement(_origCTN(''));
+                parent.insertBefore(marker, this);
                 var frag = _wrapElement(_createFragment());
                 for (var i = 0; i < arguments.length; i++) {
                     frag.appendChild(this._toNode(arguments[i]));
                 }
-                parent.insertBefore(frag, this);
+                parent.insertBefore(frag, marker);
+                parent.removeChild(marker);
             },
             after: function() {
                 var parent = this.parentElement || this.parentNode;
@@ -526,11 +604,14 @@
                     parent = _wrapElement(pId);
                 }
                 if (!parent) return;
+                var marker = _wrapElement(_origCTN(''));
+                parent.insertBefore(marker, this.nextSibling);
                 var frag = _wrapElement(_createFragment());
                 for (var i = 0; i < arguments.length; i++) {
                     frag.appendChild(this._toNode(arguments[i]));
                 }
-                parent.insertBefore(frag, this.nextSibling);
+                parent.insertBefore(frag, marker);
+                parent.removeChild(marker);
             },
             replaceWith: function() {
                 var parent = this.parentElement || this.parentNode;
@@ -540,22 +621,24 @@
                     parent = _wrapElement(pId);
                 }
                 if (!parent) return;
+                var marker = _wrapElement(_origCTN(''));
+                parent.insertBefore(marker, this);
                 var frag = _wrapElement(_createFragment());
                 for (var i = 0; i < arguments.length; i++) {
                     frag.appendChild(this._toNode(arguments[i]));
                 }
-                parent.insertBefore(frag, this);
-                parent.removeChild(this);
+                if (this.parentNode === parent) {
+                    parent.removeChild(this);
+                }
+                parent.insertBefore(frag, marker);
+                parent.removeChild(marker);
             },
             replaceChildren: function() {
-                var frag = _wrapElement(_createFragment());
-                for (var i = 0; i < arguments.length; i++) {
-                    frag.appendChild(this._toNode(arguments[i]));
+                if (typeof _doReplaceChildren === 'function') {
+                    _doReplaceChildren(this, arguments, false);
+                } else if (typeof globalThis !== 'undefined' && globalThis._doReplaceChildren) {
+                    globalThis._doReplaceChildren(this, arguments, false);
                 }
-                while (this.firstChild) {
-                    this.removeChild(this.firstChild);
-                }
-                this.appendChild(frag);
             },
             remove: function() {
                 var index = arguments[0];
@@ -576,6 +659,11 @@
                     }
                     return;
                 }
+                var p = this.parentElement || this.parentNode || this._parentNode;
+                if (p && p.removeChild) {
+                    p.removeChild(this);
+                    return;
+                }
                 var parentId = _getParent(this._nodeId);
                 if (parentId !== null) {
                     var parentObj = _wrapElement(parentId);
@@ -592,7 +680,8 @@
             }
         };
 
-        var tag = el.tagName ? el.tagName.toLowerCase() : '';
+        var tag = el.localName ? el.localName.toLowerCase() : (el.tagName ? el.tagName.toLowerCase() : '');
+        if (tag.indexOf(':') !== -1) tag = tag.split(':')[1];
         var nt = el.nodeType;
         if (typeof globalThis !== 'undefined') {
             if (nt === 11 && globalThis.DocumentFragment) {
@@ -609,6 +698,9 @@
                 }
             } else if (nt === 7 && globalThis.ProcessingInstruction) {
                 Object.setPrototypeOf(el, globalThis.ProcessingInstruction.prototype);
+            } else if (nt === 10 && globalThis.DocumentType) {
+                delete el.name;
+                Object.setPrototypeOf(el, globalThis.DocumentType.prototype);
             } else {
                 var customCtor = (globalThis.customElements && globalThis.customElements.get) ? globalThis.customElements.get(tag) : null;
                 if (customCtor && customCtor.prototype) {
@@ -618,6 +710,7 @@
                     }
                 } else {
                     var _tagToCtorName = {
+                        'svg': 'SVGSVGElement', 'use': 'SVGUseElement', 'g': 'SVGGElement', 'path': 'SVGPathElement', 'circle': 'SVGCircleElement', 'rect': 'SVGRectElement',
                         'template': 'HTMLTemplateElement', 'slot': 'HTMLSlotElement', 'dialog': 'HTMLDialogElement',
                         'progress': 'HTMLProgressElement', 'meter': 'HTMLMeterElement', 'output': 'HTMLOutputElement',
                         'datalist': 'HTMLDataListElement', 'map': 'HTMLMapElement', 'area': 'HTMLAreaElement',
@@ -642,7 +735,9 @@
                         'details': 'HTMLDetailsElement', 'summary': 'HTMLSummaryElement', 'time': 'HTMLTimeElement',
                         'data': 'HTMLDataElement', 'source': 'HTMLSourceElement', 'picture': 'HTMLPictureElement',
                         'track': 'HTMLTrackElement', 'base': 'HTMLBaseElement', 'blockquote': 'HTMLQuoteElement',
-                        'q': 'HTMLQuoteElement', 'del': 'HTMLModElement', 'ins': 'HTMLModElement'
+                        'q': 'HTMLQuoteElement', 'del': 'HTMLModElement', 'ins': 'HTMLModElement',
+                        'dir': 'HTMLDirectoryElement', 'font': 'HTMLFontElement', 'frame': 'HTMLFrameElement',
+                        'frameset': 'HTMLFrameSetElement', 'param': 'HTMLParamElement'
                     };
                     var ctorName = _tagToCtorName[tag];
                     var ctor = ctorName ? globalThis[ctorName] : null;
@@ -656,6 +751,8 @@
                             } else if (customCtor.prototype) {
                                 Object.setPrototypeOf(el, customCtor.prototype);
                             }
+                        } else if (tag.indexOf('-') === -1 && globalThis.HTMLUnknownElement) {
+                            Object.setPrototypeOf(el, globalThis.HTMLUnknownElement.prototype);
                         } else if (globalThis.HTMLElement) {
                             Object.setPrototypeOf(el, globalThis.HTMLElement.prototype);
                         }

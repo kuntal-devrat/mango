@@ -196,6 +196,29 @@ impl JsRuntime {
         session_storage: web_apis::SharedSessionStorage,
         cookie_jar: dom_bindings::CookieStore,
     ) -> Self {
+        Self::new_with_full_context(
+            document,
+            viewport_width,
+            viewport_height,
+            page_url,
+            local_storage,
+            session_storage,
+            cookie_jar,
+            None,
+        )
+    }
+
+    /// Creates a JS runtime with shared caches, storage, and preloaded background resources.
+    pub fn new_with_full_context(
+        document: Document,
+        viewport_width: f32,
+        viewport_height: f32,
+        page_url: &str,
+        local_storage: SharedLocalStorage,
+        session_storage: web_apis::SharedSessionStorage,
+        cookie_jar: dom_bindings::CookieStore,
+        resource_cache: Option<Arc<mango_net::ResourceCache>>,
+    ) -> Self {
         ensure_tokio_runtime();
 
         let shared_doc: SharedDocument = Rc::new(RefCell::new(document));
@@ -224,9 +247,10 @@ impl JsRuntime {
         let mut runtime = deno_core::JsRuntime::new(deno_core::RuntimeOptions {
             extensions: vec![crate::ops::init_extension()],
             module_loader: Some(Rc::new(
-                crate::runtime::module_loader::MangoModuleLoader::new(
+                crate::runtime::module_loader::MangoModuleLoader::with_resource_cache(
                     page_url,
                     import_maps.clone(),
+                    resource_cache,
                 ),
             )),
             ..Default::default()
@@ -256,19 +280,16 @@ impl JsRuntime {
 
         // Install prelude, DOM shim, and Web APIs shim
         if let Err(e) = runtime.execute_script("<prelude>", crate::ops::PRELUDE_JS) {
-            log::error!("Failed to install Mango prelude: {e}");
-            #[cfg(test)]
+            eprintln!("Failed to install Mango prelude: {e}");
             panic!("Failed to install Mango prelude: {e}");
         }
         if let Err(e) = runtime.execute_script("<dom_shim>", crate::dom_bindings::DOM_SHIM) {
-            log::error!("Failed to install Mango DOM shim: {e}");
-            #[cfg(test)]
+            eprintln!("Failed to install Mango DOM shim: {e}");
             panic!("Failed to install Mango DOM shim: {e}");
         }
         let web_shim = crate::web_apis::build_web_apis_shim(page_url);
         if let Err(e) = runtime.execute_script("<web_apis>", web_shim) {
-            log::error!("Failed to install Mango Web APIs shim: {e}");
-            #[cfg(test)]
+            eprintln!("Failed to install Mango Web APIs shim: {e}");
             panic!("Failed to install Mango Web APIs shim: {e}");
         }
 

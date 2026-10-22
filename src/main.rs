@@ -36,6 +36,13 @@ fn main() {
         }
     }
 
+    // Ignore SIGPIPE on Unix so broken pipes in Wayland, devtools websocket, or child processes
+    // return an EPIPE error rather than abruptly terminating the entire browser process.
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_IGN);
+    }
+
     // Initialize logging
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .filter_module("sctk_adwaita", log::LevelFilter::Off)
@@ -100,7 +107,21 @@ fn main() {
 
     // Create and run the application
     let mut app = MangoApp::new(initial_url);
-    if let Err(err) = event_loop.run_app(&mut app) {
-        log::error!("Event loop terminated: {err:?}");
+    let run_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        event_loop.run_app(&mut app)
+    }));
+    match run_res {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => log::error!("Event loop terminated with error: {err:?}"),
+        Err(payload) => {
+            let msg = if let Some(s) = payload.downcast_ref::<&str>() {
+                *s
+            } else if let Some(s) = payload.downcast_ref::<String>() {
+                s.as_str()
+            } else {
+                "unknown panic"
+            };
+            log::warn!("Event loop cleanly caught shutdown panic: {msg}");
+        }
     }
 }

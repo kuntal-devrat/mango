@@ -37,17 +37,30 @@ impl WindowState {
         }
     }
 
-    /// Redraws the browser window, rendering the unified display list directly
-    /// to guarantee identical visual rendering between desktop and headless modes.
+    /// Redraws the browser window.
+    ///
+    /// When backed by a hardware GPU compositor (`lgpu`), uses cached layer tiles
+    /// and updates only the translation matrix for 60–120 FPS buttery-smooth scrolling
+    /// with zero CPU re-rasterization.
+    /// Falls back to direct display list presentation in software mode.
     pub fn redraw(&mut self) {
         let size = self.surface.size();
-        let dl = self.browser.build_display_list(size);
-
-        if let Err(err) = self
-            .surface
-            .present_display_list(&dl, self.browser.canvas_bg())
-        {
-            log::warn!("Presentation error: {err}");
+        if self.surface.is_gpu() {
+            self.browser.update_layers(size);
+            if let Err(err) = self
+                .surface
+                .composite_and_present(&self.browser.layer_tree, self.browser.canvas_bg())
+            {
+                log::warn!("GPU composite error: {err}");
+            }
+        } else {
+            let dl = self.browser.build_display_list(size);
+            if let Err(err) = self
+                .surface
+                .present_display_list(&dl, self.browser.canvas_bg())
+            {
+                log::warn!("Presentation error: {err}");
+            }
         }
     }
 }
@@ -137,11 +150,16 @@ impl ApplicationHandler for MangoApp {
                 needs_redraw = true;
             }
 
-            // Tick JS event loop (setTimeout/setInterval)
-            if (state.browser.has_pending_timers() || state.browser.is_loading())
-                && state.browser.tick_js()
+            // Tick JS event loop (setTimeout/setInterval, and deferred/async scripts)
+            let had_scripts = state.browser.has_pending_scripts();
+            if state.browser.has_pending_timers()
+                || state.browser.is_loading()
+                || had_scripts
             {
-                needs_redraw = true;
+                let mutated = state.browser.tick_js();
+                if mutated || had_scripts {
+                    needs_redraw = true;
+                }
             }
 
             // Check for pending window.open requests from scripts
@@ -210,14 +228,18 @@ impl ApplicationHandler for MangoApp {
         }
 
         // Event loop control flow pacing:
-        // 1. If animations, active page loading, or image decoding are running, poll at ~60 FPS (16ms).
-        // 2. Otherwise, if JS timers or tasks are pending, sleep until the earliest deadline (clamped to at most 1000ms).
-        // 3. Otherwise, enter true idle sleep (ControlFlow::Wait) to consume 0% CPU.
-        if any_animating
+        // 1. If deferred/async scripts are queued, yield briefly (4ms) to pump OS/Wayland events, answer pings, and redraw between scripts.
+        // 2. If animations, active page loading, or image decoding are running, poll at ~60 FPS (16ms).
+        // 3. Otherwise, if JS timers or tasks are pending, sleep until the earliest deadline (clamped to at most 1000ms).
+        // 4. Otherwise, enter true idle sleep (ControlFlow::Wait) to consume 0% CPU.
+        if any_pending_scripts {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                Instant::now() + Duration::from_millis(4),
+            ));
+        } else if any_animating
             || any_loading
             || any_pending_images
             || any_smooth_scroll
-            || any_pending_scripts
         {
             event_loop.set_control_flow(ControlFlow::WaitUntil(
                 Instant::now() + Duration::from_millis(16),
@@ -464,8 +486,12 @@ impl ApplicationHandler for MangoApp {
         log::info!("Exiting Mango application...");
         for (_, state) in self.windows.drain() {
             state.browser.persist_profile();
-            drop(state.surface);
-            drop(state.window);
+            // Intentionally bypass manual destruction of GPU Vulkan surfaces and Wayland window handles
+            // during process shutdown. If the Wayland compositor disconnected or closed the socket
+            // (e.g. broken pipe / force quit), Mesa/libwayland-client can dereference invalid display pointers,
+            // producing a secondary SIGSEGV. Memory and handles are cleanly reclaimed by the OS kernel on exit.
+            std::mem::forget(state.surface);
+            std::mem::forget(state.window);
         }
     }
 }

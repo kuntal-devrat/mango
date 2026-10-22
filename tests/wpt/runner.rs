@@ -87,7 +87,9 @@ pub fn run_wpt_html_file(base_wpt_dir: &Path, rel_path: &str) -> Result<WptFileR
         .map_err(|e| format!("testharnessreport.js execution error: {e}"))?;
 
     // 2. Execute script tags in tree order
+    let _ = rt.execute_script("if (typeof _syncWindowNamedProperties === 'function') { _syncWindowNamedProperties(); }");
     for (src_opt, inline_code) in scripts {
+        let _ = rt.execute_script("if (typeof _syncWindowNamedProperties === 'function') { _syncWindowNamedProperties(); }");
         if let Some(src) = src_opt {
             if src.contains("testharness.js") || src.contains("testharnessreport.js") {
                 continue;

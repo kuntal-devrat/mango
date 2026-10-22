@@ -310,12 +310,13 @@
         if (typeof ctor !== 'function') {
             throw new TypeError("Failed to execute 'define' on 'CustomElementRegistry': The constructor must be a function.");
         }
+        var DomEx = globalThis.DOMException || DOMException;
         if (this._registry[name]) {
-            throw new DOMException("Failed to execute 'define' on 'CustomElementRegistry': the name '" + name + "' has already been used with this registry", "NotSupportedError");
+            throw new DomEx("Failed to execute 'define' on 'CustomElementRegistry': the name '" + name + "' has already been used with this registry", "NotSupportedError");
         }
         for (var k in this._registry) {
             if (this._registry[k] === ctor) {
-                throw new DOMException("Failed to execute 'define' on 'CustomElementRegistry': this constructor has already been used with this registry", "NotSupportedError");
+                throw new DomEx("Failed to execute 'define' on 'CustomElementRegistry': this constructor has already been used with this registry", "NotSupportedError");
             }
         }
         this._registry[name] = ctor;
@@ -475,6 +476,141 @@
     CSSStyleSheet.prototype.insertRule = function(rule, index) {
         index = index === undefined ? 0 : index;
         var rStr = String(rule).trim();
+
+        // 1. Validate @layer rules
+        if (rStr.startsWith('@layer')) {
+            var afterLayer = rStr.slice(6).trim();
+            if (afterLayer.endsWith(';')) {
+                var statementContent = afterLayer.slice(0, -1).trim();
+                if (!statementContent) {
+                    throw new DOMException("Failed to execute 'insertRule' on 'CSSStyleSheet': Invalid @layer statement", "SyntaxError");
+                }
+                var names = statementContent.split(',');
+                for (var i = 0; i < names.length; i++) {
+                    var n = names[i].trim();
+                    if (!n) {
+                        throw new DOMException("Failed to execute 'insertRule': empty layer name", "SyntaxError");
+                    }
+                    var parts = n.split('.');
+                    for (var j = 0; j < parts.length; j++) {
+                        var p = parts[j].trim();
+                        if (p !== parts[j] || !/^[a-zA-Z_-][a-zA-Z0-9_-]*$/.test(p)) {
+                            throw new DOMException("Failed to execute 'insertRule': invalid layer name", "SyntaxError");
+                        }
+                    }
+                }
+            } else if (afterLayer.indexOf('{') !== -1) {
+                var header = afterLayer.slice(0, afterLayer.indexOf('{')).trim();
+                if (header.indexOf(',') !== -1) {
+                    throw new DOMException("Failed to execute 'insertRule': @layer block cannot have multiple layer names", "SyntaxError");
+                }
+                if (header) {
+                    var parts = header.split('.');
+                    for (var j = 0; j < parts.length; j++) {
+                        var p = parts[j].trim();
+                        if (p !== parts[j] || !/^[a-zA-Z_-][a-zA-Z0-9_-]*$/.test(p)) {
+                            throw new DOMException("Failed to execute 'insertRule': invalid layer name", "SyntaxError");
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Format and parse @import rules
+        if (rStr.startsWith('@import')) {
+            var afterImport = rStr.slice(7).trim();
+            if (afterImport.endsWith(';')) {
+                afterImport = afterImport.slice(0, -1).trim();
+            }
+
+            var rawUrl = "";
+            var urlStr = "";
+            var rest = "";
+
+            if (afterImport.startsWith('url(')) {
+                var closeParen = afterImport.indexOf(')');
+                if (closeParen !== -1) {
+                    rawUrl = afterImport.slice(4, closeParen).trim();
+                    if ((rawUrl.startsWith('"') && rawUrl.endsWith('"')) || (rawUrl.startsWith("'") && rawUrl.endsWith("'"))) {
+                        rawUrl = rawUrl.slice(1, -1);
+                    }
+                    urlStr = 'url("' + rawUrl + '")';
+                    rest = afterImport.slice(closeParen + 1).trim();
+                }
+            } else if (afterImport.startsWith('"') || afterImport.startsWith("'")) {
+                var q = afterImport[0];
+                var endQ = afterImport.indexOf(q, 1);
+                if (endQ !== -1) {
+                    rawUrl = afterImport.slice(1, endQ);
+                    urlStr = 'url("' + rawUrl + '")';
+                    rest = afterImport.slice(endQ + 1).trim();
+                }
+            }
+
+            var layerStr = "";
+            var supportsStr = "";
+            var mediaList = [];
+
+            if (rest) {
+                if (rest === 'layer' || rest.startsWith('layer ')) {
+                    layerStr = 'layer';
+                    rest = rest.slice(5).trim();
+                } else if (/^layer\s*\(/.test(rest)) {
+                    var lpClose = rest.indexOf(')');
+                    if (lpClose !== -1) {
+                        var inner = rest.slice(rest.indexOf('(') + 1, lpClose).trim();
+                        var isValidLayerName = false;
+                        if (inner && inner.indexOf(',') === -1 && inner.indexOf(' ') === -1) {
+                            var lParts = inner.split('.');
+                            isValidLayerName = lParts.every(function(p) { return /^[a-zA-Z_-][a-zA-Z0-9_-]*$/.test(p); });
+                        }
+                        if (isValidLayerName) {
+                            layerStr = 'layer(' + inner + ')';
+                            rest = rest.slice(lpClose + 1).trim();
+                        } else {
+                            mediaList.push(rest.slice(0, lpClose + 1));
+                            rest = rest.slice(lpClose + 1).trim();
+                        }
+                    }
+                }
+
+                if (rest.startsWith('supports(')) {
+                    var spClose = rest.lastIndexOf(')');
+                    if (spClose !== -1) {
+                        supportsStr = rest.slice(0, spClose + 1);
+                        rest = rest.slice(spClose + 1).trim();
+                    }
+                }
+
+                if (rest) {
+                    mediaList.push(rest);
+                }
+            }
+
+            var canonicalCss = '@import ' + urlStr;
+            if (layerStr) canonicalCss += ' ' + layerStr;
+            if (supportsStr) canonicalCss += ' ' + supportsStr;
+            if (mediaList.length > 0) canonicalCss += ' ' + mediaList.join(' ');
+            canonicalCss += ';';
+
+            var mediaObj = {
+                length: mediaList.length,
+                mediaText: mediaList.join(' '),
+                item: function(i) { return mediaList[i] || null; },
+                toString: function() { return this.mediaText; }
+            };
+
+            var parsed = {
+                cssText: canonicalCss,
+                href: rawUrl,
+                media: mediaObj,
+                style: { cssText: "" }
+            };
+            this._rules.splice(index, 0, parsed);
+            return index;
+        }
+
+        // 3. General style / at-rule
         var parts = rStr.split('{');
         var sel = parts[0].trim();
         var body = parts.length > 1 ? parts.slice(1).join('{').replace(/}$/, '').trim() : '';

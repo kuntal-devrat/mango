@@ -9,6 +9,8 @@ pub enum Length {
     Px(f32),
     /// Relative to current element's font size (e.g. `1.5em`).
     Em(f32),
+    /// Relative to element's font x-height (e.g. `2ex`).
+    Ex(f32),
     /// Relative to root element's font size (e.g. `2rem`).
     Rem(f32),
     /// Relative to containing block dimension (e.g. `50%`).
@@ -67,6 +69,10 @@ impl std::hash::Hash for Length {
             }
             Length::Em(v) => {
                 1u8.hash(state);
+                v.to_bits().hash(state);
+            }
+            Length::Ex(v) => {
+                254u8.hash(state);
                 v.to_bits().hash(state);
             }
             Length::Rem(v) => {
@@ -294,7 +300,7 @@ impl Length {
         } else if let Some(num) = trimmed.strip_suffix("ch") {
             num.trim().parse::<f32>().ok().map(|v| Length::Em(v * 0.5))
         } else if let Some(num) = trimmed.strip_suffix("ex") {
-            num.trim().parse::<f32>().ok().map(|v| Length::Em(v * 0.5))
+            num.trim().parse::<f32>().ok().map(Length::Ex)
         } else if let Ok(n) = trimmed.parse::<f32>() {
             Some(Length::Px(n))
         } else {
@@ -337,6 +343,7 @@ impl Length {
         match *self {
             Length::Px(px) => px,
             Length::Em(em) => em * font_size,
+            Length::Ex(ex) => ex * 0.5 * font_size,
             Length::Rem(rem) => rem * root_font_size,
             Length::Percent(pct) => (pct / 100.0) * container_size,
             Length::Vw(vw) => (vw / 100.0) * viewport_width,
@@ -381,6 +388,7 @@ impl Length {
                 calc.px
                     + (calc.percent / 100.0) * container_size
                     + calc.em * font_size
+                    + calc.ex * 0.5 * font_size
                     + calc.rem * root_font_size
                     + (calc.vw / 100.0) * viewport_width
                     + (calc.vh / 100.0) * viewport_height

@@ -85,7 +85,7 @@ pub fn compute_align_content_spacing(
 
     if free_cross > 0.0 && is_wrap {
         match style.align_content {
-            AlignContent::Stretch => {
+            AlignContent::Normal | AlignContent::Stretch => {
                 let extra_per_line = free_cross / line_count as f32;
                 for size in line_cross_sizes.iter_mut() {
                     *size += extra_per_line;
@@ -197,7 +197,7 @@ pub fn compute_justify_content_spacing(
         (0.0, main_gap)
     } else {
         match style.justify_content {
-            JustifyContent::FlexStart => (0.0, main_gap),
+            JustifyContent::Normal | JustifyContent::FlexStart => (0.0, main_gap),
             JustifyContent::FlexEnd => (remaining_free, main_gap),
             JustifyContent::Center => (remaining_free / 2.0, main_gap),
             JustifyContent::SpaceBetween => {

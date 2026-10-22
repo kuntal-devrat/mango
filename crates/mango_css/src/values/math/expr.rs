@@ -1,11 +1,17 @@
 //! Mathematical expression trees and rounding strategies.
 
-use super::calc::CalcLength;
 use crate::values::length::Length;
 
 /// An identifier for an interned mathematical expression in CSS math functions (`calc()`, `min()`, `max()`, `clamp()`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct MathId(pub u32);
+
+impl MathId {
+    /// Returns `true` if the interned math expression resolves to a dimensionless `<number>` rather than a length.
+    pub fn is_dimensionless_number(&self) -> bool {
+        crate::values::math::get_math(*self).map_or(false, |e| e.is_dimensionless_number())
+    }
+}
 
 /// Rounding strategy for CSS `round()` function.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -578,189 +584,6 @@ impl MathExpr {
                     viewport_height,
                 )
             }),
-        }
-    }
-
-    /// Attempts to fold constant pixel lengths at parse time.
-    pub fn try_fold_px(&self) -> Option<f32> {
-        match self {
-            MathExpr::Var { .. } => None,
-            MathExpr::Length(Length::Px(px)) => Some(*px),
-            MathExpr::Length(_) => None,
-            MathExpr::Number(n) => Some(*n),
-            MathExpr::Add(a, b) => Some(a.try_fold_px()? + b.try_fold_px()?),
-            MathExpr::Sub(a, b) => Some(a.try_fold_px()? - b.try_fold_px()?),
-            MathExpr::Mul(a, b) => Some(a.try_fold_px()? * b.try_fold_px()?),
-            MathExpr::Div(a, b) => {
-                let div = b.try_fold_px()?;
-                if div.abs() > 1e-6 {
-                    Some(a.try_fold_px()? / div)
-                } else {
-                    Some(0.0)
-                }
-            }
-            MathExpr::Min(list) => {
-                let mut m = f32::INFINITY;
-                for item in list {
-                    m = m.min(item.try_fold_px()?);
-                }
-                Some(if m.is_infinite() { 0.0 } else { m })
-            }
-            MathExpr::Max(list) => {
-                let mut m = f32::NEG_INFINITY;
-                for item in list {
-                    m = m.max(item.try_fold_px()?);
-                }
-                Some(if m.is_infinite() { 0.0 } else { m })
-            }
-            MathExpr::Clamp { min, val, max } => {
-                let min_v = min.try_fold_px()?;
-                let v = val.try_fold_px()?;
-                let max_v = max.try_fold_px()?;
-                Some(v.max(min_v).min(max_v))
-            }
-            MathExpr::Round {
-                strategy,
-                val,
-                step,
-            } => {
-                let v = val.try_fold_px()?;
-                let s = step.try_fold_px()?;
-                if s.abs() < 1e-6 {
-                    Some(v)
-                } else {
-                    Some(match strategy {
-                        RoundStrategy::Nearest => (v / s).round() * s,
-                        RoundStrategy::Up => (v / s).ceil() * s,
-                        RoundStrategy::Down => (v / s).floor() * s,
-                        RoundStrategy::ToZero => (v / s).trunc() * s,
-                    })
-                }
-            }
-            MathExpr::Mod(a, b) => {
-                let av = a.try_fold_px()?;
-                let bv = b.try_fold_px()?;
-                if bv.abs() < 1e-6 {
-                    Some(0.0)
-                } else {
-                    Some(av - bv * (av / bv).floor())
-                }
-            }
-            MathExpr::Rem(a, b) => {
-                let av = a.try_fold_px()?;
-                let bv = b.try_fold_px()?;
-                if bv.abs() < 1e-6 {
-                    Some(0.0)
-                } else {
-                    Some(av % bv)
-                }
-            }
-            MathExpr::Abs(a) => Some(a.try_fold_px()?.abs()),
-            MathExpr::Sign(a) => {
-                let v = a.try_fold_px()?;
-                Some(if v > 0.0 {
-                    1.0
-                } else if v < 0.0 {
-                    -1.0
-                } else {
-                    0.0
-                })
-            }
-            MathExpr::Sin(a) => Some(a.try_fold_px()?.sin()),
-            MathExpr::Cos(a) => Some(a.try_fold_px()?.cos()),
-            MathExpr::Tan(a) => Some(a.try_fold_px()?.tan()),
-            MathExpr::Asin(a) => Some(a.try_fold_px()?.asin()),
-            MathExpr::Acos(a) => Some(a.try_fold_px()?.acos()),
-            MathExpr::Atan(a) => Some(a.try_fold_px()?.atan()),
-            MathExpr::Atan2(y, x) => Some(y.try_fold_px()?.atan2(x.try_fold_px()?)),
-            MathExpr::Sqrt(a) => {
-                let v = a.try_fold_px()?;
-                Some(if v >= 0.0 { v.sqrt() } else { 0.0 })
-            }
-            MathExpr::Pow(base, exp) => Some(base.try_fold_px()?.powf(exp.try_fold_px()?)),
-            MathExpr::Hypot(list) => {
-                let mut sum_sq = 0.0f32;
-                for item in list {
-                    let v = item.try_fold_px()?;
-                    sum_sq += v * v;
-                }
-                Some(sum_sq.sqrt())
-            }
-        }
-    }
-
-    /// Converts this expression into a linear CalcLength if it only contains linear additions/subtractions.
-    pub fn try_into_calc_length(&self) -> Option<CalcLength> {
-        let mut calc = CalcLength::default();
-        if self.accumulate_calc(&mut calc, 1.0) {
-            Some(calc)
-        } else {
-            None
-        }
-    }
-
-    fn accumulate_calc(&self, calc: &mut CalcLength, sign: f32) -> bool {
-        match self {
-            MathExpr::Length(len) => match len {
-                Length::Px(px) => {
-                    calc.px += px * sign;
-                    true
-                }
-                Length::Percent(pct) => {
-                    calc.percent += pct * sign;
-                    true
-                }
-                Length::Em(em) => {
-                    calc.em += em * sign;
-                    true
-                }
-                Length::Rem(rem) => {
-                    calc.rem += rem * sign;
-                    true
-                }
-                Length::Vw(vw) => {
-                    calc.vw += vw * sign;
-                    true
-                }
-                Length::Vh(vh) => {
-                    calc.vh += vh * sign;
-                    true
-                }
-                Length::Calc(c) => {
-                    calc.px += c.px * sign;
-                    calc.percent += c.percent * sign;
-                    calc.em += c.em * sign;
-                    calc.rem += c.rem * sign;
-                    calc.vw += c.vw * sign;
-                    calc.vh += c.vh * sign;
-                    true
-                }
-                _ => false,
-            },
-            MathExpr::Number(n) if *n == 0.0 => true,
-            MathExpr::Add(a, b) => a.accumulate_calc(calc, sign) && b.accumulate_calc(calc, sign),
-            MathExpr::Sub(a, b) => a.accumulate_calc(calc, sign) && b.accumulate_calc(calc, -sign),
-            MathExpr::Mul(a, b) => {
-                if let MathExpr::Number(n) = **b {
-                    a.accumulate_calc(calc, sign * n)
-                } else if let MathExpr::Number(n) = **a {
-                    b.accumulate_calc(calc, sign * n)
-                } else {
-                    false
-                }
-            }
-            MathExpr::Div(a, b) => {
-                if let MathExpr::Number(n) = **b {
-                    if n.abs() > 1e-6 {
-                        a.accumulate_calc(calc, sign / n)
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
-            }
-            _ => false,
         }
     }
 }

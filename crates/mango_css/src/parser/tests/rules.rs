@@ -382,10 +382,7 @@ fn test_nested_supports_in_media() {
             .collect();
         assert_eq!(
             display_decls,
-            vec![
-                &Value::Keyword("none".to_string()),
-                &Value::Display(Display::Block)
-            ]
+            vec![&Value::Display(Display::None), &Value::Display(Display::Block)]
         );
     } else {
         panic!("expected MediaRule");

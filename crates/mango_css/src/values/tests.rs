@@ -271,7 +271,7 @@ fn test_length_parse_all_units() {
     assert!(matches!(Length::parse("25.4mm"), Some(Length::Px(px)) if (px - 96.0).abs() < 0.01));
     assert!(matches!(Length::parse("101.6q"), Some(Length::Px(px)) if (px - 96.0).abs() < 0.01));
     assert!(matches!(Length::parse("2ch"), Some(Length::Em(em)) if (em - 1.0).abs() < 0.01));
-    assert!(matches!(Length::parse("2ex"), Some(Length::Em(em)) if (em - 1.0).abs() < 0.01));
+    assert!(matches!(Length::parse("2ex"), Some(Length::Ex(ex)) if (ex - 2.0).abs() < 0.01));
 }
 
 #[test]

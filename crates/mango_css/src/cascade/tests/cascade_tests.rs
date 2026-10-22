@@ -5,7 +5,7 @@ use crate::cascade::resolver::{resolve_cascade, resolve_cascade_with_index};
 use crate::cascade::rule_index::RuleIndex;
 use crate::cascade::types::Origin;
 use crate::parser::parse_stylesheet;
-use crate::values::{Length, Value};
+use crate::values::{Display, Length, Value};
 
 #[test]
 fn test_cascade_user_agent_and_author_override() {
@@ -143,7 +143,7 @@ fn test_video_and_audio_styles_and_presentational_hints() {
     let a1_styles = resolve_cascade(a1_id, &doc, &[]);
     assert_eq!(
         a1_styles.get("display"),
-        Some(&Value::Keyword("none".to_string()))
+        Some(&Value::Display(Display::None))
     );
 
     // 3. Audio with controls is display: inline-block with 300x36 dimensions
@@ -265,7 +265,7 @@ fn test_element_styles() {
         matches!(
             d1_styles.get("display"),
             Some(Value::Display(crate::values::Display::None))
-        ) || d1_styles.get("display") == Some(&Value::Keyword("none".to_string()))
+        ) || d1_styles.get("display") == Some(&Value::Display(Display::None))
     );
 
     let d2_id = doc.find_element_by_id(root, "d2").unwrap();
@@ -313,7 +313,7 @@ fn test_element_styles() {
         matches!(
             dl1_styles.get("display"),
             Some(Value::Display(crate::values::Display::None))
-        ) || dl1_styles.get("display") == Some(&Value::Keyword("none".to_string()))
+        ) || dl1_styles.get("display") == Some(&Value::Display(Display::None))
     );
 
     // 4. ruby: rp is display: none, rt is font-size 50%
@@ -330,7 +330,7 @@ fn test_element_styles() {
         matches!(
             rp1_styles.get("display"),
             Some(Value::Display(crate::values::Display::None))
-        ) || rp1_styles.get("display") == Some(&Value::Keyword("none".to_string()))
+        ) || rp1_styles.get("display") == Some(&Value::Display(Display::None))
     );
 
     // 5. bdi & bdo unicode-bidi and direction

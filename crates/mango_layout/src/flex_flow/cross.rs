@@ -199,7 +199,7 @@ pub fn resolve_item_cross_size(
             AlignSelf::Center => AlignItems::Center,
             AlignSelf::Baseline => AlignItems::Baseline,
         };
-        if item_align == AlignItems::Stretch {
+        if matches!(item_align, AlignItems::Normal | AlignItems::Stretch) {
             (content_width - pad_cross - border_cross - margin_cross.max(0.0)).max(0.0)
         } else {
             let fit_w = crate::block_flow::calculate_shrink_to_fit_width(child, content_width);

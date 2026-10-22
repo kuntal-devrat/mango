@@ -220,8 +220,10 @@ pub fn op_mango_set_text_content(state: &mut OpState, node_id: u32, #[string] te
     for child in children {
         d.detach(child);
     }
-    let text_node = d.create_text(&text);
-    d.append_child(nid, text_node);
+    if !text.is_empty() {
+        let text_node = d.create_text(&text);
+        d.append_child(nid, text_node);
+    }
     if let Some(dirty) = state.try_borrow::<DomDirtyFlag>() {
         *dirty.borrow_mut() = true;
     }

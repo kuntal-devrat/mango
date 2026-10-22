@@ -119,31 +119,6 @@
                 if (this._isPI) { this._target = String(val); return; }
                 if (typeof this.setAttribute === 'function') this.setAttribute('target', String(val));
             },
-            // <object> & <embed> and CharacterData / Comment
-            get data() {
-                if (this._customData !== undefined) {
-                    return this._customData;
-                }
-                if (this.nodeType === 8 || this.nodeType === 3 || this.nodeType === 7 || this.nodeType === 4) {
-                    return this.nodeValue || '';
-                }
-                var tag = (this.tagName || '').toLowerCase();
-                if (tag === 'object') {
-                    return (typeof this.getAttribute === 'function') ? (this.getAttribute('data') || '') : '';
-                }
-                return undefined;
-            },
-            set data(val) {
-                if (this.nodeType === 8 || this.nodeType === 3 || this.nodeType === 7 || this.nodeType === 4) {
-                    this.nodeValue = val === null ? "" : String(val);
-                    return;
-                }
-                var tag = (this.tagName || '').toLowerCase();
-                if (tag === 'object' && typeof val === 'string') {
-                    if (typeof this.setAttribute === 'function') this.setAttribute('data', val);
-                }
-                this._customData = val;
-            },
             substringData: function(offset, count) {
                 if (arguments.length < 2) {
                     throw new TypeError("Failed to execute 'substringData': 2 arguments required, but only " + arguments.length + " present.");
@@ -199,77 +174,24 @@
             get htmlFor() { return this.getAttribute('for') || ''; },
             set htmlFor(val) { this.setAttribute('for', String(val)); },
             get contentDocument() {
-                if (this.tagName && this.tagName.toLowerCase() === 'iframe') {
-                    if (!this._contentDocument) {
-                        var doc = (typeof document !== 'undefined' && document.implementation && typeof document.implementation.createHTMLDocument === 'function')
-                            ? document.implementation.createHTMLDocument('')
-                            : null;
-                        if (!doc) {
-                            var head = _wrapElement(_origCE('head'));
-                            var body = _wrapElement(_origCE('body'));
-                            var html = _wrapElement(_origCE('html'));
-                            if (html && head) html.appendChild(head);
-                            if (html && body) html.appendChild(body);
-                            doc = {
-                                title: '',
-                                readyState: 'complete',
-                                body: body,
-                                head: head,
-                                documentElement: html,
-                                createElement: function(t) { return _wrapElement(_origCE(t)); },
-                                createElementNS: function(ns, t) { return _wrapElement(_origCE(t)); },
-                                createTextNode: function(t) { return _wrapElement(_origCTN(t)); },
-                                createDocumentFragment: function() { return _wrapElement(_createFragment()); },
-                                createComment: function(t) { return (typeof document !== 'undefined' && document.createComment) ? document.createComment(t) : null; },
-                                getElementById: function(id) { return null; },
-                                querySelector: function(s) { return null; },
-                                querySelectorAll: function(s) { return _createNodeList(function() { return []; }); },
-                                getElementsByTagName: function(t) { return _createHTMLCollection(function() { return []; }); },
-                                getElementsByClassName: function(c) { return _createHTMLCollection(function() { return []; }); }
-                            };
-                        }
-                        doc.readyState = 'complete';
-                        doc.defaultView = this.contentWindow;
-                        if (typeof globalThis.Document !== 'undefined') {
-                            Object.setPrototypeOf(doc, globalThis.Document.prototype);
-                        }
-                        this._contentDocument = doc;
-                    }
-                    return this._contentDocument;
-                }
-                return null;
+                return (typeof _getIframeContentDocument === 'function') ? _getIframeContentDocument(this) : (this._contentDocument || null);
             },
             get contentWindow() {
-                if (this.tagName && this.tagName.toLowerCase() === 'iframe') {
-                    if (!this._contentWindow) {
-                        var self = this;
-                        var win = {
-                            frameElement: self,
-                            postMessage: function(msg, targetOrigin) {},
-                            addEventListener: function() {},
-                            removeEventListener: function() {},
-                            dispatchEvent: function() { return true; }
-                        };
-                        Object.defineProperty(win, 'document', {
-                            get: function() { return self.contentDocument; },
-                            configurable: true
-                        });
-                        this._contentWindow = win;
-                    }
-                    return this._contentWindow;
-                }
-                return null;
+                return (typeof _getIframeContentWindow === 'function') ? _getIframeContentWindow(this) : (this._contentWindow || null);
             },
             appendChild: function(child) {
+                if (arguments.length < 1) throw new TypeError("Failed to execute 'appendChild' on 'Node': 1 argument required");
                 return _defaultAppendChild(this, child);
             },
             removeChild: function(child) {
                 return _defaultRemoveChild(this, child);
             },
             insertBefore: function(newChild, refChild) {
+                if (arguments.length < 2) throw new TypeError("Failed to execute 'insertBefore' on 'Node': 2 arguments required");
                 return _defaultInsertBefore(this, newChild, refChild);
             },
             replaceChild: function(newChild, oldChild) {
+                if (arguments.length < 2) throw new TypeError("Failed to execute 'replaceChild' on 'Node': 2 arguments required");
                 return _defaultReplaceChild(this, newChild, oldChild);
             },
             get __shady_native_appendChild() { return this._shady_native_appendChild || this.appendChild; },
@@ -342,8 +264,25 @@
             setAttribute: function(name, value) {
                 var oldVal = _getAttribute(this._nodeId, name);
                 _setAttribute(this._nodeId, name, String(value));
+                var lower = String(name).toLowerCase();
+                if (lower === 'style' && this._style && !this._style._syncing) {
+                    this._style._syncing = true;
+                    try { this._style.cssText = String(value); } finally { this._style._syncing = false; }
+                }
+                if (lower === 'id') {
+                    var idVal = String(value);
+                    if (idVal && !(idVal in globalThis)) {
+                        var self = this;
+                        try {
+                            Object.defineProperty(globalThis, idVal, {
+                                get: function() { return self; },
+                                configurable: true,
+                                enumerable: false
+                            });
+                        } catch (e) {}
+                    }
+                }
                 if (this.tagName && this.tagName.toLowerCase() === 'canvas') {
-                    var lower = String(name).toLowerCase();
                     if (lower === 'width' || lower === 'height') {
                         _canvasResize(this._nodeId, this.width, this.height);
                     }
@@ -363,6 +302,12 @@
             removeAttribute: function(name) {
                 var oldVal = _getAttribute(this._nodeId, name);
                 _removeAttribute(this._nodeId, name);
+                if (this._nsAttrs) delete this._nsAttrs[name];
+                var lower = String(name).toLowerCase();
+                if (lower === 'style' && this._style && !this._style._syncing) {
+                    this._style._syncing = true;
+                    try { this._style.cssText = ""; } finally { this._style._syncing = false; }
+                }
                 if (oldVal !== null) {
                     _invokeAttributeChangedCallback(this, String(name), oldVal, null);
                 }
@@ -375,10 +320,45 @@
                     });
                 }
             },
-            getAttributeNS: function(ns, name) { return this.getAttribute(name); },
-            setAttributeNS: function(ns, name, value) { this.setAttribute(name, value); },
-            removeAttributeNS: function(ns, name) { this.removeAttribute(name); },
-            hasAttributeNS: function(ns, name) { return this.hasAttribute(name); },
+            getAttributeNS: function(ns, localName) {
+                if (this._nsAttrs) {
+                    for (var k in this._nsAttrs) {
+                        var a = this._nsAttrs[k];
+                        if (a && a.namespaceURI === (ns || null) && a.localName === localName) return a.value;
+                    }
+                }
+                return this.getAttribute(localName);
+            },
+            setAttributeNS: function(ns, name, value) {
+                if (!this._nsAttrs) this._nsAttrs = {};
+                var colon = String(name).indexOf(':');
+                var prefix = colon !== -1 ? String(name).substring(0, colon) : null;
+                var localName = colon !== -1 ? String(name).substring(colon + 1) : String(name);
+                this._nsAttrs[name] = { namespaceURI: ns || null, prefix: prefix, localName: localName, value: String(value) };
+                this.setAttribute(name, value);
+            },
+            removeAttributeNS: function(ns, localName) {
+                if (this._nsAttrs) {
+                    for (var k in this._nsAttrs) {
+                        var a = this._nsAttrs[k];
+                        if (a && a.namespaceURI === (ns || null) && a.localName === localName) {
+                            delete this._nsAttrs[k];
+                            this.removeAttribute(k);
+                            return;
+                        }
+                    }
+                }
+                this.removeAttribute(localName);
+            },
+            hasAttributeNS: function(ns, localName) {
+                if (this._nsAttrs) {
+                    for (var k in this._nsAttrs) {
+                        var a = this._nsAttrs[k];
+                        if (a && a.namespaceURI === (ns || null) && a.localName === localName) return true;
+                    }
+                }
+                return this.hasAttribute(localName);
+            },
             get shadowRoot() {
                 if (this._shadowRoot !== undefined) return this._shadowRoot;
                 var srId = (typeof _getShadowRoot === 'function') ? _getShadowRoot(this._nodeId) : null;

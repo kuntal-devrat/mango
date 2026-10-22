@@ -173,7 +173,7 @@ fn test_dom_measurement_and_layout() {
         <html>
         <head></head>
         <body>
-          <div id="parent" style="position: relative; width: 400px; height: 300px; border-width: 5px;">
+          <div id="parent" style="position: relative; width: 400px; height: 300px; border-width: 5px; border-style: solid;">
             <div id="child" style="color: red; font-size: 16px;">Hello</div>
           </div>
           <div id="target" style="width: 200px; height: 50px;">Target</div>

@@ -161,14 +161,12 @@ impl JsRuntime {
         base_timeout: std::time::Duration,
     ) -> std::time::Duration {
         if source_len < 20_000 {
-            base_timeout
+            base_timeout.min(std::time::Duration::from_millis(1500))
         } else {
             let extra_kb = (source_len - 20_000) / 1024;
-            let extra_ms = (extra_kb as u64) * 8; // +8ms per KB for large complex SPAs
+            let extra_ms = (extra_kb as u64) * 2;
             let scaled = base_timeout + std::time::Duration::from_millis(extra_ms);
-            scaled
-                .max(base_timeout)
-                .min(std::time::Duration::from_millis(120_000))
+            scaled.min(std::time::Duration::from_millis(1500))
         }
     }
 

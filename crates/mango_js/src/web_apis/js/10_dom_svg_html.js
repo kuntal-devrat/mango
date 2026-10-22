@@ -580,8 +580,52 @@
         }
     };
 
-    globalThis.Document = function() {};
+    globalThis.Document = function() {
+        this.nodeType = 9; this.nodeName = "#document"; this._isXml = true;
+        this.contentType = "application/xml"; this._childNodes = []; this._documentElement = null;
+        this.location = null; this._characterSet = "UTF-8"; this.characterSet = "UTF-8";
+        this.charset = "UTF-8"; this.inputEncoding = "UTF-8"; this.defaultView = null; this._defaultView = null;
+    };
     globalThis.Document.prototype = Object.create(globalThis.Node.prototype);
+    globalThis.Document.prototype.constructor = globalThis.Document;
+    globalThis.Document.prototype.createCDATASection = function(data) {
+        var DomEx = (globalThis && globalThis.DOMException) ? globalThis.DOMException : (typeof DOMException !== 'undefined' ? DOMException : Error);
+        if (!this._isXml && this.contentType === 'text/html') {
+            throw new DomEx("The operation is not supported.", "NotSupportedError");
+        }
+        var str = String(data);
+        if (str.indexOf("]]>") !== -1) {
+            throw new DomEx("String contains invalid characters", "InvalidCharacterError");
+        }
+        var s = (typeof _origCTN === 'function' && typeof _wrapElement === 'function')
+            ? _wrapElement(_origCTN(str))
+            : Object.create(globalThis.CDATASection ? globalThis.CDATASection.prototype : (globalThis.Text ? globalThis.Text.prototype : Object.prototype));
+        if (s) {
+            if (globalThis.CDATASection) Object.setPrototypeOf(s, globalThis.CDATASection.prototype);
+            s._isCDATA = true;
+            s._nodeType = 4;
+            s.nodeType = 4;
+            s._nodeName = "#cdata-section";
+            s.nodeName = "#cdata-section";
+            s.ownerDocument = this;
+            s._ownerDocument = this;
+            s.data = str;
+            s._data = str;
+        }
+        return s;
+    };
+    Object.defineProperty(globalThis.Document.prototype, 'URL', {
+        get: function() {
+            return (this._url !== undefined) ? this._url : ((globalThis.location && globalThis.location.href) ? globalThis.location.href : 'about:blank');
+        },
+        configurable: true,
+        enumerable: true
+    });
+    Object.defineProperty(globalThis.Document.prototype, 'documentURI', {
+        get: function() { return this.URL; },
+        configurable: true,
+        enumerable: true
+    });
     Object.defineProperty(globalThis.Document.prototype, 'baseURI', {
         get: function() {
             var baseEl = (typeof this.querySelector === 'function') ? this.querySelector('base[href]') : null;
@@ -589,14 +633,63 @@
                 var href = baseEl.getAttribute('href');
                 if (href) {
                     try {
-                        return new URL(href, (globalThis.location && globalThis.location.href) ? globalThis.location.href : 'about:blank').href;
+                        return new URL(href, this.URL || 'about:blank').href;
                     } catch(e) {}
                 }
             }
-            return (globalThis.location && globalThis.location.href) ? globalThis.location.href : 'about:blank';
+            return this.URL || 'about:blank';
         },
         configurable: true
     });
+    Object.defineProperty(globalThis.Document.prototype, 'defaultView', {
+        get: function() {
+            if (this._defaultView !== undefined) return this._defaultView;
+            if (typeof document !== 'undefined' && this === document && typeof window !== 'undefined') return window;
+            return null;
+        },
+        set: function(v) { this._defaultView = v; },
+        configurable: true,
+        enumerable: true
+    });
+    var _bodyProxiedEvents = [
+        "onafterprint", "onbeforeprint", "onbeforeunload", "onblur", "onerror", "onfocus",
+        "onhashchange", "onload", "onmessage", "onoffline", "ononline", "onpagehide", "onpageshow",
+        "onpopstate", "onresize", "onscroll", "onstorage", "onunload"
+    ];
+    _bodyProxiedEvents.forEach(function(evt) {
+        var desc = {
+            get: function() {
+                var doc = this.ownerDocument;
+                var win = doc ? doc.defaultView : null;
+                return win ? win[evt] : null;
+            },
+            set: function(fn) {
+                var doc = this.ownerDocument;
+                var win = doc ? doc.defaultView : null;
+                if (win) { win[evt] = fn; }
+            },
+            configurable: true,
+            enumerable: true
+        };
+        if (globalThis.HTMLBodyElement && globalThis.HTMLBodyElement.prototype) {
+            Object.defineProperty(globalThis.HTMLBodyElement.prototype, evt, desc);
+        }
+        if (globalThis.HTMLFrameSetElement && globalThis.HTMLFrameSetElement.prototype) {
+            Object.defineProperty(globalThis.HTMLFrameSetElement.prototype, evt, desc);
+        }
+    });
+    if (globalThis.HTMLIFrameElement && globalThis.HTMLIFrameElement.prototype) {
+        Object.defineProperty(globalThis.HTMLIFrameElement.prototype, 'contentWindow', {
+            get: function() { return (typeof _getIframeContentWindow === 'function') ? _getIframeContentWindow(this) : (this._contentWindow || null); },
+            configurable: true,
+            enumerable: true
+        });
+        Object.defineProperty(globalThis.HTMLIFrameElement.prototype, 'contentDocument', {
+            get: function() { return (typeof _getIframeContentDocument === 'function') ? _getIframeContentDocument(this) : (this._contentDocument || null); },
+            configurable: true,
+            enumerable: true
+        });
+    }
     globalThis.Document.prototype.__shady_getRootNode = function(opts) { return this; };
     globalThis.Document.prototype.getRootNode = function(opts) { return this; };
     if (typeof document !== 'undefined') {
@@ -605,4 +698,78 @@
         } catch(e) {}
         document.__shady_getRootNode = function(opts) { return document; };
         document.getRootNode = function(opts) { return document; };
+    }
+
+    function _locateNamespacePrefix(el, ns) {
+        if (!el || el.nodeType !== 1) return null;
+        if (el.namespaceURI === ns && el.prefix !== null) return el.prefix;
+        if (el.attributes) {
+            for (var i = 0; i < el.attributes.length; i++) {
+                var a = el.attributes[i];
+                var aName = a.name || '';
+                var aPrefix = a.prefix;
+                var aLocal = a.localName;
+                if ((aPrefix === 'xmlns' || aName.indexOf('xmlns:') === 0) && a.value === ns) {
+                    return aPrefix === 'xmlns' ? aLocal : aName.substring(6);
+                }
+            }
+        }
+        var parent = el.parentElement;
+        return parent ? _locateNamespacePrefix(parent, ns) : null;
+    }
+
+    function _locateNamespaceURI(el, prefix) {
+        if (!el || el.nodeType !== 1) return null;
+        var p = (prefix === "" || prefix === undefined) ? null : prefix;
+        if (el.namespaceURI !== null && el.prefix === p) return el.namespaceURI;
+        if (el.attributes) {
+            for (var i = 0; i < el.attributes.length; i++) {
+                var a = el.attributes[i];
+                var aNs = a.namespaceURI;
+                var aPrefix = a.prefix;
+                var aLocal = a.localName;
+                var aName = a.name || '';
+                var isXmlns = (aNs === 'http://www.w3.org/2000/xmlns/' || aPrefix === 'xmlns' || (!aPrefix && aLocal === 'xmlns') || aName === 'xmlns' || aName.indexOf('xmlns:') === 0);
+                if (isXmlns) {
+                    var pref = aPrefix === 'xmlns' ? aLocal : (aName.indexOf('xmlns:') === 0 ? aName.substring(6) : null);
+                    if (pref === p) {
+                        return (a.value !== undefined && a.value !== null && a.value !== "") ? a.value : null;
+                    }
+                }
+            }
+        }
+        var parent = el.parentElement;
+        return parent ? _locateNamespaceURI(parent, p) : null;
+    }
+
+    if (globalThis.Node && globalThis.Node.prototype) {
+        globalThis.Node.prototype.lookupPrefix = function(namespace) {
+            if (!namespace) return null;
+            var nt = this.nodeType;
+            if (nt === 1) return _locateNamespacePrefix(this, namespace);
+            if (nt === 9) return this.documentElement ? _locateNamespacePrefix(this.documentElement, namespace) : null;
+            if (nt === 2) return this.ownerElement ? _locateNamespacePrefix(this.ownerElement, namespace) : null;
+            if (nt === 10 || nt === 11) return null;
+            return this.parentElement ? _locateNamespacePrefix(this.parentElement, namespace) : null;
+        };
+
+        globalThis.Node.prototype.lookupNamespaceURI = function(prefix) {
+            var p = (prefix === "" || prefix === undefined) ? null : prefix;
+            var nt = this.nodeType;
+            if (nt === 1) {
+                if (p === 'xml') return 'http://www.w3.org/XML/1998/namespace';
+                if (p === 'xmlns') return 'http://www.w3.org/2000/xmlns/';
+                return _locateNamespaceURI(this, p);
+            }
+            if (nt === 9) return this.documentElement ? this.documentElement.lookupNamespaceURI(p) : null;
+            if (nt === 2) return this.ownerElement ? this.ownerElement.lookupNamespaceURI(p) : null;
+            if (nt === 10 || nt === 11) return null;
+            return this.parentElement ? this.parentElement.lookupNamespaceURI(p) : null;
+        };
+
+        globalThis.Node.prototype.isDefaultNamespace = function(namespace) {
+            var ns = (namespace === "" || namespace === undefined) ? null : namespace;
+            var defaultNS = this.lookupNamespaceURI(null);
+            return defaultNS === ns;
+        };
     }

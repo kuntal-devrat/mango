@@ -47,12 +47,11 @@ impl PixelBuffer {
         self.width = width;
         self.height = height;
 
-        self.surface
-            .resize(
-                NonZeroU32::new(width).unwrap(),
-                NonZeroU32::new(height).unwrap(),
-            )
-            .expect("failed to resize surface");
+        if let (Some(w), Some(h)) = (NonZeroU32::new(width), NonZeroU32::new(height)) {
+            if let Err(e) = self.surface.resize(w, h) {
+                log::warn!("failed to resize surface: {e}");
+            }
+        }
     }
 
     /// Returns the current buffer dimensions.
@@ -68,9 +67,17 @@ impl PixelBuffer {
     where
         F: FnOnce(&mut [u32], u32, u32),
     {
-        let mut buffer = self.surface.buffer_mut().expect("failed to get buffer");
+        let mut buffer = match self.surface.buffer_mut() {
+            Ok(b) => b,
+            Err(e) => {
+                log::warn!("failed to get softbuffer buffer: {e}");
+                return;
+            }
+        };
         f(&mut buffer, self.width, self.height);
-        buffer.present().expect("failed to present buffer");
+        if let Err(e) = buffer.present() {
+            log::warn!("failed to present softbuffer buffer: {e}");
+        }
     }
 }
 
@@ -172,10 +179,19 @@ impl WindowSurface {
 ///
 /// Returns the window and a suggested initial size.
 pub fn create_window(event_loop: &winit::event_loop::ActiveEventLoop) -> Arc<Window> {
-    let attrs = Window::default_attributes()
+    #[allow(unused_mut)]
+    let mut attrs = Window::default_attributes()
         .with_title("🥭 Mango")
         .with_inner_size(LogicalSize::new(1024.0, 768.0))
         .with_min_inner_size(LogicalSize::new(400.0, 300.0));
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        use winit::platform::wayland::WindowAttributesExtWayland;
+        use winit::platform::x11::WindowAttributesExtX11;
+        attrs = WindowAttributesExtWayland::with_name(attrs, "mango", "Mango");
+        attrs = WindowAttributesExtX11::with_name(attrs, "mango", "Mango");
+    }
 
     let window = event_loop
         .create_window(attrs)

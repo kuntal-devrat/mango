@@ -15,7 +15,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 authors = ["Mango Contributors"]
 license = "MIT"
@@ -109,6 +109,9 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [profile.release]
 opt-level = 2
 lto = false          # Completely disabled: LTO with rusty_v8/deno_core exhausts RAM and freezes laptop
@@ -118,6 +121,9 @@ panic = "unwind"     # Safe panic recovery without process abort
 
 [profile.dev]
 debug = 1           # Line tables only: fast linking and reduces RAM usage by >60%
+
+[profile.dev.package."*"]
+opt-level = 2
 
 [profile.test]
 debug = 1           # Prevents memory spikes during parallel test binary linking

@@ -11,7 +11,7 @@ use crate::parser::declarations::typography::{
     try_parse_overflow_wrap, try_parse_quotes, try_parse_text_decoration_thickness,
     try_parse_text_emphasis_style, try_parse_white_space, try_parse_word_break,
 };
-use crate::parser::declarations::value::{parse_single_value, parse_value_from_tokens};
+use crate::parser::declarations::value::parse_value_from_tokens;
 use crate::parser::declarations::visual::{
     split_commas, try_parse_background_attachment, try_parse_background_blend_mode,
     try_parse_background_clip, try_parse_blend_mode, try_parse_border_image, try_parse_clip_path,
@@ -23,7 +23,7 @@ use crate::parser::types::{MediaRule, Rule, StyleRule};
 use crate::properties::Declaration;
 use crate::selectors::SelectorList;
 use crate::tokenizer::Token;
-use crate::values::{CaptionSide, FontStyle, FontWeight, Length, Overflow, TableLayout, Value};
+use crate::values::{CaptionSide, Clear, Display, Float, Overflow, TableLayout, Value, Visibility};
 
 impl CssParser {
     pub(crate) fn parse_declarations_until(&mut self, stop_token: Token) -> Vec<Declaration> {
@@ -237,7 +237,7 @@ impl CssParser {
 
             let prop_lower = prop_name.to_ascii_lowercase();
             if prop_lower == "font" {
-                let expanded_font = self.parse_font_shorthand(&value_tokens, important);
+                let expanded_font = super::font::parse_font_shorthand(&value_tokens, important);
                 if !expanded_font.is_empty() {
                     declarations.extend(expanded_font);
                     continue;
@@ -254,24 +254,24 @@ impl CssParser {
 
             // CSS overflow shorthand (PRD 8.1)
             if prop_lower == "overflow" {
-                let idents: Vec<&str> = value_tokens
+                let non_ws: Vec<&Token> = value_tokens
                     .iter()
-                    .filter_map(|t| match t {
-                        Token::Ident(s) => Some(s.as_str()),
-                        _ => None,
-                    })
+                    .filter(|t| !matches!(t, Token::Whitespace | Token::Comment(_)))
                     .collect();
-                if !idents.is_empty() {
-                    let parse_o = |s: &str| match s.to_ascii_lowercase().as_str() {
-                        "visible" => Some(Value::Overflow(Overflow::Visible)),
-                        "hidden" => Some(Value::Overflow(Overflow::Hidden)),
-                        "scroll" => Some(Value::Overflow(Overflow::Scroll)),
-                        "auto" => Some(Value::Overflow(Overflow::Auto)),
+                if non_ws.len() == 1 || non_ws.len() == 2 {
+                    let parse_o = |tok: &Token| match tok {
+                        Token::Ident(s) => match s.to_ascii_lowercase().as_str() {
+                            "visible" => Some(Value::Overflow(Overflow::Visible)),
+                            "hidden" => Some(Value::Overflow(Overflow::Hidden)),
+                            "scroll" => Some(Value::Overflow(Overflow::Scroll)),
+                            "auto" => Some(Value::Overflow(Overflow::Auto)),
+                            _ => None,
+                        },
                         _ => None,
                     };
-                    let ox = parse_o(idents[0]);
-                    let oy = if idents.len() > 1 {
-                        parse_o(idents[1])
+                    let ox = parse_o(non_ws[0]);
+                    let oy = if non_ws.len() > 1 {
+                        parse_o(non_ws[1])
                     } else {
                         ox.clone()
                     };
@@ -289,6 +289,7 @@ impl CssParser {
                         continue;
                     }
                 }
+                continue;
             }
 
             if prop_lower == "background" {
@@ -427,6 +428,193 @@ impl CssParser {
                         _ => parse_value_from_tokens(&value_tokens),
                     }
                 }
+                "display" => {
+                    // `display` has a closed set of keywords. Parse it into a typed
+                    // `Value::Display` so that validation and the cascade agree on
+                    // the representation. Note that `none` is *not* handled by the
+                    // generic keyword path in `parse_value_from_tokens`.
+                    let non_ws: Vec<&Token> = value_tokens
+                        .iter()
+                        .filter(|t| !matches!(t, Token::Whitespace | Token::Comment(_)))
+                        .collect();
+                    if non_ws.len() == 1 {
+                        if let Token::Ident(s) = non_ws[0] {
+                            let lower = s.to_ascii_lowercase();
+                            let disp = match lower.as_str() {
+                                "none" => Some(Display::None),
+                                "block" => Some(Display::Block),
+                                "inline" => Some(Display::Inline),
+                                "inline-block" => Some(Display::InlineBlock),
+                                "flex" => Some(Display::Flex),
+                                "inline-flex" => Some(Display::InlineFlex),
+                                "grid" => Some(Display::Grid),
+                                "inline-grid" => Some(Display::InlineGrid),
+                                "flow-root" => Some(Display::FlowRoot),
+                                "contents" => Some(Display::Contents),
+                                "table" => Some(Display::Table),
+                                "table-row" => Some(Display::TableRow),
+                                "table-cell" => Some(Display::TableCell),
+                                "table-caption" => Some(Display::TableCaption),
+                                "table-row-group" => Some(Display::TableRowGroup),
+                                "table-header-group" => Some(Display::TableHeaderGroup),
+                                "table-footer-group" => Some(Display::TableFooterGroup),
+                                "table-column" => Some(Display::TableColumn),
+                                "table-column-group" => Some(Display::TableColumnGroup),
+                                "list-item" => Some(Display::ListItem),
+                                "ruby" => Some(Display::Ruby),
+                                "ruby-base" => Some(Display::RubyBase),
+                                "ruby-text" => Some(Display::RubyText),
+                                _ => None,
+                            };
+                            match disp {
+                                Some(d) => Some(Value::Display(d)),
+                                None => None,
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
+                "clear" => {
+                    let non_ws: Vec<&Token> = value_tokens
+                        .iter()
+                        .filter(|t| !matches!(t, Token::Whitespace | Token::Comment(_)))
+                        .collect();
+                    if non_ws.len() == 1 {
+                        if let Token::Ident(s) = non_ws[0] {
+                            match s.to_ascii_lowercase().as_str() {
+                                "none" => Some(Value::Clear(Clear::None)),
+                                "left" => Some(Value::Clear(Clear::Left)),
+                                "right" => Some(Value::Clear(Clear::Right)),
+                                "both" => Some(Value::Clear(Clear::Both)),
+                                "inline-start" => Some(Value::Clear(Clear::InlineStart)),
+                                "inline-end" => Some(Value::Clear(Clear::InlineEnd)),
+                                _ => parse_value_from_tokens(&value_tokens),
+                            }
+                        } else {
+                            parse_value_from_tokens(&value_tokens)
+                        }
+                    } else {
+                        None
+                    }
+                }
+                "float" => {
+                    let non_ws: Vec<&Token> = value_tokens
+                        .iter()
+                        .filter(|t| !matches!(t, Token::Whitespace | Token::Comment(_)))
+                        .collect();
+                    if non_ws.len() == 1 {
+                        if let Token::Ident(s) = non_ws[0] {
+                            match s.to_ascii_lowercase().as_str() {
+                                "none" => Some(Value::Float(Float::None)),
+                                "left" => Some(Value::Float(Float::Left)),
+                                "right" => Some(Value::Float(Float::Right)),
+                                "inline-start" => Some(Value::Float(Float::InlineStart)),
+                                "inline-end" => Some(Value::Float(Float::InlineEnd)),
+                                _ => parse_value_from_tokens(&value_tokens),
+                            }
+                        } else {
+                            parse_value_from_tokens(&value_tokens)
+                        }
+                    } else {
+                        None
+                    }
+                }
+                "visibility" => {
+                    let non_ws: Vec<&Token> = value_tokens
+                        .iter()
+                        .filter(|t| !matches!(t, Token::Whitespace | Token::Comment(_)))
+                        .collect();
+                    if non_ws.len() == 1 {
+                        if let Token::Ident(s) = non_ws[0] {
+                            match s.to_ascii_lowercase().as_str() {
+                                "visible" => Some(Value::Visibility(Visibility::Visible)),
+                                "hidden" => Some(Value::Visibility(Visibility::Hidden)),
+                                "collapse" => Some(Value::Visibility(Visibility::Collapse)),
+                                _ => parse_value_from_tokens(&value_tokens),
+                            }
+                        } else {
+                            parse_value_from_tokens(&value_tokens)
+                        }
+                    } else {
+                        None
+                    }
+                }
+                "overflow" | "overflow-x" | "overflow-y" => {
+                    let non_ws: Vec<&Token> = value_tokens
+                        .iter()
+                        .filter(|t| !matches!(t, Token::Whitespace | Token::Comment(_)))
+                        .collect();
+                    let to_ov = |tok: &Token| match tok {
+                        Token::Ident(s) => match s.to_ascii_lowercase().as_str() {
+                            "visible" => Some(Overflow::Visible),
+                            "hidden" => Some(Overflow::Hidden),
+                            "scroll" => Some(Overflow::Scroll),
+                            "auto" => Some(Overflow::Auto),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    if non_ws.len() == 1 {
+                        to_ov(non_ws[0])
+                            .map(Value::Overflow)
+                            .or_else(|| parse_value_from_tokens(&value_tokens))
+                    } else if non_ws.len() == 2 && prop_lower == "overflow" {
+                        let ox = to_ov(non_ws[0]);
+                        let oy = to_ov(non_ws[1]);
+                        if let (Some(x), Some(y)) = (ox, oy) {
+                            Some(Value::List(vec![Value::Overflow(x), Value::Overflow(y)]))
+                        } else {
+                            parse_value_from_tokens(&value_tokens)
+                        }
+                    } else {
+                        None
+                    }
+                }
+                "margin-trim" => {
+                    let non_ws: Vec<&Token> = value_tokens
+                        .iter()
+                        .filter(|t| !matches!(t, Token::Whitespace | Token::Comment(_)))
+                        .collect();
+                    if !non_ws.iter().all(|t| matches!(t, Token::Ident(_))) {
+                        None
+                    } else {
+                        let idents: Vec<String> = non_ws
+                            .iter()
+                            .filter_map(|t| match t {
+                                Token::Ident(s) => Some(s.to_ascii_lowercase()),
+                                _ => None,
+                            })
+                            .collect();
+                    if idents.len() == 1 {
+                        match idents[0].as_str() {
+                            "none" | "block" | "block-start" | "block-end" | "inline"
+                            | "inline-start" | "inline-end" => {
+                                Some(Value::Keyword(idents[0].clone()))
+                            }
+                            _ => None,
+                        }
+                    } else if idents.len() == 2 {
+                        let i0 = idents[0].as_str();
+                        let i1 = idents[1].as_str();
+                        if (i0 == "block-start" && i1 == "block-end")
+                            || (i0 == "block-end" && i1 == "block-start")
+                        {
+                            Some(Value::Keyword("block".to_string()))
+                        } else if (i0 == "inline-start" && i1 == "inline-end")
+                            || (i0 == "inline-end" && i1 == "inline-start")
+                        {
+                            Some(Value::Keyword("inline".to_string()))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                    }
+                }
                 _ => {
                     let v = parse_value_from_tokens(&value_tokens);
                     if v.is_none() && prop_name.starts_with("--") {
@@ -447,7 +635,11 @@ impl CssParser {
             };
 
             if let Some(parsed_val) = parsed_val {
-                let decl = Declaration::new(prop_name, parsed_val, important);
+                if !crate::properties::validation::is_valid_property_value(&prop_lower, &parsed_val) {
+                    continue;
+                }
+                let normalized_val = super::font::normalize_unitless_zero_lengths(&prop_lower, parsed_val);
+                let decl = Declaration::new(prop_name, normalized_val, important);
                 // Expand shorthands (e.g. margin, padding, border) immediately
                 for expanded in decl.expand_shorthand() {
                     declarations.push(expanded);
@@ -458,189 +650,11 @@ impl CssParser {
         declarations
     }
 
-    /// Parses a CSS `font` shorthand declaration into constituent longhands:
-    /// `font-style`, `font-weight`, `font-size`, `line-height`, and `font-family`.
     pub(crate) fn parse_font_shorthand(
         &self,
         tokens: &[Token],
         important: bool,
     ) -> Vec<Declaration> {
-        let filtered: Vec<&Token> = tokens
-            .iter()
-            .filter(|t| !matches!(t, Token::Whitespace | Token::Comment(_)))
-            .collect();
-
-        if filtered.is_empty() {
-            return Vec::new();
-        }
-
-        // Avoid breaking global keywords like inherit/initial/unset
-        if filtered.len() == 1
-            && let Token::Ident(kw) = filtered[0]
-        {
-            let lower = kw.to_ascii_lowercase();
-            if matches!(lower.as_str(), "inherit" | "initial" | "unset" | "revert") {
-                return Vec::new();
-            }
-        }
-
-        let mut font_style: Option<FontStyle> = None;
-        let mut font_weight: Option<FontWeight> = None;
-        let mut font_size: Option<Value> = None;
-        let mut line_height: Option<Value> = None;
-        let mut idx = 0;
-
-        // 1. Scan optional font-style, font-variant, font-weight tokens before font-size
-        while idx < filtered.len() {
-            match filtered[idx] {
-                Token::Ident(w) => {
-                    let lower = w.to_ascii_lowercase();
-                    match lower.as_str() {
-                        "normal" => {
-                            idx += 1;
-                        }
-                        "italic" => {
-                            font_style = Some(FontStyle::Italic);
-                            idx += 1;
-                        }
-                        "oblique" => {
-                            font_style = Some(FontStyle::Oblique);
-                            idx += 1;
-                        }
-                        "bold" => {
-                            font_weight = Some(FontWeight::Bold);
-                            idx += 1;
-                        }
-                        "bolder" => {
-                            font_weight = Some(FontWeight::Bolder);
-                            idx += 1;
-                        }
-                        "lighter" => {
-                            font_weight = Some(FontWeight::Lighter);
-                            idx += 1;
-                        }
-                        "small-caps" => {
-                            idx += 1;
-                        }
-                        "xx-small" | "x-small" | "small" | "medium" | "large" | "x-large"
-                        | "xx-large" | "smaller" | "larger" => {
-                            font_size = parse_single_value(filtered[idx]);
-                            idx += 1;
-                            break;
-                        }
-                        _ => {
-                            break;
-                        }
-                    }
-                }
-                Token::Number(n) => {
-                    if *n >= 100.0 && *n <= 900.0 && (*n as u16).is_multiple_of(100) {
-                        font_weight = Some(FontWeight::Numeric(*n as u16));
-                        idx += 1;
-                    } else if *n == 0.0 {
-                        font_size = Some(Value::Length(Length::Px(0.0)));
-                        idx += 1;
-                        break;
-                    } else {
-                        break;
-                    }
-                }
-                Token::Dimension { .. } | Token::Percentage(_) => {
-                    font_size = parse_single_value(filtered[idx]);
-                    idx += 1;
-                    break;
-                }
-                _ => break,
-            }
-        }
-
-        // Must have found a font-size
-        let Some(fs) = font_size else {
-            return Vec::new();
-        };
-
-        // 2. Check for optional `/ <line-height>`
-        if idx < filtered.len() && matches!(filtered[idx], Token::Delim('/')) {
-            idx += 1;
-            if idx < filtered.len() {
-                match filtered[idx] {
-                    Token::Number(n) => {
-                        line_height = Some(Value::Number(*n));
-                        idx += 1;
-                    }
-                    Token::Dimension { .. } | Token::Percentage(_) => {
-                        line_height = parse_single_value(filtered[idx]);
-                        idx += 1;
-                    }
-                    Token::Ident(s) if s.eq_ignore_ascii_case("normal") => {
-                        idx += 1;
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        // 3. All remaining tokens form the font-family
-        if idx >= filtered.len() {
-            return Vec::new();
-        }
-
-        let mut family_names = Vec::new();
-        let mut cur_name = String::new();
-
-        for &tok in &filtered[idx..] {
-            match tok {
-                Token::Comma => {
-                    let trimmed = cur_name.trim().to_string();
-                    if !trimmed.is_empty() {
-                        family_names.push(trimmed);
-                        cur_name.clear();
-                    }
-                }
-                Token::String(s) => {
-                    if !cur_name.is_empty() {
-                        cur_name.push(' ');
-                    }
-                    cur_name.push_str(s);
-                }
-                Token::Ident(s) => {
-                    if !cur_name.is_empty() {
-                        cur_name.push(' ');
-                    }
-                    cur_name.push_str(s);
-                }
-                _ => {}
-            }
-        }
-        let trimmed = cur_name.trim().to_string();
-        if !trimmed.is_empty() {
-            family_names.push(trimmed);
-        }
-
-        if family_names.is_empty() {
-            return Vec::new();
-        }
-
-        let family_str = family_names.join(", ");
-
-        vec![
-            Declaration::new(
-                "font-style",
-                Value::FontStyle(font_style.unwrap_or(FontStyle::Normal)),
-                important,
-            ),
-            Declaration::new(
-                "font-weight",
-                Value::FontWeight(font_weight.unwrap_or(FontWeight::Normal)),
-                important,
-            ),
-            Declaration::new("font-size", fs, important),
-            Declaration::new(
-                "line-height",
-                line_height.unwrap_or_else(|| Value::Keyword("normal".to_string())),
-                important,
-            ),
-            Declaration::new("font-family", Value::String(family_str), important),
-        ]
+        super::font::parse_font_shorthand(tokens, important)
     }
 }

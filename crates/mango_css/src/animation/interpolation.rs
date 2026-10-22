@@ -48,6 +48,7 @@ pub fn interpolate_length(a: Length, b: Length, t: f32) -> Length {
     match (a, b) {
         (Px(x), Px(y)) => Px(lerp(x, y, t)),
         (Em(x), Em(y)) => Em(lerp(x, y, t)),
+        (Ex(x), Ex(y)) => Ex(lerp(x, y, t)),
         (Rem(x), Rem(y)) => Rem(lerp(x, y, t)),
         (Percent(x), Percent(y)) => Percent(lerp(x, y, t)),
         (Vw(x), Vw(y)) => Vw(lerp(x, y, t)),
@@ -55,7 +56,9 @@ pub fn interpolate_length(a: Length, b: Length, t: f32) -> Length {
         (Calc(x), Calc(y)) => Calc(crate::values::CalcLength {
             px: lerp(x.px, y.px, t),
             percent: lerp(x.percent, y.percent, t),
+            has_percent: x.has_percent || y.has_percent,
             em: lerp(x.em, y.em, t),
+            ex: lerp(x.ex, y.ex, t),
             rem: lerp(x.rem, y.rem, t),
             vw: lerp(x.vw, y.vw, t),
             vh: lerp(x.vh, y.vh, t),

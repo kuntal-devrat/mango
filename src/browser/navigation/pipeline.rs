@@ -242,6 +242,9 @@ fn prepare_document_pipeline_internal(
                 nonce,
             } => {
                 if let Some(Ok(code)) = fetched_scripts.remove(&idx) {
+                    if is_module {
+                        scan_and_precache_module_imports(loader, &final_url, &src, &code);
+                    }
                     preloaded_scripts.push(ScriptToRun::Preloaded {
                         src,
                         code,
@@ -675,6 +678,67 @@ fn load_imported_stylesheets_parallel_cancellable(
                 Err(e) => {
                     log::warn!("Failed to fetch external stylesheet {}: {}", resolved, e);
                 }
+            }
+        }
+    }
+}
+
+/// Scans the top lines of an ES module on a background worker thread for static imports
+/// and asynchronously prefetches them into the shared resource cache.
+fn scan_and_precache_module_imports(
+    loader: &ResourceLoader,
+    base_url: &Url,
+    script_src: &str,
+    code: &str,
+) {
+    let script_base = base_url
+        .resolve(script_src)
+        .unwrap_or_else(|_| base_url.clone());
+    let mut import_specs = Vec::new();
+
+    for line in code.lines().take(150) {
+        let trimmed = line.trim();
+        if !trimmed.starts_with("import") && !trimmed.starts_with("export") {
+            continue;
+        }
+        if let Some(pos) = trimmed.find('\'') {
+            if let Some(end) = trimmed[pos + 1..].find('\'') {
+                let spec = &trimmed[pos + 1..pos + 1 + end];
+                if spec.ends_with(".js")
+                    || spec.starts_with("./")
+                    || spec.starts_with("../")
+                    || spec.starts_with("http")
+                {
+                    import_specs.push(spec.to_string());
+                }
+                continue;
+            }
+        }
+        if let Some(pos) = trimmed.find('"') {
+            if let Some(end) = trimmed[pos + 1..].find('"') {
+                let spec = &trimmed[pos + 1..pos + 1 + end];
+                if spec.ends_with(".js")
+                    || spec.starts_with("./")
+                    || spec.starts_with("../")
+                    || spec.starts_with("http")
+                {
+                    import_specs.push(spec.to_string());
+                }
+            }
+        }
+    }
+
+    for spec in import_specs {
+        if let Ok(target) = script_base.resolve(&spec) {
+            let target_str = target.to_string();
+            if loader.cache().get(&target_str).is_none() {
+                let loader_clone = loader.clone();
+                let base_clone = script_base.clone();
+                let _ = std::thread::Builder::new()
+                    .name("mango-module-precache".to_string())
+                    .spawn(move || {
+                        let _ = loader_clone.fetch_script(&base_clone, &spec);
+                    });
             }
         }
     }

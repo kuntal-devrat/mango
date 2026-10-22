@@ -101,6 +101,48 @@ pub(crate) fn expand_four_sides(prefix: &str, value: &Value, important: bool) ->
         single => vec![single.clone()],
     };
 
+    for v in &values {
+        let is_valid = match prefix {
+            "padding" => match v {
+                Value::Length(len) => match len {
+                    crate::values::Length::Px(px) => *px >= 0.0,
+                    crate::values::Length::Percent(pct) => *pct >= 0.0,
+                    crate::values::Length::Calc(_)
+                    | crate::values::Length::Math(_)
+                    | crate::values::Length::Em(_)
+                    | crate::values::Length::Rem(_)
+                    | crate::values::Length::Vw(_)
+                    | crate::values::Length::Vh(_)
+                    | crate::values::Length::Vmin(_)
+                    | crate::values::Length::Vmax(_) => true,
+                    _ => false,
+                },
+                _ => false,
+            },
+            "margin" => match v {
+                Value::Length(len) => match len {
+                    crate::values::Length::Px(_)
+                    | crate::values::Length::Percent(_)
+                    | crate::values::Length::Auto => true,
+                    crate::values::Length::Calc(_)
+                    | crate::values::Length::Math(_)
+                    | crate::values::Length::Em(_)
+                    | crate::values::Length::Rem(_)
+                    | crate::values::Length::Vw(_)
+                    | crate::values::Length::Vh(_)
+                    | crate::values::Length::Vmin(_)
+                    | crate::values::Length::Vmax(_) => true,
+                    _ => false,
+                },
+                _ => false,
+            },
+            _ => true,
+        };
+        if !is_valid {
+            return Vec::new();
+        }
+    }
+
     let (top, right, bottom, left) = match values.len() {
         1 => (
             values[0].clone(),
@@ -126,7 +168,7 @@ pub(crate) fn expand_four_sides(prefix: &str, value: &Value, important: bool) ->
             values[2].clone(),
             values[3].clone(),
         ),
-        _ => return vec![Declaration::new(prefix, value.clone(), important)],
+        _ => return Vec::new(),
     };
 
     vec![
@@ -169,7 +211,7 @@ pub(crate) fn expand_inset_shorthand(value: &Value, important: bool) -> Vec<Decl
             values[2].clone(),
             values[3].clone(),
         ),
-        _ => return vec![Declaration::new("inset", value.clone(), important)],
+        _ => return Vec::new(),
     };
 
     vec![
@@ -180,7 +222,7 @@ pub(crate) fn expand_inset_shorthand(value: &Value, important: bool) -> Vec<Decl
     ]
 }
 
-/// Expands `inset-inline: <left> <right>` logical shorthand.
+/// Expands `inset-inline: <start> <end>` logical shorthand.
 pub(crate) fn expand_inset_inline_shorthand(value: &Value, important: bool) -> Vec<Declaration> {
     let values = match value {
         Value::List(items) => items.clone(),
@@ -188,16 +230,16 @@ pub(crate) fn expand_inset_inline_shorthand(value: &Value, important: bool) -> V
     };
     let (start, end) = match values.len() {
         1 => (values[0].clone(), values[0].clone()),
-        2.. => (values[0].clone(), values[1].clone()),
-        _ => return vec![Declaration::new("inset-inline", value.clone(), important)],
+        2 => (values[0].clone(), values[1].clone()),
+        _ => return Vec::new(),
     };
     vec![
-        Declaration::new("left", start, important),
-        Declaration::new("right", end, important),
+        Declaration::new("inset-inline-start", start, important),
+        Declaration::new("inset-inline-end", end, important),
     ]
 }
 
-/// Expands `inset-block: <top> <bottom>` logical shorthand.
+/// Expands `inset-block: <start> <end>` logical shorthand.
 pub(crate) fn expand_inset_block_shorthand(value: &Value, important: bool) -> Vec<Declaration> {
     let values = match value {
         Value::List(items) => items.clone(),
@@ -205,12 +247,12 @@ pub(crate) fn expand_inset_block_shorthand(value: &Value, important: bool) -> Ve
     };
     let (start, end) = match values.len() {
         1 => (values[0].clone(), values[0].clone()),
-        2.. => (values[0].clone(), values[1].clone()),
-        _ => return vec![Declaration::new("inset-block", value.clone(), important)],
+        2 => (values[0].clone(), values[1].clone()),
+        _ => return Vec::new(),
     };
     vec![
-        Declaration::new("top", start, important),
-        Declaration::new("bottom", end, important),
+        Declaration::new("inset-block-start", start, important),
+        Declaration::new("inset-block-end", end, important),
     ]
 }
 
@@ -251,13 +293,7 @@ pub(crate) fn expand_four_sides_scalar(
             values[2].clone(),
             values[3].clone(),
         ),
-        _ => {
-            return vec![Declaration::new(
-                format!("{prefix}-{suffix}"),
-                value.clone(),
-                important,
-            )];
-        }
+        _ => return Vec::new(),
     };
 
     vec![
@@ -280,14 +316,8 @@ pub(crate) fn expand_inline_shorthand(
     };
     let (start, end) = match values.len() {
         1 => (values[0].clone(), values[0].clone()),
-        2.. => (values[0].clone(), values[1].clone()),
-        _ => {
-            return vec![Declaration::new(
-                format!("{prefix}-inline"),
-                value.clone(),
-                important,
-            )];
-        }
+        2 => (values[0].clone(), values[1].clone()),
+        _ => return Vec::new(),
     };
     vec![
         Declaration::new(format!("{prefix}-left"), start, important),
@@ -307,14 +337,8 @@ pub(crate) fn expand_block_shorthand(
     };
     let (start, end) = match values.len() {
         1 => (values[0].clone(), values[0].clone()),
-        2.. => (values[0].clone(), values[1].clone()),
-        _ => {
-            return vec![Declaration::new(
-                format!("{prefix}-block"),
-                value.clone(),
-                important,
-            )];
-        }
+        2 => (values[0].clone(), values[1].clone()),
+        _ => return Vec::new(),
     };
     vec![
         Declaration::new(format!("{prefix}-top"), start, important),
@@ -337,14 +361,8 @@ pub(crate) fn expand_two_sides_scalar(
     };
     let (val1, val2) = match values.len() {
         1 => (values[0].clone(), values[0].clone()),
-        2.. => (values[0].clone(), values[1].clone()),
-        _ => {
-            return vec![Declaration::new(
-                format!("{prefix}-{suffix}"),
-                value.clone(),
-                important,
-            )];
-        }
+        2 => (values[0].clone(), values[1].clone()),
+        _ => return Vec::new(),
     };
     vec![
         Declaration::new(format!("{prefix}-{side1}-{suffix}"), val1, important),

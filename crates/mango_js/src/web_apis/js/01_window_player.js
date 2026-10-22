@@ -5,6 +5,21 @@
     globalThis.top    = globalThis;
     globalThis.parent = globalThis;
     globalThis.global = globalThis;
+    var _framesProxy = new Proxy(globalThis, {
+        get: function(target, prop, receiver) {
+            if (typeof prop === 'string' && /^\d+$/.test(prop)) {
+                var idx = parseInt(prop, 10);
+                if (typeof document !== 'undefined' && document.getElementsByTagName) {
+                    var iframes = document.getElementsByTagName('iframe');
+                    var frameEl = iframes ? (iframes[idx] || (iframes.item && iframes.item(idx))) : null;
+                    if (typeof console !== 'undefined' && console.error) console.error("[DEBUG frames]", "idx:", idx, "iframes len:", iframes ? iframes.length : "null", "frameEl:", frameEl ? frameEl.tagName : "null", "cw:", frameEl ? !!frameEl.contentWindow : "null");
+                    if (frameEl && frameEl.contentWindow) return frameEl.contentWindow;
+                }
+            }
+            return Reflect.get(target, prop, receiver);
+        }
+    });
+    globalThis.frames = _framesProxy;
     globalThis._DumpException = function(err) {
         if (typeof console !== 'undefined' && console.error) {
             console.error("[_DumpException]", (err && err.stack) ? err.stack : err);
@@ -50,13 +65,13 @@
             DataCloneError: 25
         };
 
-        function DOMException(message, name) {
+        var DOMException = function DOMException(message, name) {
             var err = new Error(message || '');
             this.message = message ? String(message) : '';
             this.name = name ? String(name) : 'Error';
             this.code = _DOM_EXCEPTION_CODES[this.name] || 0;
             this.stack = err.stack;
-        }
+        };
         DOMException.prototype = Object.create(Error.prototype);
         DOMException.prototype.constructor = DOMException;
         DOMException.prototype.name = 'DOMException';

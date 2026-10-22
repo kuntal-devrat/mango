@@ -139,9 +139,25 @@
     function CSSStyleDeclaration(el) {
         this._el = el || null;
     }
+    var WEBKIT_ALIASES = {
+        '-webkit-align-content': 'align-content',
+        '-webkit-align-items': 'align-items',
+        '-webkit-align-self': 'align-self',
+        '-webkit-flex': 'flex',
+        '-webkit-flex-basis': 'flex-basis',
+        '-webkit-flex-direction': 'flex-direction',
+        '-webkit-flex-flow': 'flex-flow',
+        '-webkit-flex-grow': 'flex-grow',
+        '-webkit-flex-shrink': 'flex-shrink',
+        '-webkit-flex-wrap': 'flex-wrap',
+        '-webkit-justify-content': 'justify-content',
+        '-webkit-order': 'order'
+    };
+
     CSSStyleDeclaration.prototype.getPropertyValue = function(prop) {
-        var p = String(prop || '').trim();
+        var p = String(prop || '').trim().replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
         if (!p) return "";
+        p = WEBKIT_ALIASES[p] || p;
         var camel = p.replace(/-([a-z])/g, function(g) { return g[1].toUpperCase(); });
         if (this[camel] !== undefined) return String(this[camel]);
         if (this[p] !== undefined) return String(this[p]);
@@ -154,12 +170,16 @@
     };
     CSSStyleDeclaration.prototype.setProperty = function(prop, val, prio) {
         if (!this._props) this._props = {};
-        this._props[prop] = String(val);
+        var p = String(prop || '').trim().toLowerCase();
+        p = WEBKIT_ALIASES[p] || p;
+        this._props[p] = String(val);
     };
     CSSStyleDeclaration.prototype.removeProperty = function(prop) {
         if (!this._props) this._props = {};
-        var prev = this._props[prop];
-        delete this._props[prop];
+        var p = String(prop || '').trim().toLowerCase();
+        p = WEBKIT_ALIASES[p] || p;
+        var prev = this._props[p];
+        delete this._props[p];
         return prev || "";
     };
     CSSStyleDeclaration.prototype.item = function(index) {
@@ -259,11 +279,19 @@
 
         if (backendProps) {
             for (var bp in backendProps) {
-                if (bp.indexOf('--') === 0 && !(bp in props)) {
-                    props[bp] = backendProps[bp];
+                if (Object.prototype.hasOwnProperty.call(backendProps, bp)) {
+                    var val = backendProps[bp];
+                    props[bp] = val;
+                    var camel = bp.replace(/-([a-z])/g, function(g) { return g[1].toUpperCase(); });
+                    props[camel] = val;
                 }
             }
         }
+
+        // CSSOM § 2.2: `width` / `height` must expose the *used* value, so the
+        // size derived from layout wins over the backend's specified value.
+        props.width = widthStr;
+        props.height = heightStr;
 
         var propNames = Object.keys(props);
         cs.length = propNames.length;
@@ -287,22 +315,13 @@
     }
     if (!globalThis.CSS.supports) {
         globalThis.CSS.supports = function(propOrCondition, value) {
-            if (arguments.length === 2) {
-                var p = String(propOrCondition).trim().toLowerCase();
-                var validProps = [
-                    'display', 'color', 'background', 'background-color', 'width', 'height',
-                    'min-width', 'max-width', 'min-height', 'max-height', 'margin', 'padding',
-                    'border', 'border-radius', 'flex', 'flex-direction', 'flex-wrap', 'flex-flow',
-                    'justify-content', 'align-items', 'align-content', 'align-self', 'gap',
-                    'grid', 'grid-template-columns', 'grid-template-rows', 'grid-auto-flow',
-                    'position', 'top', 'left', 'right', 'bottom', 'z-index', 'opacity',
-                    'transform', 'transition', 'animation', 'overflow', 'overflow-x', 'overflow-y',
-                    'font-size', 'font-family', 'font-weight', 'line-height', 'text-align'
-                ];
-                return validProps.indexOf(p) !== -1 || p.startsWith('--');
-            }
-            if (arguments.length === 1) {
-                return true;
+            if (typeof _cssSupports === 'function') {
+                if (arguments.length >= 2) {
+                    return _cssSupports(propOrCondition, value);
+                }
+                if (arguments.length === 1) {
+                    return _cssSupports(propOrCondition, null);
+                }
             }
             return false;
         };
@@ -608,8 +627,10 @@
                     normalized.push(seg);
                 }
             }
-            this.pathname = normalized.join('/') || '/';
+            this.pathname = (normalized.join('/') || '/').replace(/[^\x00-\x7F]/g, encodeURIComponent);
             if (!this.pathname.startsWith('/')) this.pathname = '/' + this.pathname;
+            if (this.search) this.search = this.search.replace(/[^\x00-\x7F]/g, encodeURIComponent);
+            if (this.hash) this.hash = this.hash.replace(/[^\x00-\x7F]/g, encodeURIComponent);
             this.origin = this.protocol + '//' + this.host;
             this._updateHref();
         },

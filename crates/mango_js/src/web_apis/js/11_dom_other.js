@@ -1,113 +1,92 @@
-    globalThis.Document.prototype.createElement      = function(t) { return (typeof document !== 'undefined') ? document.createElement(t) : null; };
-    globalThis.Document.prototype.createElementNS    = function(ns, t) { return (typeof document !== 'undefined' && document.createElementNS) ? document.createElementNS(ns, t) : this.createElement(t); };
+    globalThis.Document.prototype.createElement = function(t) { return this._isXml ? (typeof _createElementXML === 'function' ? _createElementXML(this, t) : null) : ((typeof document !== 'undefined' && document.createElement) ? document.createElement(t) : null); };
+    globalThis.Document.prototype.createElementNS = function(ns, t) { return (typeof _createElementNS === 'function') ? _createElementNS(this, ns, t) : ((typeof document !== 'undefined' && document.createElementNS) ? document.createElementNS(ns, t) : this.createElement(t)); };
     globalThis.Document.prototype.createTextNode     = function(t) { return (typeof document !== 'undefined') ? document.createTextNode(t) : null; };
+    globalThis.Document.prototype.createComment      = function(t) { return (typeof document !== 'undefined' && document.createComment) ? document.createComment(t) : null; };
+    globalThis.Document.prototype.createProcessingInstruction = function(target, data) { return (typeof document !== 'undefined' && document.createProcessingInstruction) ? document.createProcessingInstruction(target, data) : null; };
     globalThis.Document.prototype.createDocumentFragment = function() { return (typeof document !== 'undefined' && document.createDocumentFragment) ? document.createDocumentFragment() : null; };
     globalThis.Document.prototype.querySelector      = function(s) { return (typeof document !== 'undefined') ? document.querySelector(s) : null; };
     globalThis.Document.prototype.querySelectorAll   = function(s) { return (typeof document !== 'undefined') ? document.querySelectorAll(s) : []; };
     globalThis.Document.prototype.getElementById     = function(i) { return (typeof document !== 'undefined') ? document.getElementById(i) : null; };
-    globalThis.Document.prototype.getElementsByTagName    = function(t) { return (typeof document !== 'undefined') ? document.getElementsByTagName(t) : []; };
+    globalThis.Document.prototype.getElementsByTagName    = function(t) { return (typeof document !== 'undefined' && Object.prototype.hasOwnProperty.call(document, 'getElementsByTagName')) ? document.getElementsByTagName(t) : ((typeof _defaultGetElementsByTagName === 'function') ? _defaultGetElementsByTagName(this, t) : []); };
+    globalThis.Document.prototype.getElementsByTagNameNS  = function(ns, t) { return (typeof document !== 'undefined' && Object.prototype.hasOwnProperty.call(document, 'getElementsByTagNameNS')) ? document.getElementsByTagNameNS(ns, t) : ((typeof _defaultGetElementsByTagNameNS === 'function') ? _defaultGetElementsByTagNameNS(this, ns, t) : []); };
     globalThis.Document.prototype.getElementsByClassName  = function(c) { return (typeof document !== 'undefined') ? document.getElementsByClassName(c) : []; };
     globalThis.Document.prototype.createEvent        = function(t) { return (typeof document !== 'undefined' && document.createEvent) ? document.createEvent(t) : new globalThis.Event(t); };
     globalThis.Document.prototype.importNode         = function(n, d) { return n && n.cloneNode ? n.cloneNode(d) : n; };
-    globalThis.Document.prototype.adoptNode          = function(n) { return n; };
+    globalThis.Document.prototype.adoptNode          = function(n) { return (typeof _adoptNodeInternal === 'function') ? _adoptNodeInternal(this, n) : n; };
     globalThis.Document.prototype.elementFromPoint   = function(x, y) { return (typeof document !== 'undefined' && document.elementFromPoint) ? document.elementFromPoint(x, y) : null; };
     globalThis.Document.prototype.elementsFromPoint  = function(x, y) { return (typeof document !== 'undefined' && document.elementsFromPoint) ? document.elementsFromPoint(x, y) : []; };
     globalThis.Document.prototype.caretPositionFromPoint = function() { return null; };
-    globalThis.Document.prototype.createRange        = function() {
-        return (typeof document !== 'undefined' && document.createRange) ? document.createRange() : new globalThis.Range();
-    };
-    globalThis.Document.prototype.getSelection      = function() {
-        return (typeof document !== 'undefined' && document.getSelection) ? document.getSelection() : null;
-    };
+    globalThis.Document.prototype.createRange        = function() { return (typeof document !== 'undefined' && document.createRange) ? document.createRange() : new globalThis.Range(); };
+    globalThis.Document.prototype.getSelection      = function() { return (typeof document !== 'undefined' && document.getSelection) ? document.getSelection() : null; };
     Object.defineProperty(globalThis.Document.prototype, 'activeElement', {
         get: function() { return (typeof document !== 'undefined') ? document.activeElement : null; },
         set: function(val) { if (typeof document !== 'undefined') document.activeElement = val; },
         configurable: true
     });
     Object.defineProperty(globalThis.Document.prototype, 'characterSet', {
-        get: function() { return (typeof document !== 'undefined' && document.characterSet) ? document.characterSet : 'UTF-8'; },
-        configurable: true
+        get: function() { return this._characterSet || ((typeof document !== 'undefined' && document.characterSet) ? document.characterSet : 'UTF-8'); },
+        set: function(v) { this._characterSet = v; }, configurable: true
     });
-    Object.defineProperty(globalThis.Document.prototype, 'charset', {
-        get: function() { return (typeof document !== 'undefined' && document.charset) ? document.charset : 'UTF-8'; },
-        configurable: true
-    });
-    Object.defineProperty(globalThis.Document.prototype, 'inputEncoding', {
-        get: function() { return (typeof document !== 'undefined' && document.inputEncoding) ? document.inputEncoding : 'UTF-8'; },
-        configurable: true
+    Object.defineProperty(globalThis.Document.prototype, 'charset', { get: function() { return this.characterSet; }, set: function(v) { this.characterSet = v; }, configurable: true });
+    Object.defineProperty(globalThis.Document.prototype, 'inputEncoding', { get: function() { return this.characterSet; }, set: function(v) { this.characterSet = v; }, configurable: true });
+    Object.defineProperty(globalThis.Document.prototype, 'compatMode', {
+        get: function() { return this._compatMode || (this === document && typeof _getCompatMode === 'function' ? _getCompatMode() : 'CSS1Compat'); },
+        set: function(v) { this._compatMode = v; }, configurable: true
     });
     Object.defineProperty(globalThis.Document.prototype, 'contentType', {
-        get: function() { return (typeof document !== 'undefined' && document.contentType) ? document.contentType : 'text/html'; },
-        configurable: true
+        get: function() { return this._contentType || ((typeof document !== 'undefined' && document.contentType) ? document.contentType : 'text/html'); },
+        set: function(v) { this._contentType = v; }, configurable: true
     });
     Object.defineProperty(globalThis.Document.prototype, 'documentElement', {
-        get: function() { return (typeof document !== 'undefined') ? document.documentElement : null; },
-        configurable: true
+        get: function() {
+            if (this._documentElement !== undefined) return this._documentElement;
+            var kids = this.childNodes || this._childNodes || [];
+            for (var i = 0; i < kids.length; i++) { if (kids[i] && kids[i].nodeType === 1) return kids[i]; }
+            return (this === document && typeof document !== 'undefined') ? document.documentElement : null;
+        },
+        set: function(v) { this._documentElement = v; }, configurable: true
     });
-    Object.defineProperty(globalThis.Document.prototype, 'head', {
-        get: function() { return (typeof document !== 'undefined') ? document.head : null; },
-        configurable: true
+    Object.defineProperty(globalThis.Document.prototype, 'doctype', {
+        get: function() {
+            if (this._doctype !== undefined) return this._doctype;
+            var kids = this.childNodes || [];
+            for (var i = 0; i < kids.length; i++) { if (kids[i] && kids[i].nodeType === 10) return kids[i]; }
+            return (this === document && typeof document !== 'undefined') ? document.doctype : null;
+        },
+        set: function(v) { this._doctype = v; }, configurable: true, enumerable: true
     });
-    Object.defineProperty(globalThis.Document.prototype, 'body', {
-        get: function() { return (typeof document !== 'undefined') ? document.body : null; },
-        configurable: true
-    });
-    Object.defineProperty(globalThis.Document.prototype, 'forms', {
-        get: function() { return (typeof document !== 'undefined') ? document.forms : null; },
-        configurable: true
-    });
-    Object.defineProperty(globalThis.Document.prototype, 'images', {
-        get: function() { return (typeof document !== 'undefined') ? document.images : null; },
-        configurable: true
-    });
-    Object.defineProperty(globalThis.Document.prototype, 'links', {
-        get: function() { return (typeof document !== 'undefined') ? document.links : null; },
-        configurable: true
-    });
-    Object.defineProperty(globalThis.Document.prototype, 'scripts', {
-        get: function() { return (typeof document !== 'undefined') ? document.scripts : null; },
-        configurable: true
+    ['head', 'body', 'forms', 'images', 'links', 'scripts'].forEach(function(p) {
+        Object.defineProperty(globalThis.Document.prototype, p, {
+            get: function() { return (typeof document !== 'undefined') ? document[p] : null; },
+            configurable: true
+        });
     });
     Object.defineProperty(globalThis.Document.prototype, 'children', {
-        get: function() { return (typeof document !== 'undefined') ? document.children : null; },
+        get: function() {
+            if (this === document && typeof document !== 'undefined') return document.children;
+            var kids = (this._childNodes || []).filter(function(n) { return n && n.nodeType === 1; });
+            return (typeof _createHTMLCollection === 'function') ? _createHTMLCollection(function() { return kids; }) : kids;
+        },
         configurable: true
     });
-    Object.defineProperty(globalThis.Document.prototype, 'childNodes', {
-        get: function() { return (typeof document !== 'undefined') ? document.childNodes : null; },
-        configurable: true
+    Object.defineProperty(globalThis.Document.prototype, 'firstElementChild', {
+        get: function() { var c = this.children; return (c && c.length > 0) ? c[0] : null; }, configurable: true
     });
-    Object.defineProperty(globalThis.Document.prototype, 'firstChild', {
-        get: function() { return (typeof document !== 'undefined') ? document.firstChild : null; },
-        configurable: true
+    Object.defineProperty(globalThis.Document.prototype, 'lastElementChild', {
+        get: function() { var c = this.children; return (c && c.length > 0) ? c[c.length - 1] : null; }, configurable: true
     });
-    Object.defineProperty(globalThis.Document.prototype, 'lastChild', {
-        get: function() { return (typeof document !== 'undefined') ? document.lastChild : null; },
-        configurable: true
+    Object.defineProperty(globalThis.Document.prototype, 'childElementCount', {
+        get: function() { var c = this.children; return c ? c.length : 0; }, configurable: true
     });
-    globalThis.Document.prototype.appendChild = function(c) { return (typeof document !== 'undefined' && document.appendChild) ? document.appendChild(c) : c; };
-    globalThis.Document.prototype.removeChild = function(c) { return (typeof document !== 'undefined' && document.removeChild) ? document.removeChild(c) : c; };
-    globalThis.Document.prototype.insertBefore = function(n, r) { return (typeof document !== 'undefined' && document.insertBefore) ? document.insertBefore(n, r) : n; };
-    globalThis.Document.prototype.replaceChild = function(n, o) { return (typeof document !== 'undefined' && document.replaceChild) ? document.replaceChild(n, o) : o; };
-    Object.defineProperty(globalThis.Document.prototype, 'visibilityState', {
-        get: function() { return (typeof document !== 'undefined' && document.visibilityState) ? document.visibilityState : 'visible'; },
-        configurable: true
-    });
-    Object.defineProperty(globalThis.Document.prototype, 'hidden', {
-        get: function() { return (typeof document !== 'undefined' && typeof document.hidden === 'boolean') ? document.hidden : false; },
-        configurable: true
-    });
-    Object.defineProperty(globalThis.Document.prototype, 'prerendering', {
-        get: function() { return false; },
-        configurable: true
-    });
-    Object.defineProperty(globalThis.Document.prototype, 'readyState', {
-        get: function() { return (typeof document !== 'undefined' && document.readyState) ? document.readyState : 'complete'; },
-        configurable: true
-    });
-    Object.defineProperty(globalThis.Document.prototype, 'timeline', {
-        get: function() { return (typeof document !== 'undefined' && document.timeline) ? document.timeline : null; },
-        configurable: true
-    });
+    globalThis.Document.prototype.appendChild = function(c) { if (arguments.length < 1) throw new TypeError("Failed to execute 'appendChild' on 'Node': 1 argument required"); return (typeof _defaultAppendChild === 'function') ? _defaultAppendChild(this, c) : c; };
+    globalThis.Document.prototype.removeChild = function(c) { if (arguments.length < 1) throw new TypeError("Failed to execute 'removeChild' on 'Node': 1 argument required"); return (typeof _defaultRemoveChild === 'function') ? _defaultRemoveChild(this, c) : c; };
+    globalThis.Document.prototype.insertBefore = function(n, r) { if (arguments.length < 2) throw new TypeError("Failed to execute 'insertBefore' on 'Node': 2 arguments required"); return (typeof _defaultInsertBefore === 'function') ? _defaultInsertBefore(this, n, r) : n; };
+    globalThis.Document.prototype.replaceChild = function(n, o) { if (arguments.length < 2) throw new TypeError("Failed to execute 'replaceChild' on 'Node': 2 arguments required"); return (typeof _defaultReplaceChild === 'function') ? _defaultReplaceChild(this, n, o) : o; };
+    Object.defineProperty(globalThis.Document.prototype, 'visibilityState', { get: function() { return (typeof document !== 'undefined' && document.visibilityState) ? document.visibilityState : 'visible'; }, configurable: true });
+    Object.defineProperty(globalThis.Document.prototype, 'hidden', { get: function() { return (typeof document !== 'undefined' && typeof document.hidden === 'boolean') ? document.hidden : false; }, configurable: true });
+    Object.defineProperty(globalThis.Document.prototype, 'prerendering', { get: function() { return false; }, configurable: true });
+    Object.defineProperty(globalThis.Document.prototype, 'readyState', { get: function() { return (typeof document !== 'undefined' && document.readyState) ? document.readyState : 'complete'; }, configurable: true });
+    Object.defineProperty(globalThis.Document.prototype, 'timeline', { get: function() { return (typeof document !== 'undefined' && document.timeline) ? document.timeline : null; }, configurable: true });
     if (!globalThis.DocumentTimeline) {
         globalThis.DocumentTimeline = function(options) {
             this.originTime = (options && options.originTime) || 0;
@@ -419,7 +398,13 @@
 
     globalThis.Document.prototype.append = globalThis.Element.prototype.append;
     globalThis.Document.prototype.prepend = globalThis.Element.prototype.prepend;
-    globalThis.Document.prototype.replaceChildren = globalThis.Element.prototype.replaceChildren;
+    globalThis.Document.prototype.replaceChildren = function() {
+        if (typeof _doReplaceChildren === 'function') {
+            return _doReplaceChildren(this, arguments, true);
+        } else if (typeof globalThis !== 'undefined' && globalThis._doReplaceChildren) {
+            return globalThis._doReplaceChildren(this, arguments, true);
+        }
+    };
 
     function _wrapShadowRootProto(ctor) {
         if (!ctor || !ctor.prototype) return;
@@ -490,83 +475,193 @@
         },
         configurable: true
     });
-    globalThis.DOMImplementation = function() {};
-    globalThis.CharacterData = function() {};
+    if (!globalThis.DOMImplementation) globalThis.DOMImplementation = function() {};
+    globalThis.CharacterData = function() { throw new TypeError("Illegal constructor"); };
     globalThis.CharacterData.prototype = Object.create(globalThis.Node.prototype);
+    globalThis.CharacterData.prototype.constructor = globalThis.CharacterData;
     Object.defineProperty(globalThis.CharacterData.prototype, 'data', {
-        get: function() { return this.nodeValue || ''; },
-        set: function(val) { this.nodeValue = val === null ? '' : String(val); },
-        configurable: true
+        get: function() {
+            if (this === globalThis.CharacterData.prototype || (globalThis.Comment && this === globalThis.Comment.prototype) || (globalThis.Text && this === globalThis.Text.prototype)) {
+                throw new TypeError("Illegal invocation: 'get data' called on prototype");
+            }
+            if (this._data !== undefined) return this._data;
+            if (this._nodeId !== undefined && typeof _getNodeValue === 'function') {
+                var v = _getNodeValue(this._nodeId);
+                if (v !== null && v !== undefined) return v;
+            }
+            return (this._nodeValue !== undefined && this._nodeValue !== null) ? this._nodeValue : '';
+        },
+        set: function(val) {
+            var oldVal = this.data;
+            var str = val === null ? '' : String(val);
+            this._data = str;
+            this._nodeValue = str;
+            if (this._nodeId !== undefined && typeof _setNodeValue === 'function') _setNodeValue(this._nodeId, str);
+            if (typeof globalThis !== 'undefined' && globalThis._reportDOMMutation) {
+                globalThis._reportDOMMutation({ type: 'characterData', target: this, oldValue: oldVal });
+            }
+        },
+        configurable: true,
+        enumerable: true
+    });
+    Object.defineProperty(globalThis.CharacterData.prototype, 'nodeValue', {
+        get: function() { return this.data; },
+        set: function(val) { this.data = val; },
+        configurable: true,
+        enumerable: true
+    });
+    Object.defineProperty(globalThis.CharacterData.prototype, 'textContent', {
+        get: function() { return (typeof _defaultGetTextContent === 'function') ? _defaultGetTextContent(this) : this.data; },
+        set: function(val) {
+            if (typeof _defaultSetTextContent === 'function') {
+                _defaultSetTextContent(this, val);
+            } else {
+                this.data = (val === null || val === undefined) ? '' : String(val);
+            }
+        },
+        configurable: true,
+        enumerable: true
     });
     Object.defineProperty(globalThis.CharacterData.prototype, 'length', {
         get: function() { return (this.data || '').length; },
         configurable: true
     });
     globalThis.CharacterData.prototype.substringData = function(offset, count) {
-        if (arguments.length < 2) {
-            throw new TypeError("Failed to execute 'substringData': 2 arguments required, but only " + arguments.length + " present.");
-        }
-        var str = this.data || '';
-        var uOffset = offset >>> 0;
-        var uCount = count >>> 0;
-        if (uOffset > str.length) {
-            var err = typeof DOMException !== 'undefined'
-                ? new DOMException("The index is not in the allowed range.", "IndexSizeError")
-                : new Error("IndexSizeError");
-            throw err;
-        }
+        if (arguments.length < 2) throw new TypeError("Failed to execute 'substringData': 2 arguments required");
+        var str = this.data || '', uOffset = offset >>> 0, uCount = count >>> 0;
+        if (uOffset > str.length) throw new ((globalThis && globalThis.DOMException) ? globalThis.DOMException : (typeof DOMException !== 'undefined' ? DOMException : Error))("The index is not in the allowed range.", "IndexSizeError");
         return str.substring(uOffset, uOffset + uCount);
     };
     globalThis.CharacterData.prototype.appendData = function(data) {
-        if (arguments.length < 1) {
-            throw new TypeError("Failed to execute 'appendData': 1 argument required, but only " + arguments.length + " present.");
-        }
+        if (arguments.length < 1) throw new TypeError("Failed to execute 'appendData': 1 argument required");
         this.data = (this.data || '') + String(data);
     };
     globalThis.CharacterData.prototype.insertData = function(offset, data) {
-        if (arguments.length < 2) {
-            throw new TypeError("Failed to execute 'insertData': 2 arguments required, but only " + arguments.length + " present.");
-        }
+        if (arguments.length < 2) throw new TypeError("Failed to execute 'insertData': 2 arguments required");
         this.replaceData(offset, 0, data);
     };
     globalThis.CharacterData.prototype.deleteData = function(offset, count) {
-        if (arguments.length < 2) {
-            throw new TypeError("Failed to execute 'deleteData': 2 arguments required, but only " + arguments.length + " present.");
-        }
+        if (arguments.length < 2) throw new TypeError("Failed to execute 'deleteData': 2 arguments required");
         this.replaceData(offset, count, '');
     };
     globalThis.CharacterData.prototype.replaceData = function(offset, count, data) {
-        if (arguments.length < 3) {
-            throw new TypeError("Failed to execute 'replaceData': 3 arguments required, but only " + arguments.length + " present.");
-        }
+        if (arguments.length < 3) throw new TypeError("Failed to execute 'replaceData': 3 arguments required");
+        var str = this.data || '', uOffset = offset >>> 0, uCount = count >>> 0;
+        if (uOffset > str.length) throw new ((globalThis && globalThis.DOMException) ? globalThis.DOMException : (typeof DOMException !== 'undefined' ? DOMException : Error))("The index is not in the allowed range.", "IndexSizeError");
+        if (uOffset + uCount > str.length) uCount = str.length - uOffset;
+        this.data = str.substring(0, uOffset) + String(data) + str.substring(uOffset + uCount);
+    };
+    globalThis.Text = function(data) {
+        var t = Object.create(globalThis.Text.prototype);
+        t.nodeType = 3;
+        t.nodeName = "#text";
+        t.ownerDocument = (typeof document !== 'undefined') ? document : null;
+        t.data = data === undefined ? "" : String(data);
+        return t;
+    };
+    globalThis.Text.prototype = Object.create(globalThis.CharacterData.prototype);
+    globalThis.Text.prototype.constructor = globalThis.Text;
+    globalThis.Text.prototype.splitText = function(offset) {
+        if (arguments.length < 1) throw new TypeError("Failed to execute 'splitText' on 'Text': 1 argument required");
         var str = this.data || '';
         var uOffset = offset >>> 0;
-        var uCount = count >>> 0;
         if (uOffset > str.length) {
-            var err = typeof DOMException !== 'undefined'
-                ? new DOMException("The index is not in the allowed range.", "IndexSizeError")
-                : new Error("IndexSizeError");
-            throw err;
+            var DomEx = (globalThis && globalThis.DOMException) ? globalThis.DOMException : (typeof DOMException !== 'undefined' ? DOMException : Error);
+            throw new DomEx("The index is not in the allowed range.", "IndexSizeError");
         }
-        if (uOffset + uCount > str.length) {
-            uCount = str.length - uOffset;
+        var head = str.substring(0, uOffset);
+        var tail = str.substring(uOffset);
+        this.data = head;
+        var doc = this.ownerDocument || (typeof document !== 'undefined' ? document : null);
+        var newNode = (doc && typeof doc.createTextNode === 'function')
+            ? doc.createTextNode(tail)
+            : new globalThis.Text(tail);
+        var parent = this.parentNode || this._parentNode;
+        if (parent && typeof parent.insertBefore === 'function') {
+            parent.insertBefore(newNode, this.nextSibling);
         }
-        var strData = String(data);
-        this.data = str.substring(0, uOffset) + strData + str.substring(uOffset + uCount);
+        if (typeof globalThis !== 'undefined' && typeof globalThis._notifyRangeSplitText === 'function') {
+            globalThis._notifyRangeSplitText(this, newNode, uOffset);
+        }
+        return newNode;
     };
-    globalThis.Text = function() {};
-    globalThis.Text.prototype = Object.create(globalThis.CharacterData.prototype);
-    globalThis.Comment = function() {};
+    Object.defineProperty(globalThis.Text.prototype, 'wholeText', {
+        get: function() {
+            var start = this;
+            while (start.previousSibling && start.previousSibling.nodeType === 3) {
+                start = start.previousSibling;
+            }
+            var text = "";
+            var cur = start;
+            while (cur && cur.nodeType === 3) {
+                text += cur.data || "";
+                cur = cur.nextSibling;
+            }
+            return text;
+        },
+        configurable: true,
+        enumerable: true
+    });
+
+    globalThis.Comment = function(data) {
+        var c = Object.create(globalThis.Comment.prototype);
+        c.nodeType = 8;
+        c.nodeName = "#comment";
+        c.ownerDocument = (typeof document !== 'undefined') ? document : null;
+        c.data = data === undefined ? "" : String(data);
+        return c;
+    };
     globalThis.Comment.prototype = Object.create(globalThis.CharacterData.prototype);
+    globalThis.Comment.prototype.constructor = globalThis.Comment;
+
     globalThis.CDATASection = function() {};
     globalThis.CDATASection.prototype = Object.create(globalThis.Text.prototype);
     globalThis.ProcessingInstruction = function() {};
     globalThis.ProcessingInstruction.prototype = Object.create(globalThis.CharacterData.prototype);
-    globalThis.DocumentType = function() {};
+    Object.defineProperty(globalThis.ProcessingInstruction.prototype, 'target', { get: function() { return this._target || ''; }, configurable: true, enumerable: true });
+    globalThis.DocumentType = function() { throw new TypeError("Illegal constructor"); };
     globalThis.DocumentType.prototype = Object.create(globalThis.Node.prototype);
+    globalThis.DocumentType.prototype.constructor = globalThis.DocumentType;
+    Object.defineProperty(globalThis.DocumentType.prototype, 'name', { get: function() { return (this._name !== undefined) ? this._name : ((this._nodeId !== undefined && typeof _getNodeName === 'function') ? _getNodeName(this._nodeId) : ''); }, configurable: true, enumerable: true });
+    Object.defineProperty(globalThis.DocumentType.prototype, 'publicId', { get: function() { return (this._publicId !== undefined) ? this._publicId : ((this._nodeId !== undefined && typeof _getDoctypePublicId === 'function') ? _getDoctypePublicId(this._nodeId) : ''); }, configurable: true, enumerable: true });
+    Object.defineProperty(globalThis.DocumentType.prototype, 'systemId', { get: function() { return (this._systemId !== undefined) ? this._systemId : ((this._nodeId !== undefined && typeof _getDoctypeSystemId === 'function') ? _getDoctypeSystemId(this._nodeId) : ''); }, configurable: true, enumerable: true });
+    Object.defineProperty(globalThis.DocumentType.prototype, 'nodeName', { get: function() { return this.name; }, configurable: true, enumerable: true });
+    Object.defineProperty(globalThis.DocumentType.prototype, 'nodeType', { get: function() { if (this === globalThis.DocumentType.prototype) throw new TypeError("Illegal invocation: 'get nodeType' called on prototype"); return 10; }, configurable: true, enumerable: true });
     globalThis.XMLDocument = function() {};
     globalThis.XMLDocument.prototype = Object.create(globalThis.Document.prototype);
-    globalThis.Attr = function() {};
+    globalThis.XMLDocument.prototype.constructor = globalThis.XMLDocument;
+
+    ['before', 'after', 'replaceWith', 'remove'].forEach(function(m) {
+        var fn = function() {
+            var parent = this.parentElement || this.parentNode;
+            if (!parent) return;
+            if (m === 'remove') {
+                parent.removeChild(this);
+                return;
+            }
+            var marker = document.createTextNode('');
+            if (m === 'before' || m === 'replaceWith') {
+                parent.insertBefore(marker, this);
+            } else if (m === 'after') {
+                parent.insertBefore(marker, this.nextSibling);
+            }
+            var frag = document.createDocumentFragment();
+            for (var i = 0; i < arguments.length; i++) {
+                var arg = arguments[i];
+                var n = (arg && (arg.nodeType !== undefined || arg._nodeId !== undefined))
+                    ? arg
+                    : document.createTextNode(String(arg));
+                frag.appendChild(n);
+            }
+            if (m === 'replaceWith' && this.parentNode === parent) {
+                parent.removeChild(this);
+            }
+            parent.insertBefore(frag, marker);
+            parent.removeChild(marker);
+        };
+        globalThis.CharacterData.prototype[m] = fn;
+        globalThis.DocumentType.prototype[m] = fn;
+    });
     globalThis.HTMLCollection = function() {};
     globalThis.HTMLCollection.prototype = Object.create(Object.prototype);
     globalThis.HTMLCollection.prototype.item = function(index) {
@@ -575,10 +670,16 @@
     };
     globalThis.HTMLCollection.prototype.namedItem = function(name) {
         var str = String(name);
+        if (str === '') return null;
         for (var i = 0; i < this.length; i++) {
             var el = this[i];
-            if (el && (el.id === str || (el.getAttribute && el.getAttribute('name') === str))) {
-                return el;
+            if (el) {
+                var elId = (el.getAttribute && typeof el.getAttribute === 'function') ? el.getAttribute('id') : el.id;
+                if (elId === str) return el;
+                var elNs = (el.namespaceURI !== undefined) ? el.namespaceURI : 'http://www.w3.org/1999/xhtml';
+                if (elNs === 'http://www.w3.org/1999/xhtml' && el.getAttribute && typeof el.getAttribute === 'function' && el.getAttribute('name') === str) {
+                    return el;
+                }
             }
         }
         return null;
@@ -603,53 +704,11 @@
         var i = Number(index);
         return (i >= 0 && i < this.length) ? this[i] : null;
     };
-    globalThis.NodeList.prototype.forEach = function(cb, thisArg) {
-        for (var i = 0; i < this.length; i++) {
-            cb.call(thisArg, this[i], i, this);
-        }
-    };
-    globalThis.NodeList.prototype.entries = function() {
-        var i = 0;
-        var self = this;
-        return {
-            next: function() {
-                if (i < self.length) {
-                    return { value: [i, self[i++]], done: false };
-                }
-                return { value: undefined, done: true };
-            },
-            [Symbol.iterator]: function() { return this; }
-        };
-    };
-    globalThis.NodeList.prototype.keys = function() {
-        var i = 0;
-        var self = this;
-        return {
-            next: function() {
-                if (i < self.length) {
-                    return { value: i++, done: false };
-                }
-                return { value: undefined, done: true };
-            },
-            [Symbol.iterator]: function() { return this; }
-        };
-    };
-    globalThis.NodeList.prototype.values = function() {
-        var i = 0;
-        var self = this;
-        return {
-            next: function() {
-                if (i < self.length) {
-                    return { value: self[i++], done: false };
-                }
-                return { value: undefined, done: true };
-            },
-            [Symbol.iterator]: function() { return this; }
-        };
-    };
-    globalThis.NodeList.prototype[Symbol.iterator] = function() {
-        return this.values();
-    };
+    globalThis.NodeList.prototype.forEach = Array.prototype.forEach;
+    globalThis.NodeList.prototype.entries = Array.prototype.entries;
+    globalThis.NodeList.prototype.keys = Array.prototype.keys;
+    globalThis.NodeList.prototype.values = Array.prototype.values;
+    globalThis.NodeList.prototype[Symbol.iterator] = Array.prototype[Symbol.iterator];
     globalThis.NodeList.prototype[Symbol.toStringTag] = 'NodeList';
     globalThis.NodeFilter = {
         FILTER_ACCEPT:1, FILTER_REJECT:2, FILTER_SKIP:3,
@@ -731,5 +790,3 @@
         if (globalThis.HTMLElement && globalThis.HTMLElement.prototype) globalThis._bindElementPrototype(globalThis.HTMLElement.prototype);
         if (globalThis.SVGElement && globalThis.SVGElement.prototype) globalThis._bindElementPrototype(globalThis.SVGElement.prototype);
     }
-
-

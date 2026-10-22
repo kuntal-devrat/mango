@@ -79,6 +79,7 @@ pub struct ComputedStyle {
     pub margin_right: Length,
     pub margin_bottom: Length,
     pub margin_left: Length,
+    pub margin_trim: String,
 
     pub padding_top: Length,
     pub padding_right: Length,
@@ -413,6 +414,7 @@ impl Default for ComputedStyle {
             margin_right: Length::Px(0.0),
             margin_bottom: Length::Px(0.0),
             margin_left: Length::Px(0.0),
+            margin_trim: "none".to_string(),
 
             padding_top: Length::Px(0.0),
             padding_right: Length::Px(0.0),
@@ -443,12 +445,12 @@ impl Default for ComputedStyle {
 
             flex_direction: FlexDirection::Row,
             flex_wrap: FlexWrap::NoWrap,
-            justify_content: JustifyContent::FlexStart,
+            justify_content: JustifyContent::Normal,
             justify_items: JustifyItems::Stretch,
             justify_self: JustifySelf::Auto,
-            align_items: AlignItems::Stretch,
+            align_items: AlignItems::Normal,
             align_self: AlignSelf::Auto,
-            align_content: AlignContent::Stretch,
+            align_content: AlignContent::Normal,
             flex_grow: 0.0,
             flex_shrink: 1.0,
             flex_basis: Length::Auto,

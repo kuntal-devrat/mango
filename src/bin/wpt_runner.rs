@@ -1,57 +1,80 @@
-//! Mango WPT (Web Platform Tests) Official Test Suite Runner CLI.
+//! Mango WPT (Web Platform Tests) runner CLI.
 //!
-//! Executes canonical W3C WPT test files from `web-platform-tests/wpt`
-//! and outputs structured subtest scorecard with pass/fail counts.
+//! Executes canonical W3C WPT test files from the vendored, byte-exact
+//! `web-platform-tests/wpt` snapshot under `tests/wpt/upstream/` and produces a
+//! structured conformance scorecard.
 //!
 //! Usage:
-//!   cargo run --bin wpt-runner
-//!   cargo run --bin wpt-runner -- [rel_path_to_wpt_test.html]
+//!   cargo run --release --bin wpt-runner --                     # whole upstream tree
+//!   cargo run --release --bin wpt-runner -- dom/nodes           # one category
+//!   cargo run --release --bin wpt-runner -- --json-batch list.txt
+//!       Runs the files listed in `list.txt` (one relative path per line) and
+//!       prints one JSON object per file. This mode is used by the integration
+//!       tests to isolate each WPT file in its own process, exactly like
+//!       `wptrunner` does, so that a runaway test cannot abort the whole run.
 
-use std::env;
-use std::path::Path;
+#[path = "../../tests/wpt/harness.rs"]
+mod harness;
 
-#[path = "../../tests/wpt/runner.rs"]
-mod runner;
-use runner::run_wpt_html_file;
-
-const DEFAULT_SUITES: &[(&str, &str)] = &[
-    ("Node.nodeName", "dom/nodes/Node-nodeName.html"),
-    ("Node.nodeValue", "dom/nodes/Node-nodeValue.html"),
-    ("Node.textContent", "dom/nodes/Node-textContent.html"),
-    ("Node.isSameNode", "dom/nodes/Node-isSameNode.html"),
-    ("CharacterData.data", "dom/nodes/CharacterData-data.html"),
-    (
-        "CharacterData.appendData",
-        "dom/nodes/CharacterData-appendData.html",
-    ),
-    (
-        "CharacterData.deleteData",
-        "dom/nodes/CharacterData-deleteData.html",
-    ),
-    (
-        "CharacterData.insertData",
-        "dom/nodes/CharacterData-insertData.html",
-    ),
-    (
-        "CharacterData.replaceData",
-        "dom/nodes/CharacterData-replaceData.html",
-    ),
-    (
-        "CharacterData.substringData",
-        "dom/nodes/CharacterData-substringData.html",
-    ),
-    ("Element.tagName", "dom/nodes/Element-tagName.html"),
-    (
-        "Document.createComment",
-        "dom/nodes/Document-createComment.html",
-    ),
-    (
-        "Document.createAttribute",
-        "dom/nodes/Document-createAttribute.html",
-    ),
-];
+use harness::{WptFileStatus, WptSuiteResult};
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    let root = harness::upstream_root();
+
+    if let Some(idx) = args.iter().position(|a| a == "--json-batch") {
+        let list_path = args
+            .get(idx + 1)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("-"));
+        run_json_batch(&root, &list_path);
+        return;
+    }
+
+    if let Some(idx) = args.iter().position(|a| a == "--json") {
+        if let Some(rel) = args.get(idx + 1) {
+            let result = harness::run_wpt_file(&root, rel, harness::DEFAULT_FILE_TIMEOUT);
+            println!(
+                "{}",
+                serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string())
+            );
+            return;
+        }
+    }
+
+    print_banner();
+
+    let targets: Vec<String> = args
+        .iter()
+        .skip(1)
+        .filter(|a| !a.starts_with('-'))
+        .cloned()
+        .collect();
+
+    let suite = if targets.is_empty() {
+        run_all(&root)
+    } else {
+        let mut s = WptSuiteResult::default();
+        for t in targets {
+            let dir = root.join(&t);
+            if dir.is_dir() {
+                for rel in harness::discover_tests(&root, &dir) {
+                    s.push(harness::run_wpt_file(&root, &rel, harness::DEFAULT_FILE_TIMEOUT));
+                }
+            } else {
+                s.push(harness::run_wpt_file(&root, &t, harness::DEFAULT_FILE_TIMEOUT));
+            }
+        }
+        s
+    };
+
+    print_scorecard(&suite);
+    print_failures(&suite, 40);
+}
+
+fn print_banner() {
     println!(
         "\x1b[1;36m================================================================================\x1b[0m"
     );
@@ -59,68 +82,76 @@ fn main() {
     println!(
         "\x1b[1;36m================================================================================\x1b[0m\n"
     );
+}
 
-    let args: Vec<String> = env::args().collect();
-    let base_dir = Path::new("tests/wpt");
+fn run_all(root: &Path) -> WptSuiteResult {
+    let mut suite = WptSuiteResult::default();
+    for rel in harness::discover_tests(root, root) {
+        suite.push(harness::run_wpt_file(root, &rel, harness::DEFAULT_FILE_TIMEOUT));
+    }
+    suite
+}
 
-    let tests_to_run: Vec<(&str, String)> = if args.len() > 1 && !args[1].starts_with('-') {
-        let path = args[1].clone();
-        vec![("CLI Test Target", path)]
-    } else {
-        DEFAULT_SUITES
-            .iter()
-            .map(|(label, path)| (*label, path.to_string()))
-            .collect()
+/// Runs every file listed in `list_path` and prints one JSON object per line.
+///
+/// A file that crashes the process (V8 OOM, Rust panic in native code) simply
+/// produces no output line; the caller detects the missing line and re-runs
+/// that file individually.
+fn run_json_batch(root: &Path, list_path: &Path) {
+    let list = match std::fs::read_to_string(list_path) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("could not read {}: {e}", list_path.display());
+            return;
+        }
     };
 
-    let mut total_tests = 0;
-    let mut passed_tests = 0;
-    let mut failed_tests = 0;
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
 
-    for (label, test_rel_path) in tests_to_run {
-        println!(
-            "\x1b[1;35m▶ Running WPT:\x1b[0m {} ({})",
-            label, test_rel_path
-        );
-        match run_wpt_html_file(base_dir, &test_rel_path) {
-            Ok(results) => {
-                for t in &results.tests {
-                    if t.status == "PASS" {
-                        println!("    \x1b[32m✓ PASS:\x1b[0m {}", t.name);
-                        passed_tests += 1;
-                    } else {
-                        println!(
-                            "    \x1b[31m✗ {}:\x1b[0m {} \x1b[90m(msg: {:?})\x1b[0m",
-                            t.status, t.name, t.message
-                        );
-                        failed_tests += 1;
-                    }
-                    total_tests += 1;
-                }
-            }
-            Err(e) => {
-                eprintln!("    \x1b[31m[ERROR]\x1b[0m Failed to execute '{test_rel_path}': {e}");
-            }
+    for rel in list.lines().map(|l| l.trim()).filter(|l| !l.is_empty()) {
+        let result = harness::run_wpt_file(root, rel, harness::DEFAULT_FILE_TIMEOUT);
+        if let Ok(json) = serde_json::to_string(&result) {
+            let _ = writeln!(out, "{json}");
+            let _ = out.flush();
         }
     }
+}
 
+fn print_scorecard(suite: &WptSuiteResult) {
     println!(
-        "\n\x1b[1;36m================================================================================\x1b[0m"
+        "\x1b[1;36m================================================================================\x1b[0m"
     );
     println!("\x1b[1;33m📊 OFFICIAL WPT COMPLIANCE SCORECARD FOR MANGO ENGINE\x1b[0m");
     println!(
         "\x1b[1;36m================================================================================\x1b[0m"
     );
-    let pass_rate = if total_tests > 0 {
-        (passed_tests as f64 / total_tests as f64) * 100.0
-    } else {
-        0.0
-    };
-    println!("Total WPT Assertions : {total_tests}");
-    println!("Passed Assertions   : {passed_tests}");
-    println!("Failed Assertions   : {failed_tests}");
-    println!("Pass Rate           : {pass_rate:.1}%");
+    println!("Files run          : {}", suite.files_total());
+    println!("  passed           : {}", suite.files_passed());
+    println!("  errored          : {}", suite.files_errored());
+    println!("  timed out        : {}", suite.files_timed_out());
+    println!("Total WPT Assertions : {}", suite.total());
+    println!("Passed Assertions   : {}", suite.passed());
+    println!("Failed Assertions   : {}", suite.failed());
+    println!("Pass Rate           : {:.2}%", suite.pass_percentage());
     println!(
         "\x1b[1;36m================================================================================\x1b[0m\n"
     );
+}
+
+fn print_failures(suite: &WptSuiteResult, limit: usize) {
+    let mut shown = 0;
+    for r in &suite.results {
+        if shown >= limit {
+            break;
+        }
+        if r.status == WptFileStatus::Pass {
+            continue;
+        }
+        println!("  [{}] {}", r.status.as_str(), r.path);
+        if let Some(m) = &r.message {
+            println!("      {}", m.lines().next().unwrap_or(""));
+        }
+        shown += 1;
+    }
 }

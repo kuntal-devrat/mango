@@ -37,7 +37,11 @@ impl Default for HttpClient {
 impl HttpClient {
     /// Creates a new HTTP client with default settings and empty cookie jar.
     pub fn new() -> Self {
-        let timeout = Duration::from_secs(30);
+        Self::with_timeout(Duration::from_secs(30))
+    }
+
+    /// Creates an HTTP client with a custom timeout.
+    pub fn with_timeout(timeout: Duration) -> Self {
         Self {
             user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36".to_string(),
             timeout,
@@ -49,7 +53,14 @@ impl HttpClient {
 
     /// Creates an HTTP client sharing an existing cookie jar.
     pub fn with_cookie_jar(cookie_jar: std::sync::Arc<std::sync::Mutex<CookieJar>>) -> Self {
-        let timeout = Duration::from_secs(30);
+        Self::with_timeout_and_cookie_jar(Duration::from_secs(30), cookie_jar)
+    }
+
+    /// Creates an HTTP client sharing an existing cookie jar with custom timeout.
+    pub fn with_timeout_and_cookie_jar(
+        timeout: Duration,
+        cookie_jar: std::sync::Arc<std::sync::Mutex<CookieJar>>,
+    ) -> Self {
         Self {
             user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36".to_string(),
             timeout,

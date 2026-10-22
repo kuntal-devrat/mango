@@ -2,113 +2,174 @@
 
     globalThis.Node = function() {};
     globalThis.Node.prototype = Object.create(EventTarget.prototype);
+    globalThis.Node.prototype.constructor = globalThis.Node;
     // Node type constants and Document Position bitmasks
     var _nodeConsts = {
-        ELEMENT_NODE:1, ATTRIBUTE_NODE:2, TEXT_NODE:3, CDATA_SECTION_NODE:4,
-        ENTITY_REFERENCE_NODE:5, ENTITY_NODE:6, PROCESSING_INSTRUCTION_NODE:7, COMMENT_NODE:8,
-        DOCUMENT_NODE:9, DOCUMENT_TYPE_NODE:10, DOCUMENT_FRAGMENT_NODE:11, NOTATION_NODE:12,
-        DOCUMENT_POSITION_DISCONNECTED: 1,
-        DOCUMENT_POSITION_PRECEDING: 2,
-        DOCUMENT_POSITION_FOLLOWING: 4,
-        DOCUMENT_POSITION_CONTAINS: 8,
-        DOCUMENT_POSITION_CONTAINED_BY: 16,
-        DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC: 32
+        ELEMENT_NODE:1, ATTRIBUTE_NODE:2, TEXT_NODE:3, CDATA_SECTION_NODE:4, ENTITY_REFERENCE_NODE:5, ENTITY_NODE:6,
+        PROCESSING_INSTRUCTION_NODE:7, COMMENT_NODE:8, DOCUMENT_NODE:9, DOCUMENT_TYPE_NODE:10, DOCUMENT_FRAGMENT_NODE:11, NOTATION_NODE:12,
+        DOCUMENT_POSITION_DISCONNECTED:1, DOCUMENT_POSITION_PRECEDING:2, DOCUMENT_POSITION_FOLLOWING:4, DOCUMENT_POSITION_CONTAINS:8,
+        DOCUMENT_POSITION_CONTAINED_BY:16, DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC:32
     };
     Object.assign(globalThis.Node, _nodeConsts);
     Object.assign(globalThis.Node.prototype, _nodeConsts);
-    if (!globalThis.Node.prototype.appendChild) globalThis.Node.prototype.appendChild     = function(c) { return (this && this.appendChild && this.appendChild !== globalThis.Node.prototype.appendChild) ? this.appendChild(c) : c; };
-    if (!globalThis.Node.prototype.removeChild) globalThis.Node.prototype.removeChild     = function(c) { return (this && this.removeChild && this.removeChild !== globalThis.Node.prototype.removeChild) ? this.removeChild(c) : c; };
-    if (!globalThis.Node.prototype.insertBefore) globalThis.Node.prototype.insertBefore    = function(n, r) { return this.appendChild ? this.appendChild(n) : n; };
-    if (!globalThis.Node.prototype.replaceChild) globalThis.Node.prototype.replaceChild    = function(n, o) { if (this.removeChild) this.removeChild(o); if (this.appendChild) this.appendChild(n); return o; };
-    if (!globalThis.Node.prototype.cloneNode) globalThis.Node.prototype.cloneNode       = function(deep) { return this; };
-    globalThis.Node.prototype.contains        = function(o) { return o === this; };
-    globalThis.Node.prototype.hasChildNodes   = function() { return (this.children && this.children.length > 0) || false; };
-    globalThis.Node.prototype.normalize       = function() {};
+    if (globalThis.Attr && globalThis.Attr.prototype) Object.setPrototypeOf(globalThis.Attr.prototype, globalThis.Node.prototype);
+    globalThis.Node.prototype.appendChild  = function(c) {
+        if (arguments.length < 1) throw new TypeError("Failed to execute 'appendChild' on 'Node': 1 argument required");
+        return (typeof _defaultAppendChild === 'function') ? _defaultAppendChild(this, c) : c;
+    };
+    globalThis.Node.prototype.removeChild  = function(c) { return (typeof _defaultRemoveChild === 'function') ? _defaultRemoveChild(this, c) : c; };
+    globalThis.Node.prototype.insertBefore = function(n, r) {
+        if (arguments.length < 2) throw new TypeError("Failed to execute 'insertBefore' on 'Node': 2 arguments required");
+        return (typeof _defaultInsertBefore === 'function') ? _defaultInsertBefore(this, n, r) : n;
+    };
+    globalThis.Node.prototype.replaceChild = function(n, o) {
+        if (arguments.length < 2) throw new TypeError("Failed to execute 'replaceChild' on 'Node': 2 arguments required");
+        return (typeof _defaultReplaceChild === 'function') ? _defaultReplaceChild(this, n, o) : o;
+    };
+    globalThis.Node.prototype.moveBefore   = function(n, r) {
+        if (arguments.length < 2) throw new TypeError("Failed to execute 'moveBefore' on 'Node': 2 arguments required");
+        return (typeof _defaultInsertBefore === 'function') ? _defaultInsertBefore(this, n, r) : n;
+    };
+    globalThis.Node.prototype.cloneNode    = function(deep) {
+        if (this && this._nodeId !== undefined && typeof _cloneNode === 'function') {
+            var cloneId = _cloneNode(this._nodeId, !!deep);
+            var clObj = (cloneId && typeof _wrapElement === 'function') ? _wrapElement(cloneId) : null;
+            if (clObj) {
+                if (this._prefix !== undefined) { clObj._prefix = this._prefix; clObj.prefix = this._prefix; }
+                var curNs = this.namespaceURI; if (curNs) { clObj._namespaceURI = curNs; clObj.namespaceURI = curNs; }
+                if (this._localName !== undefined) { clObj._localName = this._localName; clObj.localName = this._localName; }
+                if (this._tagName !== undefined) { clObj._tagName = this._tagName; clObj.tagName = this._tagName; }
+                if (this._nodeName !== undefined) { clObj._nodeName = this._nodeName; clObj.nodeName = this._nodeName; }
+                if (this._isPI) { clObj._isPI = true; clObj._target = this._target; }
+            }
+            return clObj;
+        }
+        if (this && this.nodeType === 10) {
+            var impl = (this.ownerDocument && this.ownerDocument.implementation) || (typeof document !== 'undefined' && document.implementation);
+            if (impl && impl.createDocumentType) {
+                var c = impl.createDocumentType(this.name || '', this.publicId || '', this.systemId || '');
+                c._ownerDocument = this._ownerDocument || this.ownerDocument;
+                return c;
+            }
+        }
+        var copy = Object.create(Object.getPrototypeOf(this));
+        for (var k in this) { if (Object.prototype.hasOwnProperty.call(this, k)) copy[k] = this[k]; }
+        copy._parentNode = null; copy.parentNode = null;
+        if (copy._childNodes) {
+            copy._childNodes = deep ? (this._childNodes || []).map(function(c) { var cl = c && c.cloneNode ? c.cloneNode(true) : c; if (cl) cl._parentNode = copy; return cl; }) : [];
+            if (!deep && copy.nodeType === 9) {
+                copy._documentElement = null; copy.documentElement = null;
+                copy._doctype = null; copy.doctype = null;
+                copy.title = ""; copy._title = "";
+            }
+        }
+        return copy;
+    };
+    globalThis.Node.prototype.contains     = function(o) {
+        if (!o) return false;
+        if (o === this) return true;
+        if (this._nodeId !== undefined && o._nodeId !== undefined && typeof _elementContains === 'function') {
+            return _elementContains(this._nodeId, o._nodeId);
+        }
+        var p = o.parentNode;
+        while (p) {
+            if (p === this) return true;
+            p = p.parentNode;
+        }
+        return false;
+    };
+    globalThis.Node.prototype.hasChildNodes = function() { return (this.children && this.children.length > 0) || (this.childNodes && this.childNodes.length > 0) || false; };
+    globalThis.Node.prototype.normalize    = function() { if (typeof _normalizeNode === 'function') return _normalizeNode(this); };
     Object.defineProperties(globalThis.Node.prototype, {
         parentNode: {
             get: function() {
                 if (this._nodeId !== undefined && typeof _getParentNode === 'function') {
                     var p = _getParentNode(this._nodeId);
-                    if (p === -1) return null;
+                    if (p === -1) return this._parentNode || null;
                     if (p === 0) return document;
                     return (typeof _wrapElement === 'function') ? _wrapElement(p) : null;
                 }
                 return this._parentNode || null;
             },
-            set: function(val) {
-                this._parentNode = val;
-            },
-            configurable: true,
-            enumerable: true
+            set: function(val) { this._parentNode = val; },
+            configurable: true, enumerable: true
         },
         parentElement: {
-            get: function() {
-                var p = this.parentNode;
-                return (p && p.nodeType === 1) ? p : null;
-            },
-            configurable: true,
-            enumerable: true
+            get: function() { var p = this.parentNode; return (p && p.nodeType === 1) ? p : null; },
+            configurable: true, enumerable: true
         },
         firstChild: {
             get: function() {
                 if (this._nodeId !== undefined && typeof _getFirstChild === 'function') {
                     var fid = _getFirstChild(this._nodeId);
-                    if (fid !== null && fid !== undefined && typeof _wrapElement === 'function') {
-                        return _wrapElement(fid);
-                    }
-                    return null;
+                    return (fid !== null && fid !== undefined && typeof _wrapElement === 'function') ? _wrapElement(fid) : null;
                 }
-                var kids = this.childNodes;
-                return (kids && kids.length > 0) ? kids[0] : null;
+                var kids = this.childNodes; return (kids && kids.length > 0) ? kids[0] : null;
             },
-            configurable: true,
-            enumerable: true
+            configurable: true, enumerable: true
         },
         lastChild: {
             get: function() {
                 if (this._nodeId !== undefined && typeof _getLastChild === 'function') {
                     var lid = _getLastChild(this._nodeId);
-                    if (lid !== null && lid !== undefined && typeof _wrapElement === 'function') {
-                        return _wrapElement(lid);
-                    }
-                    return null;
+                    return (lid !== null && lid !== undefined && typeof _wrapElement === 'function') ? _wrapElement(lid) : null;
                 }
-                var kids = this.childNodes;
-                return (kids && kids.length > 0) ? kids[kids.length - 1] : null;
+                var kids = this.childNodes; return (kids && kids.length > 0) ? kids[kids.length - 1] : null;
             },
-            configurable: true,
-            enumerable: true
+            configurable: true, enumerable: true
         },
         previousSibling: {
             get: function() {
                 if (this._nodeId !== undefined && typeof _getPreviousSibling === 'function') {
                     var sid = _getPreviousSibling(this._nodeId);
-                    return (sid !== null && sid !== undefined && typeof _wrapElement === 'function') ? _wrapElement(sid) : null;
+                    if (sid !== null && sid !== undefined && sid !== -1 && typeof _wrapElement === 'function') return _wrapElement(sid);
+                }
+                var p = this.parentNode || this._parentNode;
+                if (p) {
+                    var k = p.childNodes || p._childNodes;
+                    if (k) {
+                        for (var i = 0; i < k.length; i++) {
+                            if (k[i] === this || (k[i] && k[i]._nodeId !== undefined && k[i]._nodeId === this._nodeId)) return i > 0 ? k[i - 1] : null;
+                        }
+                    }
                 }
                 return null;
             },
-            configurable: true,
-            enumerable: true
+            configurable: true, enumerable: true
         },
         nextSibling: {
             get: function() {
                 if (this._nodeId !== undefined && typeof _getNextSibling === 'function') {
                     var sid = _getNextSibling(this._nodeId);
-                    return (sid !== null && sid !== undefined && typeof _wrapElement === 'function') ? _wrapElement(sid) : null;
+                    if (sid !== null && sid !== undefined && sid !== -1 && typeof _wrapElement === 'function') return _wrapElement(sid);
+                }
+                var p = this.parentNode || this._parentNode;
+                if (p) {
+                    var k = p.childNodes || p._childNodes;
+                    if (k) {
+                        for (var i = 0; i < k.length; i++) {
+                            if (k[i] === this || (k[i] && k[i]._nodeId !== undefined && k[i]._nodeId === this._nodeId)) return i + 1 < k.length ? k[i + 1] : null;
+                        }
+                    }
                 }
                 return null;
             },
-            configurable: true,
-            enumerable: true
+            configurable: true, enumerable: true
         },
         childNodes: {
             get: function() {
+                if (this._cachedChildNodes) return this._cachedChildNodes;
                 var self = this;
                 if (typeof _createNodeList === 'function' && typeof _getChildNodeIds === 'function' && self._nodeId !== undefined) {
-                    return _createNodeList(function() {
+                    this._cachedChildNodes = _createNodeList(function() {
                         var arr = _getChildNodeIds(self._nodeId) || [];
                         return arr.map(function(id) { return (typeof _wrapElement === 'function') ? _wrapElement(id) : id; });
                     });
+                    return this._cachedChildNodes;
+                }
+                if (typeof _createNodeList === 'function') {
+                    this._cachedChildNodes = _createNodeList(function() { return self._childNodes || []; });
+                    return this._cachedChildNodes;
                 }
                 return self._childNodes || [];
             },
@@ -117,14 +178,13 @@
         },
         isConnected: {
             get: function() {
-                var cur = this;
-                while (cur) {
+                var cur = this, depth = 0;
+                while (cur && depth++ < 1000) {
                     if (cur === document || cur.nodeType === 9) return true;
-                    if (cur.nodeType === 11 && cur.host) {
-                        cur = cur.host;
-                        continue;
-                    }
-                    cur = cur.parentNode || cur.parentElement || cur.host;
+                    if (cur.nodeType === 11 && cur.host) { cur = cur.host; continue; }
+                    var p = cur.parentNode || cur.parentElement || cur.host;
+                    if (!p || p === cur) break;
+                    cur = p;
                 }
                 return false;
             },
@@ -133,34 +193,57 @@
         },
         nodeType: {
             get: function() {
+                if (this === globalThis.Node.prototype ||
+                    (globalThis.CharacterData && this === globalThis.CharacterData.prototype) ||
+                    (globalThis.Comment && this === globalThis.Comment.prototype) ||
+                    (globalThis.Text && this === globalThis.Text.prototype) ||
+                    (globalThis.Element && this === globalThis.Element.prototype) ||
+                    (globalThis.Document && this === globalThis.Document.prototype) ||
+                    (globalThis.XMLDocument && this === globalThis.XMLDocument.prototype) ||
+                    (globalThis.DocumentFragment && this === globalThis.DocumentFragment.prototype) ||
+                    (globalThis.DocumentType && this === globalThis.DocumentType.prototype) ||
+                    (globalThis.Attr && this === globalThis.Attr.prototype) ||
+                    (this.constructor && this.constructor.prototype === this)) {
+                    throw new TypeError("Illegal invocation: 'get nodeType' called on prototype");
+                }
+                if (this._nodeType !== undefined) return this._nodeType;
                 return (this._nodeId !== undefined && typeof _getNodeType === 'function')
                     ? _getNodeType(this._nodeId)
-                    : (this._nodeType || 1);
+                    : 1;
             },
-            configurable: true,
-            enumerable: true
+            set: function(val) { this._nodeType = val; }, configurable: true, enumerable: true
         },
         nodeName: {
             get: function() {
-                if (this._nodeId !== undefined && typeof _getNodeName === 'function') {
-                    return _getNodeName(this._nodeId);
-                }
-                return this.tagName || '#node';
+                if (this._nodeName !== undefined) return this._nodeName;
+                return (this._nodeId !== undefined && typeof _getNodeName === 'function') ? _getNodeName(this._nodeId) : (this.tagName || '#node');
             },
-            configurable: true,
-            enumerable: true
+            set: function(v) { this._nodeName = v; }, configurable: true, enumerable: true
         },
         nodeValue: {
             get: function() {
-                return (this._nodeId !== undefined && typeof _getNodeValue === 'function')
-                    ? _getNodeValue(this._nodeId)
-                    : (this._nodeValue || null);
+                var nt = this.nodeType;
+                if (nt === 2) return this.value;
+                if (nt === 3 || nt === 4 || nt === 7 || nt === 8) {
+                    if (this._data !== undefined) return this._data;
+                    if (this._nodeId !== undefined && typeof _getNodeValue === 'function') {
+                        var v = _getNodeValue(this._nodeId);
+                        if (v !== null && v !== undefined) return v;
+                    }
+                    return (this._nodeValue !== undefined) ? this._nodeValue : '';
+                }
+                return null;
             },
             set: function(v) {
-                if (this._nodeId !== undefined && typeof _setNodeValue === 'function') {
-                    _setNodeValue(this._nodeId, String(v));
-                } else {
-                    this._nodeValue = String(v);
+                var nt = this.nodeType;
+                if (nt === 2) {
+                    this.value = v;
+                    return;
+                }
+                if (nt === 3 || nt === 4 || nt === 7 || nt === 8) {
+                    var str = (v === null || v === undefined) ? '' : String(v);
+                    this.data = str;
+                    return;
                 }
             },
             configurable: true,
@@ -168,35 +251,70 @@
         },
         textContent: {
             get: function() {
-                return (this._nodeId !== undefined && typeof _getTextContent === 'function')
-                    ? _getTextContent(this._nodeId)
-                    : (this._textContent || '');
+                return (typeof _defaultGetTextContent === 'function') ? _defaultGetTextContent(this) : null;
             },
             set: function(val) {
-                if (this._nodeId !== undefined && typeof _setTextContent === 'function') {
-                    _setTextContent(this._nodeId, String(val));
-                } else {
-                    this._textContent = String(val);
+                if (typeof _defaultSetTextContent === 'function') {
+                    _defaultSetTextContent(this, val);
                 }
             },
             configurable: true,
             enumerable: true
         }
     });
-    globalThis.Node.prototype.isEqualNode     = function(o) { return this === o; };
-    globalThis.Node.prototype.isSameNode      = function(o) { return this === o; };
+    globalThis.Node.prototype.isEqualNode = function(other) {
+        if (this === other) return true;
+        if (!other || typeof other !== 'object' || this.nodeType !== other.nodeType) return false;
+        var nt = this.nodeType;
+        if (nt === 10) {
+            if (this.name !== other.name || this.publicId !== other.publicId || this.systemId !== other.systemId) return false;
+        } else if (nt === 1) {
+            if (this.namespaceURI !== other.namespaceURI || this.prefix !== other.prefix || this.localName !== other.localName) return false;
+            var aList = this.attributes ? Array.from(this.attributes) : [], bList = other.attributes ? Array.from(other.attributes) : [];
+            if (aList.length !== bList.length) return false;
+            for (var i = 0; i < aList.length; i++) {
+                var a = aList[i], found = false;
+                for (var j = 0; j < bList.length; j++) {
+                    var b = bList[j];
+                    if (a.namespaceURI === b.namespaceURI && a.localName === b.localName && a.value === b.value) { found = true; break; }
+                }
+                if (!found) return false;
+            }
+        } else if (nt === 2) {
+            if (this.namespaceURI !== other.namespaceURI || this.localName !== other.localName || this.value !== other.value) return false;
+        } else if (nt === 7) {
+            if (this.target !== other.target || this.data !== other.data) return false;
+        } else if (nt === 3 || nt === 8) {
+            if (this.data !== other.data) return false;
+        }
+        var aKids = this.childNodes || [], bKids = other.childNodes || [];
+        if (aKids.length !== bKids.length) return false;
+        for (var k = 0; k < aKids.length; k++) {
+            if (!aKids[k].isEqualNode(bKids[k])) return false;
+        }
+        return true;
+    };
+    globalThis.Node.prototype.isSameNode = function(o) { return this === o; };
     Object.defineProperty(globalThis.Node.prototype, 'ownerDocument', {
         get: function() {
-            return (typeof document !== 'undefined' && this === document) ? null : (typeof document !== 'undefined' ? document : null);
+            if (this.nodeType === 9 || (typeof document !== 'undefined' && this === document)) return null;
+            if (this.nodeType === 2 && this.ownerElement && this.ownerElement.ownerDocument) {
+                return this.ownerElement.ownerDocument;
+            }
+            return (this._ownerDocument !== undefined) ? this._ownerDocument : (typeof document !== 'undefined' ? document : null);
         },
-        configurable: true
+        set: function(val) { this._ownerDocument = val; }, configurable: true, enumerable: true
     });
     Object.defineProperty(globalThis.Node.prototype, 'baseURI', {
         get: function() {
-            var doc = (this.ownerDocument || (typeof document !== 'undefined' ? document : null));
+            if (this.nodeType === 2 && this.ownerElement && this.ownerElement.baseURI) {
+                return this.ownerElement.baseURI;
+            }
+            var doc = (this.nodeType === 9) ? this : (this.ownerDocument || (typeof document !== 'undefined' ? document : null));
             return (doc && doc.baseURI) || (typeof location !== 'undefined' ? location.href : 'about:blank');
         },
-        configurable: true
+        configurable: true,
+        enumerable: true
     });
     globalThis.Node.prototype.getRootNode     = function(options) {
         var cur = this;
@@ -208,27 +326,62 @@
         return cur || (typeof document !== 'undefined' ? document : this);
     };
     globalThis.Node.prototype.compareDocumentPosition = function(other) {
+        if (typeof _compareDocumentPositionNodes === 'function') {
+            return _compareDocumentPositionNodes(this, other);
+        }
         if (this === other) return 0;
-        if (!other || typeof other !== 'object') {
-            throw new TypeError("Failed to execute 'compareDocumentPosition' on 'Node': parameter 1 is not of type 'Node'.");
-        }
-        var otherId = (other._nodeId !== undefined) ? other._nodeId : null;
-        var myId = (this._nodeId !== undefined) ? this._nodeId : null;
-        if (myId === null && typeof document !== 'undefined' && this === document) {
-            myId = 0;
-        }
-        if (otherId === null && typeof document !== 'undefined' && other === document) {
-            otherId = 0;
-        }
-        if (typeof _compareDocumentPosition === 'function' && myId !== null && otherId !== null) {
-            return _compareDocumentPosition(myId, otherId);
-        }
         return 1 | 32 | 4;
     };
 
     globalThis.Element = function() {};
     globalThis.Element.prototype = Object.create(globalThis.Node.prototype);
+    globalThis.Element.prototype.constructor = globalThis.Element;
     Object.defineProperties(globalThis.Element.prototype, {
+        prefix: {
+            get: function() {
+                return (this._prefix !== undefined) ? this._prefix : null;
+            },
+            configurable: true,
+            enumerable: true
+        },
+        localName: {
+            get: function() {
+                if (this._localName !== undefined) return this._localName;
+                var t = this.tagName;
+                return t ? t.toLowerCase() : null;
+            },
+            configurable: true,
+            enumerable: true
+        },
+        namespaceURI: {
+            get: function() {
+                if (this._namespaceURI !== undefined) return this._namespaceURI;
+                var cur = this;
+                while (cur && cur.nodeType === 1) {
+                    var t = (cur._tagName || (cur._nodeId !== undefined && typeof _getTagName === 'function' ? _getTagName(cur._nodeId) : '') || '').toLowerCase();
+                    if (t === 'svg' || t === 'use' || t === 'g' || t === 'path' || t === 'circle' || t === 'rect') return 'http://www.w3.org/2000/svg';
+                    cur = cur._parentNode || cur.parentNode;
+                }
+                var doc = this.ownerDocument || (typeof document !== 'undefined' ? document : null);
+                if (doc && doc._isXml && doc.contentType !== 'application/xhtml+xml') return null;
+                return 'http://www.w3.org/1999/xhtml';
+            },
+            configurable: true,
+            enumerable: true
+        },
+        tagName: {
+            get: function() {
+                if (this._tagName !== undefined) return this._tagName;
+                if (this._nodeId !== undefined && typeof _getTagName === 'function') {
+                    var t = _getTagName(this._nodeId);
+                    if (this.namespaceURI !== 'http://www.w3.org/1999/xhtml') return t ? t.toLowerCase() : t;
+                    return t;
+                }
+                return '';
+            },
+            configurable: true,
+            enumerable: true
+        },
         id: {
             get: function() { return this.getAttribute ? (this.getAttribute('id') || '') : ''; },
             set: function(v) { if (this.setAttribute) this.setAttribute('id', v); },
@@ -377,8 +530,10 @@
     globalThis.Element.prototype.hasAttributeNS     = function(ns, n) { return this.hasAttribute(n); };
     globalThis.Element.prototype.getAttributeNames  = function() { return []; };
     globalThis.Element.prototype.hasAttributes      = function() { return (this.getAttributeNames ? this.getAttributeNames() : []).length > 0; };
-    globalThis.NamedNodeMap = function NamedNodeMap() {};
-    globalThis.Attr = function Attr() {};
+    if (!globalThis.NamedNodeMap) globalThis.NamedNodeMap = function NamedNodeMap() {};
+    if (!globalThis.Attr) {
+        globalThis.Attr = function Attr() { throw new TypeError("Illegal constructor"); };
+    }
     globalThis.DOMTokenList = function DOMTokenList() {
         throw new TypeError("Illegal constructor");
     };
@@ -514,20 +669,24 @@
     });
     Object.defineProperty(globalThis.Element.prototype, 'attributes', {
         get: function() {
-            var self = this;
-            var names = (typeof self.getAttributeNames === 'function') ? self.getAttributeNames() : [];
-            var list = [];
+            var self = this, names = (typeof self.getAttributeNames === 'function') ? self.getAttributeNames() : [], list = [];
             for (var i = 0; i < names.length; i++) {
-                var n = names[i];
-                var v = (typeof self.getAttribute === 'function') ? (self.getAttribute(n) || '') : '';
+                var n = names[i], v = (typeof self.getAttribute === 'function') ? (self.getAttribute(n) || '') : '';
+                var nsInfo = (self._nsAttrs && self._nsAttrs[n]) || null;
+                var colon = String(n).indexOf(':');
+                var prefix = nsInfo ? nsInfo.prefix : (colon !== -1 ? String(n).substring(0, colon) : null);
+                var localName = nsInfo ? nsInfo.localName : (colon !== -1 ? String(n).substring(colon + 1) : n);
+                var nsUri = nsInfo ? nsInfo.namespaceURI : null;
+                if (!nsUri) {
+                    if (prefix === 'xmlns' || n === 'xmlns') nsUri = 'http://www.w3.org/2000/xmlns/';
+                    else if (prefix === 'xlink') nsUri = 'http://www.w3.org/1999/xlink';
+                    else if (prefix === 'xml') nsUri = 'http://www.w3.org/XML/1998/namespace';
+                }
                 var attrNode = {
-                    name: n,
-                    value: v,
-                    specified: true,
-                    ownerElement: self,
-                    nodeName: n,
-                    nodeValue: v
+                    name: n, value: v, specified: true, ownerElement: self, nodeName: n, nodeValue: v,
+                    namespaceURI: nsUri, prefix: prefix, localName: localName
                 };
+                if (globalThis.Attr) Object.setPrototypeOf(attrNode, globalThis.Attr.prototype);
                 list.push(attrNode);
                 list[n] = attrNode;
             }
@@ -551,6 +710,7 @@
     globalThis.Element.prototype.querySelector        = function(s) { return (typeof _defaultQuerySelector === 'function') ? _defaultQuerySelector(this, s) : null; };
     globalThis.Element.prototype.querySelectorAll     = function(s) { return (typeof _defaultQuerySelectorAll === 'function') ? _defaultQuerySelectorAll(this, s) : []; };
     globalThis.Element.prototype.getElementsByTagName = function(t) { return (typeof _defaultGetElementsByTagName === 'function') ? _defaultGetElementsByTagName(this, t) : []; };
+    globalThis.Element.prototype.getElementsByTagNameNS = function(ns, t) { return (typeof _defaultGetElementsByTagNameNS === 'function') ? _defaultGetElementsByTagNameNS(this, ns, t) : []; };
     globalThis.Element.prototype.getElementsByClassName = function(c) { return (typeof _defaultGetElementsByClassName === 'function') ? _defaultGetElementsByClassName(this, c) : []; };
     globalThis.Element.prototype.attachShadow = function(init) {
         var mode = (init && init.mode) || 'open';
@@ -594,71 +754,10 @@
         return [r];
     };
     function _jsElementMatches(el, sel) {
-        if (!el || !sel) return false;
-        var s = String(sel).trim();
-        if (!s) return false;
-        if (s === '*') return true;
-        if (s.indexOf(',') !== -1) {
-            var parts = s.split(',');
-            for (var i = 0; i < parts.length; i++) {
-                if (_jsElementMatches(el, parts[i].trim())) return true;
-            }
-            return false;
+        if (typeof globalThis !== 'undefined' && typeof globalThis._jsElementMatches === 'function') {
+            return globalThis._jsElementMatches(el, sel);
         }
-        if (s.indexOf(':not(') === 0 && s.charAt(s.length - 1) === ')') {
-            var inner = s.substring(5, s.length - 1);
-            return !_jsElementMatches(el, inner);
-        }
-        var idIdx = s.indexOf('#');
-        if (idIdx !== -1) {
-            var rest = s.substring(idIdx + 1);
-            var endId = rest.search(/[\.\[: ]/);
-            var expectedId = endId === -1 ? rest : rest.substring(0, endId);
-            var elId = (el.id !== undefined && el.id !== null) ? String(el.id) : (el.getAttribute ? el.getAttribute('id') : '');
-            if (elId !== expectedId) return false;
-        }
-        var tagMatch = s.match(/^([a-zA-Z0-9_\-]+)/);
-        if (tagMatch) {
-            var expectedTag = tagMatch[1].toUpperCase();
-            var elTag = el.tagName ? String(el.tagName).toUpperCase() : '';
-            if (elTag && elTag !== expectedTag) return false;
-        }
-        var classRegex = /\.([a-zA-Z0-9_\-]+)/g;
-        var cm;
-        while ((cm = classRegex.exec(s)) !== null) {
-            var cls = cm[1];
-            if (el.classList && typeof el.classList.contains === 'function') {
-                if (!el.classList.contains(cls)) return false;
-            } else if (el.className) {
-                var clist = String(el.className).split(/\s+/);
-                if (clist.indexOf(cls) === -1) return false;
-            } else {
-                return false;
-            }
-        }
-        var attrRegex = /\[([a-zA-Z0-9_\-]+)(?:=([^\],]+))?\]/g;
-        var am;
-        while ((am = attrRegex.exec(s)) !== null) {
-            var attrName = am[1];
-            var expectedVal = am[2];
-            if (expectedVal !== undefined) {
-                expectedVal = expectedVal.replace(/^['"]|['"]$/g, '');
-                var actualVal = (typeof el.getAttribute === 'function') ? el.getAttribute(attrName) : el[attrName];
-                if (String(actualVal) !== String(expectedVal)) return false;
-            } else {
-                var hasA = (typeof el.hasAttribute === 'function') ? el.hasAttribute(attrName) : (attrName in el);
-                if (!hasA) return false;
-            }
-        }
-        if (s.indexOf(':empty') !== -1) {
-            var children = el.childNodes || el.children || [];
-            for (var ci = 0; ci < children.length; ci++) {
-                var c = children[ci];
-                if (c.nodeType === 1) return false;
-                if (c.nodeType === 3 && c.nodeValue && c.nodeValue.length > 0) return false;
-            }
-        }
-        return true;
+        return false;
     }
 
     var _matchFn = function(sel) {

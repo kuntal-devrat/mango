@@ -484,3 +484,24 @@ fn test_scrollbar_rendering_and_interaction() {
     );
     browser.handle_mouse_click(MouseButton::Left, KeyState::Released);
 }
+
+#[test]
+fn test_unicode_tab_title_boundary_safety() {
+    let mut browser = BrowserChrome::new(1024, 768);
+
+    // Multi-byte Unicode titles (Claude with en-dash at byte 15, GitHub with middle dot, Japanese, Emojis)
+    let titles = [
+        "Claude – Anthropic", // en-dash crossing byte 15 (original panic trigger)
+        "GitHub: Let’s build from here · GitHub",
+        "🥭 マンゴーブラウザ — Fast Web Browser for Rust",
+        "Test 1234567890 🌟 Special",
+        "Very long title exceeding eighteen unicode characters with multi-byte symbols: — · –",
+    ];
+
+    for title in titles {
+        browser.tabs[0].title = title.to_string();
+        // Rendering the chrome display list must never panic
+        let dl = browser.build_display_list((1024, 768));
+        assert!(!dl.is_empty());
+    }
+}

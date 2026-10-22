@@ -66,6 +66,8 @@ pub enum Float {
     None,
     Left,
     Right,
+    InlineStart,
+    InlineEnd,
 }
 
 /// CSS `clear` property values.
@@ -76,6 +78,8 @@ pub enum Clear {
     Left,
     Right,
     Both,
+    InlineStart,
+    InlineEnd,
 }
 
 /// CSS `box-sizing` property values.
@@ -117,6 +121,7 @@ pub enum FlexWrap {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum JustifyContent {
     #[default]
+    Normal,
     FlexStart,
     FlexEnd,
     Center,
@@ -152,6 +157,7 @@ pub enum JustifySelf {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AlignItems {
     #[default]
+    Normal,
     Stretch,
     FlexStart,
     FlexEnd,
@@ -175,6 +181,7 @@ pub enum AlignSelf {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AlignContent {
     #[default]
+    Normal,
     Stretch,
     FlexStart,
     FlexEnd,

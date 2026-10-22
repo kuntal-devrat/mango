@@ -14,7 +14,7 @@ fn test_document_advanced_apis() {
 
         // document factories
         var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-        if (!svg || svg.tagName !== "SVG") throw new Error("createElementNS failed");
+        if (!svg || (svg.tagName !== "svg" && svg.tagName !== "SVG")) throw new Error("createElementNS failed");
 
         var b = document.body;
         var tw = document.createTreeWalker(b, NodeFilter.SHOW_ALL, null);

@@ -134,10 +134,10 @@ pub fn layout_block(
     // 6. If this box itself is a float, register its margin box in FloatContext
     if let Some(style) = &box_node.style {
         match style.float {
-            Float::Left => {
+            Float::Left | Float::InlineStart => {
                 float_ctx.add_left_float(box_node.dimensions.margin_box());
             }
-            Float::Right => {
+            Float::Right | Float::InlineEnd => {
                 // Adjust position to the right edge of container
                 let margin_box_w = box_node.dimensions.margin_box().width();
                 let new_x = containing_block.content.right() - margin_box_w;
@@ -269,7 +269,16 @@ pub(crate) fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut Fl
         let mut prev_margin_bottom = 0.0f32;
         let mut in_flow_count = 0;
 
-        let container_dims = box_node.dimensions;
+        let mut container_dims = box_node.dimensions;
+        if container_dims.content.size.height == 0.0
+            && let Some(style) = &box_node.style
+            && let Some(ratio) = style.aspect_ratio
+            && ratio > 0.0
+            && container_dims.content.size.width > 0.0
+        {
+            container_dims.content.size.height =
+                (container_dims.content.size.width / ratio).max(0.0);
+        }
         let box_establishes_bfc = establishes_bfc(box_node);
 
         for child in box_node.children.iter_mut() {

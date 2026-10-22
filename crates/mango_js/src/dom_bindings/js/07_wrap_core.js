@@ -4,32 +4,21 @@
         var el = {
             _nodeId: nodeId,
             _listeners: {},
-            get textContent() { return _getTextContent(this._nodeId); },
-            set textContent(val) {
-                var oldVal = _getTextContent(this._nodeId);
-                var oldKids = this.childNodes ? Array.prototype.slice.call(this.childNodes) : [];
-                for (var i = 0; i < oldKids.length; i++) {
-                    _invokeDisconnectedCallback(oldKids[i]);
-                    _clearSubtreeWrapperCache(oldKids[i]);
-                }
-                _setTextContent(this._nodeId, String(val));
-                if (typeof globalThis !== 'undefined' && globalThis._reportDOMMutation) {
-                    globalThis._reportDOMMutation({
-                        type: 'characterData',
-                        target: this,
-                        oldValue: oldVal
-                    });
-                }
-            },
             get innerText() { return this.textContent; },
             set innerText(val) { this.textContent = val; },
             get innerHTML() { return _getInnerHTML(this._nodeId); },
             set innerHTML(val) {
                 var oldKids = this.childNodes ? Array.prototype.slice.call(this.childNodes) : [];
                 for (var i = 0; i < oldKids.length; i++) {
-                    _invokeDisconnectedCallback(oldKids[i]);
-                    _clearSubtreeWrapperCache(oldKids[i]);
+                    var k = oldKids[i];
+                    if (k) {
+                        k.parentNode = null;
+                        k._parentNode = null;
+                        _invokeDisconnectedCallback(k);
+                        _clearSubtreeWrapperCache(k);
+                    }
                 }
+                if (this._childNodes) this._childNodes = [];
                 _setInnerHTML(this._nodeId, String(val));
                 if (typeof globalThis !== 'undefined' && globalThis._upgradeTree) {
                     globalThis._upgradeTree(this, null, null);
@@ -38,11 +27,13 @@
             get outerHTML() { return _getOuterHTML(this._nodeId); },
             set outerHTML(val) { _setOuterHTML(this._nodeId, String(val)); },
             get nodeType() {
+                if (this._nodeType !== undefined) return this._nodeType;
                 if (this._isPI) return 7;
                 return _getNodeType(this._nodeId);
             },
             get nodeName() {
                 if (this._isPI) return this._target || '';
+                if (this._nodeName !== undefined) return this._nodeName;
                 return _getNodeName(this._nodeId);
             },
             get nodeValue() {
@@ -73,8 +64,32 @@
             COMMENT_NODE: 8,
             DOCUMENT_NODE: 9,
             DOCUMENT_FRAGMENT_NODE: 11,
-            get tagName() { return _getTagName(this._nodeId); },
-            get localName() { var t = this.tagName; return t ? t.toLowerCase() : t; },
+            get tagName() {
+                if (this._tagName !== undefined) return this._tagName;
+                var t = _getTagName(this._nodeId);
+                if (this.namespaceURI !== 'http://www.w3.org/1999/xhtml') return t ? t.toLowerCase() : t;
+                return t;
+            },
+            get localName() {
+                if (this._localName !== undefined) return this._localName;
+                var t = this.tagName;
+                return t ? t.toLowerCase() : t;
+            },
+            get prefix() {
+                return (this._prefix !== undefined) ? this._prefix : null;
+            },
+            get namespaceURI() {
+                if (this._namespaceURI !== undefined) return this._namespaceURI;
+                var cur = this;
+                while (cur && cur.nodeType === 1) {
+                    var t = (cur._tagName || (cur._nodeId !== undefined ? _getTagName(cur._nodeId) : '') || '').toLowerCase();
+                    if (t === 'svg' || t === 'use' || t === 'g' || t === 'path' || t === 'circle' || t === 'rect') return 'http://www.w3.org/2000/svg';
+                    cur = cur._parentNode || cur.parentNode;
+                }
+                var doc = this.ownerDocument || (typeof document !== 'undefined' ? document : null);
+                if (doc && doc._isXml && doc.contentType !== 'application/xhtml+xml') return null;
+                return 'http://www.w3.org/1999/xhtml';
+            },
             get content() {
                 var tag = (this.tagName || '').toUpperCase();
                 if (tag === 'TEMPLATE') {
@@ -193,22 +208,20 @@
             },
             set pathname(val) { this._customPathname = val; },
             get href() {
-                if (this._customHref !== undefined) return this._customHref;
-                var tag = (this.tagName || '').toLowerCase();
+                var raw = this.getAttribute ? (this.getAttribute('href') || '') : (this._customHref || '');
+                var tag = (this._tagName || (this._nodeId !== undefined ? _getTagName(this._nodeId) : '') || '').toLowerCase();
                 if (tag === 'a' || tag === 'area') {
-                    var raw = this.getAttribute ? (this.getAttribute('href') || '') : '';
-                    var base = (typeof window !== 'undefined' && window.location && window.location.href)
-                        ? window.location.href
-                        : 'https://www.youtube.com/';
-                    try {
-                        return (new URL(raw, base)).href;
-                    } catch(e) {
-                        return raw;
-                    }
+                    var base = (this.ownerDocument && this.ownerDocument.baseURI) || (typeof window !== 'undefined' && window.location && window.location.href ? window.location.href : 'about:blank');
+                    try { return (new URL(raw, base)).href; } catch(e) { return raw; }
                 }
-                return this.getAttribute ? (this.getAttribute('href') || '') : '';
+                return raw;
             },
-            set href(val) { this._customHref = val; if (this.setAttribute) this.setAttribute('href', String(val)); },
+            set href(val) {
+                var s = String(val);
+                if (this.setAttribute) this.setAttribute('href', s);
+                var base = (this.ownerDocument && this.ownerDocument.baseURI) || (typeof window !== 'undefined' && window.location && window.location.href ? window.location.href : 'about:blank');
+                try { this._customHref = (new URL(s, base)).href; } catch(e) { this._customHref = s; }
+            },
             get search() {
                 if (this._customSearch !== undefined) return this._customSearch;
                 var tag = (this.tagName || '').toLowerCase();
@@ -417,8 +430,14 @@
             set readOnly(val) { if (val) this.setAttribute("readonly", ""); else this.removeAttribute("readonly"); },
             get placeholder() { var a = _getAttribute(this._nodeId, "placeholder"); return a === null ? "" : a; },
             set placeholder(val) { _setAttribute(this._nodeId, "placeholder", String(val)); },
-            get name() { var a = _getAttribute(this._nodeId, "name"); return a === null ? "" : a; },
-            set name(val) { _setAttribute(this._nodeId, "name", String(val)); },
+            get name() {
+                if (this.nodeType === 10) return (this._name !== undefined) ? this._name : (typeof _getNodeName === 'function' ? _getNodeName(this._nodeId) : '');
+                var a = _getAttribute(this._nodeId, "name"); return a === null ? "" : a;
+            },
+            set name(val) {
+                if (this.nodeType === 10) { this._name = String(val); return; }
+                _setAttribute(this._nodeId, "name", String(val));
+            },
             get pattern() { var p = this.getAttribute('pattern'); return p === null ? '' : p; },
             set pattern(val) { this.setAttribute('pattern', String(val)); },
             get type() {

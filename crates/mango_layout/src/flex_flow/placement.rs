@@ -87,7 +87,10 @@ pub fn position_flex_items_on_line(params: LinePlacementParams) {
         let c_root_fs = child_style.root_font_size;
 
         let mut item_cross = m.cross;
-        if item_align == AlignItems::Stretch && is_child_cross_auto && !has_cross_auto_margin {
+        if matches!(item_align, AlignItems::Normal | AlignItems::Stretch)
+            && is_child_cross_auto
+            && !has_cross_auto_margin
+        {
             item_cross = (line_cross_size - m.pad_cross - m.border_cross - m.margin_cross).max(0.0);
             if is_row {
                 if child_style.max_height != Length::Auto {
@@ -180,7 +183,7 @@ pub fn position_flex_items_on_line(params: LinePlacementParams) {
             }
         } else {
             cross_offset = match item_align {
-                AlignItems::FlexStart | AlignItems::Stretch => 0.0,
+                AlignItems::Normal | AlignItems::FlexStart | AlignItems::Stretch => 0.0,
                 AlignItems::Baseline => {
                     if is_row && line_baseline_ascent > 0.0 {
                         (line_baseline_ascent - m.baseline_ascent).max(0.0)
@@ -250,7 +253,7 @@ pub fn position_flex_items_on_line(params: LinePlacementParams) {
             (item_cross, m.final_main, x, y)
         };
 
-        let was_stretched = item_align == AlignItems::Stretch
+        let was_stretched = matches!(item_align, AlignItems::Normal | AlignItems::Stretch)
             && is_child_cross_auto
             && (item_cross - m.cross).abs() > 0.5;
 

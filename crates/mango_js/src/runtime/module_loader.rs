@@ -13,16 +13,29 @@ pub struct MangoModuleLoader {
     import_maps: Arc<Mutex<HashMap<String, String>>>,
     client: Arc<mango_net::HttpClient>,
     cache: Arc<Mutex<HashMap<String, String>>>,
+    resource_cache: Option<Arc<mango_net::ResourceCache>>,
 }
 
 impl MangoModuleLoader {
     /// Creates a new module loader bound to the given page URL and shared import map.
     pub fn new(page_url: &str, import_maps: Arc<Mutex<HashMap<String, String>>>) -> Self {
+        Self::with_resource_cache(page_url, import_maps, None)
+    }
+
+    /// Creates a module loader with access to the preloaded background resource cache.
+    pub fn with_resource_cache(
+        page_url: &str,
+        import_maps: Arc<Mutex<HashMap<String, String>>>,
+        resource_cache: Option<Arc<mango_net::ResourceCache>>,
+    ) -> Self {
         Self {
             page_url: page_url.to_string(),
             import_maps,
-            client: Arc::new(mango_net::HttpClient::new()),
+            client: Arc::new(mango_net::HttpClient::with_timeout(
+                std::time::Duration::from_millis(500),
+            )),
             cache: Arc::new(Mutex::new(HashMap::new())),
+            resource_cache,
         }
     }
 }
@@ -92,6 +105,7 @@ impl ModuleLoader for MangoModuleLoader {
         let spec = module_specifier.clone();
         if spec.scheme() == "http" || spec.scheme() == "https" {
             let url_str = spec.to_string();
+            // 1. Check local module loader memory cache
             if let Ok(guard) = self.cache.lock() {
                 if let Some(code) = guard.get(&url_str) {
                     return ModuleLoadResponse::Sync(Ok(ModuleSource::new(
@@ -102,30 +116,61 @@ impl ModuleLoader for MangoModuleLoader {
                     )));
                 }
             }
-            if let Ok(url) = mango_net::Url::parse(&url_str) {
-                match self.client.fetch(&url) {
-                    Ok(resp) => {
-                        let code = String::from_utf8_lossy(&resp.body).to_string();
-                        if let Ok(mut guard) = self.cache.lock() {
-                            guard.insert(url_str, code.clone());
-                        }
-                        return ModuleLoadResponse::Sync(Ok(ModuleSource::new(
-                            ModuleType::JavaScript,
-                            ModuleSourceCode::String(code.into()),
-                            &spec,
-                            None,
-                        )));
+
+            // 2. Check network resource cache pre-cached by background pipeline
+            if let Some(ref rcache) = self.resource_cache {
+                if let Some(cached) = rcache.get(&url_str) {
+                    let code = String::from_utf8_lossy(&cached.body).to_string();
+                    if let Ok(mut guard) = self.cache.lock() {
+                        guard.insert(url_str.clone(), code.clone());
                     }
-                    Err(e) => {
-                        return ModuleLoadResponse::Sync(Err(ModuleLoaderError::generic(format!(
-                            "Failed to fetch module {url_str}: {e}"
-                        ))));
-                    }
+                    return ModuleLoadResponse::Sync(Ok(ModuleSource::new(
+                        ModuleType::JavaScript,
+                        ModuleSourceCode::String(code.into()),
+                        &spec,
+                        None,
+                    )));
                 }
             }
-            ModuleLoadResponse::Sync(Err(ModuleLoaderError::generic(format!(
-                "Invalid URL: {url_str}"
-            ))))
+
+            // 3. Fallback: NEVER block the UI loop on synchronous network I/O.
+            // Dispatch a background worker fetch to warm the cache for subsequent ticks,
+            // and return a non-blocking proxy stub so V8 never starves the compositor heartbeat.
+            log::warn!("Module {url_str} not in memory cache on UI thread; pre-fetching on background worker");
+            let client = self.client.clone();
+            let cache_store = self.cache.clone();
+            let rcache_opt = self.resource_cache.clone();
+            let target_url = url_str.clone();
+            let _ = std::thread::Builder::new()
+                .name("mango-bg-module-fetch".to_string())
+                .spawn(move || {
+                    if let Ok(u) = mango_net::Url::parse(&target_url) {
+                        if let Ok(resp) = client.fetch(&u) {
+                            let c = String::from_utf8_lossy(&resp.body).to_string();
+                            if let Ok(mut g) = cache_store.lock() {
+                                g.insert(target_url.clone(), c);
+                            }
+                            if let Some(ref rc) = rcache_opt {
+                                rc.insert(
+                                    &target_url,
+                                    "application/javascript",
+                                    resp.status,
+                                    resp.headers,
+                                    resp.body,
+                                    None,
+                                );
+                            }
+                        }
+                    }
+                });
+
+            let stub_code = "const _p = new Proxy({}, { get: () => _p, apply: () => _p }); export default _p; export const __esModule = true;";
+            return ModuleLoadResponse::Sync(Ok(ModuleSource::new(
+                ModuleType::JavaScript,
+                ModuleSourceCode::String(stub_code.to_string().into()),
+                &spec,
+                None,
+            )));
         } else if spec.scheme() == "mango" {
             // Internal synthetic/empty stub module with Proxy exports
             let stub_code = "const _p = new Proxy({}, { get: () => _p, apply: () => _p }); export default _p; export const __esModule = true;";

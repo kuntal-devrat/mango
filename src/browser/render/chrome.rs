@@ -148,8 +148,10 @@ impl BrowserChrome {
             });
 
             // Tab title
-            let title_text = if tab.title.len() > 18 {
-                format!("{}...", &tab.title[..15])
+            let char_count = tab.title.chars().count();
+            let title_text = if char_count > 18 {
+                let truncated: String = tab.title.chars().take(15).collect();
+                format!("{truncated}...")
             } else {
                 tab.title.clone()
             };

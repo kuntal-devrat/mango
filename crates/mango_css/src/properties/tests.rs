@@ -12,7 +12,8 @@ fn test_expand_flex_and_gap_shorthands() {
     assert_eq!(expanded[1].name, "flex-shrink");
     assert_eq!(expanded[1].value, Value::Number(1.0));
     assert_eq!(expanded[2].name, "flex-basis");
-    assert_eq!(expanded[2].value, Value::Length(Length::Px(0.0)));
+    // CSS Flexbox Level 1 § 7.1: an omitted flex-basis defaults to 0%.
+    assert_eq!(expanded[2].value, Value::Length(Length::Percent(0.0)));
 
     let gap_decl = Declaration::new(
         "gap",
@@ -181,18 +182,20 @@ fn test_expand_inset_shorthands() {
     );
     let exp_inline = decl_inline.expand_shorthand();
     assert_eq!(exp_inline.len(), 2);
-    assert_eq!(exp_inline[0].name, "left");
+    // Logical properties are resolved to physical offsets at computed-value time,
+    // so the shorthand expands to the logical longhands.
+    assert_eq!(exp_inline[0].name, "inset-inline-start");
     assert_eq!(exp_inline[0].value, Value::Length(Length::Px(8.0)));
-    assert_eq!(exp_inline[1].name, "right");
+    assert_eq!(exp_inline[1].name, "inset-inline-end");
     assert_eq!(exp_inline[1].value, Value::Length(Length::Px(12.0)));
 
     // inset-block
     let decl_block = Declaration::new("inset-block", Value::Length(Length::Px(20.0)), false);
     let exp_block = decl_block.expand_shorthand();
     assert_eq!(exp_block.len(), 2);
-    assert_eq!(exp_block[0].name, "top");
+    assert_eq!(exp_block[0].name, "inset-block-start");
     assert_eq!(exp_block[0].value, Value::Length(Length::Px(20.0)));
-    assert_eq!(exp_block[1].name, "bottom");
+    assert_eq!(exp_block[1].name, "inset-block-end");
     assert_eq!(exp_block[1].value, Value::Length(Length::Px(20.0)));
 }
 

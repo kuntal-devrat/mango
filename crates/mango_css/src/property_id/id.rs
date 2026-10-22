@@ -23,6 +23,7 @@ pub enum CssPropertyId {
     MarginRight,
     MarginBottom,
     MarginLeft,
+    MarginTrim,
     PaddingTop,
     PaddingRight,
     PaddingBottom,

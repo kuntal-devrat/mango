@@ -51,10 +51,6 @@ impl Declaration {
                 | "inset"
                 | "inset-inline"
                 | "inset-block"
-                | "inset-inline-start"
-                | "inset-inline-end"
-                | "inset-block-start"
-                | "inset-block-end"
                 | "border"
                 | "border-top"
                 | "border-right"
@@ -188,10 +184,6 @@ impl Declaration {
             "inset" => expand_inset_shorthand(&self.value, important),
             "inset-inline" => expand_inset_inline_shorthand(&self.value, important),
             "inset-block" => expand_inset_block_shorthand(&self.value, important),
-            "inset-inline-start" => vec![Declaration::new("left", self.value.clone(), important)],
-            "inset-inline-end" => vec![Declaration::new("right", self.value.clone(), important)],
-            "inset-block-start" => vec![Declaration::new("top", self.value.clone(), important)],
-            "inset-block-end" => vec![Declaration::new("bottom", self.value.clone(), important)],
 
             "border" => {
                 expand_border_sides(&["top", "right", "bottom", "left"], &self.value, important)

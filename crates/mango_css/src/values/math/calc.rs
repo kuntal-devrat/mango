@@ -5,7 +5,9 @@
 pub struct CalcLength {
     pub px: f32,
     pub percent: f32,
+    pub has_percent: bool,
     pub em: f32,
+    pub ex: f32,
     pub rem: f32,
     pub vw: f32,
     pub vh: f32,
@@ -17,7 +19,9 @@ impl std::hash::Hash for CalcLength {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.px.to_bits().hash(state);
         self.percent.to_bits().hash(state);
+        self.has_percent.hash(state);
         self.em.to_bits().hash(state);
+        self.ex.to_bits().hash(state);
         self.rem.to_bits().hash(state);
         self.vw.to_bits().hash(state);
         self.vh.to_bits().hash(state);
@@ -28,16 +32,20 @@ impl CalcLength {
     pub const ZERO: CalcLength = CalcLength {
         px: 0.0,
         percent: 0.0,
+        has_percent: false,
         em: 0.0,
+        ex: 0.0,
         rem: 0.0,
         vw: 0.0,
         vh: 0.0,
     };
 
     pub fn is_zero(&self) -> bool {
-        self.px == 0.0
+        !self.has_percent
+            && self.px == 0.0
             && self.percent == 0.0
             && self.em == 0.0
+            && self.ex == 0.0
             && self.rem == 0.0
             && self.vw == 0.0
             && self.vh == 0.0
