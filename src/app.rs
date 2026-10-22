@@ -152,10 +152,7 @@ impl ApplicationHandler for MangoApp {
 
             // Tick JS event loop (setTimeout/setInterval, and deferred/async scripts)
             let had_scripts = state.browser.has_pending_scripts();
-            if state.browser.has_pending_timers()
-                || state.browser.is_loading()
-                || had_scripts
-            {
+            if state.browser.has_pending_timers() || state.browser.is_loading() || had_scripts {
                 let mutated = state.browser.tick_js();
                 if mutated || had_scripts {
                     needs_redraw = true;
@@ -236,11 +233,7 @@ impl ApplicationHandler for MangoApp {
             event_loop.set_control_flow(ControlFlow::WaitUntil(
                 Instant::now() + Duration::from_millis(4),
             ));
-        } else if any_animating
-            || any_loading
-            || any_pending_images
-            || any_smooth_scroll
-        {
+        } else if any_animating || any_loading || any_pending_images || any_smooth_scroll {
             event_loop.set_control_flow(ControlFlow::WaitUntil(
                 Instant::now() + Duration::from_millis(16),
             ));
@@ -249,12 +242,24 @@ impl ApplicationHandler for MangoApp {
             if deadline <= now {
                 event_loop.set_control_flow(ControlFlow::WaitUntil(now));
             } else {
-                let delay = (deadline - now).min(Duration::from_millis(1000));
+                let delay = (deadline - now).min(Duration::from_millis(100));
                 event_loop.set_control_flow(ControlFlow::WaitUntil(now + delay));
             }
         } else {
-            event_loop.set_control_flow(ControlFlow::Wait);
+            // Clamp idle sleep to at most 100ms.
+            // This guarantees Wayland xdg_wm_base pings are promptly serviced and
+            // eliminates deadlock when background tasks complete.
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                Instant::now() + Duration::from_millis(100),
+            ));
             crate::trim_memory();
+        }
+    }
+
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, _event: ()) {
+        // Woken up by a background worker, network fetch, or timer completion
+        for state in self.windows.values() {
+            state.window.request_redraw();
         }
     }
 

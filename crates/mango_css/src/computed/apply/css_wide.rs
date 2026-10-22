@@ -17,6 +17,7 @@ pub fn is_css_wide_keyword(val: &Value) -> Option<&'static str> {
             "unset" => Some("unset"),
             "revert" => Some("revert"),
             "revert-layer" => Some("revert-layer"),
+            "revert-rule" => Some("revert-rule"),
             _ => None,
         }
     } else {
@@ -54,7 +55,7 @@ pub fn apply_css_wide_keyword(
                     cp.remove(&prop_lower);
                 }
             }
-            "initial" | "revert" | "revert-layer" => {
+            "initial" | "revert" | "revert-layer" | "revert-rule" => {
                 cp.remove(&prop_lower);
             }
             _ => {}
@@ -74,7 +75,7 @@ pub fn apply_css_wide_keyword(
                 let source = parent_style.unwrap_or(&initial);
                 *style = source.clone();
             }
-            "unset" | "revert" | "revert-layer" => {
+            "unset" | "revert" | "revert-layer" | "revert-rule" => {
                 let mut merged = initial.clone();
                 if let Some(parent) = parent_style {
                     copy_all_inherited_properties(&mut merged, parent);
@@ -95,7 +96,7 @@ pub fn apply_css_wide_keyword(
     let use_parent = match kw {
         "inherit" => true,
         "initial" => false,
-        "unset" | "revert" | "revert-layer" => is_inherited,
+        "unset" | "revert" | "revert-layer" | "revert-rule" => is_inherited,
         _ => false,
     };
 
@@ -159,8 +160,17 @@ fn copy_single_property(style: &mut ComputedStyle, source: &ComputedStyle, prop:
         "text-decoration" | "text-decoration-line" => {
             style.text_decoration = source.text_decoration
         }
+        "text-decoration-style" => {
+            style.text_decoration_style = source.text_decoration_style;
+        }
+        "text-decoration-color" => {
+            style.text_decoration_color = source.text_decoration_color;
+        }
         "text-decoration-thickness" => {
             style.text_decoration_thickness = source.text_decoration_thickness.clone()
+        }
+        "text-underline-offset" => {
+            style.text_underline_offset = source.text_underline_offset;
         }
         "text-transform" => style.text_transform = source.text_transform,
         "letter-spacing" => style.letter_spacing = source.letter_spacing,

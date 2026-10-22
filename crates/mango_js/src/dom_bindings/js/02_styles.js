@@ -154,6 +154,29 @@
                 }
                 return "";
             }
+            if (kebab === 'text-decoration') {
+                if (!base._props) return "";
+                var line = base._props['text-decoration-line'];
+                var thick = base._props['text-decoration-thickness'];
+                var st = base._props['text-decoration-style'];
+                var clr = base._props['text-decoration-color'];
+                if (line === undefined && thick === undefined && st === undefined && clr === undefined) {
+                    return base._props['text-decoration'] || "";
+                }
+                var isLineInit = !line || line === 'none';
+                var isThickInit = !thick || thick === 'auto';
+                var isStInit = !st || st === 'solid';
+                var isClrInit = !clr || clr === 'currentcolor';
+                if (isLineInit && isThickInit && isStInit && isClrInit) {
+                    return "none";
+                }
+                var parts = [];
+                if (!isLineInit) parts.push(line);
+                if (!isThickInit) parts.push(thick);
+                if (!isStInit) parts.push(st);
+                if (!isClrInit) parts.push(clr);
+                return parts.length > 0 ? parts.join(" ") : "none";
+            }
             if (base._props && base._props[kebab] !== undefined) return String(base._props[kebab]);
             var camel = kebab.replace(/-([a-z])/g, function(g) { return g[1].toUpperCase(); });
             if (base[camel] !== undefined && typeof base[camel] !== 'function') return String(base[camel]);
@@ -220,6 +243,15 @@
                     delete base._props['top']; delete base._props['right']; delete base._props['bottom']; delete base._props['left'];
                     delete base._props['inset-block-start']; delete base._props['inset-block-end'];
                     delete base._props['inset-inline-start']; delete base._props['inset-inline-end'];
+                } else if (kebab === 'text-decoration') {
+                    delete base._props['text-decoration-line'];
+                    delete base._props['text-decoration-thickness'];
+                    delete base._props['text-decoration-style'];
+                    delete base._props['text-decoration-color'];
+                    delete base.textDecorationLine; delete base.textDecorationThickness;
+                    delete base.textDecorationStyle; delete base.textDecorationColor;
+                    delete base['text-decoration-line']; delete base['text-decoration-thickness'];
+                    delete base['text-decoration-style']; delete base['text-decoration-color'];
                 }
                 delete base._props[kebab];
                 delete base[camel];
@@ -253,7 +285,7 @@
                 if (kebab === 'all') {
                     base._all = sVal;
                 }
-                if (kebab === 'flex' || kebab === 'margin' || kebab === 'padding' || kebab === 'flex-flow' || kebab === 'inset' || kebab === 'inset-block' || kebab === 'inset-inline' || kebab === 'overflow') {
+                if (kebab === 'flex' || kebab === 'margin' || kebab === 'padding' || kebab === 'flex-flow' || kebab === 'inset' || kebab === 'inset-block' || kebab === 'inset-inline' || kebab === 'overflow' || kebab === 'text-decoration') {
                     delete base._props[kebab];
                     delete base[camel];
                     delete base[kebab];

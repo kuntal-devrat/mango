@@ -47,10 +47,10 @@ impl PixelBuffer {
         self.width = width;
         self.height = height;
 
-        if let (Some(w), Some(h)) = (NonZeroU32::new(width), NonZeroU32::new(height)) {
-            if let Err(e) = self.surface.resize(w, h) {
-                log::warn!("failed to resize surface: {e}");
-            }
+        if let (Some(w), Some(h)) = (NonZeroU32::new(width), NonZeroU32::new(height))
+            && let Err(e) = self.surface.resize(w, h)
+        {
+            log::warn!("failed to resize surface: {e}");
         }
     }
 

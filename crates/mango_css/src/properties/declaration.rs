@@ -115,6 +115,7 @@ impl Declaration {
                 | "place-content"
                 | "place-self"
                 | "column-rule"
+                | "text-decoration"
                 | "text-emphasis"
                 | "container"
                 | "contain-intrinsic-size"
@@ -356,6 +357,7 @@ impl Declaration {
                 expand_place_shorthand("align-self", "justify-self", &self.value, important)
             }
             "column-rule" => expand_column_rule_shorthand(&self.value, important),
+            "text-decoration" => expand_text_decoration_shorthand(&self.value, important),
             "text-emphasis" => expand_text_emphasis_shorthand(&self.value, important),
             "container" => expand_container_shorthand(&self.value, important),
             "contain-intrinsic-size" => {

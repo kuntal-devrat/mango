@@ -3,6 +3,7 @@
 use deno_core::{OpState, op2};
 use mango_html::dom::{NodeData, NodeId};
 
+use super::computed_format::*;
 use crate::dom_bindings::{LayoutBounds, SharedDocument};
 
 #[op2]
@@ -24,25 +25,82 @@ pub fn op_mango_get_computed_style(
     }
 
     let mut sheets = Vec::new();
-    let mut stack = vec![d.root()];
-    while let Some(curr) = stack.pop() {
-        if let Some(node) = d.get(curr) {
-            if let NodeData::Element(el) = &node.data {
+    fn collect_styles_recursive(
+        d: &mango_html::dom::Document,
+        curr: NodeId,
+        out: &mut Vec<mango_css::parser::Stylesheet>,
+    ) {
+        for child in d.children(curr) {
+            if let NodeData::Element(el) = &child.data {
+                if el.tag_name.eq_ignore_ascii_case("noscript") {
+                    continue;
+                }
                 if el.tag_name.eq_ignore_ascii_case("style") {
-                    let css_text = d.text_content(node.id);
+                    let css_text = d.text_content(child.id);
                     if !css_text.trim().is_empty() {
-                        sheets.push(mango_css::parser::parse_stylesheet(&css_text));
+                        out.push(mango_css::parser::parse_stylesheet(&css_text));
                     }
                 }
             }
-            for child in d.children(curr) {
-                stack.push(child.id);
-            }
+            collect_styles_recursive(d, child.id, out);
         }
     }
+    collect_styles_recursive(&d, d.root(), &mut sheets);
 
     let sheet_refs: Vec<&mango_css::parser::Stylesheet> = sheets.iter().collect();
-    let style = mango_css::compute_style(nid, &d, &sheet_refs, None);
+    let mut author_order = 1000;
+    let author_index = mango_css::cascade::RuleIndex::from_stylesheets(
+        &sheet_refs,
+        mango_css::cascade::Origin::Author,
+        &mut author_order,
+    );
+
+    let node_elem = d.get(nid).and_then(|n| match &n.data {
+        NodeData::Element(el) => Some(el),
+        _ => None,
+    });
+
+    let shadow_root_id = node_elem
+        .and_then(|el| el.shadow_root)
+        .or_else(|| {
+            d.get(nid)
+                .and_then(|n| n.parent)
+                .and_then(|pid| d.get(pid))
+                .and_then(|pn| match &pn.data {
+                    NodeData::Element(pe) => pe.shadow_root,
+                    _ => None,
+                })
+        })
+        .or_else(|| d.get_enclosing_shadow_root(nid));
+
+    let mut shadow_sheets = Vec::new();
+    if let Some(sr_id) = shadow_root_id {
+        collect_styles_recursive(&d, sr_id, &mut shadow_sheets);
+    }
+    let shadow_refs: Vec<&mango_css::parser::Stylesheet> = shadow_sheets.iter().collect();
+    let mut shadow_order = 50000;
+    let shadow_index = if !shadow_refs.is_empty() {
+        Some(mango_css::cascade::RuleIndex::from_stylesheets(
+            &shadow_refs,
+            mango_css::cascade::Origin::Author,
+            &mut shadow_order,
+        ))
+    } else {
+        None
+    };
+
+    let parent_style = d
+        .get(nid)
+        .and_then(|n| n.parent)
+        .map(|pid| mango_css::compute_style_with_index(pid, &d, &author_index, None));
+
+    let style = mango_css::compute_style_with_shadow_index(
+        nid,
+        &d,
+        &author_index,
+        shadow_index.as_ref(),
+        parent_style.as_ref(),
+    );
 
     // Determine containing block width for resolving percentage margins/paddings
     let mut cb_w: Option<f32> = None;
@@ -53,7 +111,7 @@ pub fn op_mango_get_computed_style(
 
     let mut curr_ancestor = d.get(nid).and_then(|n| n.parent);
     while let Some(anc_id) = curr_ancestor {
-        let anc_style = mango_css::compute_style(anc_id, &d, &sheet_refs, None);
+        let anc_style = mango_css::compute_style_with_index(anc_id, &d, &author_index, None);
         let is_cb = if is_abspos {
             anc_style.position != mango_css::values::Position::Static
                 || !anc_style.transform.is_identity()
@@ -91,7 +149,7 @@ pub fn op_mango_get_computed_style(
     if cb_w.is_none() {
         let mut curr = d.get(nid).and_then(|n| n.parent);
         while let Some(anc_id) = curr {
-            let anc_style = mango_css::compute_style(anc_id, &d, &sheet_refs, None);
+            let anc_style = mango_css::compute_style_with_index(anc_id, &d, &author_index, None);
             if let mango_css::values::Length::Px(px) = anc_style.width {
                 if px > 0.0 {
                     cb_w = Some(px);
@@ -99,151 +157,6 @@ pub fn op_mango_get_computed_style(
                 }
             }
             curr = d.get(anc_id).and_then(|n| n.parent);
-        }
-    }
-
-    fn format_padding_length(
-        l: &mango_css::values::Length,
-        font_size: f32,
-        root_font_size: f32,
-        containing_block_width: Option<f32>,
-    ) -> String {
-        let cb_w = containing_block_width.unwrap_or(0.0);
-        let px = l.to_px(font_size, root_font_size, cb_w).max(0.0);
-        let rounded = (px * 1000.0).round() / 1000.0;
-        if (rounded - rounded.round()).abs() < 1e-4 {
-            format!("{:.0}px", rounded.round())
-        } else {
-            format!("{rounded}px")
-        }
-    }
-
-    let serialize_4_box = |t: &str, r: &str, b: &str, l: &str| -> String {
-        if t == r && r == b && b == l {
-            t.to_string()
-        } else if t == b && r == l {
-            format!("{t} {r}")
-        } else if r == l {
-            format!("{t} {r} {b}")
-        } else {
-            format!("{t} {r} {b} {l}")
-        }
-    };
-
-
-    fn format_css_length(
-        l: &mango_css::values::Length,
-        font_size: f32,
-        root_font_size: f32,
-        containing_block_width: Option<f32>,
-    ) -> String {
-        match l {
-            mango_css::values::Length::Px(px) => {
-                let rounded = (*px * 1000.0).round() / 1000.0;
-                if (rounded - rounded.round()).abs() < 1e-4 {
-                    format!("{:.0}px", rounded.round())
-                } else {
-                    format!("{rounded}px")
-                }
-            }
-            mango_css::values::Length::Percent(pct) => {
-                if let Some(cb_width) = containing_block_width {
-                    let px = (pct / 100.0) * cb_width;
-                    let rounded = (px * 1000.0).round() / 1000.0;
-                    if (rounded - rounded.round()).abs() < 1e-4 {
-                        format!("{:.0}px", rounded.round())
-                    } else {
-                        format!("{rounded}px")
-                    }
-                } else if pct.fract() == 0.0 {
-                    format!("{:.0}%", pct)
-                } else {
-                    format!("{pct}%")
-                }
-            }
-            mango_css::values::Length::Auto => "auto".to_string(),
-            mango_css::values::Length::Content => "content".to_string(),
-            mango_css::values::Length::MinContent => "min-content".to_string(),
-            mango_css::values::Length::MaxContent => "max-content".to_string(),
-            mango_css::values::Length::FitContent => "fit-content".to_string(),
-            mango_css::values::Length::Calc(calc) => {
-                if containing_block_width.is_none() && calc.has_percent {
-                    let resolved_px = calc.px + calc.em * font_size + calc.ex * 0.5 * font_size + calc.rem * root_font_size;
-                    let pct_rounded = (calc.percent * 1000.0).round() / 1000.0;
-                    let pct_str = if (pct_rounded - pct_rounded.round()).abs() < 1e-4 {
-                        format!("{:.0}%", pct_rounded.round())
-                    } else {
-                        format!("{pct_rounded}%")
-                    };
-                    if (resolved_px * 1000.0).round().abs() < 1e-4 {
-                        pct_str
-                    } else {
-                        let px_rounded = (resolved_px.abs() * 1000.0).round() / 1000.0;
-                        let px_str = if (px_rounded - px_rounded.round()).abs() < 1e-4 {
-                            format!("{:.0}px", px_rounded.round())
-                        } else {
-                            format!("{px_rounded}px")
-                        };
-                        if resolved_px > 0.0 {
-                            format!("calc({pct_str} + {px_str})")
-                        } else {
-                            format!("calc({pct_str} - {px_str})")
-                        }
-                    }
-                } else {
-                    let cb_w = containing_block_width.unwrap_or(0.0);
-                    let px = l.to_px(font_size, root_font_size, cb_w);
-                    let rounded = (px * 1000.0).round() / 1000.0;
-                    if (rounded - rounded.round()).abs() < 1e-4 {
-                        format!("{:.0}px", rounded.round())
-                    } else {
-                        format!("{rounded}px")
-                    }
-                }
-            }
-            mango_css::values::Length::Math(_)
-            | mango_css::values::Length::Em(_)
-            | mango_css::values::Length::Ex(_)
-            | mango_css::values::Length::Rem(_)
-            | mango_css::values::Length::Vw(_)
-            | mango_css::values::Length::Vh(_)
-            | mango_css::values::Length::Vmin(_)
-            | mango_css::values::Length::Vmax(_) => {
-                let cb_w = containing_block_width.unwrap_or(0.0);
-                let px = l.to_px(font_size, root_font_size, cb_w);
-                let rounded = (px * 1000.0).round() / 1000.0;
-                if (rounded - rounded.round()).abs() < 1e-4 {
-                    format!("{:.0}px", rounded.round())
-                } else {
-                    format!("{rounded}px")
-                }
-            }
-            _ => "0px".to_string(),
-        }
-    }
-
-    fn format_css_color(c: &mango_core::Color) -> String {
-        if c.a == 255 {
-            format!("rgb({}, {}, {})", c.r, c.g, c.b)
-        } else if c.a == 0 {
-            "rgba(0, 0, 0, 0)".to_string()
-        } else {
-            format!("rgba({}, {}, {}, {})", c.r, c.g, c.b, c.a as f32 / 255.0)
-        }
-    }
-
-    fn format_border_style(s: mango_css::values::BorderStyle) -> &'static str {
-        match s {
-            mango_css::values::BorderStyle::None => "none",
-            mango_css::values::BorderStyle::Solid => "solid",
-            mango_css::values::BorderStyle::Dashed => "dashed",
-            mango_css::values::BorderStyle::Dotted => "dotted",
-            mango_css::values::BorderStyle::Double => "double",
-            mango_css::values::BorderStyle::Hidden => "hidden",
-            mango_css::values::BorderStyle::Groove => "groove",
-            mango_css::values::BorderStyle::Ridge => "ridge",
-            mango_css::values::BorderStyle::Inset => "inset",
-            mango_css::values::BorderStyle::Outset => "outset",
         }
     }
 
@@ -297,6 +210,53 @@ pub fn op_mango_get_computed_style(
     } else {
         map.insert("line-height".to_string(), "normal".to_string());
     }
+
+    // Text decoration & typography
+    let td_line = style.text_decoration.to_css_string();
+    let td_style = style.text_decoration_style.as_str().to_string();
+    let td_color = format_css_color(&style.resolved_text_decoration_color());
+    let td_thickness = match &style.text_decoration_thickness {
+        mango_css::values::TextDecorationThickness::Auto => "auto".to_string(),
+        mango_css::values::TextDecorationThickness::FromFont => "from-font".to_string(),
+        mango_css::values::TextDecorationThickness::Length(l) => {
+            format_css_length(l, style.font_size, style.root_font_size, None)
+        }
+    };
+    map.insert("text-decoration-line".to_string(), td_line.clone());
+    map.insert("text-decoration-style".to_string(), td_style.clone());
+    map.insert("text-decoration-color".to_string(), td_color.clone());
+    map.insert(
+        "text-decoration-thickness".to_string(),
+        td_thickness.clone(),
+    );
+
+    let td_shorthand = if td_line == "none"
+        && td_thickness == "auto"
+        && td_style == "solid"
+        && style.text_decoration_color.is_none()
+    {
+        "none".to_string()
+    } else {
+        let mut parts = Vec::new();
+        if td_line != "none" {
+            parts.push(td_line);
+        }
+        if td_thickness != "auto" {
+            parts.push(td_thickness);
+        }
+        if td_style != "solid" {
+            parts.push(td_style);
+        }
+        if style.text_decoration_color.is_some() {
+            parts.push(td_color);
+        }
+        if parts.is_empty() {
+            "none".to_string()
+        } else {
+            parts.join(" ")
+        }
+    };
+    map.insert("text-decoration".to_string(), td_shorthand);
 
     // Position & Insets
     let pos_str = match style.position {
@@ -379,7 +339,12 @@ pub fn op_mango_get_computed_style(
     );
     map.insert(
         "min-width".to_string(),
-        format_css_length(&style.min_width, style.font_size, style.root_font_size, cb_w),
+        format_css_length(
+            &style.min_width,
+            style.font_size,
+            style.root_font_size,
+            cb_w,
+        ),
     );
     let max_w = match style.max_width {
         mango_css::values::Length::Auto => "none".to_string(),
@@ -388,7 +353,12 @@ pub fn op_mango_get_computed_style(
     map.insert("max-width".to_string(), max_w);
     map.insert(
         "min-height".to_string(),
-        format_css_length(&style.min_height, style.font_size, style.root_font_size, None),
+        format_css_length(
+            &style.min_height,
+            style.font_size,
+            style.root_font_size,
+            None,
+        ),
     );
     let max_h = match style.max_height {
         mango_css::values::Length::Auto => "none".to_string(),
@@ -517,6 +487,33 @@ pub fn op_mango_get_computed_style(
         "border-left-style".to_string(),
         format_border_style(style.border_left_style).to_string(),
     );
+    if style.border_top_color == style.border_right_color
+        && style.border_right_color == style.border_bottom_color
+        && style.border_bottom_color == style.border_left_color
+    {
+        map.insert(
+            "border-color".to_string(),
+            format_css_color(&style.border_top_color),
+        );
+    }
+    if style.border_top_width == style.border_right_width
+        && style.border_right_width == style.border_bottom_width
+        && style.border_bottom_width == style.border_left_width
+    {
+        map.insert(
+            "border-width".to_string(),
+            format!("{:.0}px", style.border_top_width),
+        );
+    }
+    if style.border_top_style == style.border_right_style
+        && style.border_right_style == style.border_bottom_style
+        && style.border_bottom_style == style.border_left_style
+    {
+        map.insert(
+            "border-style".to_string(),
+            format_border_style(style.border_top_style).to_string(),
+        );
+    }
 
     // Flexbox
     let fd_str = match style.flex_direction {
@@ -567,9 +564,18 @@ pub fn op_mango_get_computed_style(
         }
         mango_css::values::Length::Calc(calc) => {
             if calc.has_percent {
-                format_css_length(&style.flex_basis, style.font_size, style.root_font_size, None)
+                format_css_length(
+                    &style.flex_basis,
+                    style.font_size,
+                    style.root_font_size,
+                    None,
+                )
             } else {
-                let px = (calc.px + calc.em * style.font_size + calc.ex * 0.5 * style.font_size + calc.rem * style.root_font_size).max(0.0);
+                let px = (calc.px
+                    + calc.em * style.font_size
+                    + calc.ex * 0.5 * style.font_size
+                    + calc.rem * style.root_font_size)
+                    .max(0.0);
                 let rounded = (px * 1000.0).round() / 1000.0;
                 if (rounded - rounded.round()).abs() < 1e-4 {
                     format!("{:.0}px", rounded.round())
@@ -579,7 +585,10 @@ pub fn op_mango_get_computed_style(
             }
         }
         mango_css::values::Length::Math(_) => {
-            let px = style.flex_basis.to_px(style.font_size, style.root_font_size, cb_w.unwrap_or(0.0)).max(0.0);
+            let px = style
+                .flex_basis
+                .to_px(style.font_size, style.root_font_size, cb_w.unwrap_or(0.0))
+                .max(0.0);
             let rounded = (px * 1000.0).round() / 1000.0;
             if (rounded - rounded.round()).abs() < 1e-4 {
                 format!("{:.0}px", rounded.round())
@@ -587,7 +596,12 @@ pub fn op_mango_get_computed_style(
                 format!("{rounded}px")
             }
         }
-        _ => format_css_length(&style.flex_basis, style.font_size, style.root_font_size, None),
+        _ => format_css_length(
+            &style.flex_basis,
+            style.font_size,
+            style.root_font_size,
+            None,
+        ),
     };
     map.insert("flex-basis".to_string(), flex_basis_str.clone());
 
@@ -663,14 +677,15 @@ pub fn op_mango_get_computed_style(
     map.insert("align-content".to_string(), ac_str.to_string());
 
     let rg = format_css_length(&style.row_gap, style.font_size, style.root_font_size, None);
-    let cg = format_css_length(&style.column_gap, style.font_size, style.root_font_size, cb_w);
+    let cg = format_css_length(
+        &style.column_gap,
+        style.font_size,
+        style.root_font_size,
+        cb_w,
+    );
     map.insert("row-gap".to_string(), rg.clone());
     map.insert("column-gap".to_string(), cg.clone());
-    let gap_shorthand = if rg == cg {
-        rg
-    } else {
-        format!("{rg} {cg}")
-    };
+    let gap_shorthand = if rg == cg { rg } else { format!("{rg} {cg}") };
     map.insert("gap".to_string(), gap_shorthand);
 
     // Overflow

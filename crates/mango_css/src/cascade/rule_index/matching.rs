@@ -5,92 +5,231 @@ use std::collections::{HashMap, HashSet};
 use mango_html::dom::{Document, ElementData, NodeData, NodeId};
 
 use crate::cascade::media::matches_container_query;
-use crate::cascade::types::{IndexedRule, MatchedDeclaration, Origin};
+use crate::cascade::types::{IndexedRule, MatchedDeclaration, Origin, ScopeDef};
 use crate::parser::{StyleRule, parse_declaration_list};
 use crate::specificity::Specificity;
 use crate::values::{Length, Value};
 
 use super::index::RuleIndex;
 
+fn selector_targets_scope(sel_list: Option<&crate::selectors::SelectorList>) -> bool {
+    let Some(list) = sel_list else { return false };
+    list.selectors.iter().any(|sel| {
+        let subject = if let Some((_, compound)) = sel.tail.last() {
+            compound
+        } else {
+            &sel.head
+        };
+        subject.simple_selectors.iter().any(|s| match s {
+            crate::selectors::SimpleSelector::Nesting => true,
+            crate::selectors::SimpleSelector::PseudoClass(p) => {
+                p.eq_ignore_ascii_case("scope")
+                    || ((p.starts_with("is(") || p.starts_with("where("))
+                        && (p.contains("scope") || p.contains('&')))
+            }
+            _ => false,
+        })
+    })
+}
+
+fn subject_targets_scope(style_rule: &StyleRule) -> bool {
+    selector_targets_scope(Some(&style_rule.selectors))
+}
+
+fn match_scope_chain(
+    chain: &[ScopeDef],
+    node_id: NodeId,
+    doc: &Document,
+    style_rule: &StyleRule,
+) -> Option<NodeId> {
+    if chain.is_empty() {
+        return Some(node_id);
+    }
+    match_scope_level(chain, chain.len() - 1, node_id, doc, style_rule, true)
+}
+
+fn match_scope_level(
+    chain: &[ScopeDef],
+    level: usize,
+    target_node: NodeId,
+    doc: &Document,
+    style_rule: &StyleRule,
+    is_innermost: bool,
+) -> Option<NodeId> {
+    let scope_def = &chain[level];
+    let root_sel = scope_def.root;
+    let limit_sel = scope_def.limit;
+
+    let can_target_self = if is_innermost {
+        subject_targets_scope(style_rule)
+    } else {
+        selector_targets_scope(chain[level + 1].root)
+    };
+
+    let mut candidates = Vec::new();
+    if can_target_self {
+        candidates.push(target_node);
+    }
+    let mut cur = doc.get(target_node).and_then(|n| n.parent);
+    while let Some(pid) = cur {
+        candidates.push(pid);
+        cur = doc.get(pid).and_then(|n| n.parent);
+    }
+
+    for root_cand in candidates {
+        let mut outer_root_opt = None;
+        if level > 0 {
+            if let Some(outer_root) =
+                match_scope_level(chain, level - 1, root_cand, doc, style_rule, false)
+            {
+                outer_root_opt = Some(outer_root);
+            } else {
+                continue;
+            }
+        }
+
+        if let Some(rsel) = root_sel {
+            if let Some(outer_root) = outer_root_opt {
+                crate::selectors::set_current_scope_root(Some(outer_root));
+            }
+            let matches_root = rsel.matches(root_cand, doc);
+            if outer_root_opt.is_some() {
+                crate::selectors::set_current_scope_root(None);
+            }
+            if !matches_root {
+                continue;
+            }
+        }
+
+        crate::selectors::set_current_scope_root(Some(root_cand));
+        let is_limited = if let Some(lsel) = limit_sel {
+            if selector_targets_scope(Some(lsel)) && lsel.matches(root_cand, doc) {
+                true
+            } else if target_node.raw() == root_cand.raw() {
+                false
+            } else {
+                let mut hit = false;
+                let mut curr_opt = Some(target_node);
+                while let Some(elem) = curr_opt {
+                    if elem.raw() == root_cand.raw() {
+                        break;
+                    }
+                    if lsel.matches(elem, doc) {
+                        hit = true;
+                        break;
+                    }
+                    curr_opt = doc.get(elem).and_then(|n| n.parent);
+                }
+                hit
+            }
+        } else {
+            false
+        };
+        crate::selectors::set_current_scope_root(None);
+
+        if is_limited {
+            continue;
+        }
+
+        if is_innermost {
+            crate::selectors::set_current_scope_root(Some(root_cand));
+            let matches_rule = style_rule.selectors.selectors.iter().any(|sel| {
+                if target_node.raw() == root_cand.raw() {
+                    let subject = if let Some((_, compound)) = sel.tail.last() {
+                        compound
+                    } else {
+                        &sel.head
+                    };
+                    let has_scope = subject.simple_selectors.iter().any(|s| match s {
+                        crate::selectors::SimpleSelector::Nesting => true,
+                        crate::selectors::SimpleSelector::PseudoClass(p) => {
+                            p.eq_ignore_ascii_case("scope")
+                                || ((p.starts_with("is(") || p.starts_with("where("))
+                                    && (p.contains("scope") || p.contains('&')))
+                        }
+                        _ => false,
+                    });
+                    if !has_scope {
+                        return false;
+                    }
+                }
+                sel.matches(target_node, doc)
+            });
+            crate::selectors::set_current_scope_root(None);
+
+            if !matches_rule {
+                continue;
+            }
+        }
+
+        return Some(root_cand);
+    }
+
+    None
+}
+
 pub(crate) fn apply_style_rule(
     style_rule: &StyleRule,
     node_id: NodeId,
     doc: &Document,
     origin: Origin,
-    layer_order: Option<u32>,
-    scope_root: Option<&crate::selectors::SelectorList>,
-    scope_limit: Option<&crate::selectors::SelectorList>,
+    layer_path: std::sync::Arc<[u32]>,
+    scope_chain: &[ScopeDef],
     rule_source_order: usize,
     out: &mut Vec<MatchedDeclaration>,
 ) {
-    let mut added_scope_spec = Specificity::ZERO;
+    let winning_root = if !scope_chain.is_empty() {
+        if let Some(root_node) = match_scope_chain(scope_chain, node_id, doc, style_rule) {
+            Some(root_node)
+        } else {
+            return;
+        }
+    } else {
+        None
+    };
 
-    if scope_root.is_some() || scope_limit.is_some() {
-        let mut matching_root: Option<(NodeId, Specificity)> = None;
-
-        if let Some(root_sel) = scope_root {
-            let is_root_self = root_sel.matches(node_id, doc);
-            let limit_excludes_self = scope_limit.is_some_and(|lim| lim.matches(node_id, doc));
-
-            if is_root_self && !limit_excludes_self {
-                let root_spec = root_sel
-                    .selectors
-                    .iter()
-                    .map(Specificity::of)
-                    .max()
-                    .unwrap_or(Specificity::ZERO);
-                matching_root = Some((node_id, root_spec));
-            }
-
-            if matching_root.is_none() {
-                if limit_excludes_self {
-                    return;
-                }
-                let mut curr = doc.get(node_id).and_then(|n| n.parent);
-                let mut hit_limit = false;
-                while let Some(ancestor_id) = curr {
-                    if root_sel.matches(ancestor_id, doc) {
-                        if !hit_limit {
-                            let root_spec = root_sel
-                                .selectors
-                                .iter()
-                                .map(Specificity::of)
-                                .max()
-                                .unwrap_or(Specificity::ZERO);
-                            matching_root = Some((ancestor_id, root_spec));
-                        }
-                        break;
-                    }
-                    if let Some(lim) = scope_limit {
-                        if lim.matches(ancestor_id, doc) {
-                            hit_limit = true;
-                        }
-                    }
-                    curr = doc.get(ancestor_id).and_then(|n| n.parent);
-                }
-            }
-
-            if let Some((root_node, root_spec)) = matching_root {
-                crate::selectors::set_current_scope_root(Some(root_node));
-                added_scope_spec = root_spec;
+    let scope_proximity = winning_root.map(|root| {
+        let mut hops = 0u32;
+        let mut cur = node_id;
+        while cur.raw() != root.raw() {
+            if let Some(parent) = doc.get(cur).and_then(|n| n.parent) {
+                hops += 1;
+                cur = parent;
             } else {
-                return;
-            }
-        } else if let Some(lim) = scope_limit {
-            let mut curr = Some(node_id);
-            while let Some(elem_id) = curr {
-                if lim.matches(elem_id, doc) {
-                    return;
-                }
-                curr = doc.get(elem_id).and_then(|n| n.parent);
+                break;
             }
         }
+        hops
+    });
+
+    if let Some(root_node) = winning_root {
+        crate::selectors::set_current_scope_root(Some(root_node));
     }
 
     let mut max_specificity: Option<Specificity> = None;
     for complex_sel in &style_rule.selectors.selectors {
-        if complex_sel.matches(node_id, doc) {
-            let spec = Specificity::of(complex_sel) + added_scope_spec;
+        if winning_root.map(|r| r.raw()) == Some(node_id.raw()) {
+            let subject = if let Some((_, compound)) = complex_sel.tail.last() {
+                compound
+            } else {
+                &complex_sel.head
+            };
+            let has_scope = subject.simple_selectors.iter().any(|s| match s {
+                crate::selectors::SimpleSelector::Nesting => true,
+                crate::selectors::SimpleSelector::PseudoClass(p) => {
+                    p.eq_ignore_ascii_case("scope")
+                        || ((p.starts_with("is(") || p.starts_with("where("))
+                            && (p.contains("scope") || p.contains('&')))
+                }
+                _ => false,
+            });
+            if !has_scope {
+                continue;
+            }
+        }
+        let m = complex_sel.matches(node_id, doc);
+        if m {
+            let spec = Specificity::of(complex_sel);
             max_specificity = Some(match max_specificity {
                 Some(current) => current.max(spec),
                 None => spec,
@@ -98,7 +237,7 @@ pub(crate) fn apply_style_rule(
         }
     }
 
-    if scope_root.is_some() {
+    if winning_root.is_some() {
         crate::selectors::set_current_scope_root(None);
     }
 
@@ -113,7 +252,9 @@ pub(crate) fn apply_style_rule(
                         specificity,
                         origin,
                         source_order: rule_source_order * 1000 + decl_idx,
-                        layer_order,
+                        layer_path: layer_path.clone(),
+                        rule_id: rule_source_order,
+                        scope_proximity,
                     });
                 }
             } else {
@@ -123,7 +264,9 @@ pub(crate) fn apply_style_rule(
                     specificity,
                     origin,
                     source_order: rule_source_order * 1000 + decl_idx,
-                    layer_order,
+                    layer_path: layer_path.clone(),
+                    rule_id: rule_source_order,
+                    scope_proximity,
                 });
             }
         }
@@ -149,9 +292,8 @@ pub(crate) fn collect_matches_for_node<'a>(
                     node_id,
                     doc,
                     cand.origin,
-                    cand.layer_order,
-                    cand.scope_root,
-                    cand.scope_limit,
+                    cand.layer_path.clone(),
+                    &cand.scope_chain,
                     cand.source_order,
                     out,
                 );
@@ -167,9 +309,8 @@ pub(crate) fn collect_matches_for_node<'a>(
                 node_id,
                 doc,
                 cand.origin,
-                cand.layer_order,
-                cand.scope_root,
-                cand.scope_limit,
+                cand.layer_path.clone(),
+                &cand.scope_chain,
                 cand.source_order,
                 out,
             );
@@ -186,9 +327,8 @@ pub(crate) fn collect_matches_for_node<'a>(
                     node_id,
                     doc,
                     cand.origin,
-                    cand.layer_order,
-                    cand.scope_root,
-                    cand.scope_limit,
+                    cand.layer_path.clone(),
+                    &cand.scope_chain,
                     cand.source_order,
                     out,
                 );
@@ -207,9 +347,8 @@ pub(crate) fn collect_matches_for_node<'a>(
                     node_id,
                     doc,
                     cand.origin,
-                    cand.layer_order,
-                    cand.scope_root,
-                    cand.scope_limit,
+                    cand.layer_path.clone(),
+                    &cand.scope_chain,
                     cand.source_order,
                     out,
                 );
@@ -227,9 +366,8 @@ pub(crate) fn collect_matches_for_node<'a>(
                         node_id,
                         doc,
                         cand.origin,
-                        cand.layer_order,
-                        cand.scope_root,
-                        cand.scope_limit,
+                        cand.layer_path.clone(),
+                        &cand.scope_chain,
                         cand.source_order,
                         out,
                     );
@@ -249,9 +387,8 @@ pub(crate) fn collect_matches_for_node<'a>(
                         node_id,
                         doc,
                         cand.origin,
-                        cand.layer_order,
-                        cand.scope_root,
-                        cand.scope_limit,
+                        cand.layer_path.clone(),
+                        &cand.scope_chain,
                         cand.source_order,
                         out,
                     );
@@ -277,9 +414,8 @@ pub(crate) fn collect_matches_for_node<'a>(
                     node_id,
                     doc,
                     cand.origin,
-                    None,
-                    None,
-                    None,
+                    std::sync::Arc::from([]),
+                    &[],
                     cand.source_order,
                     out,
                 );
@@ -335,7 +471,9 @@ pub(crate) fn collect_pseudo_matches_for_node<'a>(
                             specificity,
                             origin: cand.origin,
                             source_order: cand.source_order * 1000 + decl_idx,
-                            layer_order: cand.layer_order,
+                            layer_path: cand.layer_path.clone(),
+                            rule_id: cand.source_order,
+                            scope_proximity: None,
                         });
                     }
                 } else {
@@ -345,7 +483,9 @@ pub(crate) fn collect_pseudo_matches_for_node<'a>(
                         specificity,
                         origin: cand.origin,
                         source_order: cand.source_order * 1000 + decl_idx,
-                        layer_order: cand.layer_order,
+                        layer_path: cand.layer_path.clone(),
+                        rule_id: cand.source_order,
+                        scope_proximity: None,
                     });
                 }
             }
@@ -444,7 +584,9 @@ pub(crate) fn collect_pseudo_matches_for_node<'a>(
                                 specificity,
                                 origin: cand.origin,
                                 source_order: cand.source_order * 1000 + decl_idx,
-                                layer_order: None,
+                                layer_path: std::sync::Arc::from([]),
+                                rule_id: cand.source_order,
+                                scope_proximity: None,
                             });
                         }
                     } else {
@@ -454,7 +596,9 @@ pub(crate) fn collect_pseudo_matches_for_node<'a>(
                             specificity,
                             origin: cand.origin,
                             source_order: cand.source_order * 1000 + decl_idx,
-                            layer_order: None,
+                            layer_path: std::sync::Arc::from([]),
+                            rule_id: cand.source_order,
+                            scope_proximity: None,
                         });
                     }
                 }

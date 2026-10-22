@@ -197,13 +197,21 @@ pub(crate) fn find_first_matching_element(
     selectors: &mango_css::SelectorList,
 ) -> Option<NodeId> {
     for child in doc.children(current) {
-        if matches!(child.data, NodeData::Element(_)) {
-            if selectors.matches(child.id, doc) {
-                return Some(child.id);
+        match child.data {
+            NodeData::Element(_) => {
+                if selectors.matches(child.id, doc) {
+                    return Some(child.id);
+                }
+                if let Some(found) = find_first_matching_element(doc, child.id, selectors) {
+                    return Some(found);
+                }
             }
-            if let Some(found) = find_first_matching_element(doc, child.id, selectors) {
-                return Some(found);
+            NodeData::DocumentFragment | NodeData::Document => {
+                if let Some(found) = find_first_matching_element(doc, child.id, selectors) {
+                    return Some(found);
+                }
             }
+            _ => {}
         }
     }
     None
@@ -216,11 +224,17 @@ pub(crate) fn collect_matching_elements(
     out: &mut Vec<NodeId>,
 ) {
     for child in doc.children(current) {
-        if matches!(child.data, NodeData::Element(_)) {
-            if selectors.matches(child.id, doc) {
-                out.push(child.id);
+        match child.data {
+            NodeData::Element(_) => {
+                if selectors.matches(child.id, doc) {
+                    out.push(child.id);
+                }
+                collect_matching_elements(doc, child.id, selectors, out);
             }
-            collect_matching_elements(doc, child.id, selectors, out);
+            NodeData::DocumentFragment | NodeData::Document => {
+                collect_matching_elements(doc, child.id, selectors, out);
+            }
+            _ => {}
         }
     }
 }

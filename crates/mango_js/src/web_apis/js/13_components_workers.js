@@ -272,6 +272,22 @@
             if (match && ctor && globalThis._upgradeCustomElement) {
                 globalThis._upgradeCustomElement(node, ctor);
             }
+            var elId = node.id || (node.getAttribute && node.getAttribute('id'));
+            if (elId && typeof globalThis !== 'undefined' && !(elId in globalThis)) {
+                try {
+                    (function(targetId) {
+                        Object.defineProperty(globalThis, targetId, {
+                            get: function() {
+                                return (typeof document !== 'undefined' && document.getElementById)
+                                    ? document.getElementById(targetId)
+                                    : null;
+                            },
+                            configurable: true,
+                            enumerable: false
+                        });
+                    })(elId);
+                } catch(e) {}
+            }
             var sr = node._shadowRoot || node.shadowRoot;
             if (sr) {
                 _upgradeTree(sr, targetName, targetCtor, visited);
@@ -419,221 +435,7 @@
         globalThis.customElements = new globalThis.CustomElementRegistry();
     }
 
-    // ── 28.5 Constructable Stylesheets (CSSOM §2) ─────────────────────────────
-    function CSSStyleSheet(options) {
-        this._rules = [];
-        this._disabled = !!(options && options.disabled);
-        this._media = (options && options.media) || 'all';
-    }
-
-    Object.defineProperty(CSSStyleSheet.prototype, 'cssRules', {
-        get: function() { return this._rules; },
-        enumerable: true
-    });
-    Object.defineProperty(CSSStyleSheet.prototype, 'rules', {
-        get: function() { return this._rules; },
-        enumerable: true
-    });
-    Object.defineProperty(CSSStyleSheet.prototype, 'disabled', {
-        get: function() { return this._disabled; },
-        set: function(v) { this._disabled = !!v; },
-        enumerable: true
-    });
-    Object.defineProperty(CSSStyleSheet.prototype, 'media', {
-        get: function() { return this._media; },
-        enumerable: true
-    });
-
-    CSSStyleSheet.prototype.replaceSync = function(text) {
-        this._rules = [];
-        var css = String(text);
-        var blocks = css.split('}');
-        for (var i = 0; i < blocks.length; i++) {
-            var block = blocks[i].trim();
-            if (!block) continue;
-            var parts = block.split('{');
-            if (parts.length >= 2) {
-                var sel = parts[0].trim();
-                var body = parts.slice(1).join('{').trim();
-                this._rules.push({
-                    cssText: sel + ' { ' + body + ' }',
-                    selectorText: sel,
-                    style: { cssText: body }
-                });
-            }
-        }
-        return undefined;
-    };
-
-    CSSStyleSheet.prototype.replace = function(text) {
-        var self = this;
-        return new Promise(function(resolve) {
-            self.replaceSync(text);
-            resolve(self);
-        });
-    };
-
-    CSSStyleSheet.prototype.insertRule = function(rule, index) {
-        index = index === undefined ? 0 : index;
-        var rStr = String(rule).trim();
-
-        // 1. Validate @layer rules
-        if (rStr.startsWith('@layer')) {
-            var afterLayer = rStr.slice(6).trim();
-            if (afterLayer.endsWith(';')) {
-                var statementContent = afterLayer.slice(0, -1).trim();
-                if (!statementContent) {
-                    throw new DOMException("Failed to execute 'insertRule' on 'CSSStyleSheet': Invalid @layer statement", "SyntaxError");
-                }
-                var names = statementContent.split(',');
-                for (var i = 0; i < names.length; i++) {
-                    var n = names[i].trim();
-                    if (!n) {
-                        throw new DOMException("Failed to execute 'insertRule': empty layer name", "SyntaxError");
-                    }
-                    var parts = n.split('.');
-                    for (var j = 0; j < parts.length; j++) {
-                        var p = parts[j].trim();
-                        if (p !== parts[j] || !/^[a-zA-Z_-][a-zA-Z0-9_-]*$/.test(p)) {
-                            throw new DOMException("Failed to execute 'insertRule': invalid layer name", "SyntaxError");
-                        }
-                    }
-                }
-            } else if (afterLayer.indexOf('{') !== -1) {
-                var header = afterLayer.slice(0, afterLayer.indexOf('{')).trim();
-                if (header.indexOf(',') !== -1) {
-                    throw new DOMException("Failed to execute 'insertRule': @layer block cannot have multiple layer names", "SyntaxError");
-                }
-                if (header) {
-                    var parts = header.split('.');
-                    for (var j = 0; j < parts.length; j++) {
-                        var p = parts[j].trim();
-                        if (p !== parts[j] || !/^[a-zA-Z_-][a-zA-Z0-9_-]*$/.test(p)) {
-                            throw new DOMException("Failed to execute 'insertRule': invalid layer name", "SyntaxError");
-                        }
-                    }
-                }
-            }
-        }
-
-        // 2. Format and parse @import rules
-        if (rStr.startsWith('@import')) {
-            var afterImport = rStr.slice(7).trim();
-            if (afterImport.endsWith(';')) {
-                afterImport = afterImport.slice(0, -1).trim();
-            }
-
-            var rawUrl = "";
-            var urlStr = "";
-            var rest = "";
-
-            if (afterImport.startsWith('url(')) {
-                var closeParen = afterImport.indexOf(')');
-                if (closeParen !== -1) {
-                    rawUrl = afterImport.slice(4, closeParen).trim();
-                    if ((rawUrl.startsWith('"') && rawUrl.endsWith('"')) || (rawUrl.startsWith("'") && rawUrl.endsWith("'"))) {
-                        rawUrl = rawUrl.slice(1, -1);
-                    }
-                    urlStr = 'url("' + rawUrl + '")';
-                    rest = afterImport.slice(closeParen + 1).trim();
-                }
-            } else if (afterImport.startsWith('"') || afterImport.startsWith("'")) {
-                var q = afterImport[0];
-                var endQ = afterImport.indexOf(q, 1);
-                if (endQ !== -1) {
-                    rawUrl = afterImport.slice(1, endQ);
-                    urlStr = 'url("' + rawUrl + '")';
-                    rest = afterImport.slice(endQ + 1).trim();
-                }
-            }
-
-            var layerStr = "";
-            var supportsStr = "";
-            var mediaList = [];
-
-            if (rest) {
-                if (rest === 'layer' || rest.startsWith('layer ')) {
-                    layerStr = 'layer';
-                    rest = rest.slice(5).trim();
-                } else if (/^layer\s*\(/.test(rest)) {
-                    var lpClose = rest.indexOf(')');
-                    if (lpClose !== -1) {
-                        var inner = rest.slice(rest.indexOf('(') + 1, lpClose).trim();
-                        var isValidLayerName = false;
-                        if (inner && inner.indexOf(',') === -1 && inner.indexOf(' ') === -1) {
-                            var lParts = inner.split('.');
-                            isValidLayerName = lParts.every(function(p) { return /^[a-zA-Z_-][a-zA-Z0-9_-]*$/.test(p); });
-                        }
-                        if (isValidLayerName) {
-                            layerStr = 'layer(' + inner + ')';
-                            rest = rest.slice(lpClose + 1).trim();
-                        } else {
-                            mediaList.push(rest.slice(0, lpClose + 1));
-                            rest = rest.slice(lpClose + 1).trim();
-                        }
-                    }
-                }
-
-                if (rest.startsWith('supports(')) {
-                    var spClose = rest.lastIndexOf(')');
-                    if (spClose !== -1) {
-                        supportsStr = rest.slice(0, spClose + 1);
-                        rest = rest.slice(spClose + 1).trim();
-                    }
-                }
-
-                if (rest) {
-                    mediaList.push(rest);
-                }
-            }
-
-            var canonicalCss = '@import ' + urlStr;
-            if (layerStr) canonicalCss += ' ' + layerStr;
-            if (supportsStr) canonicalCss += ' ' + supportsStr;
-            if (mediaList.length > 0) canonicalCss += ' ' + mediaList.join(' ');
-            canonicalCss += ';';
-
-            var mediaObj = {
-                length: mediaList.length,
-                mediaText: mediaList.join(' '),
-                item: function(i) { return mediaList[i] || null; },
-                toString: function() { return this.mediaText; }
-            };
-
-            var parsed = {
-                cssText: canonicalCss,
-                href: rawUrl,
-                media: mediaObj,
-                style: { cssText: "" }
-            };
-            this._rules.splice(index, 0, parsed);
-            return index;
-        }
-
-        // 3. General style / at-rule
-        var parts = rStr.split('{');
-        var sel = parts[0].trim();
-        var body = parts.length > 1 ? parts.slice(1).join('{').replace(/}$/, '').trim() : '';
-        var parsed = {
-            cssText: rStr,
-            selectorText: sel,
-            style: { cssText: body }
-        };
-        this._rules.splice(index, 0, parsed);
-        return index;
-    };
-
-    CSSStyleSheet.prototype.deleteRule = function(index) {
-        if (index < 0 || index >= this._rules.length) {
-            throw new RangeError("Index out of range");
-        }
-        this._rules.splice(index, 1);
-    };
-
-    globalThis.CSSStyleSheet = CSSStyleSheet;
-    if (typeof window !== 'undefined') {
-        window.CSSStyleSheet = CSSStyleSheet;
-    }
+    // ── 28.5 Constructable Stylesheets (CSSOM §2) moved to 22_cssom_rules.js & 23_cssom_parser.js
 
     // ── 29. Blob / File / FileReader ──────────────────────────────────────────
     // (Full standard implementations of Blob, File, and FileReader are defined above in section 19)

@@ -348,11 +348,7 @@ impl BrowserChrome {
                     log::warn!("Preloaded script error ({src}): {e}");
                 }
             }
-            ScriptToRun::External {
-                src,
-                is_module,
-                ..
-            } => {
+            ScriptToRun::External { src, is_module, .. } => {
                 const MAX_EXTERNAL_SCRIPTS: usize = 128;
                 if *ext_cnt >= MAX_EXTERNAL_SCRIPTS {
                     return;
@@ -367,7 +363,9 @@ impl BrowserChrome {
                 let script_code = if let Some(cached) = self.loader.cache().get(&key) {
                     Some(String::from_utf8_lossy(&cached.body).into_owned())
                 } else {
-                    log::warn!("External script not in cache, skipping sync fetch on UI thread: {src}");
+                    log::warn!(
+                        "External script not in cache, skipping sync fetch on UI thread: {src}"
+                    );
                     None
                 };
                 if let Some(code) = script_code {
@@ -560,11 +558,7 @@ impl BrowserChrome {
                     log::warn!("Pending preloaded script error ({src}): {e}");
                 }
             }
-            ScriptToRun::External {
-                src,
-                is_module,
-                ..
-            } => {
+            ScriptToRun::External { src, is_module, .. } => {
                 let Some(ref base) = self.base_url else {
                     return;
                 };
@@ -575,7 +569,9 @@ impl BrowserChrome {
                 let script_code = if let Some(cached) = self.loader.cache().get(&key) {
                     Some(String::from_utf8_lossy(&cached.body).into_owned())
                 } else {
-                    log::warn!("Pending external script not in cache, skipping sync fetch on UI thread: {src}");
+                    log::warn!(
+                        "Pending external script not in cache, skipping sync fetch on UI thread: {src}"
+                    );
                     None
                 };
                 if let Some(code) = script_code {

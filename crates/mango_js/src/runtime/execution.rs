@@ -108,48 +108,14 @@ impl JsRuntime {
         }
     }
 
-    /// Executes a JavaScript source string (e.g., inline `<script>` content).
+    /// Executes a JavaScript source string (e.g., inline `<script>` content or DOM event dispatch)
+    /// with an automatic watchdog timeout to prevent UI freezes and Wayland Force Quit dialogs.
     pub fn execute_script(&mut self, source: &str) -> Result<(), String> {
-        let _guard = self.enter_isolate();
-        let prev_hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(|_| {}));
-        let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.runtime.execute_script("<script>", source.to_string())
-        }));
-        std::panic::set_hook(prev_hook);
-
-        match res {
-            Ok(Ok(_)) => {
-                log::info!("Script executed successfully ({} bytes)", source.len());
-                deno_core::v8::scope!(scope, self.runtime.v8_isolate());
-                scope.perform_microtask_checkpoint();
-                Ok(())
-            }
-            Ok(Err(e)) => {
-                let err_str = e.to_string();
-                if err_str.contains("Cannot use import statement outside a module")
-                    || err_str.contains("Unexpected token 'export'")
-                {
-                    log::info!("Script contains ES module syntax, executing as ES module");
-                    return self.execute_module(source);
-                }
-                let err_msg = format!("JS Error: {e}");
-                log::warn!("{err_msg}");
-                Err(err_msg)
-            }
-            Err(panic_err) => {
-                let msg = if let Some(s) = panic_err.downcast_ref::<&str>() {
-                    s.to_string()
-                } else if let Some(s) = panic_err.downcast_ref::<String>() {
-                    s.clone()
-                } else {
-                    "Unknown JS panic".to_string()
-                };
-                let err_msg = format!("JS Panic caught safely: {msg}");
-                log::warn!("{err_msg}");
-                Err(err_msg)
-            }
-        }
+        self.execute_script_with_name_and_timeout(
+            "<script>",
+            source,
+            std::time::Duration::from_millis(1500),
+        )
     }
 
     /// Computes a scaled execution timeout based on script size.
@@ -310,27 +276,23 @@ impl JsRuntime {
         }
     }
 
-    /// Processes any expired timers and drains promise microtasks. Returns `true` if the DOM was mutated.
+    /// Processes any expired timers and drains promise microtasks with watchdog protection.
+    /// Returns `true` if the DOM was mutated.
     pub fn tick(&mut self) -> bool {
-        let timer_fired = {
-            let _guard = self.enter_isolate();
-            let prev_hook = std::panic::take_hook();
-            std::panic::set_hook(Box::new(|_| {}));
-            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let scripts = self.event_loop.borrow_mut().drain_due();
-                let mut timer_fired = false;
-                for s in scripts {
-                    if self.runtime.execute_script("<event_loop>", s).is_ok() {
-                        timer_fired = true;
-                    }
-                }
-                deno_core::v8::scope!(scope, self.runtime.v8_isolate());
-                scope.perform_microtask_checkpoint();
-                timer_fired
-            }));
-            std::panic::set_hook(prev_hook);
-            res.unwrap_or(false)
-        };
+        let scripts = self.event_loop.borrow_mut().drain_due();
+        let mut timer_fired = false;
+        for s in scripts {
+            if self
+                .execute_script_with_name_and_timeout(
+                    "<event_loop>",
+                    &s,
+                    std::time::Duration::from_millis(1500),
+                )
+                .is_ok()
+            {
+                timer_fired = true;
+            }
+        }
 
         let waker = std::task::Waker::noop();
         let mut cx = std::task::Context::from_waker(waker);

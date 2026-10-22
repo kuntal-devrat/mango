@@ -8,7 +8,7 @@ pub fn is_css_wide_keyword(val: &Value) -> bool {
     if let Value::Keyword(k) = val {
         matches!(
             k.to_ascii_lowercase().as_str(),
-            "initial" | "inherit" | "unset" | "revert" | "revert-layer"
+            "initial" | "inherit" | "unset" | "revert" | "revert-layer" | "revert-rule"
         )
     } else {
         false
@@ -156,7 +156,9 @@ pub fn is_valid_property_value(property_name: &str, value: &Value) -> bool {
             _ => false,
         },
 
-        "margin-top" | "margin-right" | "margin-bottom" | "margin-left" => is_valid_margin_val(value),
+        "margin-top" | "margin-right" | "margin-bottom" | "margin-left" => {
+            is_valid_margin_val(value)
+        }
 
         "margin" => match value {
             Value::List(list) => {
@@ -165,7 +167,9 @@ pub fn is_valid_property_value(property_name: &str, value: &Value) -> bool {
             single => is_valid_margin_val(single),
         },
 
-        "padding-top" | "padding-right" | "padding-bottom" | "padding-left" => is_valid_padding_val(value),
+        "padding-top" | "padding-right" | "padding-bottom" | "padding-left" => {
+            is_valid_padding_val(value)
+        }
 
         "padding" => match value {
             Value::List(list) => {
@@ -174,14 +178,8 @@ pub fn is_valid_property_value(property_name: &str, value: &Value) -> bool {
             single => is_valid_padding_val(single),
         },
 
-        "top"
-        | "right"
-        | "bottom"
-        | "left"
-        | "inset-block-start"
-        | "inset-block-end"
-        | "inset-inline-start"
-        | "inset-inline-end" => is_valid_margin_val(value),
+        "top" | "right" | "bottom" | "left" | "inset-block-start" | "inset-block-end"
+        | "inset-inline-start" | "inset-inline-end" => is_valid_margin_val(value),
 
         "inset" => match value {
             Value::List(list) => {
@@ -202,21 +200,17 @@ pub fn is_valid_property_value(property_name: &str, value: &Value) -> bool {
                 k.to_ascii_lowercase().as_str(),
                 "none" | "block" | "block-start" | "block-end"
             ),
-            Value::List(list) => {
-                if list.len() == 2 {
-                    let w1 = match &list[0] {
-                        Value::Keyword(k) => k.to_ascii_lowercase(),
-                        _ => return false,
-                    };
-                    let w2 = match &list[1] {
-                        Value::Keyword(k) => k.to_ascii_lowercase(),
-                        _ => return false,
-                    };
-                    (w1 == "block-start" && w2 == "block-end")
-                        || (w1 == "block-end" && w2 == "block-start")
-                } else {
-                    false
-                }
+            Value::List(list) if list.len() == 2 => {
+                let w1 = match &list[0] {
+                    Value::Keyword(k) => k.to_ascii_lowercase(),
+                    _ => return false,
+                };
+                let w2 = match &list[1] {
+                    Value::Keyword(k) => k.to_ascii_lowercase(),
+                    _ => return false,
+                };
+                (w1 == "block-start" && w2 == "block-end")
+                    || (w1 == "block-end" && w2 == "block-start")
             }
             _ => false,
         },
@@ -244,7 +238,11 @@ pub fn is_valid_property_value(property_name: &str, value: &Value) -> bool {
             Value::Length(len) => match len {
                 Length::Px(px) => *px >= 0.0,
                 Length::Percent(pct) => *pct >= 0.0,
-                Length::Auto | Length::Content | Length::MinContent | Length::MaxContent | Length::FitContent => true,
+                Length::Auto
+                | Length::Content
+                | Length::MinContent
+                | Length::MaxContent
+                | Length::FitContent => true,
                 Length::Calc(_)
                 | Length::Math(_)
                 | Length::Em(_)

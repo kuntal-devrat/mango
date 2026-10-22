@@ -34,6 +34,9 @@ pub fn op_mango_css_parse_declaration(
     // `rgb(255, 0, 0)`, so for a non-shorthand property we echo the value text
     // back. Shorthands are still expanded into their longhands.
     if decls.len() == 1 && decls[0].name == p {
+        if p == "text-decoration-line" {
+            return Some(vec![(p.clone(), decls[0].value.to_css_string())]);
+        }
         let specified = strip_important(v);
         return Some(vec![(p.clone(), specified)]);
     }

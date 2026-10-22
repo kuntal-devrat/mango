@@ -85,9 +85,13 @@ fn run_category(subdir: &str) -> WptSuiteResult {
 /// Prints the conformance scorecard for a suite.
 fn print_scorecard(title: &str, suite: &WptSuiteResult) {
     let mut out = String::new();
-    out.push_str("\n================================================================================\n");
+    out.push_str(
+        "\n================================================================================\n",
+    );
     out.push_str(&format!("📊 {title}\n"));
-    out.push_str("================================================================================\n");
+    out.push_str(
+        "================================================================================\n",
+    );
     out.push_str(&format!(
         "Files run          : {} ({} passed, {} errored, {} timed out)\n",
         suite.files_total(),
@@ -102,8 +106,13 @@ fn print_scorecard(title: &str, suite: &WptSuiteResult) {
         suite.failed(),
         suite.results.iter().map(|r| r.skipped()).sum::<usize>()
     ));
-    out.push_str(&format!("Assertion pass rate: {:.2}%\n", suite.pass_percentage()));
-    out.push_str("================================================================================\n");
+    out.push_str(&format!(
+        "Assertion pass rate: {:.2}%\n",
+        suite.pass_percentage()
+    ));
+    out.push_str(
+        "================================================================================\n",
+    );
     isolation::stream_write(&out);
     println!("{out}");
 }
@@ -135,7 +144,10 @@ fn print_failures(suite: &WptSuiteResult, limit: usize) {
         .filter(|r| r.counts_as_run() && r.status != WptFileStatus::Pass)
         .count();
     if failing > shown {
-        out.push_str(&format!("  … and {} more non-passing files\n", failing - shown));
+        out.push_str(&format!(
+            "  … and {} more non-passing files\n",
+            failing - shown
+        ));
     }
     isolation::stream_write(&out);
     println!("{out}");
@@ -267,7 +279,9 @@ fn wpt_compliance_report_is_generated() {
 
     let out_dir = Path::new("target");
     let path = out_dir.join("wpt_compliance.json");
-    report.write_json(&path).expect("failed to write WPT report");
+    report
+        .write_json(&path)
+        .expect("failed to write WPT report");
     let wrote_msg = format!("Wrote {}\n", path.display());
     isolation::stream_write(&wrote_msg);
     println!("{wrote_msg}");

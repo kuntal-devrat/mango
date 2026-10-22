@@ -40,7 +40,9 @@ pub fn parse_meta_yaml(src: &str) -> DirectoryMeta {
         }
 
         // A new mapping key at indentation 0.
-        if !line.starts_with(' ') && !line.starts_with('-') && let Some((k, v)) = line.split_once(':')
+        if !line.starts_with(' ')
+            && !line.starts_with('-')
+            && let Some((k, v)) = line.split_once(':')
         {
             let key = k.trim().to_ascii_lowercase();
             let value = v.trim();
@@ -92,11 +94,14 @@ pub fn parse_meta_yaml(src: &str) -> DirectoryMeta {
 
 fn unquote(s: &str) -> String {
     let s = s.trim();
-    let s = s.strip_prefix('[').and_then(|r| r.strip_suffix(']')).unwrap_or(s);
+    let s = s
+        .strip_prefix('[')
+        .and_then(|r| r.strip_suffix(']'))
+        .unwrap_or(s);
     let s = s.trim();
-    if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
-        s[1..s.len() - 1].to_string()
-    } else if s.len() >= 2 && s.starts_with('\'') && s.ends_with('\'') {
+    if s.len() >= 2
+        && ((s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')))
+    {
         s[1..s.len() - 1].to_string()
     } else {
         s.to_string()

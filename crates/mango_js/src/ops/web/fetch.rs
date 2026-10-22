@@ -89,7 +89,8 @@ pub fn op_mango_fetch(
         .cloned()
         .unwrap_or_else(|| std::sync::Arc::new(std::sync::Mutex::new(mango_net::CookieJar::new())));
 
-    let client = HttpClient::with_cookie_jar(cj);
+    let client =
+        HttpClient::with_timeout_and_cookie_jar(std::time::Duration::from_millis(2500), cj);
     let mut custom_headers = parse_simple_headers_json(&headers_json);
 
     let result = (|| -> Result<mango_net::HttpResponse, String> {
@@ -280,5 +281,6 @@ pub fn op_mango_start_fetch(
         if let Ok(mut q) = tasks.lock() {
             q.push(js);
         }
+        mango_core::wake_event_loop();
     });
 }

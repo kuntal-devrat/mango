@@ -321,46 +321,32 @@
                 }
             },
             getAttributeNS: function(ns, localName) {
-                if (this._nsAttrs) {
-                    for (var k in this._nsAttrs) {
-                        var a = this._nsAttrs[k];
-                        if (a && a.namespaceURI === (ns || null) && a.localName === localName) return a.value;
-                    }
-                }
-                return this.getAttribute(localName);
+                var a = this.getAttributeNodeNS ? this.getAttributeNodeNS(ns, localName) : null;
+                return a ? a.value : null;
             },
             setAttributeNS: function(ns, name, value) {
+                if (arguments.length < 3) throw new TypeError("Failed to execute 'setAttributeNS': 3 arguments required");
                 if (!this._nsAttrs) this._nsAttrs = {};
-                var colon = String(name).indexOf(':');
-                var prefix = colon !== -1 ? String(name).substring(0, colon) : null;
-                var localName = colon !== -1 ? String(name).substring(colon + 1) : String(name);
-                this._nsAttrs[name] = { namespaceURI: ns || null, prefix: prefix, localName: localName, value: String(value) };
-                this.setAttribute(name, value);
+                var info = (typeof _validateAndExtractNamespace === 'function')
+                    ? _validateAndExtractNamespace(ns, name)
+                    : { namespaceURI: ns || null, prefix: (String(name).indexOf(':') !== -1 ? String(name).split(':')[0] : null), localName: (String(name).indexOf(':') !== -1 ? String(name).split(':')[1] : String(name)), qualifiedName: String(name) };
+                this._nsAttrs[info.qualifiedName] = { namespaceURI: info.namespaceURI, prefix: info.prefix, localName: info.localName, value: String(value) };
+                this.setAttribute(info.qualifiedName, value);
             },
             removeAttributeNS: function(ns, localName) {
-                if (this._nsAttrs) {
-                    for (var k in this._nsAttrs) {
-                        var a = this._nsAttrs[k];
-                        if (a && a.namespaceURI === (ns || null) && a.localName === localName) {
-                            delete this._nsAttrs[k];
-                            this.removeAttribute(k);
-                            return;
-                        }
-                    }
+                var a = this.getAttributeNodeNS ? this.getAttributeNodeNS(ns, localName) : null;
+                if (a) {
+                    if (this._nsAttrs) delete this._nsAttrs[a.name];
+                    this.removeAttribute(a.name);
                 }
-                this.removeAttribute(localName);
             },
             hasAttributeNS: function(ns, localName) {
-                if (this._nsAttrs) {
-                    for (var k in this._nsAttrs) {
-                        var a = this._nsAttrs[k];
-                        if (a && a.namespaceURI === (ns || null) && a.localName === localName) return true;
-                    }
-                }
-                return this.hasAttribute(localName);
+                return (this.getAttributeNodeNS ? this.getAttributeNodeNS(ns, localName) : null) !== null;
             },
             get shadowRoot() {
-                if (this._shadowRoot !== undefined) return this._shadowRoot;
+                if (this._shadowRootInstance !== undefined) {
+                    return (this._shadowRootInstance && this._shadowRootInstance.mode === 'open') ? this._shadowRootInstance : null;
+                }
                 var srId = (typeof _getShadowRoot === 'function') ? _getShadowRoot(this._nodeId) : null;
                 if (srId) {
                     var mode = (typeof _getShadowRootMode === 'function') ? _getShadowRootMode(this._nodeId) : 'open';
@@ -382,16 +368,27 @@
                         configurable: true,
                         enumerable: true
                     });
-                    this._shadowRoot = (sr.mode === 'open') ? sr : null;
-                    return this._shadowRoot;
+                    this._shadowRootInstance = sr;
+                    this._shadowRoot = sr;
+                    return (mode === 'open') ? sr : null;
                 }
                 return null;
             },
             set shadowRoot(val) {
+                this._shadowRootInstance = val;
                 this._shadowRoot = val;
             },
             attachShadow: function(init) {
-                var mode = (init && init.mode) || 'open';
+                if (!init || typeof init !== 'object') {
+                    throw new TypeError("Failed to execute 'attachShadow' on 'Element': 1 argument required, but only 0 present.");
+                }
+                var mode = init.mode;
+                if (mode !== 'open' && mode !== 'closed') {
+                    throw new TypeError("Failed to execute 'attachShadow' on 'Element': Invalid shadow root mode.");
+                }
+                if (this._shadowRootInstance) {
+                    return this._shadowRootInstance;
+                }
                 var srId = _attachShadow(this._nodeId, mode);
                 var sr = (srId !== null && srId !== undefined) ? _wrapElement(srId) : _wrapElement(_createFragment());
                 if (typeof globalThis.ShadowRoot === 'function' && globalThis.ShadowRoot.prototype) {
@@ -399,8 +396,8 @@
                 }
                 sr.mode = mode;
                 sr.host = this;
-                this.shadowRoot = (sr.mode === 'open') ? sr : null;
-                this._shadowRoot = (sr.mode === 'open') ? sr : null;
+                this._shadowRootInstance = sr;
+                this._shadowRoot = sr;
                 sr._adoptedStyleSheets = [];
                 Object.defineProperty(sr, 'adoptedStyleSheets', {
                     get: function() { return this._adoptedStyleSheets; },

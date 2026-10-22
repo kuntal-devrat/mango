@@ -713,22 +713,18 @@
     globalThis.Element.prototype.getElementsByTagNameNS = function(ns, t) { return (typeof _defaultGetElementsByTagNameNS === 'function') ? _defaultGetElementsByTagNameNS(this, ns, t) : []; };
     globalThis.Element.prototype.getElementsByClassName = function(c) { return (typeof _defaultGetElementsByClassName === 'function') ? _defaultGetElementsByClassName(this, c) : []; };
     globalThis.Element.prototype.attachShadow = function(init) {
-        var mode = (init && init.mode) || 'open';
-        var srId = (this._nodeId !== undefined && typeof _attachShadow === 'function')
-            ? _attachShadow(this._nodeId, mode)
-            : null;
+        if (!init || typeof init !== 'object') throw new TypeError("Failed to execute 'attachShadow' on 'Element': 1 argument required.");
+        var mode = init.mode;
+        if (mode !== 'open' && mode !== 'closed') throw new TypeError("Failed to execute 'attachShadow': Invalid shadow root mode.");
+        if (this._shadowRootInstance) return this._shadowRootInstance;
+        var srId = (this._nodeId !== undefined && typeof _attachShadow === 'function') ? _attachShadow(this._nodeId, mode) : null;
         var sr = (srId !== null && srId !== undefined && typeof _wrapElement === 'function')
             ? _wrapElement(srId)
-            : ((typeof _createFragment === 'function' && typeof _wrapElement === 'function')
-                ? _wrapElement(_createFragment())
-                : (typeof document !== 'undefined' && document.createDocumentFragment ? document.createDocumentFragment() : {}));
-        if (typeof globalThis.ShadowRoot === 'function' && globalThis.ShadowRoot.prototype) {
-            Object.setPrototypeOf(sr, globalThis.ShadowRoot.prototype);
-        }
-        sr.mode = mode;
-        sr.host = this;
-        this.shadowRoot = (mode === 'open') ? sr : null;
-        this._shadowRoot = (mode === 'open') ? sr : null;
+            : ((typeof _createFragment === 'function' && typeof _wrapElement === 'function') ? _wrapElement(_createFragment()) : (typeof document !== 'undefined' && document.createDocumentFragment ? document.createDocumentFragment() : {}));
+        if (typeof globalThis.ShadowRoot === 'function' && globalThis.ShadowRoot.prototype) Object.setPrototypeOf(sr, globalThis.ShadowRoot.prototype);
+        sr.mode = mode; sr.host = this;
+        this._shadowRoot = sr; this._shadowRootInstance = sr;
+        Object.defineProperty(this, 'shadowRoot', { get: function() { return (mode === 'open') ? sr : null; }, configurable: true });
         if (!sr.adoptedStyleSheets) sr._adoptedStyleSheets = [];
         return sr;
     };

@@ -382,7 +382,10 @@ fn test_nested_supports_in_media() {
             .collect();
         assert_eq!(
             display_decls,
-            vec![&Value::Display(Display::None), &Value::Display(Display::Block)]
+            vec![
+                &Value::Display(Display::None),
+                &Value::Display(Display::Block)
+            ]
         );
     } else {
         panic!("expected MediaRule");
@@ -485,4 +488,11 @@ fn test_supports_condition_evaluation() {
     } else {
         panic!("expected media rule for invalid-fallback");
     }
+}
+
+#[test]
+fn test_supports_color_revert_rule() {
+    assert!(crate::supports("color:revert-rule", None));
+    assert!(crate::supports("(color: revert-rule)", None));
+    assert!(crate::supports("color", Some("revert-rule")));
 }

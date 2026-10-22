@@ -33,15 +33,15 @@ fn main() {
         return;
     }
 
-    if let Some(idx) = args.iter().position(|a| a == "--json") {
-        if let Some(rel) = args.get(idx + 1) {
-            let result = harness::run_wpt_file(&root, rel, harness::DEFAULT_FILE_TIMEOUT);
-            println!(
-                "{}",
-                serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string())
-            );
-            return;
-        }
+    if let Some(idx) = args.iter().position(|a| a == "--json")
+        && let Some(rel) = args.get(idx + 1)
+    {
+        let result = harness::run_wpt_file(&root, rel, harness::DEFAULT_FILE_TIMEOUT);
+        println!(
+            "{}",
+            serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string())
+        );
+        return;
     }
 
     print_banner();
@@ -61,10 +61,18 @@ fn main() {
             let dir = root.join(&t);
             if dir.is_dir() {
                 for rel in harness::discover_tests(&root, &dir) {
-                    s.push(harness::run_wpt_file(&root, &rel, harness::DEFAULT_FILE_TIMEOUT));
+                    s.push(harness::run_wpt_file(
+                        &root,
+                        &rel,
+                        harness::DEFAULT_FILE_TIMEOUT,
+                    ));
                 }
             } else {
-                s.push(harness::run_wpt_file(&root, &t, harness::DEFAULT_FILE_TIMEOUT));
+                s.push(harness::run_wpt_file(
+                    &root,
+                    &t,
+                    harness::DEFAULT_FILE_TIMEOUT,
+                ));
             }
         }
         s
@@ -87,7 +95,11 @@ fn print_banner() {
 fn run_all(root: &Path) -> WptSuiteResult {
     let mut suite = WptSuiteResult::default();
     for rel in harness::discover_tests(root, root) {
-        suite.push(harness::run_wpt_file(root, &rel, harness::DEFAULT_FILE_TIMEOUT));
+        suite.push(harness::run_wpt_file(
+            root,
+            &rel,
+            harness::DEFAULT_FILE_TIMEOUT,
+        ));
     }
     suite
 }

@@ -603,7 +603,9 @@
                 if (!this._sheet) {
                     if (typeof globalThis.CSSStyleSheet === 'function') {
                         this._sheet = new globalThis.CSSStyleSheet();
+                        this._sheet._ownerNode = this;
                         var text = this.textContent || "";
+                        this._sheetText = text;
                         if (text && typeof this._sheet.replaceSync === 'function') {
                             try { this._sheet.replaceSync(text); } catch(e) {}
                         }
@@ -614,6 +616,11 @@
                             insertRule: function(rule, idx) { return 0; },
                             deleteRule: function(idx) {}
                         };
+                    }
+                } else if (this._sheetText !== this.textContent && this.parentNode) {
+                    this._sheetText = this.textContent || "";
+                    if (typeof this._sheet.replaceSync === 'function') {
+                        try { this._sheet.replaceSync(this._sheetText); } catch(e) {}
                     }
                 }
                 return this._sheet;
@@ -714,17 +721,18 @@
     };
 
     globalThis.Element.prototype.getAttributeNodeNS = function(ns, localName) {
-        var val = this.getAttributeNS ? this.getAttributeNS(ns, localName) : this.getAttribute(localName);
-        if (val === null) return null;
-        if (!this._attrNodes) this._attrNodes = {};
-        var ln = String(localName), key = (ns || '') + ':' + ln;
-        if (this._attrNodes[key]) { this._attrNodes[key].value = val; return this._attrNodes[key]; }
-        var doc = this.ownerDocument || (typeof document !== 'undefined' ? document : null);
-        var attr = (doc && doc.createAttributeNS) ? doc.createAttributeNS(ns, localName) : { name: localName, localName: localName, namespaceURI: ns || null, value: val, specified: true, nodeType: 2, nodeName: localName, nodeValue: val };
-        attr.value = val; attr.ownerElement = this; attr.ownerDocument = doc; attr._ownerDocument = doc;
-        if (globalThis.Attr) Object.setPrototypeOf(attr, globalThis.Attr.prototype);
-        this._attrNodes[key] = attr; this._attrNodes[ln] = attr;
-        return attr;
+        var targetNs = (ns === "" || ns === undefined) ? null : (ns === null ? null : String(ns));
+        var targetLocal = String(localName);
+        var attrs = this.attributes;
+        if (attrs) {
+            for (var i = 0; i < attrs.length; i++) {
+                var a = attrs[i];
+                if (a && a.namespaceURI === targetNs && a.localName === targetLocal) {
+                    return a;
+                }
+            }
+        }
+        return null;
     };
 
     globalThis.Element.prototype.setAttributeNode = function(attr) {

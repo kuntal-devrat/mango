@@ -83,7 +83,8 @@
                 var cur = this;
                 while (cur && cur.nodeType === 1) {
                     var t = (cur._tagName || (cur._nodeId !== undefined ? _getTagName(cur._nodeId) : '') || '').toLowerCase();
-                    if (t === 'svg' || t === 'use' || t === 'g' || t === 'path' || t === 'circle' || t === 'rect') return 'http://www.w3.org/2000/svg';
+                    if (t === 'svg' || t === 'use' || t === 'g' || t === 'path' || t === 'circle' || t === 'rect' || t === 'line' || t === 'polygon' || t === 'polyline' || t === 'ellipse' || t === 'text' || t === 'defs' || t === 'marker' || t === 'pattern' || t === 'mask' || t === 'clippath') return 'http://www.w3.org/2000/svg';
+                    if (t === 'math' || t === 'mrow' || t === 'mi' || t === 'mo' || t === 'mn' || t === 'ms' || t === 'mspace' || t === 'mtext') return 'http://www.w3.org/1998/Math/MathML';
                     cur = cur._parentNode || cur.parentNode;
                 }
                 var doc = this.ownerDocument || (typeof document !== 'undefined' ? document : null);
@@ -178,17 +179,23 @@
                 }
                 return this._dataset;
             },
-            get id() { return this.getAttribute("id") || ""; },
-            set id(val) { this.setAttribute("id", val); },
-            get className() { return this.getAttribute("class") || ""; },
-            set className(val) { this.setAttribute("class", val); },
+            get id() { return (typeof this.getAttribute === 'function') ? (this.getAttribute("id") || "") : (this._id || ""); },
+            set id(val) { if (typeof this.setAttribute === 'function') this.setAttribute("id", val); else this._id = val; },
+            get className() { return (typeof this.getAttribute === 'function') ? (this.getAttribute("class") || "") : (this._className || ""); },
+            set className(val) { if (typeof this.setAttribute === 'function') this.setAttribute("class", val); else this._className = val; },
             get classList() {
                 if (!this._classList) this._classList = _createClassList(this._nodeId, this);
                 return this._classList;
             },
             get style() {
-                if (!this._style) this._style = _createStyleObject(this._nodeId);
+                if (!this._style) this._style = _createStyleObject(this._nodeId, this);
                 return this._style;
+            },
+            set style(val) {
+                if (!this._style) this._style = _createStyleObject(this._nodeId, this);
+                if (typeof val === 'string') {
+                    this._style.cssText = val;
+                }
             },
             get pathname() {
                 if (this._customPathname !== undefined) return this._customPathname;

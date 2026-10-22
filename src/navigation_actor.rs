@@ -220,6 +220,7 @@ impl NavigationActorHandle {
                                                         epoch,
                                                     },
                                                 );
+                                                mango_core::wake_event_loop();
                                             }
                                         } else {
                                             early_fcp_cb.store(false, Ordering::SeqCst);
@@ -248,6 +249,7 @@ impl NavigationActorHandle {
                                     push_history,
                                     epoch,
                                 });
+                                mango_core::wake_event_loop();
                             }
                         }
                         Ok(Err(e)) => {
@@ -259,6 +261,7 @@ impl NavigationActorHandle {
                                     push_history,
                                     epoch,
                                 });
+                                mango_core::wake_event_loop();
                             }
                         }
                         Err(timeout_msg) => {
@@ -270,6 +273,7 @@ impl NavigationActorHandle {
                                     push_history,
                                     epoch,
                                 });
+                                mango_core::wake_event_loop();
                             }
                         }
                     }
@@ -313,6 +317,7 @@ impl NavigationActorHandle {
                                     push_history,
                                     epoch,
                                 });
+                                mango_core::wake_event_loop();
                             }
                         }
                         Ok(Err(e)) => {
@@ -324,6 +329,7 @@ impl NavigationActorHandle {
                                     push_history,
                                     epoch,
                                 });
+                                mango_core::wake_event_loop();
                             }
                         }
                         Err(timeout_msg) => {
@@ -335,6 +341,7 @@ impl NavigationActorHandle {
                                     push_history,
                                     epoch,
                                 });
+                                mango_core::wake_event_loop();
                             }
                         }
                     }
@@ -412,6 +419,7 @@ impl NavigationActorHandle {
     #[cfg(test)]
     pub fn inject_result_for_test(&self, res: NavResult) {
         let _ = self.result_tx.send(res);
+        mango_core::wake_event_loop();
     }
 
     /// Gracefully signals all navigation workers to terminate and awaits their completion.

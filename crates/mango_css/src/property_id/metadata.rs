@@ -99,6 +99,9 @@ impl CssPropertyId {
             "line-height" => Some(Self::LineHeight),
             "text-align" => Some(Self::TextAlign),
             "text-decoration" => Some(Self::TextDecoration),
+            "text-decoration-line" => Some(Self::TextDecorationLine),
+            "text-decoration-style" => Some(Self::TextDecorationStyle),
+            "text-decoration-color" => Some(Self::TextDecorationColor),
             "text-transform" => Some(Self::TextTransform),
             "letter-spacing" => Some(Self::LetterSpacing),
             "word-spacing" => Some(Self::WordSpacing),
@@ -299,6 +302,9 @@ impl CssPropertyId {
             Self::LineHeight => "line-height",
             Self::TextAlign => "text-align",
             Self::TextDecoration => "text-decoration",
+            Self::TextDecorationLine => "text-decoration-line",
+            Self::TextDecorationStyle => "text-decoration-style",
+            Self::TextDecorationColor => "text-decoration-color",
             Self::TextTransform => "text-transform",
             Self::LetterSpacing => "letter-spacing",
             Self::WordSpacing => "word-spacing",
@@ -417,7 +423,6 @@ impl CssPropertyId {
                 | Self::FontFamily
                 | Self::LineHeight
                 | Self::TextAlign
-                | Self::TextDecoration
                 | Self::TextTransform
                 | Self::LetterSpacing
                 | Self::WordSpacing
@@ -594,6 +599,9 @@ impl CssPropertyId {
             LineHeight,
             TextAlign,
             TextDecoration,
+            TextDecorationLine,
+            TextDecorationStyle,
+            TextDecorationColor,
             TextTransform,
             LetterSpacing,
             WordSpacing,

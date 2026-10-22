@@ -1,6 +1,7 @@
 pub mod attributes;
 pub mod canvas;
 pub mod computed;
+pub mod computed_format;
 pub mod cookies;
 pub mod css_ops;
 pub mod mutation;
@@ -17,4 +18,3 @@ pub use mutation::*;
 pub use query::*;
 pub use traversal::*;
 pub use types::*;
-

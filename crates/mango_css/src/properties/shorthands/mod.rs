@@ -23,5 +23,6 @@ pub(crate) use flex_grid::{
 };
 pub(crate) use typography::{
     expand_columns_shorthand, expand_contain_intrinsic_size_shorthand, expand_container_shorthand,
-    expand_font_shorthand, expand_mask_shorthand, expand_text_emphasis_shorthand,
+    expand_font_shorthand, expand_mask_shorthand, expand_text_decoration_shorthand,
+    expand_text_emphasis_shorthand,
 };

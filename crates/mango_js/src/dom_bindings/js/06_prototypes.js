@@ -98,39 +98,6 @@
             }
             _search(node);
             if (found) return found;
-
-            if (s === '#engagement-panel-scrim' || s.indexOf('engagement-panel-scrim') !== -1) {
-                return {
-                    nodeType: 1, tagName: 'DIV', id: 'engagement-panel-scrim',
-                    addEventListener: function() {}, removeEventListener: function() {}, dispatchEvent: function() { return true; },
-                    style: _createStyleObject(), classList: { add: function() {}, remove: function() {}, toggle: function() {}, contains: function() { return false; } },
-                    setAttribute: function() {}, getAttribute: function() { return null; }, removeAttribute: function() {}
-                };
-            }
-            if (s.indexOf('info-skeleton') !== -1 || s.indexOf('meta-skeleton') !== -1 || s.indexOf('related-skeleton') !== -1) {
-                var idName = s.indexOf('info-skeleton') !== -1 ? 'info-skeleton' : (s.indexOf('meta-skeleton') !== -1 ? 'meta-skeleton' : 'related-skeleton');
-                return {
-                    nodeType: 1, tagName: 'DIV', id: idName,
-                    appendChild: function(c) { return c; }, removeChild: function(c) { return c; }, insertBefore: function(c) { return c; },
-                    addEventListener: function() {}, removeEventListener: function() {}, style: _createStyleObject()
-                };
-            }
-            if (s.indexOf('button') !== -1) {
-                return {
-                    nodeType: 1, tagName: 'DIV', id: 'button', children: [], childNodes: [],
-                    querySelector: function() { return null; }, querySelectorAll: function() { return []; },
-                    addEventListener: function() {}, removeEventListener: function() {}, style: _createStyleObject()
-                };
-            }
-            if (s === '#background' || s.indexOf('background') !== -1) {
-                return {
-                    nodeType: 1, tagName: 'DIV', id: 'background', children: [], childNodes: [],
-                    querySelector: function() { return null; }, querySelectorAll: function() { return []; },
-                    addEventListener: function() {}, removeEventListener: function() {}, dispatchEvent: function() { return true; },
-                    style: _createStyleObject(), classList: { add: function() {}, remove: function() {}, toggle: function() {}, contains: function() { return false; } },
-                    setAttribute: function() {}, getAttribute: function() { return null; }, removeAttribute: function() {}
-                };
-            }
             return null;
         }
 

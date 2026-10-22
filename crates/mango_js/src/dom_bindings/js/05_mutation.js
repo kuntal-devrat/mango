@@ -6,7 +6,7 @@
     var _wrapperCache = {};
 
     function _invokeConnectedCallback(node, visited) {
-        if (!node || typeof node !== 'object') return;
+        if (!node || typeof node !== 'object' || node.nodeType !== 1) return;
         if (!visited) visited = new Set();
         if (visited.has(node)) return;
         visited.add(node);
@@ -42,49 +42,53 @@
                     ctrl.connectedCallback();
                 } catch(e) {
                     if (typeof console !== 'undefined' && console.warn) {
-                        console.warn("[_invokeConnectedCallback polymerController.connectedCallback error]:", (e && e.stack) ? e.stack : e);
+                        console.warn("[_invokeConnectedCallback polymerController.connectedCallback error]:", e);
                     }
                 }
             }
             if (typeof ctrl.attached === 'function' && !ctrl._isAttachedCalled) {
                 ctrl._isAttachedCalled = true;
-                try {
-                    ctrl.attached();
-                } catch(e) {
-                    if (typeof console !== 'undefined' && console.warn) {
-                        console.warn("[_invokeConnectedCallback polymerController.attached error]:", (e && e.stack) ? e.stack : e);
-                    }
-                }
+                try { ctrl.attached(); } catch(e) {}
             }
         }
         if (typeof node.dispatchEvent === 'function') {
             try {
-                var evt = (typeof globalThis.CustomEvent === 'function')
+                node.dispatchEvent((typeof globalThis.CustomEvent === 'function')
                     ? new globalThis.CustomEvent('attached', { bubbles: true, composed: true })
-                    : { type: 'attached', target: node, bubbles: true, composed: true, defaultPrevented: false };
-                node.dispatchEvent(evt);
+                    : { type: 'attached', target: node, bubbles: true, composed: true });
             } catch(e) {}
         }
         if (node && (node.id === 'page-manager' || (node.tagName && String(node.tagName).toLowerCase() === 'ytd-page-manager'))) {
             try {
                 var appEl = (typeof document !== 'undefined' && document.querySelector) ? document.querySelector('ytd-app') : null;
                 var appCtrl = appEl && (appEl.polymerController || appEl);
-                if (appCtrl && appCtrl.pageManagerAttachedPromise && typeof appCtrl.pageManagerAttachedPromise.resolve === 'function') {
-                    appCtrl.pageManagerAttachedPromise.resolve();
-                }
+                if (appCtrl && appCtrl.pageManagerAttachedPromise && typeof appCtrl.pageManagerAttachedPromise.resolve === 'function') appCtrl.pageManagerAttachedPromise.resolve();
             } catch(e) {}
         }
         var nodeTag = (node.tagName || '').toLowerCase();
-        if ((nodeTag === 'script' || nodeTag === 'link') && !node._hasDispatchedLoad) {
+        if (nodeTag === 'script' && node.isConnected && !node._alreadyStarted) {
+            node._alreadyStarted = true;
+            var scriptType = (node.getAttribute && node.getAttribute('type')) ? String(node.getAttribute('type')).trim().toLowerCase() : '';
+            var isJs = !scriptType || scriptType === 'text/javascript' || scriptType === 'application/javascript' || scriptType === 'module' || scriptType === 'text/ecmascript';
+            var code = (node.text !== undefined && node.text !== null) ? node.text : (node.textContent || '');
+            if (isJs && code.trim()) {
+                var prevScript = (typeof document !== 'undefined') ? document.currentScript : null;
+                if (typeof globalThis.__setCurrentScript === 'function') globalThis.__setCurrentScript(node);
+                try {
+                    (1, eval)(code);
+                } catch(err) {
+                    if (typeof console !== 'undefined' && console.error) console.error('[Script error]:', err);
+                } finally {
+                    if (typeof globalThis.__setCurrentScript === 'function') globalThis.__setCurrentScript(prevScript);
+                }
+            }
+        }
+        if ((nodeTag === 'script' || nodeTag === 'link' || nodeTag === 'style') && !node._hasDispatchedLoad) {
             node._hasDispatchedLoad = true;
             setTimeout(function() {
                 try {
-                    if (typeof node.onload === 'function') {
-                        node.onload({ type: 'load', target: node });
-                    }
-                    if (typeof node.dispatchEvent === 'function') {
-                        node.dispatchEvent(new Event('load'));
-                    }
+                    if (typeof node.onload === 'function') node.onload({ type: 'load', target: node });
+                    if (typeof node.dispatchEvent === 'function') node.dispatchEvent(new Event('load'));
                 } catch(e) {}
             }, 0);
         }
@@ -94,8 +98,9 @@
                 _invokeConnectedCallback(kids[i], visited);
             }
         }
-        if (node.shadowRoot) {
-            _invokeConnectedCallback(node.shadowRoot, visited);
+        var shadow = node.shadowRoot || node._shadowRoot || node._shadowRootInstance;
+        if (shadow) {
+            _invokeConnectedCallback(shadow, visited);
         } else if (node.root && node.root !== node && node.root.host === node) {
             _invokeConnectedCallback(node.root, visited);
         }
@@ -108,26 +113,18 @@
         if (visited.has(node)) return;
         visited.add(node);
 
-        if (typeof node.disconnectedCallback === 'function' && node._isCustomConnected) {
-            node._isCustomConnected = false;
-            try { node.disconnectedCallback(); } catch(e) {}
-        }
-        if (typeof node.detached === 'function' && node._isAttachedCalled) {
-            node._isAttachedCalled = false;
-            try { node.detached(); } catch(e) {}
-        }
-        if (node.polymerController && typeof node.polymerController.detached === 'function' && node.polymerController._isAttachedCalled) {
-            node.polymerController._isAttachedCalled = false;
-            try { node.polymerController.detached(); } catch(e) {}
-        }
+        if (typeof node.disconnectedCallback === 'function' && node._isCustomConnected) { node._isCustomConnected = false; try { node.disconnectedCallback(); } catch(e) {} }
+        if (typeof node.detached === 'function' && node._isAttachedCalled) { node._isAttachedCalled = false; try { node.detached(); } catch(e) {} }
+        if (node.polymerController && typeof node.polymerController.detached === 'function' && node.polymerController._isAttachedCalled) { node.polymerController._isAttachedCalled = false; try { node.polymerController.detached(); } catch(e) {} }
         var kids = node.childNodes;
         if (kids) {
             for (var i = 0; i < kids.length; i++) {
                 _invokeDisconnectedCallback(kids[i], visited);
             }
         }
-        if (node.shadowRoot) {
-            _invokeDisconnectedCallback(node.shadowRoot, visited);
+        var disShadow = node.shadowRoot || node._shadowRoot || node._shadowRootInstance;
+        if (disShadow) {
+            _invokeDisconnectedCallback(disShadow, visited);
         } else if (node.root && node.root !== node && node.root.host === node) {
             _invokeDisconnectedCallback(node.root, visited);
         }
@@ -749,6 +746,13 @@
                     addedNodes: (strVal !== "" && node.firstChild) ? [node.firstChild] : [],
                     removedNodes: oldKids
                 });
+                if (strVal !== "") {
+                    globalThis._reportDOMMutation({
+                        type: 'characterData',
+                        target: (node.firstChild || node),
+                        oldValue: null
+                    });
+                }
             }
             return;
         }

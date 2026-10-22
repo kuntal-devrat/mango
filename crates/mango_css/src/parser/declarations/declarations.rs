@@ -8,8 +8,11 @@ use crate::parser::declarations::transforms::try_parse_transform_list;
 use crate::parser::declarations::typography::{
     try_parse_content, try_parse_counter_actions, try_parse_font_feature_settings,
     try_parse_font_variation_settings, try_parse_hyphens, try_parse_line_clamp,
-    try_parse_overflow_wrap, try_parse_quotes, try_parse_text_decoration_thickness,
-    try_parse_text_emphasis_style, try_parse_white_space, try_parse_word_break,
+    try_parse_overflow_wrap, try_parse_quotes, try_parse_text_decoration,
+    try_parse_text_decoration_color, try_parse_text_decoration_line,
+    try_parse_text_decoration_style, try_parse_text_decoration_thickness,
+    try_parse_text_emphasis_style, try_parse_text_underline_offset, try_parse_white_space,
+    try_parse_word_break,
 };
 use crate::parser::declarations::value::parse_value_from_tokens;
 use crate::parser::declarations::visual::{
@@ -143,6 +146,93 @@ impl CssParser {
                                     out.extend(inner_rules);
                                 }
                             }
+                        }
+                        continue;
+                    } else if kw.eq_ignore_ascii_case("scope") {
+                        self.skip_whitespace_and_comments();
+                        let mut root = None;
+                        if *self.peek() == Token::OpenParen {
+                            self.advance();
+                            let mut root_tokens = Vec::new();
+                            let mut depth = 1;
+                            while *self.peek() != Token::Eof && depth > 0 {
+                                match self.peek() {
+                                    Token::OpenParen => {
+                                        depth += 1;
+                                        root_tokens.push(self.advance());
+                                    }
+                                    Token::CloseParen => {
+                                        depth -= 1;
+                                        if depth > 0 {
+                                            root_tokens.push(self.advance());
+                                        } else {
+                                            self.advance();
+                                            break;
+                                        }
+                                    }
+                                    _ => root_tokens.push(self.advance()),
+                                }
+                            }
+                            let mut root_parser = CssParser::new(root_tokens);
+                            if let Some(rsel) = root_parser.parse_selector_list() {
+                                root = Some(crate::selectors::expand_nested_selectors(
+                                    parent_sel, &rsel,
+                                ));
+                            }
+                        } else {
+                            root = Some(parent_sel.clone());
+                        }
+
+                        self.skip_whitespace_and_comments();
+                        let mut limit = None;
+                        if let Token::Ident(to_kw) = self.peek().clone() {
+                            if to_kw.eq_ignore_ascii_case("to") {
+                                self.advance();
+                                self.skip_whitespace_and_comments();
+                                if *self.peek() == Token::OpenParen {
+                                    self.advance();
+                                    let mut limit_tokens = Vec::new();
+                                    let mut depth = 1;
+                                    while *self.peek() != Token::Eof && depth > 0 {
+                                        match self.peek() {
+                                            Token::OpenParen => {
+                                                depth += 1;
+                                                limit_tokens.push(self.advance());
+                                            }
+                                            Token::CloseParen => {
+                                                depth -= 1;
+                                                if depth > 0 {
+                                                    limit_tokens.push(self.advance());
+                                                } else {
+                                                    self.advance();
+                                                    break;
+                                                }
+                                            }
+                                            _ => limit_tokens.push(self.advance()),
+                                        }
+                                    }
+                                    let mut limit_parser = CssParser::new(limit_tokens);
+                                    limit = limit_parser.parse_selector_list();
+                                }
+                            }
+                        }
+
+                        self.skip_whitespace_and_comments();
+                        if *self.peek() == Token::OpenCurly {
+                            self.advance();
+                            let scope_rules = self.parse_rule_list(true);
+                            if *self.peek() == Token::CloseCurly {
+                                self.advance();
+                            }
+                            if let Some(out) = out_rules.as_deref_mut() {
+                                out.push(Rule::Scope(crate::parser::types::ScopeRule {
+                                    root,
+                                    limit,
+                                    rules: scope_rules,
+                                }));
+                            }
+                        } else {
+                            self.skip_unknown_rule_or_block();
                         }
                         continue;
                     } else {
@@ -339,8 +429,12 @@ impl CssParser {
                     .or_else(|| parse_value_from_tokens(&value_tokens)),
                 "text-emphasis-style" => try_parse_text_emphasis_style(&value_tokens)
                     .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "text-decoration-thickness" => try_parse_text_decoration_thickness(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
+                "text-decoration-line" => try_parse_text_decoration_line(&value_tokens),
+                "text-decoration-style" => try_parse_text_decoration_style(&value_tokens),
+                "text-decoration-color" => try_parse_text_decoration_color(&value_tokens),
+                "text-decoration-thickness" => try_parse_text_decoration_thickness(&value_tokens),
+                "text-underline-offset" => try_parse_text_underline_offset(&value_tokens),
+                "text-decoration" => try_parse_text_decoration(&value_tokens),
                 "filter" | "-webkit-filter" | "backdrop-filter" | "-webkit-backdrop-filter" => {
                     try_parse_filter_list(&value_tokens)
                         .or_else(|| parse_value_from_tokens(&value_tokens))
@@ -466,10 +560,7 @@ impl CssParser {
                                 "ruby-text" => Some(Display::RubyText),
                                 _ => None,
                             };
-                            match disp {
-                                Some(d) => Some(Value::Display(d)),
-                                None => None,
-                            }
+                            disp.map(Value::Display)
                         } else {
                             None
                         }
@@ -588,57 +679,91 @@ impl CssParser {
                                 _ => None,
                             })
                             .collect();
-                    if idents.len() == 1 {
-                        match idents[0].as_str() {
-                            "none" | "block" | "block-start" | "block-end" | "inline"
-                            | "inline-start" | "inline-end" => {
-                                Some(Value::Keyword(idents[0].clone()))
+                        if idents.len() == 1 {
+                            match idents[0].as_str() {
+                                "none" | "block" | "block-start" | "block-end" | "inline"
+                                | "inline-start" | "inline-end" => {
+                                    Some(Value::Keyword(idents[0].clone()))
+                                }
+                                _ => None,
                             }
-                            _ => None,
-                        }
-                    } else if idents.len() == 2 {
-                        let i0 = idents[0].as_str();
-                        let i1 = idents[1].as_str();
-                        if (i0 == "block-start" && i1 == "block-end")
-                            || (i0 == "block-end" && i1 == "block-start")
-                        {
-                            Some(Value::Keyword("block".to_string()))
-                        } else if (i0 == "inline-start" && i1 == "inline-end")
-                            || (i0 == "inline-end" && i1 == "inline-start")
-                        {
-                            Some(Value::Keyword("inline".to_string()))
+                        } else if idents.len() == 2 {
+                            let i0 = idents[0].as_str();
+                            let i1 = idents[1].as_str();
+                            if (i0 == "block-start" && i1 == "block-end")
+                                || (i0 == "block-end" && i1 == "block-start")
+                            {
+                                Some(Value::Keyword("block".to_string()))
+                            } else if (i0 == "inline-start" && i1 == "inline-end")
+                                || (i0 == "inline-end" && i1 == "inline-start")
+                            {
+                                Some(Value::Keyword("inline".to_string()))
+                            } else {
+                                None
+                            }
                         } else {
                             None
                         }
-                    } else {
-                        None
-                    }
                     }
                 }
                 _ => {
-                    let v = parse_value_from_tokens(&value_tokens);
-                    if v.is_none() && prop_name.starts_with("--") {
-                        let mut raw = String::new();
-                        for tok in &value_tokens {
-                            raw.push_str(&self.token_to_string(tok));
-                        }
-                        let trimmed = raw.trim().to_string();
-                        if !trimmed.is_empty() {
-                            Some(Value::String(trimmed))
+                    if prop_name.starts_with("--") {
+                        let non_ws: Vec<&Token> = value_tokens
+                            .iter()
+                            .filter(|t| !matches!(t, Token::Whitespace | Token::Comment(_)))
+                            .collect();
+                        if non_ws.len() == 1
+                            && let Token::Ident(s) = non_ws[0]
+                            && matches!(
+                                s.to_ascii_lowercase().as_str(),
+                                "initial"
+                                    | "inherit"
+                                    | "unset"
+                                    | "revert"
+                                    | "revert-layer"
+                                    | "revert-rule"
+                            )
+                        {
+                            Some(Value::Keyword(s.to_ascii_lowercase()))
+                        } else if let Some((var_val, consumed)) =
+                            crate::parser::declarations::functions::parse_var_call(&value_tokens)
+                            && value_tokens[consumed..]
+                                .iter()
+                                .all(|t| matches!(t, Token::Whitespace | Token::Comment(_)))
+                        {
+                            Some(var_val)
                         } else {
-                            None
+                            let mut raw = String::new();
+                            for tok in &value_tokens {
+                                raw.push_str(&self.token_to_string(tok));
+                            }
+                            let trimmed = raw.trim().to_string();
+                            if !trimmed.is_empty() {
+                                if let Some(v_parsed) = parse_value_from_tokens(&value_tokens) {
+                                    match v_parsed {
+                                        Value::Color(_) => Some(Value::String(trimmed)),
+                                        other => Some(other),
+                                    }
+                                } else {
+                                    Some(Value::String(trimmed))
+                                }
+                            } else {
+                                None
+                            }
                         }
                     } else {
-                        v
+                        parse_value_from_tokens(&value_tokens)
                     }
                 }
             };
 
             if let Some(parsed_val) = parsed_val {
-                if !crate::properties::validation::is_valid_property_value(&prop_lower, &parsed_val) {
+                if !crate::properties::validation::is_valid_property_value(&prop_lower, &parsed_val)
+                {
                     continue;
                 }
-                let normalized_val = super::font::normalize_unitless_zero_lengths(&prop_lower, parsed_val);
+                let normalized_val =
+                    super::font::normalize_unitless_zero_lengths(&prop_lower, parsed_val);
                 let decl = Declaration::new(prop_name, normalized_val, important);
                 // Expand shorthands (e.g. margin, padding, border) immediately
                 for expanded in decl.expand_shorthand() {

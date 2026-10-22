@@ -88,7 +88,11 @@ impl SimpleSelector {
         };
 
         match self {
-            SimpleSelector::Universal | SimpleSelector::Nesting => true,
+            SimpleSelector::Universal => true,
+            SimpleSelector::Nesting => match current_scope_root() {
+                Some(root_id) => node_id.raw() == root_id.raw(),
+                None => true,
+            },
             SimpleSelector::Type(tag) => el.tag_name.eq_ignore_ascii_case(tag),
             SimpleSelector::Class(class_name) => el.has_class(class_name),
             SimpleSelector::Id(id_name) => el.id() == Some(id_name),
@@ -215,11 +219,68 @@ impl CompoundSelector {
         Self { simple_selectors }
     }
 
+    pub fn has_part_pseudo(&self) -> bool {
+        self.simple_selectors.iter().any(|s| match s {
+            SimpleSelector::PseudoElement(p) => {
+                let lower = p.to_ascii_lowercase();
+                lower.starts_with("part(") && lower.ends_with(')')
+            }
+            _ => false,
+        })
+    }
+
     /// Tests if all simple selectors in this compound selector match the node.
     pub fn matches(&self, node_id: NodeId, doc: &Document) -> bool {
         if self.simple_selectors.is_empty() {
             return false;
         }
+
+        if let Some(part_sel) = self.simple_selectors.iter().find(|s| match s {
+            SimpleSelector::PseudoElement(p) => {
+                let lower = p.to_ascii_lowercase();
+                lower.starts_with("part(") && lower.ends_with(')')
+            }
+            _ => false,
+        }) {
+            let part_name = match part_sel {
+                SimpleSelector::PseudoElement(p) => p[5..p.len() - 1].trim(),
+                _ => unreachable!(),
+            };
+            let Some(node) = doc.get(node_id) else {
+                return false;
+            };
+            let NodeData::Element(elem) = &node.data else {
+                return false;
+            };
+            let Some(part_attr) = elem.get_attribute("part") else {
+                return false;
+            };
+            if !part_attr
+                .split_whitespace()
+                .any(|tok| tok.eq_ignore_ascii_case(part_name))
+            {
+                return false;
+            }
+            let Some(sr_id) = doc.get_enclosing_shadow_root(node_id) else {
+                return false;
+            };
+            let Some(host_id) = doc.get_host_for_shadow_root(sr_id) else {
+                return false;
+            };
+
+            return self
+                .simple_selectors
+                .iter()
+                .filter(|s| match s {
+                    SimpleSelector::PseudoElement(p) => {
+                        let lower = p.to_ascii_lowercase();
+                        !(lower.starts_with("part(") && lower.ends_with(')'))
+                    }
+                    _ => true,
+                })
+                .all(|s| s.matches(host_id, doc));
+        }
+
         self.simple_selectors
             .iter()
             .all(|s| s.matches(node_id, doc))
@@ -297,8 +358,20 @@ impl ComplexSelector {
             return false;
         }
 
+        let start_node = if last_compound.has_part_pseudo() {
+            let Some(sr_id) = doc.get_enclosing_shadow_root(node_id) else {
+                return false;
+            };
+            let Some(host_id) = doc.get_host_for_shadow_root(sr_id) else {
+                return false;
+            };
+            host_id
+        } else {
+            node_id
+        };
+
         self.match_tail(
-            node_id,
+            start_node,
             self.tail.len() - 1,
             *last_comb,
             expected_origin,
@@ -387,7 +460,9 @@ impl ComplexSelector {
                     if Some(parent) != expected_origin {
                         return false;
                     }
-                    if !prev_compound.matches(parent, doc) {
+                    let is_anchor = prev_compound.simple_selectors == [SimpleSelector::Universal]
+                        || prev_compound.simple_selectors == [SimpleSelector::Nesting];
+                    if !is_anchor && !prev_compound.matches(parent, doc) {
                         return false;
                     }
                     return true;
@@ -407,7 +482,12 @@ impl ComplexSelector {
                 let mut curr = current_node;
                 while let Some(parent) = parent_element(curr, doc) {
                     if tail_idx == 0 && expected_origin.is_some() {
-                        if Some(parent) == expected_origin && prev_compound.matches(parent, doc) {
+                        let is_anchor = prev_compound.simple_selectors
+                            == [SimpleSelector::Universal]
+                            || prev_compound.simple_selectors == [SimpleSelector::Nesting];
+                        if Some(parent) == expected_origin
+                            && (is_anchor || prev_compound.matches(parent, doc))
+                        {
                             return true;
                         }
                     } else if prev_compound.matches(parent, doc) {
@@ -432,7 +512,9 @@ impl ComplexSelector {
                     if Some(sibling) != expected_origin {
                         return false;
                     }
-                    if !prev_compound.matches(sibling, doc) {
+                    let is_anchor = prev_compound.simple_selectors == [SimpleSelector::Universal]
+                        || prev_compound.simple_selectors == [SimpleSelector::Nesting];
+                    if !is_anchor && !prev_compound.matches(sibling, doc) {
                         return false;
                     }
                     return true;
@@ -452,7 +534,12 @@ impl ComplexSelector {
                 let mut curr = current_node;
                 while let Some(sibling) = prev_element_sibling(curr, doc) {
                     if tail_idx == 0 && expected_origin.is_some() {
-                        if Some(sibling) == expected_origin && prev_compound.matches(sibling, doc) {
+                        let is_anchor = prev_compound.simple_selectors
+                            == [SimpleSelector::Universal]
+                            || prev_compound.simple_selectors == [SimpleSelector::Nesting];
+                        if Some(sibling) == expected_origin
+                            && (is_anchor || prev_compound.matches(sibling, doc))
+                        {
                             return true;
                         }
                     } else if prev_compound.matches(sibling, doc) {

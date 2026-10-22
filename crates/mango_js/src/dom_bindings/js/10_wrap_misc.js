@@ -211,14 +211,29 @@
                     var n = names[i];
                     var v = self.getAttribute ? (self.getAttribute(n) || '') : '';
                     var nsInfo = (self._nsAttrs && self._nsAttrs[n]) || null;
+                    var isForeign = self.namespaceURI === 'http://www.w3.org/2000/svg' || self.namespaceURI === 'http://www.w3.org/1998/Math/MathML' || (self.ownerDocument && (self.ownerDocument._isXml || self.ownerDocument.contentType === 'application/xhtml+xml' || self.ownerDocument.contentType === 'application/xml'));
                     var colon = String(n).indexOf(':');
-                    var prefix = nsInfo ? nsInfo.prefix : (colon !== -1 ? String(n).substring(0, colon) : null);
-                    var localName = nsInfo ? nsInfo.localName : (colon !== -1 ? String(n).substring(colon + 1) : n);
-                    var nsUri = nsInfo ? nsInfo.namespaceURI : null;
-                    if (!nsUri) {
+                    var prefix = null;
+                    var localName = n;
+                    var nsUri = null;
+                    if (nsInfo) {
+                        prefix = nsInfo.prefix;
+                        localName = nsInfo.localName;
+                        nsUri = nsInfo.namespaceURI;
+                    } else if (isForeign && colon !== -1) {
+                        prefix = String(n).substring(0, colon);
+                        localName = String(n).substring(colon + 1);
                         if (prefix === 'xmlns' || n === 'xmlns') nsUri = 'http://www.w3.org/2000/xmlns/';
                         else if (prefix === 'xlink') nsUri = 'http://www.w3.org/1999/xlink';
                         else if (prefix === 'xml') nsUri = 'http://www.w3.org/XML/1998/namespace';
+                        else {
+                            var anc = self;
+                            while (anc && anc.nodeType === 1) {
+                                var nsVal = (typeof anc.getAttribute === 'function') ? anc.getAttribute('xmlns:' + prefix) : null;
+                                if (nsVal) { nsUri = nsVal; break; }
+                                anc = anc.parentElement || anc.parentNode;
+                            }
+                        }
                     }
                     var attrNode = {
                         name: n, _value: v, specified: true, ownerElement: self, nodeName: n, nodeType: 2,
@@ -265,17 +280,16 @@
                 return attr;
             },
             getAttributeNodeNS: function(ns, localName) {
-                var v = this.getAttributeNS ? this.getAttributeNS(ns, localName) : this.getAttribute(localName);
-                if (v === null) return null;
-                if (!this._attrNodes) this._attrNodes = {};
-                var ln = String(localName), key = (ns || '') + ':' + ln;
-                if (this._attrNodes[key]) { this._attrNodes[key].value = v; return this._attrNodes[key]; }
-                var doc = this.ownerDocument || (typeof document !== 'undefined' ? document : null);
-                var attr = (doc && doc.createAttributeNS) ? doc.createAttributeNS(ns, localName) : { name: localName, localName: localName, namespaceURI: ns || null, value: v, specified: true, nodeType: 2, nodeName: localName, nodeValue: v };
-                attr.value = v; attr.ownerElement = this; attr.ownerDocument = doc; attr._ownerDocument = doc;
-                if (globalThis.Attr) Object.setPrototypeOf(attr, globalThis.Attr.prototype);
-                this._attrNodes[key] = attr; this._attrNodes[ln] = attr;
-                return attr;
+                var targetNs = (ns === "" || ns === undefined) ? null : (ns === null ? null : String(ns));
+                var targetLocal = String(localName);
+                var attrs = this.attributes;
+                for (var i = 0; i < attrs.length; i++) {
+                    var a = attrs[i];
+                    if (a && a.namespaceURI === targetNs && a.localName === targetLocal) {
+                        return a;
+                    }
+                }
+                return null;
             },
             toggleAttribute: function(name, force) {
                 var has = this.hasAttribute(name);
@@ -683,6 +697,11 @@
         var tag = el.localName ? el.localName.toLowerCase() : (el.tagName ? el.tagName.toLowerCase() : '');
         if (tag.indexOf(':') !== -1) tag = tag.split(':')[1];
         var nt = el.nodeType;
+        if (nt !== 1) {
+            delete el.hasAttributes; delete el.attributes; delete el.getAttributeNames;
+            delete el.getAttribute; delete el.setAttribute; delete el.removeAttribute;
+            delete el.hasAttribute; delete el.prefix; delete el.localName; delete el.namespaceURI;
+        }
         if (typeof globalThis !== 'undefined') {
             if (nt === 11 && globalThis.DocumentFragment) {
                 Object.setPrototypeOf(el, globalThis.DocumentFragment.prototype);

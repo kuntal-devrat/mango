@@ -143,15 +143,17 @@ pub fn run_files_isolated(root: &Path, files: &[String]) -> Vec<WptFileResult> {
 
     std::thread::scope(|scope| {
         for _ in 0..workers {
-            scope.spawn(|| loop {
-                let idx = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                if idx >= batches.len() {
-                    break;
+            scope.spawn(|| {
+                loop {
+                    let idx = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    if idx >= batches.len() {
+                        break;
+                    }
+                    let batch = batches[idx];
+                    let batch_results = run_batch_isolated(bin, root, batch);
+                    let mut guard = results.lock().unwrap();
+                    guard[idx] = batch_results;
                 }
-                let batch = batches[idx];
-                let batch_results = run_batch_isolated(bin, root, batch);
-                let mut guard = results.lock().unwrap();
-                guard[idx] = batch_results;
             });
         }
     });
@@ -217,7 +219,7 @@ fn run_batch(bin: &str, root: &Path, files: &[String]) -> Option<Vec<WptFileResu
     if let Some(stdout) = child.stdout.take() {
         use std::io::BufRead;
         let reader = std::io::BufReader::new(stdout);
-        for line in reader.lines().flatten() {
+        for line in reader.lines().map_while(Result::ok) {
             let line = line.trim();
             if line.is_empty() {
                 continue;

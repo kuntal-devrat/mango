@@ -30,6 +30,8 @@ pub const WEB_APIS_SHIM_TEMPLATE: &str = concat!(
     include_str!("js/19_webcodecs.js"),
     include_str!("js/20_opfs_transport_coi.js"),
     include_str!("js/21_test_driver.js"),
+    include_str!("js/22_cssom_rules.js"),
+    include_str!("js/23_cssom_parser.js"),
 );
 
 pub fn build_web_apis_shim(page_url: &str) -> String {

@@ -299,8 +299,8 @@ fn matches_single_condition(
             continue;
         }
 
-        // 3. Boolean feature query: e.g. (hover), (pointer), (color)
-        if !eval_boolean_feature(inner, env) {
+        // 3. Boolean feature query: e.g. (hover), (pointer), (color), (width)
+        if !eval_boolean_feature(inner, width, height, env) {
             return false;
         }
     }
@@ -308,8 +308,11 @@ fn matches_single_condition(
     true
 }
 
-fn eval_boolean_feature(feature: &str, env: &MediaEnvironment) -> bool {
+fn eval_boolean_feature(feature: &str, width: f32, height: f32, env: &MediaEnvironment) -> bool {
     match feature {
+        "width" | "inline-size" => width > 0.0,
+        "height" | "block-size" => height > 0.0,
+        "aspect-ratio" => width > 0.0 && height > 0.0,
         "hover" => env.hover == HoverType::Hover,
         "any-hover" => env.any_hover == HoverType::Hover,
         "pointer" => env.pointer != PointerType::None,

@@ -40,6 +40,11 @@
 
         return new Proxy(base, {
             get: function(target, prop, receiver) {
+                var desc = Object.getOwnPropertyDescriptor(target, prop);
+                if (desc) {
+                    if (desc.get) return desc.get.call(receiver);
+                    if ('value' in desc) return desc.value;
+                }
                 if (prop === 'length') {
                     return (getItemsFn() || []).length;
                 }
@@ -99,6 +104,8 @@
                 return keys;
             },
             getOwnPropertyDescriptor: function(target, prop) {
+                var own = Object.getOwnPropertyDescriptor(target, prop);
+                if (own) return own;
                 var items = getItemsFn() || [];
                 if (prop === 'length') {
                     return { value: items.length, writable: false, enumerable: false, configurable: true };
@@ -127,6 +134,11 @@
 
         return new Proxy(base, {
             get: function(target, prop, receiver) {
+                var desc = Object.getOwnPropertyDescriptor(target, prop);
+                if (desc) {
+                    if (desc.get) return desc.get.call(receiver);
+                    if ('value' in desc) return desc.value;
+                }
                 if (prop === 'length') {
                     return (getItemsFn() || []).length;
                 }
@@ -170,6 +182,8 @@
                 return keys;
             },
             getOwnPropertyDescriptor: function(target, prop) {
+                var own = Object.getOwnPropertyDescriptor(target, prop);
+                if (own) return own;
                 if (prop === 'length') {
                     return { value: (getItemsFn() || []).length, writable: false, enumerable: false, configurable: true };
                 }

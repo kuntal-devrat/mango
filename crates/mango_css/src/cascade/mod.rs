@@ -26,5 +26,6 @@ pub use resolver::{
 pub use rule_index::{RuleIndex, extract_subject_keys_from_is_where};
 pub use types::{
     IndexedContainerRule, IndexedRule, KeySelector, MatchedDeclaration, Origin, PseudoRuleBucket,
+    RegisteredKeyframes, RegisteredProperty, compare_layer_paths,
 };
 pub use user_agent::user_agent_stylesheet;

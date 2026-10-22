@@ -58,6 +58,8 @@ pub fn resolve_cascade_with_shadow_index(
         if let Some(s_index) = shadow_index {
             let host_id = if elem.shadow_root.is_some() {
                 Some(node_id)
+            } else if let Some(sr_id) = doc.get_enclosing_shadow_root(node_id) {
+                doc.get_host_for_shadow_root(sr_id)
             } else {
                 node.parent
             };
@@ -84,6 +86,7 @@ pub fn resolve_cascade_with_shadow_index(
         // 3. Inline style="..." attribute on the element itself
         if let Some(style_attr) = elem.get_attribute("style") {
             let inline_decls = parse_declaration_list(style_attr);
+            let inline_rule_id = source_order + 10_000_000;
             for decl in inline_decls {
                 if decl.is_shorthand() {
                     for expanded in decl.expand_shorthand() {
@@ -93,7 +96,9 @@ pub fn resolve_cascade_with_shadow_index(
                             specificity: Specificity(1, 0, 0),
                             origin: Origin::Inline,
                             source_order,
-                            layer_order: None,
+                            layer_path: std::sync::Arc::from([]),
+                            rule_id: inline_rule_id,
+                            scope_proximity: None,
                         });
                     }
                 } else {
@@ -103,17 +108,97 @@ pub fn resolve_cascade_with_shadow_index(
                         specificity: Specificity(1, 0, 0),
                         origin: Origin::Inline,
                         source_order,
-                        layer_order: None,
+                        layer_path: std::sync::Arc::from([]),
+                        rule_id: inline_rule_id,
+                        scope_proximity: None,
                     });
                 }
             }
         }
     }
 
-    matched_decls.sort_by_key(|a| a.cascade_weight());
-    let mut resolved = HashMap::new();
+    matched_decls.sort_by(|a, b| a.compare_cascade(b));
+    resolve_matched_declarations(&matched_decls)
+}
+
+fn resolve_matched_declarations(matched_decls: &[MatchedDeclaration]) -> HashMap<String, Value> {
+    let mut decls_by_prop: HashMap<String, Vec<&MatchedDeclaration>> = HashMap::new();
     for matched in matched_decls {
-        resolved.insert(matched.declaration.name, matched.declaration.value);
+        decls_by_prop
+            .entry(matched.declaration.name.clone())
+            .or_default()
+            .push(matched);
+    }
+
+    let mut resolved = HashMap::new();
+    for (prop_name, decls) in decls_by_prop {
+        let mut chosen_val = None;
+        let mut idx = decls.len();
+        let mut skipping_same_layer: Option<&std::sync::Arc<[u32]>> = None;
+        let mut skipping_author_origin = false;
+        let mut skipping_rule_id: Option<usize> = None;
+        let mut reverted_from_important = false;
+
+        while idx > 0 {
+            idx -= 1;
+            let decl = decls[idx];
+
+            if let Some(target_rule) = skipping_rule_id {
+                if decl.rule_id == target_rule {
+                    continue;
+                }
+                skipping_rule_id = None;
+            }
+
+            if skipping_author_origin
+                && (decl.origin == Origin::Author || decl.origin == Origin::Inline)
+            {
+                continue;
+            }
+            if let Some(target_layer) = skipping_same_layer {
+                if decl.origin == Origin::Author && decl.layer_path == *target_layer {
+                    continue;
+                }
+                skipping_same_layer = None;
+            }
+
+            match &decl.declaration.value {
+                Value::Keyword(k) if k.eq_ignore_ascii_case("revert-rule") => {
+                    if decl.declaration.important {
+                        reverted_from_important = true;
+                    }
+                    skipping_rule_id = Some(decl.rule_id);
+                    continue;
+                }
+                Value::Keyword(k) if k.eq_ignore_ascii_case("revert-layer") => {
+                    if reverted_from_important {
+                        // Cycle between revert-rule !important and revert-layer resolves to unset
+                        chosen_val = None;
+                        break;
+                    }
+                    if decl.origin == Origin::Author && !decl.layer_path.is_empty() {
+                        skipping_same_layer = Some(&decl.layer_path);
+                    } else {
+                        skipping_author_origin = true;
+                    }
+                    continue;
+                }
+                Value::Keyword(k) if k.eq_ignore_ascii_case("revert") => {
+                    if decl.origin == Origin::Author || decl.origin == Origin::Inline {
+                        skipping_author_origin = true;
+                    }
+                    continue;
+                }
+                val => {
+                    chosen_val = Some(val.clone());
+                    break;
+                }
+            }
+        }
+
+        if let Some(val) = chosen_val {
+            resolved.insert(prop_name, val);
+        }
     }
     resolved
 }
@@ -171,12 +256,8 @@ pub fn resolve_pseudo_element_cascade_with_shadow_index(
         &mut matched_decls,
     );
 
-    matched_decls.sort_by_key(|a| a.cascade_weight());
-    let mut resolved = HashMap::new();
-    for matched in matched_decls {
-        resolved.insert(matched.declaration.name, matched.declaration.value);
-    }
-    resolved
+    matched_decls.sort_by(|a, b| a.compare_cascade(b));
+    resolve_matched_declarations(&matched_decls)
 }
 
 /// Resolves pseudo-element cascade matching using the indexed author stylesheet rules.

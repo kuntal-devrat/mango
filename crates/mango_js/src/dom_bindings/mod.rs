@@ -21,4 +21,5 @@ pub const DOM_SHIM: &str = concat!(
     include_str!("js/12_components.js"),
     include_str!("js/13_range_selection.js"),
     include_str!("js/14_parsers_and_globals.js"),
+    include_str!("js/15_traversal.js"),
 );

@@ -159,6 +159,8 @@
         if (!p) return "";
         p = WEBKIT_ALIASES[p] || p;
         var camel = p.replace(/-([a-z])/g, function(g) { return g[1].toUpperCase(); });
+        if (p === 'animation-name' && this._props && this._props['animation'] === 'none' && this._props['animation-name'] === undefined) return 'none';
+        if (p === 'place-self' && this._props && this._props['place-self'] !== undefined) return String(this._props['place-self']);
         if (this[camel] !== undefined) return String(this[camel]);
         if (this[p] !== undefined) return String(this[p]);
         if (this._props && this._props[p] !== undefined) return String(this._props[p]);
@@ -173,6 +175,14 @@
         var p = String(prop || '').trim().toLowerCase();
         p = WEBKIT_ALIASES[p] || p;
         this._props[p] = String(val);
+        if (p === 'animation' && String(val).trim() === 'none') {
+            this._props['animation-name'] = 'none';
+        }
+        if (p === 'place-self') {
+            var parts = String(val).trim().split(/\s+/);
+            this._props['align-self'] = parts[0];
+            this._props['justify-self'] = parts[1] || parts[0];
+        }
     };
     CSSStyleDeclaration.prototype.removeProperty = function(prop) {
         if (!this._props) this._props = {};
@@ -182,6 +192,40 @@
         delete this._props[p];
         return prev || "";
     };
+    Object.defineProperty(CSSStyleDeclaration.prototype, 'cssText', {
+        get: function() {
+            var parts = [];
+            var props = this._props || {};
+            for (var k in props) {
+                if (Object.prototype.hasOwnProperty.call(props, k) && props[k] !== undefined && props[k] !== "") {
+                    parts.push(k + ': ' + props[k] + ';');
+                }
+            }
+            return parts.join(' ');
+        },
+        set: function(val) {
+            if (this._props) {
+                for (var k in this._props) {
+                    if (Object.prototype.hasOwnProperty.call(this._props, k)) {
+                        delete this._props[k];
+                    }
+                }
+            }
+            var decls = String(val || '').split(';');
+            for (var i = 0; i < decls.length; i++) {
+                var d = decls[i].trim();
+                if (!d) continue;
+                var colon = d.indexOf(':');
+                if (colon !== -1) {
+                    var p = d.slice(0, colon).trim();
+                    var v = d.slice(colon + 1).trim();
+                    this.setProperty(p, v);
+                }
+            }
+        },
+        configurable: true,
+        enumerable: true
+    });
     CSSStyleDeclaration.prototype.item = function(index) {
         var i = Number(index);
         return (i >= 0 && i < this.length) ? this[i] : "";
@@ -257,13 +301,13 @@
             paddingBottom:    s.paddingBottom    || s.padding || '0px',
             paddingLeft:      s.paddingLeft      || s.padding || '0px',
             border:           s.border           || '0px none rgb(0, 0, 0)',
-            borderWidth:      s.borderWidth      || '0px',
+            borderWidth:      (backendProps && (backendProps['border-width'] || backendProps.borderWidth || backendProps['border-top-width'])) || s.borderWidth || '0px',
             borderTopWidth:   s.borderTopWidth   || s.borderWidth || '0px',
             borderRightWidth: s.borderRightWidth || s.borderWidth || '0px',
             borderBottomWidth:s.borderBottomWidth|| s.borderWidth || '0px',
             borderLeftWidth:  s.borderLeftWidth  || s.borderWidth || '0px',
-            borderStyle:      s.borderStyle      || 'none',
-            borderColor:      s.borderColor      || 'rgb(0, 0, 0)',
+            borderStyle:      (backendProps && (backendProps['border-style'] || backendProps.borderStyle || backendProps['border-top-style'])) || s.borderStyle || 'none',
+            borderColor:      (backendProps && (backendProps['border-color'] || backendProps.borderColor || backendProps['border-top-color'])) || s.borderColor || 'rgb(0, 0, 0)',
             boxSizing:        (backendProps && (backendProps['box-sizing'] || backendProps.boxSizing)) || s.boxSizing        || 'content-box',
             transform:        s.transform        || 'none',
             transition:       s.transition       || 'none',

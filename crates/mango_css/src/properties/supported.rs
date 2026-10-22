@@ -82,7 +82,9 @@ pub const EXTRA_SUPPORTED_PROPERTIES: &[&str] = &[
     "quotes",
     "text-align",
     "text-decoration",
+    "text-decoration-color",
     "text-decoration-line",
+    "text-decoration-style",
     "text-decoration-thickness",
     "text-emphasis-color",
     "text-emphasis-style",
@@ -226,7 +228,9 @@ pub fn is_supported_property(property_name: &str) -> bool {
         return true;
     }
 
-    EXTRA_SUPPORTED_PROPERTIES.binary_search(&prop.as_str()).is_ok()
+    EXTRA_SUPPORTED_PROPERTIES
+        .binary_search(&prop.as_str())
+        .is_ok()
         || EXTRA_SUPPORTED_PROPERTIES.contains(&prop.as_str())
 }
 
@@ -251,9 +255,22 @@ mod tests {
         // A representative sample of the dense registry must be reported as
         // supported, since `is_supported_property` short-circuits on it.
         for name in [
-            "display", "position", "float", "clear", "width", "height", "color",
-            "margin-top", "padding-left", "font-size", "z-index", "overflow",
-            "visibility", "transform", "opacity", "grid-template-columns",
+            "display",
+            "position",
+            "float",
+            "clear",
+            "width",
+            "height",
+            "color",
+            "margin-top",
+            "padding-left",
+            "font-size",
+            "z-index",
+            "overflow",
+            "visibility",
+            "transform",
+            "opacity",
+            "grid-template-columns",
         ] {
             assert!(
                 is_supported_property(name),

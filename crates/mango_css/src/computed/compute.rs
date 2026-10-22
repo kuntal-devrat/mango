@@ -26,7 +26,21 @@ pub fn compute_style_with_shadow_index(
     // ── 1. Inherited properties: start with parent values if available ──
     if let Some(parent) = parent_style {
         style.root_font_size = parent.root_font_size;
-        style.custom_properties = Arc::clone(&parent.custom_properties);
+        let mut inherited_cp = (*parent.custom_properties).clone();
+        inherited_cp.retain(|name, _| {
+            if let Some(reg) = author_index.property_rules.get(name) {
+                reg.inherits
+            } else if let Some(shadow) = shadow_index {
+                shadow
+                    .property_rules
+                    .get(name)
+                    .map(|r| r.inherits)
+                    .unwrap_or(true)
+            } else {
+                true
+            }
+        });
+        style.custom_properties = Arc::new(inherited_cp);
         style.color = parent.color;
         style.font_size = parent.font_size;
         style.font_weight = parent.font_weight;
@@ -76,6 +90,26 @@ pub fn compute_style_with_shadow_index(
         }
     }
 
+    // Apply registered @property initial-values for custom properties not explicitly set
+    for (name, reg) in &author_index.property_rules {
+        if !style.custom_properties.contains_key(name) {
+            if let Some(ref init_val) = reg.initial_value {
+                let cp = Arc::make_mut(&mut style.custom_properties);
+                cp.insert(name.clone(), init_val.clone());
+            }
+        }
+    }
+    if let Some(shadow) = shadow_index {
+        for (name, reg) in &shadow.property_rules {
+            if !style.custom_properties.contains_key(name) {
+                if let Some(ref init_val) = reg.initial_value {
+                    let cp = Arc::make_mut(&mut style.custom_properties);
+                    cp.insert(name.clone(), init_val.clone());
+                }
+            }
+        }
+    }
+
     // Pre-resolve custom property var(--*) references in cascaded declarations
     let mut resolved_cascaded: HashMap<String, Value> = HashMap::with_capacity(cascaded.len());
     let mut visited = HashSet::new();
@@ -103,6 +137,23 @@ pub fn compute_style_with_shadow_index(
     expand_deferred_shorthands(&mut resolved_cascaded);
 
     apply_cascaded_properties(&mut style, &resolved_cascaded, parent_style);
+
+    // Apply keyframe animation styles (offset 0.0 for starting/paused animations)
+    let anim_names: Vec<String> = style.animations.iter().map(|a| a.name.clone()).collect();
+    for anim_name in anim_names {
+        if let Some(kf_reg) = author_index.keyframe_rules.get(&anim_name) {
+            let kf = crate::animation::Keyframes::from_rule(&kf_reg.keyframes);
+            let decls = kf.sample(0.0);
+            apply_cascaded_properties(&mut style, &decls, parent_style);
+        } else if let Some(shadow) = shadow_index {
+            if let Some(kf_reg) = shadow.keyframe_rules.get(&anim_name) {
+                let kf = crate::animation::Keyframes::from_rule(&kf_reg.keyframes);
+                let decls = kf.sample(0.0);
+                apply_cascaded_properties(&mut style, &decls, parent_style);
+            }
+        }
+    }
+
     if parent_style.is_none() {
         style.root_font_size = style.font_size;
     }

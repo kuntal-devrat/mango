@@ -1,9 +1,11 @@
 use crate::parser::declarations::functions::parse_url_fn;
 use crate::parser::declarations::gradient::token_to_string;
+use crate::properties::shorthands::typography::parse_text_decoration_shorthand;
 use crate::tokenizer::Token;
 use crate::values::{
-    ContentItem, CounterAction, FontFeatureSettings, FontVariationSettings, Hyphens, LineClamp,
-    OverflowWrap, TextDecorationThickness, TextEmphasisStyle, Value, WhiteSpace, WordBreak,
+    ContentItem, CounterAction, FontFeatureSettings, FontVariationSettings, Hyphens, Length,
+    LineClamp, OverflowWrap, TextDecorationLine, TextDecorationStyle, TextDecorationThickness,
+    TextEmphasisStyle, Value, WhiteSpace, WordBreak,
 };
 
 pub fn try_parse_word_break(tokens: &[Token]) -> Option<Value> {
@@ -43,7 +45,97 @@ pub fn try_parse_text_emphasis_style(tokens: &[Token]) -> Option<Value> {
 
 pub fn try_parse_text_decoration_thickness(tokens: &[Token]) -> Option<Value> {
     let text: String = tokens.iter().map(token_to_string).collect();
-    TextDecorationThickness::parse(&text).map(Value::TextDecorationThickness)
+    let trimmed = text.trim();
+    if trimmed.eq_ignore_ascii_case("initial")
+        || trimmed.eq_ignore_ascii_case("inherit")
+        || trimmed.eq_ignore_ascii_case("unset")
+        || trimmed.eq_ignore_ascii_case("revert")
+        || trimmed.eq_ignore_ascii_case("revert-layer")
+    {
+        return Some(Value::Keyword(trimmed.to_string()));
+    }
+    TextDecorationThickness::parse(trimmed).map(Value::TextDecorationThickness)
+}
+
+pub fn try_parse_text_decoration_line(tokens: &[Token]) -> Option<Value> {
+    let text: String = tokens.iter().map(token_to_string).collect();
+    let trimmed = text.trim();
+    if trimmed.eq_ignore_ascii_case("initial")
+        || trimmed.eq_ignore_ascii_case("inherit")
+        || trimmed.eq_ignore_ascii_case("unset")
+        || trimmed.eq_ignore_ascii_case("revert")
+        || trimmed.eq_ignore_ascii_case("revert-layer")
+    {
+        return Some(Value::Keyword(trimmed.to_string()));
+    }
+    TextDecorationLine::parse(trimmed).map(Value::TextDecoration)
+}
+
+pub fn try_parse_text_decoration_style(tokens: &[Token]) -> Option<Value> {
+    let text: String = tokens.iter().map(token_to_string).collect();
+    let trimmed = text.trim();
+    if trimmed.eq_ignore_ascii_case("initial")
+        || trimmed.eq_ignore_ascii_case("inherit")
+        || trimmed.eq_ignore_ascii_case("unset")
+        || trimmed.eq_ignore_ascii_case("revert")
+        || trimmed.eq_ignore_ascii_case("revert-layer")
+    {
+        return Some(Value::Keyword(trimmed.to_string()));
+    }
+    TextDecorationStyle::parse(trimmed).map(Value::TextDecorationStyle)
+}
+
+pub fn try_parse_text_decoration_color(tokens: &[Token]) -> Option<Value> {
+    let text: String = tokens.iter().map(token_to_string).collect();
+    let trimmed = text.trim();
+    if trimmed.eq_ignore_ascii_case("initial")
+        || trimmed.eq_ignore_ascii_case("inherit")
+        || trimmed.eq_ignore_ascii_case("unset")
+        || trimmed.eq_ignore_ascii_case("revert")
+        || trimmed.eq_ignore_ascii_case("revert-layer")
+    {
+        return Some(Value::Keyword(trimmed.to_string()));
+    }
+    if trimmed.eq_ignore_ascii_case("currentcolor") {
+        Some(Value::CurrentColor)
+    } else {
+        Value::parse_color(trimmed).map(Value::Color)
+    }
+}
+
+pub fn try_parse_text_underline_offset(tokens: &[Token]) -> Option<Value> {
+    let text: String = tokens.iter().map(token_to_string).collect();
+    let trimmed = text.trim();
+    if trimmed.eq_ignore_ascii_case("initial")
+        || trimmed.eq_ignore_ascii_case("inherit")
+        || trimmed.eq_ignore_ascii_case("unset")
+        || trimmed.eq_ignore_ascii_case("revert")
+        || trimmed.eq_ignore_ascii_case("revert-layer")
+    {
+        return Some(Value::Keyword(trimmed.to_string()));
+    }
+    if trimmed.eq_ignore_ascii_case("auto") {
+        Some(Value::Length(Length::Auto))
+    } else {
+        Length::parse(trimmed).map(Value::Length)
+    }
+}
+
+pub fn try_parse_text_decoration(tokens: &[Token]) -> Option<Value> {
+    let text: String = tokens.iter().map(token_to_string).collect();
+    let trimmed = text.trim();
+    if trimmed.eq_ignore_ascii_case("initial")
+        || trimmed.eq_ignore_ascii_case("inherit")
+        || trimmed.eq_ignore_ascii_case("unset")
+        || trimmed.eq_ignore_ascii_case("revert")
+        || trimmed.eq_ignore_ascii_case("revert-layer")
+    {
+        return Some(Value::Keyword(trimmed.to_string()));
+    }
+    if trimmed.starts_with("var(") {
+        return Some(Value::Keyword(trimmed.to_string()));
+    }
+    parse_text_decoration_shorthand(trimmed).map(|_| Value::String(trimmed.to_string()))
 }
 
 /// Tries to parse `white-space` keywords (normal, nowrap, pre, pre-wrap, pre-line, break-spaces).

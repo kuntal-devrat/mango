@@ -4,8 +4,8 @@ use std::collections::HashMap;
 
 use crate::computed::style::ComputedStyle;
 use crate::values::{
-    Clear, Direction, Float, FontStyle, FontWeight, Length, TextAlign, TextOverflow, TextTransform,
-    UnicodeBidi, Value, WhiteSpace,
+    Clear, Direction, Float, FontStyle, FontWeight, Length, TextAlign, TextDecorationLine,
+    TextDecorationStyle, TextOverflow, TextTransform, UnicodeBidi, Value, WhiteSpace,
 };
 
 /// Pre-applies `font-size` early so subsequent length values (like `em`) can resolve against it.
@@ -113,11 +113,36 @@ pub(crate) fn apply_typography_property(
             },
             _ => {}
         },
-        "text-decoration" => {
-            if let Value::TextDecoration(td) = val {
-                style.text_decoration = *td;
+        "text-decoration" | "text-decoration-line" => match val {
+            Value::TextDecoration(td) => style.text_decoration = *td,
+            Value::Keyword(k) => {
+                if let Some(line) = TextDecorationLine::parse(k) {
+                    style.text_decoration = line;
+                }
             }
-        }
+            _ => {}
+        },
+        "text-decoration-style" => match val {
+            Value::TextDecorationStyle(tds) => style.text_decoration_style = *tds,
+            Value::Keyword(k) => {
+                if let Some(s) = TextDecorationStyle::parse(k) {
+                    style.text_decoration_style = s;
+                }
+            }
+            _ => {}
+        },
+        "text-decoration-color" => match val {
+            Value::Color(c) => style.text_decoration_color = Some(*c),
+            Value::CurrentColor => style.text_decoration_color = None,
+            Value::Keyword(k) => {
+                if k.eq_ignore_ascii_case("currentcolor") {
+                    style.text_decoration_color = None;
+                } else if let Some(c) = Value::parse_color(k) {
+                    style.text_decoration_color = Some(c);
+                }
+            }
+            _ => {}
+        },
         "text-transform" => match val {
             Value::TextTransform(tt) => style.text_transform = *tt,
             Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {

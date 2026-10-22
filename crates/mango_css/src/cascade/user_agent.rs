@@ -84,6 +84,12 @@ pub fn user_agent_stylesheet() -> &'static Stylesheet {
                 text-decoration: underline;
                 cursor: pointer;
             }
+            u, ins {
+                text-decoration: underline;
+            }
+            s, strike, del {
+                text-decoration: line-through;
+            }
             sup {
                 vertical-align: super;
                 font-size: 0.8em;

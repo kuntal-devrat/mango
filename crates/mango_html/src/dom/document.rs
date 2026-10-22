@@ -452,12 +452,13 @@ impl Document {
             if el.shadow_root.is_some() {
                 return None;
             }
+            let actual_host_id = host_node.id;
             el.shadow_root = Some(shadow_fragment);
             el.shadow_root_mode = Some(mode.to_ascii_lowercase());
             el.shadow_root_clonable = clonable;
             el.shadow_root_delegates_focus = delegates_focus;
-            self.shadow_hosts.insert(shadow_fragment, host_id);
-            self.dirty_nodes.insert(host_id);
+            self.shadow_hosts.insert(shadow_fragment, actual_host_id);
+            self.dirty_nodes.insert(actual_host_id);
             self.version = self.version.wrapping_add(1);
             return Some(shadow_fragment);
         }
@@ -502,7 +503,15 @@ impl Document {
 
     /// Returns the host element for a given shadow root fragment ID, if any.
     pub fn get_host_for_shadow_root(&self, sr_id: NodeId) -> Option<NodeId> {
-        self.shadow_hosts.get(&sr_id).copied()
+        self.shadow_hosts.get(&sr_id).copied().or_else(|| {
+            self.shadow_hosts.iter().find_map(|(sr, host)| {
+                if sr.raw() == sr_id.raw() {
+                    Some(*host)
+                } else {
+                    None
+                }
+            })
+        })
     }
 
     /// Finds the nearest enclosing shadow root fragment ID for a given node, if it is inside a shadow tree.
