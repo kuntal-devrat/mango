@@ -33,7 +33,15 @@ pub(crate) fn paint_text(
             mango_css::values::FontStyle::Oblique => mango_render::FontStyle::Oblique,
             mango_css::values::FontStyle::Normal => mango_render::FontStyle::Normal,
         };
-        let decoration = mango_render::TextDecoration::None;
+        let decoration = if s.text_decoration.has_underline() {
+            mango_render::TextDecoration::Underline
+        } else if s.text_decoration.has_line_through() {
+            mango_render::TextDecoration::LineThrough
+        } else if s.text_decoration.has_overline() {
+            mango_render::TextDecoration::Overline
+        } else {
+            mango_render::TextDecoration::None
+        };
 
         // Custom text-decoration rendering (underline, overline, line-through, thickness, color)
         let text_w = box_node.dimensions.content.width();

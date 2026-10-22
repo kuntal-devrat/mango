@@ -125,6 +125,7 @@
         var el = _wrapElement(_origCE(t));
         if (el) {
             var tagLower = _toAsciiLower(t);
+            if (tagLower === 'script') el._dynamicallyInserted = true;
             var tagUpper = _toAsciiUpper(t);
             el._localName = tagLower;
             el.localName = tagLower;

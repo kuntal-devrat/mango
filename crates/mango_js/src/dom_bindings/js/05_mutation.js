@@ -66,7 +66,7 @@
             } catch(e) {}
         }
         var nodeTag = (node.tagName || '').toLowerCase();
-        if (nodeTag === 'script' && node.isConnected && !node._alreadyStarted) {
+        if (nodeTag === 'script' && node.isConnected && !node._alreadyStarted && node._dynamicallyInserted) {
             node._alreadyStarted = true;
             var scriptType = (node.getAttribute && node.getAttribute('type')) ? String(node.getAttribute('type')).trim().toLowerCase() : '';
             var isJs = !scriptType || scriptType === 'text/javascript' || scriptType === 'application/javascript' || scriptType === 'module' || scriptType === 'text/ecmascript';

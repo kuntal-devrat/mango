@@ -105,6 +105,8 @@ jobs:
           sudo apt-get install -y pkg-config libx11-dev libasound2-dev libfontconfig1-dev
       - name: Run Official Web Platform Tests
         run: cargo test --test wpt_official_runner --verbose
+      - name: Verify Modular WPT Expectations
+        run: cargo run --bin wpt-runner -- --check-expectations css/css-text-decor css/css-cascade
       - name: Run WPT CSS Reftests Runner
         run: cargo test --test wpt_css_reftests_runner --verbose
 

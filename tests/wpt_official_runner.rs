@@ -21,6 +21,8 @@
 
 #[path = "wpt/discovery.rs"]
 pub mod discovery;
+#[path = "wpt/expectations.rs"]
+pub mod expectations;
 #[path = "wpt/harness.rs"]
 pub mod harness;
 #[path = "wpt/isolation.rs"]
@@ -30,11 +32,19 @@ pub mod report;
 
 use harness::{WptFileStatus, WptSuiteResult};
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The vendored, byte-exact upstream WPT root.
 fn upstream_root() -> std::path::PathBuf {
     harness::upstream_root()
+}
+
+/// The root directory for modular WPT expectation baselines.
+pub fn expectations_root() -> std::path::PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("wpt")
+        .join("expectations")
 }
 
 /// Runs every test in `subdir` of the vendored upstream tree.
@@ -222,6 +232,21 @@ fn wpt_official_dom_category() {
         "DOM category pass rate regressed to {:.2}% (floor: 45%)",
         suite.pass_percentage()
     );
+
+    let exp_dir = expectations_root();
+    if let Ok(store) = expectations::ExpectationStore::load_from_dir(&exp_dir)
+        && !store.suites.is_empty()
+    {
+        let audit = store.audit_suite(&suite);
+        let summary = audit.summary("DOM CATEGORY");
+        isolation::stream_write(&summary);
+        println!("{summary}");
+        assert!(
+            audit.regressions.is_empty(),
+            "Regressions detected in DOM category:\n{}",
+            audit.regressions.join("\n")
+        );
+    }
 }
 
 /// The whole vendored `css/` category.
@@ -240,6 +265,21 @@ fn wpt_official_css_category() {
         "CSS category pass rate regressed to {:.2}% (floor: 5%)",
         suite.pass_percentage()
     );
+
+    let exp_dir = expectations_root();
+    if let Ok(store) = expectations::ExpectationStore::load_from_dir(&exp_dir)
+        && !store.suites.is_empty()
+    {
+        let audit = store.audit_suite(&suite);
+        let summary = audit.summary("CSS CATEGORY");
+        isolation::stream_write(&summary);
+        println!("{summary}");
+        assert!(
+            audit.regressions.is_empty(),
+            "Regressions detected in CSS category:\n{}",
+            audit.regressions.join("\n")
+        );
+    }
 }
 
 /// Writes a machine-readable conformance report next to the build artifacts.
