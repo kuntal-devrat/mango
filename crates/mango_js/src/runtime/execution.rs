@@ -78,6 +78,30 @@ impl Drop for ExecutionWatchdog {
 }
 
 impl JsRuntime {
+    const MAX_HEAP_BYTES: usize = 512 * 1024 * 1024;
+
+    fn enforce_heap_budget(&mut self) -> Result<(), String> {
+        if self.execution_disabled {
+            return Err("page JavaScript disabled after memory budget exceeded".to_string());
+        }
+        let used = self
+            .runtime
+            .v8_isolate()
+            .get_heap_statistics()
+            .used_heap_size();
+        if used > Self::MAX_HEAP_BYTES {
+            self.execution_disabled = true;
+            self.clear_timers();
+            log::error!(
+                "Disabling page JavaScript at {} MiB (budget {} MiB)",
+                used / (1024 * 1024),
+                Self::MAX_HEAP_BYTES / (1024 * 1024)
+            );
+            return Err("page JavaScript memory budget exceeded".to_string());
+        }
+        Ok(())
+    }
+
     /// Executes an ES Module script and resolves any top-level exports or promises.
     pub fn execute_module(&mut self, source: &str) -> Result<(), String> {
         self.execute_module_with_name_and_timeout(
@@ -103,6 +127,7 @@ impl JsRuntime {
         source: &str,
         timeout: std::time::Duration,
     ) -> Result<(), String> {
+        self.enforce_heap_budget()?;
         let effective_timeout = Self::compute_scaled_timeout(source.len(), timeout);
         let _guard = self.enter_isolate();
         let isolate_handle = self.runtime.v8_isolate().thread_safe_handle();
@@ -158,9 +183,15 @@ impl JsRuntime {
 
         match res {
             Ok(Ok(_)) => {
+                let heap = self
+                    .runtime
+                    .v8_isolate()
+                    .get_heap_statistics()
+                    .used_heap_size();
                 log::debug!(
-                    "ES Module '{name}' executed successfully ({} bytes)",
-                    source.len()
+                    "ES Module '{name}' executed successfully ({} bytes, {} MiB V8 heap)",
+                    source.len(),
+                    heap / (1024 * 1024)
                 );
                 deno_core::v8::scope!(scope, self.runtime.v8_isolate());
                 scope.perform_microtask_checkpoint();
@@ -220,6 +251,7 @@ impl JsRuntime {
         source: &str,
         timeout: std::time::Duration,
     ) -> Result<(), String> {
+        self.enforce_heap_budget()?;
         let effective_timeout = Self::compute_scaled_timeout(source.len(), timeout);
         let _guard = self.enter_isolate();
         let isolate_handle = self.runtime.v8_isolate().thread_safe_handle();
@@ -248,9 +280,15 @@ impl JsRuntime {
 
         match res {
             Ok(Ok(_)) => {
+                let heap = self
+                    .runtime
+                    .v8_isolate()
+                    .get_heap_statistics()
+                    .used_heap_size();
                 log::debug!(
-                    "Script '{name}' executed successfully ({} bytes)",
-                    source.len()
+                    "Script '{name}' executed successfully ({} bytes, {} MiB V8 heap)",
+                    source.len(),
+                    heap / (1024 * 1024)
                 );
                 deno_core::v8::scope!(scope, self.runtime.v8_isolate());
                 scope.perform_microtask_checkpoint();
@@ -346,7 +384,13 @@ impl JsRuntime {
     /// Processes any expired timers and drains promise microtasks with watchdog protection.
     /// Returns `true` if the DOM was mutated.
     pub fn tick(&mut self) -> bool {
-        let scripts = self.event_loop.borrow_mut().drain_due();
+        // Keep one page from monopolising the UI thread. Remaining callbacks
+        // stay queued and are serviced on later browser frames.
+        const MAX_CALLBACKS_PER_TICK: usize = 32;
+        let scripts = self
+            .event_loop
+            .borrow_mut()
+            .drain_due_limited(MAX_CALLBACKS_PER_TICK);
         let mut timer_fired = false;
         for s in scripts {
             if self

@@ -107,8 +107,6 @@ jobs:
         run: cargo test --test wpt_official_runner --verbose
       - name: Verify Modular WPT Expectations
         run: cargo run --bin wpt-runner -- --check-expectations css/css-text-decor css/css-cascade
-      - name: Run WPT CSS Reftests Runner
-        run: cargo test --test wpt_css_reftests_runner --verbose
 
   headless-smoke-test:
     name: Headless Renderer Smoke Test

@@ -2,7 +2,7 @@ use super::*;
 use mango_core::Color;
 use mango_html::parse_html;
 
-use crate::values::{BackgroundRepeat, BackgroundSize, BorderStyle, Length};
+use crate::values::{BackgroundRepeat, BackgroundSize, BorderStyle, Length, Value};
 
 #[test]
 fn test_computed_style_inheritance() {
@@ -56,6 +56,45 @@ fn test_custom_property_basic_var_resolution() {
 
     assert_eq!(p_style.color, Color::rgb(0x33, 0x66, 0x99));
     assert_eq!(p_style.font_size, 24.0);
+}
+
+#[test]
+fn test_custom_property_inheritance_shares_storage_until_override() {
+    let html = r#"
+        <div style="--theme-color: #336699; --base-size: 24px">
+            <p>shared</p>
+            <p style="--theme-color: #ff0000">overridden</p>
+        </div>
+    "#;
+    let doc = parse_html(html);
+    let root = doc.root();
+    let div_id = doc.find_element_by_tag(root, "div").unwrap();
+    let paragraphs: Vec<_> = doc
+        .children(div_id)
+        .filter_map(|node| match node.data {
+            mango_html::dom::NodeData::Element(ref el) if el.tag_name.eq_ignore_ascii_case("p") => {
+                Some(node.id)
+            }
+            _ => None,
+        })
+        .collect();
+
+    let parent = compute_style(div_id, &doc, &[], None);
+    let shared = compute_style(paragraphs[0], &doc, &[], Some(&parent));
+    let overridden = compute_style(paragraphs[1], &doc, &[], Some(&parent));
+
+    assert!(std::sync::Arc::ptr_eq(
+        &parent.custom_properties,
+        &shared.custom_properties
+    ));
+    assert!(!std::sync::Arc::ptr_eq(
+        &parent.custom_properties,
+        &overridden.custom_properties
+    ));
+    assert_eq!(
+        overridden.custom_properties.get("--theme-color"),
+        Some(&Value::String("#ff0000".to_string()))
+    );
 }
 
 #[test]

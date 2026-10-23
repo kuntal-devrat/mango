@@ -109,6 +109,9 @@ pub struct JsRuntime {
     pub web_locks_engine: crate::web_locks::WebLocksEngine,
     /// Registered import maps for ES module resolution.
     pub(crate) import_maps: Arc<Mutex<HashMap<String, String>>>,
+    /// Once exceeded, page script execution is disabled for this document.
+    /// This prevents one page's JS graph from taking down the browser.
+    pub(crate) execution_disabled: bool,
 }
 
 static TOKIO_RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
@@ -268,6 +271,13 @@ impl JsRuntime {
 
         let mut runtime = deno_core::JsRuntime::new(deno_core::RuntimeOptions {
             extensions: vec![crate::ops::init_extension()],
+            // A page isolate is a bounded execution resource. Without an
+            // isolate heap ceiling, a broken/unsupported module graph can
+            // grow V8 past the browser process's memory budget before Mango
+            // gets a chance to reclaim anything.
+            create_params: Some(
+                deno_core::v8::Isolate::create_params().heap_limits(0, 768 * 1024 * 1024),
+            ),
             module_loader: Some(Rc::new(
                 crate::runtime::module_loader::MangoModuleLoader::with_resource_cache(
                     page_url,
@@ -348,6 +358,7 @@ impl JsRuntime {
             shared_worker_hub,
             web_locks_engine,
             import_maps,
+            execution_disabled: false,
         }
     }
 

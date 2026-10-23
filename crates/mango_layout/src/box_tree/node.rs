@@ -9,6 +9,16 @@ use crate::dimensions::Dimensions;
 use super::types::LayoutBox;
 
 impl LayoutBox {
+    /// Counts this box and descendants without allocating. Used by browser
+    /// memory policy before retaining a layout snapshot in BFCache.
+    pub fn descendant_count(&self) -> usize {
+        1 + self
+            .children
+            .iter()
+            .map(LayoutBox::descendant_count)
+            .sum::<usize>()
+    }
+
     pub fn new(box_type: BoxType, style: Option<Arc<ComputedStyle>>) -> Self {
         Self {
             box_type,

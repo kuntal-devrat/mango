@@ -82,10 +82,6 @@ path = "src/bin/headless.rs"
 name = "wpt-runner"
 path = "src/bin/wpt_runner.rs"
 
-[[bin]]
-name = "wpt-reftest-runner"
-path = "src/bin/wpt_reftest_runner.rs"
-
 [dependencies]
 mango_core.workspace = true
 mango_html.workspace = true

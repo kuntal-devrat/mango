@@ -91,13 +91,63 @@ impl<K: std::hash::Hash + Eq + Clone> BoundedSvgRenderStore<K> {
     }
 }
 
-static SVG_DOC_CACHE: OnceLock<RwLock<HashMap<String, std::sync::Arc<SvgDocument>>>> =
-    OnceLock::new();
+pub(crate) struct SvgDocStore {
+    entries: HashMap<String, std::sync::Arc<SvgDocument>>,
+    total_source_bytes: usize,
+}
+
+impl SvgDocStore {
+    const MAX_SOURCE_BYTES: usize = 8 * 1024 * 1024;
+
+    fn new() -> Self {
+        Self {
+            entries: HashMap::with_capacity(128),
+            total_source_bytes: 0,
+        }
+    }
+
+    fn get(&self, key: &str) -> Option<std::sync::Arc<SvgDocument>> {
+        self.entries.get(key).cloned()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn contains_key(&self, key: &str) -> bool {
+        self.entries.contains_key(key)
+    }
+
+    fn insert(&mut self, key: String, value: std::sync::Arc<SvgDocument>) {
+        let bytes = key.len();
+        if bytes > Self::MAX_SOURCE_BYTES {
+            return;
+        }
+        if let Some(old) = self.entries.remove(&key) {
+            // The key owns the source string; recover its size from the old
+            // entry by conservatively rebuilding the total below if needed.
+            let _ = old;
+            self.total_source_bytes = self.entries.keys().map(String::len).sum();
+        }
+        while self.total_source_bytes + bytes > Self::MAX_SOURCE_BYTES && !self.entries.is_empty() {
+            if let Some(oldest) = self.entries.keys().next().cloned() {
+                self.entries.remove(&oldest);
+                self.total_source_bytes = self.entries.keys().map(String::len).sum();
+            }
+        }
+        self.total_source_bytes += bytes;
+        self.entries.insert(key, value);
+    }
+
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.total_source_bytes = 0;
+    }
+}
+
+static SVG_DOC_CACHE: OnceLock<RwLock<SvgDocStore>> = OnceLock::new();
 static SVG_RENDER_CACHE: OnceLock<RwLock<BoundedSvgRenderStore<(String, u32, u32, u32)>>> =
     OnceLock::new();
 
-pub(crate) fn svg_doc_cache() -> &'static RwLock<HashMap<String, std::sync::Arc<SvgDocument>>> {
-    SVG_DOC_CACHE.get_or_init(|| RwLock::new(HashMap::with_capacity(256)))
+pub(crate) fn svg_doc_cache() -> &'static RwLock<SvgDocStore> {
+    SVG_DOC_CACHE.get_or_init(|| RwLock::new(SvgDocStore::new()))
 }
 
 pub(crate) fn svg_render_cache() -> &'static RwLock<BoundedSvgRenderStore<(String, u32, u32, u32)>>
@@ -144,7 +194,7 @@ pub fn render_svg(
     // 2. Check parsed SVG DOM cache
     let doc: std::sync::Arc<SvgDocument> = {
         let parsed_opt = if let Ok(cache) = svg_doc_cache().read() {
-            cache.get(svg_xml).cloned()
+            cache.get(svg_xml)
         } else {
             None
         };
@@ -155,12 +205,6 @@ pub fn render_svg(
             let parsed = SvgDocument::parse(svg_xml)?;
             let arc_doc = std::sync::Arc::new(parsed);
             if let Ok(mut cache) = svg_doc_cache().write() {
-                if cache.len() >= 512 {
-                    let keys_to_remove: Vec<_> = cache.keys().take(256).cloned().collect();
-                    for k in keys_to_remove {
-                        cache.remove(&k);
-                    }
-                }
                 cache.insert(svg_xml.to_string(), arc_doc.clone());
             }
             arc_doc
@@ -256,7 +300,7 @@ pub fn clear_global_svg_symbols() {
 pub fn get_svg_intrinsic_dimensions(svg_xml: &str) -> (Option<f32>, Option<f32>) {
     let doc: std::sync::Arc<SvgDocument> = {
         let cached = if let Ok(cache) = svg_doc_cache().read() {
-            cache.get(svg_xml).cloned()
+            cache.get(svg_xml)
         } else {
             None
         };
@@ -265,9 +309,6 @@ pub fn get_svg_intrinsic_dimensions(svg_xml: &str) -> (Option<f32>, Option<f32>)
         } else if let Some(parsed) = SvgDocument::parse(svg_xml) {
             let arc_doc = std::sync::Arc::new(parsed);
             if let Ok(mut cache) = svg_doc_cache().write() {
-                if cache.len() >= 512 {
-                    cache.clear();
-                }
                 cache.insert(svg_xml.to_string(), arc_doc.clone());
             }
             arc_doc

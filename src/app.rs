@@ -185,6 +185,13 @@ impl ApplicationHandler for MangoApp {
                 needs_redraw = true;
             }
 
+            // Coalesce all DOM mutations observed during this turn into one
+            // layout. This keeps a page with many timers/microtasks from
+            // relaying the entire document once per callback.
+            if state.browser.flush_pending_layout() {
+                needs_redraw = true;
+            }
+
             // Keep draining the background image backlog
             if state.browser.has_pending_image_fetches() && state.browser.drain_pending_images() {
                 needs_redraw = true;

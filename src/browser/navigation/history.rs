@@ -7,16 +7,22 @@ use mango_html::parse_html;
 use mango_js::JsRuntime;
 use mango_net::Url;
 use mango_render::display_list::DisplayList;
-use mango_render::{cache_image, decode_data_uri, get_cached_image};
 
 use super::super::BrowserChrome;
 use super::super::forms::find_element_by_id;
 use super::super::types::ScriptToRun;
 use super::super::welcome::{preprocess_wikipedia_appearance_html, resolve_navigation_input};
 use super::pipeline::{collect_scripts, load_imported_stylesheets_parallel};
-use super::resources::{collect_stylesheet_images, extract_title, load_web_fonts_async};
+use super::resources::{extract_title, load_web_fonts_async};
 use crate::chrome_ui::*;
 use crate::navigation::*;
+
+fn script_source_bytes(script: &ScriptToRun) -> usize {
+    match script {
+        ScriptToRun::Inline { code, .. } | ScriptToRun::Preloaded { code, .. } => code.len(),
+        ScriptToRun::External { .. } => 0,
+    }
+}
 
 impl BrowserChrome {
     /// Navigates the browser to the specified URL or input string.
@@ -85,6 +91,9 @@ impl BrowserChrome {
         skip_embedded_sheets_and_fonts: bool,
         preloaded_scripts: Option<Vec<ScriptToRun>>,
     ) {
+        self.style_index_cache = None;
+        self.style_index_version = u64::MAX;
+        self.style_index_viewport = (0, 0);
         self.current_html = html;
         self.address_text = url.clone();
         self.cursor_pos = self.address_text.len();
@@ -105,7 +114,12 @@ impl BrowserChrome {
         }
         if let Some(tab) = self.tabs.get_mut(self.active_tab_idx) {
             if push_history {
-                if let Some(ref root) = self.root_box {
+                if let Some(ref root) = self.root_box
+                    // Avoid retaining large GitHub/news pages in BFCache. The
+                    // active document remains fully usable; only the frozen
+                    // back/forward copy is omitted.
+                    && root.descendant_count() <= 10_000
+                {
                     let (w, h) = (
                         self.width as f32,
                         (self.height.saturating_sub(HEADER_HEIGHT as u32)) as f32,
@@ -137,6 +151,10 @@ impl BrowserChrome {
         self.layer_tree.clear_page_tiles();
         mango_render::prune_image_caches();
         if let Some(mut old_rt) = self.js_runtime.take() {
+            // Cancel callbacks before dropping the runtime. Otherwise queued
+            // timer/task source strings can keep a large page alive until the
+            // runtime's deferred cleanup runs.
+            old_rt.clear_timers();
             old_rt.gc();
         }
 
@@ -248,34 +266,8 @@ impl BrowserChrome {
                 embedded_sheets.iter().chain(self.cached_stylesheets.iter()),
             ));
 
-        // Pre-layout so the page renders immediately even if scripts take time.
-        // CSS background images are queued from the style scan BEFORE the first
-        // layout (no box tree needed) and fetched on a background worker, so
-        // there is exactly ONE layout here and no middle blocking relayout.
-        if let Some(ref base) = self.base_url.clone() {
-            let mut bg_images = Vec::new();
-            let dummy_doc = js_rt.document_ref();
-            collect_stylesheet_images(&dummy_doc, &self.cached_stylesheets, &mut bg_images);
-            collect_stylesheet_images(&dummy_doc, &embedded_sheets, &mut bg_images);
-            drop(dummy_doc);
-            let mut seen_bg = std::collections::HashSet::new();
-            bg_images.retain(|u| seen_bg.insert(u.clone()));
-            // Inline fast path only (data: URIs + memory cache). Remote URLs go
-            // to the background backlog; never block the UI thread here.
-            let mut remote_bg = Vec::new();
-            for bg in bg_images {
-                if bg.trim_start().starts_with("data:") {
-                    if let Some(decoded) = decode_data_uri(&bg) {
-                        cache_image(&bg, decoded);
-                    }
-                } else if get_cached_image(&bg).is_none() {
-                    remote_bg.push(bg);
-                }
-            }
-            if !remote_bg.is_empty() && self.image_rx.is_none() {
-                self.queue_image_backlog(remote_bg, base.clone());
-            }
-        }
+        // CSS background images are loaded lazily from visible layout boxes;
+        // do not decode every theme texture before the first paint.
         self.relayout();
 
         // Extract and execute scripts in document order
@@ -289,11 +281,38 @@ impl BrowserChrome {
         };
 
         // Separate scripts into sync, async, and defer per HTML spec (§4.12.1)
+        const MAX_PAGE_SCRIPT_BYTES: usize = 16 * 1024 * 1024;
+        const MAX_SINGLE_SCRIPT_BYTES: usize = 4 * 1024 * 1024;
+        // Start with a conservative per-page execution budget. This is a
+        // renderer safety limit, not a claim of full application support;
+        // the budget can be raised after module execution is profiled.
+        const MAX_PAGE_SCRIPTS: usize = 8;
+        const MAX_PAGE_MODULES: usize = 1;
+        let mut script_bytes = 0usize;
+        let mut script_count = 0usize;
+        let mut module_count = 0usize;
         let mut sync_scripts = Vec::new();
         let mut async_scripts = Vec::new();
         let mut defer_scripts = Vec::new();
 
         for s in scripts {
+            let bytes = script_source_bytes(&s).max(64 * 1024);
+            if script_count >= MAX_PAGE_SCRIPTS
+                || (s.is_module() && module_count >= MAX_PAGE_MODULES)
+                || bytes > MAX_SINGLE_SCRIPT_BYTES
+                || script_bytes.saturating_add(bytes) > MAX_PAGE_SCRIPT_BYTES
+            {
+                log::warn!(
+                    "Skipping script above page execution budget ({} bytes)",
+                    bytes
+                );
+                continue;
+            }
+            script_count += 1;
+            if s.is_module() {
+                module_count += 1;
+            }
+            script_bytes += bytes;
             if s.is_defer() {
                 defer_scripts.push(s);
             } else if s.is_async() {

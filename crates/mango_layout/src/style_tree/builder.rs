@@ -65,6 +65,29 @@ pub fn build_style_tree_with_env(
         env.clone(),
     );
 
+    build_style_tree_with_author_index(doc, &author_index, env)
+}
+
+/// Builds a styled tree using a page-level author index that was constructed
+/// once and retained by the caller. Embedded styles are still extracted here
+/// because DOM mutations can add/remove `<style>` elements; the expensive
+/// external stylesheet index is supplied by the page cache.
+pub fn build_style_tree_with_cached_index(
+    doc: &Document,
+    author_index: &RuleIndex<'_>,
+    env: &mango_css::MediaEnvironment,
+) -> Option<StyledNode> {
+    mango_css::set_current_viewport(env.viewport_width, env.viewport_height);
+    scan_and_register_global_svg_symbols(doc);
+    scan_and_register_image_maps(doc);
+    build_style_tree_with_author_index(doc, author_index, env)
+}
+
+fn build_style_tree_with_author_index(
+    doc: &Document,
+    author_index: &RuleIndex<'_>,
+    env: &mango_css::MediaEnvironment,
+) -> Option<StyledNode> {
     // 2.5 Extract stylesheets and build RuleIndexes for all shadow roots
     let all_shadow_roots = scan_all_shadow_roots(doc);
     let mut shadow_sheets: HashMap<NodeId, Vec<Stylesheet>> = HashMap::new();
@@ -86,7 +109,7 @@ pub fn build_style_tree_with_env(
     build_styled_node(
         doc,
         doc.root(),
-        &author_index,
+        author_index,
         &shadow_indexes,
         None,
         None,
@@ -233,6 +256,14 @@ pub fn build_styled_node<'a>(
                 host_shadow_index,
                 parent_style,
             );
+            if style.custom_properties.len() > 1000 {
+                log::debug!(
+                    "large custom-property map: node={} tag={} entries={}",
+                    node_id.raw(),
+                    el.tag_name,
+                    style.custom_properties.len()
+                );
+            }
             if style.display == Display::None {
                 return None;
             }

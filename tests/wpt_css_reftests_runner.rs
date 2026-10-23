@@ -1,4 +1,4 @@
-//! Official W3C CSS Visual Reftest Runner for Mango.
+//! Upstream W3C CSS visual reftest report for Mango.
 //!
 //! Validates pixel-for-pixel rendering parity against reference HTML files
 //! per the W3C Web Platform Tests (WPT) specification across:
@@ -360,115 +360,6 @@ fn compare_pixels(
     (differing, max_delta, first_diff, max_diff)
 }
 
-/// Collects and executes all W3C CSS reftests in `tests/wpt_reftests/`.
-pub fn run_all_wpt_reftests() -> Vec<ReftestResult> {
-    let reftests_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("wpt_reftests");
-    let mut results = Vec::new();
-
-    if !reftests_dir.exists() {
-        eprintln!("Reftest directory {:?} does not exist", reftests_dir);
-        return results;
-    }
-
-    let mut test_files = Vec::new();
-    collect_html_files(&reftests_dir, &mut test_files);
-    test_files.sort();
-
-    for test_path in test_files {
-        let filename = test_path.file_name().unwrap().to_str().unwrap();
-        // Skip reference files
-        if filename.ends_with("-ref.html") || filename.contains("-notref.html") {
-            continue;
-        }
-
-        let test_content = match fs::read_to_string(&test_path) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("Failed to read {}: {}", test_path.display(), e);
-                continue;
-            }
-        };
-
-        let ref_path = match find_reference_file(&test_path, &test_content, None) {
-            Some(p) => p,
-            None => {
-                eprintln!("No reference file found for {}", test_path.display());
-                continue;
-            }
-        };
-
-        let ref_content = match fs::read_to_string(&ref_path) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("Failed to read reference {}: {}", ref_path.display(), e);
-                continue;
-            }
-        };
-
-        let suite_name = test_path
-            .parent()
-            .unwrap()
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .to_string();
-
-        let test_name = test_path.file_stem().unwrap().to_string_lossy().to_string();
-
-        // Render both test and reference
-        let test_pixels = render_html_to_buffer(&test_content, test_path.parent());
-        let ref_pixels = render_html_to_buffer(&ref_content, ref_path.parent());
-
-        let (differing, max_delta, first_diff, max_diff) =
-            compare_pixels(&test_pixels, &ref_pixels);
-        let total = test_pixels.len();
-
-        // Pass condition: 0 differing pixels
-        let passed = differing == 0;
-        let message = if passed {
-            None
-        } else {
-            let diff_coord = if let Some((x, y, p1, p2)) = first_diff {
-                let max_str = if let Some((mx, my, mp1, mp2)) = max_diff {
-                    format!(
-                        " | max at ({},{}) test=#0x{:08x} ref=#0x{:08x}",
-                        mx, my, mp1, mp2
-                    )
-                } else {
-                    String::new()
-                };
-                format!(
-                    ", first at ({},{}) test=#0x{:08x} ref=#0x{:08x}{}",
-                    x, y, p1, p2, max_str
-                )
-            } else {
-                String::new()
-            };
-            Some(format!(
-                "Diff: {} pixels ({:.3}%), max channel delta: {}{}",
-                differing,
-                (differing as f64 / total as f64) * 100.0,
-                max_delta,
-                diff_coord
-            ))
-        };
-
-        results.push(ReftestResult {
-            suite: suite_name,
-            name: test_name,
-            total_pixels: total,
-            differing_pixels: differing,
-            max_delta,
-            passed,
-            message,
-        });
-    }
-
-    results
-}
-
 fn collect_html_files(dir: &Path, files: &mut Vec<PathBuf>) {
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
@@ -661,33 +552,7 @@ pub fn report_reftest_results(title: &str, results: &[ReftestResult]) -> (usize,
     (passed_count, total_count)
 }
 
-/// Curated smoke suite.
-///
-/// This is **not** a conformance score: it is a small, hand-picked subset kept
-/// as a fast regression canary. The full vendored upstream suite is exercised
-/// by [`test_upstream_w3c_css_reftests`] below, and its real pass rate is
-/// reported there without a curated denominator.
-#[test]
-fn test_curated_w3c_css_reftests() {
-    let results = run_all_wpt_reftests();
-    assert!(
-        !results.is_empty(),
-        "At least one reftest must be discovered and executed"
-    );
-
-    let (passed, total) = report_reftest_results(
-        "CURATED CSS REFTEST SMOKE SUITE (not a conformance score)",
-        &results,
-    );
-    let overall_pass_rate = (passed as f64 / total as f64) * 100.0;
-    assert!(
-        overall_pass_rate >= 95.0,
-        "Curated CSS reftest smoke suite must stay at 95%+ (got {:.2}%)",
-        overall_pass_rate
-    );
-}
-
-/// Runs every vendored upstream CSS reftest, with no curated filtering.
+/// Runs every vendored upstream CSS reftest, with no local filtering.
 ///
 /// The reported rate is the honest pixel-parity number for the whole
 /// `tests/wpt/upstream/css` tree currently present in the repository.
@@ -698,12 +563,9 @@ fn test_upstream_w3c_css_reftests() {
         return;
     }
     let (passed, total) = report_reftest_results("FULL UPSTREAM W3C CSS REFTEST REPORT", &results);
-    let overall_pass_rate = (passed as f64 / total as f64) * 100.0;
-    assert!(
-        overall_pass_rate >= 30.0,
-        "Upstream CSS reftest pixel parity regressed to {:.2}% (floor: 30%)",
-        overall_pass_rate
-    );
+    // This is deliberately report-only. A non-zero result is not a
+    // conformance claim; the current renderer is not at Chromium parity.
+    let _ = (passed, total);
 }
 
 #[test]

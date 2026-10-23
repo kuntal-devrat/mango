@@ -25,6 +25,10 @@ use crate::values::{
 #[derive(Debug, Clone, PartialEq)]
 pub struct ComputedStyle {
     pub custom_properties: Arc<HashMap<String, Value>>,
+    /// Custom properties declared on this element that must not be inherited.
+    /// Keeping these out of the shared inherited map avoids cloning the full
+    /// page variable table when a descendant overrides one registered value.
+    pub local_custom_properties: HashMap<String, Value>,
     pub display: Display,
     pub position: Position,
     pub float: Float,
@@ -368,6 +372,7 @@ impl Default for ComputedStyle {
     fn default() -> Self {
         Self {
             custom_properties: Arc::new(HashMap::new()),
+            local_custom_properties: HashMap::new(),
             display: Display::Inline,
             position: Position::Static,
             float: Float::None,

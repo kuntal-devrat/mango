@@ -7,7 +7,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use super::emoji::{get_or_rasterize_color_emoji, is_emoji_char};
 use super::manager::FontManager;
 use super::types::{
-    ACCESS_COUNTER, CachedGlyph, FontFamily, FontStyle, FontWeight, GlyphCacheEntry, glyph_cache,
+    ACCESS_COUNTER, CachedGlyph, FontFamily, FontStyle, FontWeight, GLYPH_CACHE_BYTES,
+    GlyphCacheEntry, MAX_GLYPH_CACHE_BYTES, glyph_cache,
 };
 
 impl FontManager {
@@ -76,24 +77,39 @@ impl FontManager {
         };
 
         if let Ok(mut cache) = glyph_cache().write() {
-            if cache.len() >= 4096 {
-                // Bounded LRU eviction: retain the most recent 2048 entries instead of clearing all
-                let mut access_times: Vec<u64> = cache
-                    .values()
-                    .map(|e| e.last_access.load(Ordering::Relaxed))
-                    .collect();
-                access_times.sort_unstable();
-                let median_threshold = access_times[access_times.len() / 2];
-                cache.retain(|_, v| v.last_access.load(Ordering::Relaxed) >= median_threshold);
+            let new_bytes = cached.bitmap.len();
+            while new_bytes <= MAX_GLYPH_CACHE_BYTES
+                && GLYPH_CACHE_BYTES.load(Ordering::Relaxed) + new_bytes > MAX_GLYPH_CACHE_BYTES
+                && !cache.is_empty()
+            {
+                let oldest_key = cache
+                    .iter()
+                    .min_by_key(|(_, entry)| entry.last_access.load(Ordering::Relaxed))
+                    .map(|(key, _)| *key);
+                if let Some(key) = oldest_key {
+                    if let Some(removed) = cache.remove(&key) {
+                        GLYPH_CACHE_BYTES.fetch_sub(
+                            removed.glyph.bitmap.len(),
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                    }
+                }
             }
-            let tick = ACCESS_COUNTER.fetch_add(1, Ordering::Relaxed);
-            cache.insert(
-                key,
-                GlyphCacheEntry {
-                    glyph: cached.clone(),
-                    last_access: AtomicU64::new(tick),
-                },
-            );
+            if let Some(old) = cache.remove(&key) {
+                GLYPH_CACHE_BYTES
+                    .fetch_sub(old.glyph.bitmap.len(), std::sync::atomic::Ordering::Relaxed);
+            }
+            if new_bytes <= MAX_GLYPH_CACHE_BYTES {
+                let tick = ACCESS_COUNTER.fetch_add(1, Ordering::Relaxed);
+                cache.insert(
+                    key,
+                    GlyphCacheEntry {
+                        glyph: cached.clone(),
+                        last_access: AtomicU64::new(tick),
+                    },
+                );
+                GLYPH_CACHE_BYTES.fetch_add(new_bytes, std::sync::atomic::Ordering::Relaxed);
+            }
         }
 
         cached

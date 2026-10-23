@@ -37,6 +37,11 @@ impl BrowserChrome {
 
     /// Saves the active tab's WebContents (DOM tree, JS runtime, scroll, form state) into `self.tabs`.
     pub fn save_active_tab_state(&mut self) {
+        // The self-referential stylesheet index is page-local and is rebuilt
+        // when the tab is restored; never leave it pointing at moved fields.
+        self.style_index_cache = None;
+        self.style_index_version = u64::MAX;
+        self.style_index_viewport = (0, 0);
         if let Some(tab) = self.tabs.get_mut(self.active_tab_idx) {
             tab.url = self.address_text.clone();
             tab.title = self.page_title.clone();
@@ -78,6 +83,9 @@ impl BrowserChrome {
                 self.cached_document = contents.cached_document;
                 self.base_url = contents.base_url;
                 self.cached_stylesheets = contents.cached_stylesheets;
+                self.style_index_cache = None;
+                self.style_index_version = u64::MAX;
+                self.style_index_viewport = (0, 0);
                 self.root_box = contents.root_box;
                 self.js_runtime = contents.js_runtime;
                 self.style_snapshot = contents.style_snapshot;
