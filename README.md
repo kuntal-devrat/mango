@@ -4,7 +4,7 @@
 
 **An experimental, lightweight web browser and rendering engine written from scratch in pure Rust.**
 
-[![Version](https://img.shields.io/badge/version-v0.1.15-orange.svg)](Cargo.toml)
+[![Version](https://img.shields.io/badge/version-v0.1.16-orange.svg)](Cargo.toml)
 [![CI](https://github.com/kuntal-devrat/mango/actions/workflows/ci.yml/badge.svg)](https://github.com/kuntal-devrat/mango/actions/workflows/ci.yml)
 [![WPT DOM](https://img.shields.io/badge/WPT%20DOM-78.1%25-brightgreen.svg)](#-web-platform-tests-wpt-conformance)
 [![WPT CSS](https://img.shields.io/badge/WPT%20CSS-50.5%25-blue.svg)](#-web-platform-tests-wpt-conformance)

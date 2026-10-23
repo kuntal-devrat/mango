@@ -11,12 +11,14 @@
 //! bumping the epoch abandons stale queued commands immediately and the
 //! document pipeline checks the epoch between each bounded fetch batch.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use crate::browser::types::fetch_with_timeout;
 use crate::browser::{PreparedDocument, prepare_document_pipeline_cancellable};
 use mango_net::{ResourceLoader, Url};
 
@@ -50,6 +52,79 @@ pub enum NavCommand {
     Shutdown,
 }
 
+/// Per-tab navigation epochs.
+///
+/// A global epoch counter is wrong for a tabbed browser: navigating tab B must
+/// not cancel tab A's in-flight navigation. Each tab owns the latest epoch
+/// allocated for it, and workers only abort when *their* tab's epoch changes.
+struct EpochTracker {
+    next: AtomicU64,
+    /// Latest epoch allocated or cancellation generation, used for diagnostics
+    /// and the legacy `active_epoch()` API.
+    global: AtomicU64,
+    per_tab: Mutex<HashMap<usize, u64>>,
+}
+
+impl EpochTracker {
+    fn new() -> Self {
+        Self {
+            next: AtomicU64::new(1),
+            global: AtomicU64::new(1),
+            per_tab: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn begin(&self, tab_id: usize) -> u64 {
+        let epoch = self.next.fetch_add(1, Ordering::SeqCst) + 1;
+        self.global.fetch_max(epoch, Ordering::SeqCst);
+        if let Ok(mut map) = self.per_tab.lock() {
+            map.insert(tab_id, epoch);
+        }
+        epoch
+    }
+
+    fn is_current(&self, tab_id: usize, epoch: u64) -> bool {
+        self.per_tab
+            .lock()
+            .ok()
+            .and_then(|map| map.get(&tab_id).copied())
+            == Some(epoch)
+    }
+
+    #[cfg(test)]
+    fn force_current(&self, tab_id: usize, epoch: u64) {
+        self.global.fetch_max(epoch, Ordering::SeqCst);
+        if let Ok(mut map) = self.per_tab.lock() {
+            map.insert(tab_id, epoch);
+        }
+    }
+
+    fn invalidate(&self, tab_id: usize) {
+        if let Ok(mut map) = self.per_tab.lock() {
+            map.remove(&tab_id);
+        }
+    }
+
+    fn invalidate_all(&self) {
+        self.global.fetch_add(1, Ordering::SeqCst);
+        if let Ok(mut map) = self.per_tab.lock() {
+            map.clear();
+        }
+    }
+
+    fn for_tab(&self, tab_id: usize) -> u64 {
+        self.per_tab
+            .lock()
+            .ok()
+            .and_then(|map| map.get(&tab_id).copied())
+            .unwrap_or(0)
+    }
+
+    fn latest(&self) -> u64 {
+        self.global.load(Ordering::SeqCst)
+    }
+}
+
 /// Results emitted by the Navigation Actor back to the UI thread.
 pub enum NavResult {
     /// Document pipeline finished successfully on the background actor.
@@ -81,7 +156,7 @@ pub struct NavigationActorHandle {
     result_rx: Receiver<NavResult>,
     #[allow(dead_code)]
     result_tx: Sender<NavResult>,
-    current_epoch: Arc<AtomicU64>,
+    epochs: Arc<EpochTracker>,
     _workers: Vec<JoinHandle<()>>,
 }
 
@@ -94,7 +169,7 @@ impl NavigationActorHandle {
     pub fn spawn(loader: ResourceLoader) -> Self {
         let (cmd_tx, cmd_rx) = channel::<NavCommand>();
         let (result_tx, result_rx) = channel::<NavResult>();
-        let current_epoch = Arc::new(AtomicU64::new(1));
+        let epochs = Arc::new(EpochTracker::new());
         let shared_rx = Arc::new(Mutex::new(cmd_rx));
 
         let mut workers = Vec::with_capacity(NAV_WORKER_COUNT);
@@ -102,11 +177,11 @@ impl NavigationActorHandle {
             let shared_rx = shared_rx.clone();
             let result_tx = result_tx.clone();
             let loader = loader.clone();
-            let epoch_flag = current_epoch.clone();
+            let epochs = epochs.clone();
             let handle = std::thread::Builder::new()
                 .name(format!("mango-nav-worker-{worker_id}"))
                 .spawn(move || {
-                    Self::worker_loop(loader, shared_rx, result_tx, epoch_flag);
+                    Self::worker_loop(loader, shared_rx, result_tx, epochs);
                 })
                 .expect("failed to spawn navigation worker");
             workers.push(handle);
@@ -116,7 +191,7 @@ impl NavigationActorHandle {
             cmd_tx,
             result_rx,
             result_tx,
-            current_epoch,
+            epochs,
             _workers: workers,
         }
     }
@@ -125,7 +200,7 @@ impl NavigationActorHandle {
         loader: ResourceLoader,
         shared_rx: Arc<Mutex<Receiver<NavCommand>>>,
         result_tx: Sender<NavResult>,
-        epoch_flag: Arc<AtomicU64>,
+        epochs: Arc<EpochTracker>,
     ) {
         loop {
             // Receive the next command with bounded timeout so the Mutex is not
@@ -155,14 +230,14 @@ impl NavigationActorHandle {
                     push_history,
                     epoch,
                 } => {
-                    if epoch_flag.load(Ordering::SeqCst) != epoch {
+                    if !epochs.is_current(tab_id, epoch) {
                         continue;
                     }
                     let should_cancel = {
-                        let flag = epoch_flag.clone();
-                        move || flag.load(Ordering::SeqCst) != epoch
+                        let epochs = epochs.clone();
+                        move || !epochs.is_current(tab_id, epoch)
                     };
-                    let cancel_flag = epoch_flag.clone();
+                    let cancel_flag = epochs.clone();
                     let inc_parser = Arc::new(Mutex::new(mango_html::IncrementalParser::new()));
                     let early_fcp_emitted = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
@@ -179,7 +254,7 @@ impl NavigationActorHandle {
                             let url = url.clone();
                             move || {
                                 loader.fetch_document_streaming(&url, move |chunk| {
-                                    if cancel_flag_cb.load(Ordering::SeqCst) != epoch {
+                                    if !cancel_flag_cb.is_current(tab_id, epoch) {
                                         return false;
                                     }
                                     let _new_hints = inc_parser_cb
@@ -207,12 +282,9 @@ impl NavigationActorHandle {
                                                     &loader_cb,
                                                     partial_doc,
                                                     url_cb.clone(),
-                                                    &|| {
-                                                        cancel_flag_cb.load(Ordering::SeqCst)
-                                                            != epoch
-                                                    },
+                                                    &|| !cancel_flag_cb.is_current(tab_id, epoch),
                                                 );
-                                            if cancel_flag_cb.load(Ordering::SeqCst) == epoch {
+                                            if cancel_flag_cb.is_current(tab_id, epoch) {
                                                 let _ = result_tx_cb.send(
                                                     NavResult::ProgressiveReady {
                                                         tab_id,
@@ -242,7 +314,7 @@ impl NavigationActorHandle {
                                 doc_res,
                                 &should_cancel,
                             );
-                            if epoch_flag.load(Ordering::SeqCst) == epoch {
+                            if epochs.is_current(tab_id, epoch) {
                                 let _ = result_tx.send(NavResult::DocumentReady {
                                     tab_id,
                                     prep,
@@ -253,7 +325,7 @@ impl NavigationActorHandle {
                             }
                         }
                         Ok(Err(e)) => {
-                            if epoch_flag.load(Ordering::SeqCst) == epoch {
+                            if epochs.is_current(tab_id, epoch) {
                                 let _ = result_tx.send(NavResult::Error {
                                     tab_id,
                                     url,
@@ -265,7 +337,7 @@ impl NavigationActorHandle {
                             }
                         }
                         Err(timeout_msg) => {
-                            if epoch_flag.load(Ordering::SeqCst) == epoch {
+                            if epochs.is_current(tab_id, epoch) {
                                 let _ = result_tx.send(NavResult::Error {
                                     tab_id,
                                     url,
@@ -286,12 +358,12 @@ impl NavigationActorHandle {
                     push_history,
                     epoch,
                 } => {
-                    if epoch_flag.load(Ordering::SeqCst) != epoch {
+                    if !epochs.is_current(tab_id, epoch) {
                         continue;
                     }
                     let should_cancel = {
-                        let flag = epoch_flag.clone();
-                        move || flag.load(Ordering::SeqCst) != epoch
+                        let epochs = epochs.clone();
+                        move || !epochs.is_current(tab_id, epoch)
                     };
                     match fetch_with_timeout(
                         {
@@ -310,7 +382,7 @@ impl NavigationActorHandle {
                                 doc_res,
                                 &should_cancel,
                             );
-                            if epoch_flag.load(Ordering::SeqCst) == epoch {
+                            if epochs.is_current(tab_id, epoch) {
                                 let _ = result_tx.send(NavResult::DocumentReady {
                                     tab_id,
                                     prep,
@@ -321,7 +393,7 @@ impl NavigationActorHandle {
                             }
                         }
                         Ok(Err(e)) => {
-                            if epoch_flag.load(Ordering::SeqCst) == epoch {
+                            if epochs.is_current(tab_id, epoch) {
                                 let _ = result_tx.send(NavResult::Error {
                                     tab_id,
                                     url,
@@ -333,7 +405,7 @@ impl NavigationActorHandle {
                             }
                         }
                         Err(timeout_msg) => {
-                            if epoch_flag.load(Ordering::SeqCst) == epoch {
+                            if epochs.is_current(tab_id, epoch) {
                                 let _ = result_tx.send(NavResult::Error {
                                     tab_id,
                                     url,
@@ -352,7 +424,7 @@ impl NavigationActorHandle {
 
     /// Requests navigation to a new URL.
     pub fn navigate(&self, tab_id: usize, url: Url, push_history: bool) {
-        let epoch = self.current_epoch.fetch_add(1, Ordering::SeqCst) + 1;
+        let epoch = self.epochs.begin(tab_id);
         let _ = self.cmd_tx.send(NavCommand::Navigate {
             tab_id,
             url,
@@ -370,7 +442,7 @@ impl NavigationActorHandle {
         content_type: String,
         push_history: bool,
     ) {
-        let epoch = self.current_epoch.fetch_add(1, Ordering::SeqCst) + 1;
+        let epoch = self.epochs.begin(tab_id);
         let _ = self.cmd_tx.send(NavCommand::Post {
             tab_id,
             url,
@@ -391,7 +463,7 @@ impl NavigationActorHandle {
     /// stored in their `epoch` field, so simply making the global counter
     /// different is sufficient to invalidate them.
     pub fn cancel(&self) {
-        self.current_epoch.fetch_add(1, Ordering::SeqCst);
+        self.epochs.invalidate_all();
         let _ = self.cmd_tx.send(NavCommand::Cancel);
     }
 
@@ -410,14 +482,38 @@ impl NavigationActorHandle {
         self.result_rx.recv_timeout(timeout)
     }
 
-    /// Returns the current active epoch.
+    /// Returns the newest epoch allocated to any tab (used by diagnostics/tests).
     pub fn active_epoch(&self) -> u64 {
-        self.current_epoch.load(Ordering::SeqCst)
+        self.epochs.latest()
+    }
+
+    /// Returns the latest epoch allocated to a specific tab.
+    pub fn active_epoch_for(&self, tab_id: usize) -> u64 {
+        self.epochs.for_tab(tab_id)
+    }
+
+    /// Returns true if `epoch` is still the current navigation for `tab_id`.
+    pub fn is_current(&self, tab_id: usize, epoch: u64) -> bool {
+        self.epochs.is_current(tab_id, epoch)
+    }
+
+    /// Cancels only the in-flight navigation for one tab.
+    pub fn cancel_tab(&self, tab_id: usize) {
+        self.epochs.invalidate(tab_id);
+        let _ = self.cmd_tx.send(NavCommand::Cancel);
     }
 
     /// Injects a navigation result directly into the result channel for testing.
     #[cfg(test)]
     pub fn inject_result_for_test(&self, res: NavResult) {
+        let (tab_id, epoch) = match &res {
+            NavResult::DocumentReady { tab_id, epoch, .. }
+            | NavResult::ProgressiveReady { tab_id, epoch, .. }
+            | NavResult::Error { tab_id, epoch, .. } => (*tab_id, *epoch),
+        };
+        // Tests inject synthetic results directly; make the injected epoch the
+        // current epoch for that tab so the result is not discarded as stale.
+        self.epochs.force_current(tab_id, epoch);
         let _ = self.result_tx.send(res);
         mango_core::wake_event_loop();
     }
@@ -438,30 +534,6 @@ impl Drop for NavigationActorHandle {
     fn drop(&mut self) {
         self.shutdown();
     }
-}
-
-/// Runs a blocking fetch on a short-lived thread bounded by `timeout`.
-///
-/// Returns `Err(message)` on timeout or thread panic instead of hanging the
-/// navigation worker forever.
-fn fetch_with_timeout<T, F>(f: F, timeout: Duration) -> Result<T, String>
-where
-    T: Send + 'static,
-    F: FnOnce() -> T + Send + 'static,
-{
-    let (tx, rx) = channel();
-    std::thread::Builder::new()
-        .name("mango-nav-fetch".to_string())
-        .spawn(move || {
-            let _ = tx.send(f());
-        })
-        .map_err(|e| format!("failed to spawn fetch thread: {e}"))?;
-    rx.recv_timeout(timeout).map_err(|e| match e {
-        RecvTimeoutError::Timeout => {
-            format!("navigation fetch timed out after {:?}", timeout)
-        }
-        RecvTimeoutError::Disconnected => "navigation fetch worker disconnected".to_string(),
-    })
 }
 
 #[cfg(test)]
@@ -548,6 +620,61 @@ mod tests {
                     }
                     panic!("Unexpected error: {message}");
                 }
+            }
+        }
+    }
+    #[test]
+    fn test_navigating_one_tab_does_not_cancel_another() {
+        let loader = ResourceLoader::new();
+        let actor = NavigationActorHandle::spawn(loader);
+
+        let url_a = Url::parse("data:text/html,<html><body><h1>Tab A</h1></body></html>").unwrap();
+        let url_b = Url::parse("data:text/html,<html><body><h1>Tab B</h1></body></html>").unwrap();
+
+        actor.navigate(0, url_a, true);
+        let epoch_a = actor.active_epoch_for(0);
+        actor.navigate(1, url_b, true);
+        let epoch_b = actor.active_epoch_for(1);
+
+        assert!(
+            actor.is_current(0, epoch_a),
+            "navigating tab 1 must not invalidate tab 0"
+        );
+        assert!(actor.is_current(1, epoch_b));
+
+        let mut saw_a = false;
+        let mut saw_b = false;
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        while !(saw_a && saw_b) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for both tab navigations"
+            );
+            match actor
+                .recv_timeout(Duration::from_secs(10))
+                .expect("both tab navigations should complete")
+            {
+                NavResult::ProgressiveReady { .. } => {}
+                NavResult::DocumentReady {
+                    tab_id,
+                    prep,
+                    epoch,
+                    ..
+                } => {
+                    assert_eq!(epoch, actor.active_epoch_for(tab_id));
+                    match tab_id {
+                        0 => {
+                            assert!(prep.html.contains("Tab A"));
+                            saw_a = true;
+                        }
+                        1 => {
+                            assert!(prep.html.contains("Tab B"));
+                            saw_b = true;
+                        }
+                        other => panic!("unexpected tab id {other}"),
+                    }
+                }
+                NavResult::Error { message, .. } => panic!("navigation failed: {message}"),
             }
         }
     }

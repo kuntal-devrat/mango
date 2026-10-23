@@ -30,6 +30,11 @@ impl BrowserChrome {
         &self.tabs
     }
 
+    #[allow(dead_code)]
+    pub fn tabs_mut(&mut self) -> &mut [Tab] {
+        &mut self.tabs
+    }
+
     /// Saves the active tab's WebContents (DOM tree, JS runtime, scroll, form state) into `self.tabs`.
     pub fn save_active_tab_state(&mut self) {
         if let Some(tab) = self.tabs.get_mut(self.active_tab_idx) {
@@ -62,6 +67,7 @@ impl BrowserChrome {
     /// Restores the active tab's WebContents from `self.tabs[self.active_tab_idx]`.
     pub fn restore_active_tab_state(&mut self) {
         if let Some(tab) = self.tabs.get_mut(self.active_tab_idx) {
+            self.is_loading = tab.loading;
             self.address_text = tab.url.clone();
             self.cursor_pos = self.address_text.len();
             self.page_title = tab.title.clone();
@@ -101,6 +107,7 @@ impl BrowserChrome {
         let new_tab = Tab::with_url_and_title("about:welcome", "New Tab");
         self.tabs.push(new_tab);
         self.active_tab_idx = self.tabs.len() - 1;
+        self.is_loading = false;
         self.address_text = "about:welcome".to_string();
         self.cursor_pos = self.address_text.len();
         self.scroll_y = 0.0;
@@ -114,6 +121,7 @@ impl BrowserChrome {
         let new_tab = Tab::with_url_and_title(url, "Loading...");
         self.tabs.push(new_tab);
         self.active_tab_idx = self.tabs.len() - 1;
+        self.is_loading = false;
         self.address_text = url.to_string();
         self.cursor_pos = self.address_text.len();
         self.scroll_y = 0.0;
@@ -138,7 +146,18 @@ impl BrowserChrome {
         }
 
         let closing_active = self.active_tab_idx == idx;
+        if let Some(contents) = self.tabs.get(idx).and_then(|t| t.contents.as_ref())
+            && let Some(doc) = &contents.cached_document
+        {
+            mango_render::remove_canvases_for_document(doc.id());
+        }
         if closing_active {
+            if let Some(doc) = &self.cached_document {
+                mango_render::remove_canvases_for_document(doc.id());
+            }
+            if let Some(rt) = &self.js_runtime {
+                mango_render::remove_canvases_for_document(rt.document_ref().id());
+            }
             self.cached_document = None;
             self.root_box = None;
             if let Some(mut rt) = self.js_runtime.take() {
@@ -151,6 +170,15 @@ impl BrowserChrome {
             self.style_snapshot.clear();
             self.image_rx = None;
         }
+        // Navigation results carry tab indices. Removing a tab shifts every
+        // later index, so abandon in-flight navigations for shifted tabs and
+        // clear their spinners rather than leaving them permanently loading.
+        for shifted in idx..self.tabs.len() {
+            self.nav_actor.cancel_tab(shifted);
+            if let Some(tab) = self.tabs.get_mut(shifted) {
+                tab.loading = false;
+            }
+        }
         let mut closed_tab = self.tabs.remove(idx);
         closed_tab.contents = None;
         closed_tab.clear_history();
@@ -160,6 +188,11 @@ impl BrowserChrome {
         } else if self.active_tab_idx > idx {
             self.active_tab_idx -= 1;
         }
+        self.is_loading = self
+            .tabs
+            .get(self.active_tab_idx)
+            .map(|tab| tab.loading)
+            .unwrap_or(false);
 
         mango_render::prune_web_fonts();
         mango_render::prune_image_caches();
@@ -185,6 +218,20 @@ impl BrowserChrome {
         if self.tabs.len() > 1 {
             let next_idx = (self.active_tab_idx + 1) % self.tabs.len();
             self.switch_tab(next_idx);
+        }
+    }
+}
+
+impl BrowserChrome {
+    /// Sets loading state for a specific tab and keeps the active-tab mirror
+    /// (`self.is_loading`) in sync.
+    #[allow(dead_code)]
+    pub(crate) fn set_tab_loading(&mut self, tab_id: usize, loading: bool) {
+        if let Some(tab) = self.tabs.get_mut(tab_id) {
+            tab.loading = loading;
+        }
+        if tab_id == self.active_tab_idx {
+            self.is_loading = loading;
         }
     }
 }

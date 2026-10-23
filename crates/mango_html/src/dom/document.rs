@@ -1,14 +1,21 @@
 //! DOM Document root, arena management, node factory, and shadow root registry.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use mango_core::{Arena, InternedString, StringInterner};
 
 use super::node::{DomError, ElementData, Node, NodeData, NodeId, QuirksMode};
 
+static NEXT_DOCUMENT_ID: AtomicU64 = AtomicU64::new(1);
+
 /// A complete DOM document containing all allocated nodes.
 #[derive(Debug, Clone)]
 pub struct Document {
+    /// Process-unique identity. Clones share it because they are snapshots of
+    /// the same logical document; independently parsed documents get new ids.
+    /// It namespaces document-owned side tables such as canvas backing stores.
+    id: u64,
     pub(crate) arena: Arena<Node>,
     pub(crate) root: NodeId,
     pub quirks_mode: QuirksMode,
@@ -26,6 +33,14 @@ pub struct Document {
     pub shadow_hosts: HashMap<NodeId, NodeId>,
     /// Monotonically increasing mutation version counter.
     pub version: u64,
+    /// Number of live JavaScript wrappers per node. A node that has been
+    /// detached but still has a wrapper must remain usable (DOM semantics
+    /// allow re-appending removed nodes), so it is only reclaimed after the
+    /// last wrapper is finalized.
+    pub(crate) js_wrapper_counts: HashMap<NodeId, u32>,
+    /// Roots of subtrees that are currently detached from the document and
+    /// therefore eligible for reclamation once no JS wrapper references them.
+    pub(crate) detached_candidates: HashSet<NodeId>,
 }
 
 impl Document {
@@ -44,6 +59,7 @@ impl Document {
         });
 
         Self {
+            id: NEXT_DOCUMENT_ID.fetch_add(1, Ordering::Relaxed),
             arena,
             root,
             quirks_mode: QuirksMode::NoQuirks,
@@ -54,7 +70,29 @@ impl Document {
             target_id: None,
             shadow_hosts: HashMap::new(),
             version: 0,
+            js_wrapper_counts: HashMap::new(),
+            detached_candidates: HashSet::new(),
         }
+    }
+
+    /// Process-unique document identity.
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    /// Returns a process-unique key for a `<canvas>` element's backing store.
+    ///
+    /// Canvas stores are global in `mango_render`, so keying only by the arena
+    /// index would alias canvases in different tabs. The high 32 bits carry the
+    /// document identity.
+    pub fn canvas_key(&self, node: NodeId) -> Option<u64> {
+        let n = self.arena.get(node)?;
+        if let NodeData::Element(el) = &n.data
+            && el.tag_name.eq_ignore_ascii_case("canvas")
+        {
+            return Some((self.id << 32) | u64::from(node.raw()));
+        }
+        None
     }
 
     /// Sets or clears the active target fragment identifier for the `:target` CSS pseudo-class.
@@ -205,6 +243,46 @@ impl Document {
     /// Returns the root document node ID.
     pub fn root(&self) -> NodeId {
         self.root
+    }
+
+    /// Returns the current active id occupying a raw arena index, if any.
+    ///
+    /// This is used only at the JS boundary where a legacy raw index (for
+    /// example a layout-bounds key) must be upgraded to a generation-safe
+    /// handle before being returned to JavaScript.
+    pub fn node_id_at_raw(&self, index: u32) -> Option<NodeId> {
+        self.arena.id_at(index)
+    }
+
+    /// Number of live DOM nodes currently owned by this document.
+    pub fn live_node_count(&self) -> usize {
+        self.arena.len()
+    }
+
+    /// Number of allocated arena slot positions (including retired slots).
+    pub fn arena_slot_count(&self) -> usize {
+        self.arena.total_slots()
+    }
+
+    /// Number of freed arena slots available for reuse.
+    pub fn free_arena_slots(&self) -> usize {
+        self.arena.free_slots()
+    }
+
+    /// Rough heap footprint of the DOM arena in bytes. This is intentionally
+    /// conservative: it counts allocated slots and the common per-node payload
+    /// so tab memory reporting does not omit the largest DOM-owned allocation.
+    pub fn estimated_memory_usage(&self) -> usize {
+        let slots = self.arena.total_slots();
+        let mut bytes = slots * std::mem::size_of::<Node>();
+        for (_, node) in self.arena.iter() {
+            if let NodeData::Element(el) = &node.data {
+                for (name, value) in &el.attributes {
+                    bytes += name.len() + value.len();
+                }
+            }
+        }
+        bytes
     }
 
     /// Gets a reference to a node by its ID.

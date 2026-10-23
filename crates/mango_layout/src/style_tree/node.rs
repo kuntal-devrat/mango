@@ -7,6 +7,8 @@ use mango_html::dom::NodeId;
 #[derive(Debug, Clone, PartialEq)]
 pub struct StyledNode {
     pub node_id: Option<NodeId>,
+    /// Document-scoped key for a `<canvas>` backing store, if this node is a canvas.
+    pub canvas_key: Option<u64>,
     pub style: Arc<ComputedStyle>,
     pub text: Option<String>,
     /// The element's tag name (e.g. "div", "img"), or None for text/document nodes.
@@ -20,6 +22,7 @@ impl StyledNode {
     pub fn new(node_id: Option<NodeId>, style: impl Into<Arc<ComputedStyle>>) -> Self {
         Self {
             node_id,
+            canvas_key: None,
             style: style.into(),
             text: None,
             tag_name: None,
@@ -35,6 +38,7 @@ impl StyledNode {
     ) -> Self {
         Self {
             node_id,
+            canvas_key: None,
             style: style.into(),
             text: Some(text),
             tag_name: None,

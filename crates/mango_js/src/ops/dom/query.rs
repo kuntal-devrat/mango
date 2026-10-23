@@ -1,5 +1,5 @@
 use deno_core::{OpState, op2};
-use mango_html::dom::{NodeData, NodeId};
+use mango_html::dom::{NodeData, node_id_from_js, node_id_to_js};
 
 use crate::dom_bindings::{
     LayoutBounds, SharedDocument, collect_elements_by_kind, collect_matching_elements,
@@ -15,7 +15,7 @@ pub fn op_mango_get_element_by_id(state: &mut OpState, #[string] id: String) -> 
     };
     let d = doc.borrow();
     find_element_by_id_recursive(&d, d.root(), &id)
-        .map(|id| id.raw())
+        .map(node_id_to_js)
         .unwrap_or(0)
 }
 
@@ -32,16 +32,16 @@ pub fn op_mango_query_selector(
     let root = if root_id == 0 {
         d.root()
     } else {
-        NodeId::from_raw(root_id)
+        node_id_from_js(root_id)
     };
     mango_css::selectors::set_current_scope_root(Some(root));
     let res = if let Some(selectors) = mango_css::parse_selectors(&selector)
         && let Some(found) = find_first_matching_element(&d, root, &selectors)
     {
-        found.raw()
+        node_id_to_js(found)
     } else {
         query_selector_simple(&d, root, &selector)
-            .map(|id| id.raw())
+            .map(node_id_to_js)
             .unwrap_or(0)
     };
     mango_css::selectors::set_current_scope_root(None);
@@ -62,7 +62,7 @@ pub fn op_mango_query_selector_all(
     let root = if root_id == 0 {
         d.root()
     } else {
-        NodeId::from_raw(root_id)
+        node_id_from_js(root_id)
     };
     mango_css::selectors::set_current_scope_root(Some(root));
     let mut out = Vec::new();
@@ -73,7 +73,7 @@ pub fn op_mango_query_selector_all(
         collect_elements_by_kind(&d, root, &selector, &mut out);
     }
     mango_css::selectors::set_current_scope_root(None);
-    out.into_iter().map(|id| id.raw()).collect()
+    out.into_iter().map(node_id_to_js).collect()
 }
 
 #[op2]
@@ -86,7 +86,7 @@ pub fn op_mango_get_document_elements(state: &mut OpState, #[string] tag: String
     let d = doc.borrow();
     let mut out = Vec::new();
     collect_elements_by_kind(&d, d.root(), &tag, &mut out);
-    out.into_iter().map(|id| id.raw()).collect()
+    out.into_iter().map(node_id_to_js).collect()
 }
 
 #[op2(fast)]
@@ -100,7 +100,7 @@ pub fn op_mango_element_matches(
         None => return false,
     };
     let d = doc.borrow();
-    let nid = NodeId::from_raw(node_id);
+    let nid = node_id_from_js(node_id);
     if let Some(selectors) = mango_css::parse_selectors(&selector) {
         return selectors.matches(nid, &d);
     }
@@ -119,12 +119,12 @@ pub fn op_mango_element_closest(
     };
     let d = doc.borrow();
     if let Some(selectors) = mango_css::parse_selectors(&selector) {
-        let mut curr = Some(NodeId::from_raw(node_id));
+        let mut curr = Some(node_id_from_js(node_id));
         while let Some(id) = curr {
             if matches!(d.get(id).map(|n| &n.data), Some(NodeData::Element(_)))
                 && selectors.matches(id, &d)
             {
-                return id.raw();
+                return node_id_to_js(id);
             }
             curr = d.get(id).and_then(|n| n.parent);
         }
@@ -137,8 +137,9 @@ pub fn op_mango_element_closest(
 #[op2]
 #[serde]
 pub fn op_mango_get_element_rect(state: &mut OpState, node_id: u32) -> Vec<f32> {
+    let raw = node_id_from_js(node_id).raw();
     if let Some(bounds) = state.try_borrow::<LayoutBounds>()
-        && let Some(&rect) = bounds.borrow().get(&node_id)
+        && let Some(&rect) = bounds.borrow().get(&raw)
     {
         return rect.to_vec();
     }
@@ -147,6 +148,10 @@ pub fn op_mango_get_element_rect(state: &mut OpState, node_id: u32) -> Vec<f32> 
 
 #[op2(fast)]
 pub fn op_mango_element_from_point(state: &mut OpState, x: f32, y: f32) -> u32 {
+    let Some(doc) = state.try_borrow::<SharedDocument>() else {
+        return 0;
+    };
+    let d = doc.borrow();
     if let Some(bounds) = state.try_borrow::<LayoutBounds>() {
         let b = bounds.borrow();
         let mut best: Option<(u32, f32)> = None;
@@ -158,8 +163,10 @@ pub fn op_mango_element_from_point(state: &mut OpState, x: f32, y: f32) -> u32 {
                 }
             }
         }
-        if let Some((id, _)) = best {
-            return id;
+        if let Some((raw_id, _)) = best
+            && let Some(id) = d.node_id_at_raw(raw_id)
+        {
+            return node_id_to_js(id);
         }
     }
     0
@@ -168,6 +175,10 @@ pub fn op_mango_element_from_point(state: &mut OpState, x: f32, y: f32) -> u32 {
 #[op2]
 #[serde]
 pub fn op_mango_elements_from_point(state: &mut OpState, x: f32, y: f32) -> Vec<u32> {
+    let Some(doc) = state.try_borrow::<SharedDocument>() else {
+        return Vec::new();
+    };
+    let d = doc.borrow();
     let mut matches: Vec<(u32, f32)> = Vec::new();
     if let Some(bounds) = state.try_borrow::<LayoutBounds>() {
         let b = bounds.borrow();
@@ -179,7 +190,10 @@ pub fn op_mango_elements_from_point(state: &mut OpState, x: f32, y: f32) -> Vec<
         }
     }
     matches.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-    matches.into_iter().map(|(id, _)| id).collect()
+    matches
+        .into_iter()
+        .filter_map(|(raw_id, _)| d.node_id_at_raw(raw_id).map(node_id_to_js))
+        .collect()
 }
 
 #[op2(fast)]

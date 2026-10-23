@@ -1,5 +1,5 @@
 use deno_core::{OpState, op2};
-use mango_html::dom::{NodeData, NodeId};
+use mango_html::dom::{NodeData, node_id_from_js};
 
 use crate::dom_bindings::{DomDirtyFlag, SharedDocument};
 
@@ -14,11 +14,10 @@ pub fn op_mango_get_attribute(
 ) -> Option<String> {
     let doc = state.try_borrow::<SharedDocument>()?;
     let d = doc.borrow();
-    d.get(NodeId::from_raw(node_id))
-        .and_then(|n| match &n.data {
-            NodeData::Element(el) => el.get_attribute(&name).map(|s| s.to_string()),
-            _ => None,
-        })
+    d.get(node_id_from_js(node_id)).and_then(|n| match &n.data {
+        NodeData::Element(el) => el.get_attribute(&name).map(|s| s.to_string()),
+        _ => None,
+    })
 }
 
 #[op2(fast)]
@@ -33,7 +32,7 @@ pub fn op_mango_set_attribute(
         None => return,
     };
     let mut d = doc.borrow_mut();
-    if let Some(node) = d.get_mut(NodeId::from_raw(node_id))
+    if let Some(node) = d.get_mut(node_id_from_js(node_id))
         && let NodeData::Element(ref mut elem) = node.data
     {
         if let Some(attr) = elem.attributes.iter_mut().find(|(k, _)| k == &name) {
@@ -54,7 +53,7 @@ pub fn op_mango_remove_attribute(state: &mut OpState, node_id: u32, #[string] na
         None => return,
     };
     let mut d = doc.borrow_mut();
-    if let Some(node) = d.get_mut(NodeId::from_raw(node_id))
+    if let Some(node) = d.get_mut(node_id_from_js(node_id))
         && let NodeData::Element(ref mut elem) = node.data
     {
         elem.attributes.retain(|(k, _)| k != &name);
@@ -71,7 +70,7 @@ pub fn op_mango_has_attribute(state: &mut OpState, node_id: u32, #[string] name:
         None => return false,
     };
     let d = doc.borrow();
-    d.get(NodeId::from_raw(node_id))
+    d.get(node_id_from_js(node_id))
         .map(|n| match &n.data {
             NodeData::Element(el) => el.get_attribute(&name).is_some(),
             _ => false,
@@ -87,7 +86,7 @@ pub fn op_mango_get_attribute_names(state: &mut OpState, node_id: u32) -> Vec<St
         None => return Vec::new(),
     };
     let d = doc.borrow();
-    d.get(NodeId::from_raw(node_id))
+    d.get(node_id_from_js(node_id))
         .map(|n| match &n.data {
             NodeData::Element(el) => el.attributes.iter().map(|(k, _)| k.clone()).collect(),
             _ => Vec::new(),
@@ -115,11 +114,10 @@ pub fn op_mango_get_dataset_value(
             attr_name.push(ch);
         }
     }
-    d.get(NodeId::from_raw(node_id))
-        .and_then(|n| match &n.data {
-            NodeData::Element(el) => el.get_attribute(&attr_name).map(|s| s.to_string()),
-            _ => None,
-        })
+    d.get(node_id_from_js(node_id)).and_then(|n| match &n.data {
+        NodeData::Element(el) => el.get_attribute(&attr_name).map(|s| s.to_string()),
+        _ => None,
+    })
 }
 
 #[op2(fast)]
@@ -143,7 +141,7 @@ pub fn op_mango_set_dataset_value(
         }
     }
     let mut d = doc.borrow_mut();
-    if let Some(node) = d.get_mut(NodeId::from_raw(node_id))
+    if let Some(node) = d.get_mut(node_id_from_js(node_id))
         && let NodeData::Element(ref mut elem) = node.data
     {
         if let Some(attr) = elem.attributes.iter_mut().find(|(k, _)| k == &attr_name) {
@@ -173,7 +171,7 @@ pub fn op_mango_remove_dataset_value(state: &mut OpState, node_id: u32, #[string
         }
     }
     let mut d = doc.borrow_mut();
-    if let Some(node) = d.get_mut(NodeId::from_raw(node_id))
+    if let Some(node) = d.get_mut(node_id_from_js(node_id))
         && let NodeData::Element(ref mut elem) = node.data
     {
         elem.attributes.retain(|(k, _)| k != &attr_name);
@@ -191,7 +189,7 @@ pub fn op_mango_get_dataset_keys(state: &mut OpState, node_id: u32) -> Vec<Strin
         None => return Vec::new(),
     };
     let d = doc.borrow();
-    match d.get(NodeId::from_raw(node_id)).map(|n| &n.data) {
+    match d.get(node_id_from_js(node_id)).map(|n| &n.data) {
         Some(NodeData::Element(el)) => el
             .attributes
             .iter()

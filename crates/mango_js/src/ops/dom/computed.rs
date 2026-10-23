@@ -1,7 +1,7 @@
 //! Computed style extraction and formatting op.
 
 use deno_core::{OpState, op2};
-use mango_html::dom::{NodeData, NodeId};
+use mango_html::dom::{NodeData, NodeId, node_id_from_js};
 
 use super::computed_format::*;
 use crate::dom_bindings::{LayoutBounds, SharedDocument};
@@ -19,7 +19,7 @@ pub fn op_mango_get_computed_style(
         None => return HashMap::new(),
     };
     let d = doc.borrow();
-    let nid = NodeId::from_raw(node_id);
+    let nid = node_id_from_js(node_id);
     if d.get(nid).is_none() {
         return HashMap::new();
     }
@@ -318,7 +318,7 @@ pub fn op_mango_get_computed_style(
     // otherwise we fall back to the computed value.
     let used_size = state
         .try_borrow::<LayoutBounds>()
-        .and_then(|b| b.borrow().get(&node_id).copied());
+        .and_then(|b| b.borrow().get(&nid.raw()).copied());
     let (used_w, used_h) = match used_size {
         Some([_, _, w, h]) => (Some(w), Some(h)),
         _ => (None, None),

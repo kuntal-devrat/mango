@@ -52,6 +52,14 @@ fn get_fetch_pool() -> &'static rayon::ThreadPool {
     })
 }
 
+/// Queues a background fetch/decode task on the bounded fetch pool.
+pub fn spawn_fetch_task<F>(task: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    get_fetch_pool().spawn(task);
+}
+
 /// Runs a blocking fetch closure bounded by `timeout` using a bounded thread pool.
 pub fn fetch_with_timeout<T, E, F>(
     fetch: F,

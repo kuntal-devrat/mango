@@ -261,7 +261,7 @@ fn test_canvas_display_list_rendering_and_fallback_suppression() {
     let pixels = vec![0xFFFF_0000; 100 * 50]; // 100x50 red pixels
     let mut canvas_box = LayoutBox::new(
         BoxType::Canvas {
-            node_id: Some(999),
+            canvas_key: Some(999),
             width: 100,
             height: 50,
             intrinsic_width: 100.0,

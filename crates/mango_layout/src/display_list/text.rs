@@ -33,7 +33,7 @@ pub(crate) fn paint_text(
             mango_css::values::FontStyle::Oblique => mango_render::FontStyle::Oblique,
             mango_css::values::FontStyle::Normal => mango_render::FontStyle::Normal,
         };
-        let decoration = if s.text_decoration.has_underline() {
+        let mut decoration = if s.text_decoration.has_underline() {
             mango_render::TextDecoration::Underline
         } else if s.text_decoration.has_line_through() {
             mango_render::TextDecoration::LineThrough
@@ -43,9 +43,17 @@ pub(crate) fn paint_text(
             mango_render::TextDecoration::None
         };
 
-        // Custom text-decoration rendering (underline, overline, line-through, thickness, color)
+        // Custom text-decoration rendering (custom thickness, color, or underline offset)
+        let has_custom_decor = s.text_decoration_color.is_some()
+            || s.text_underline_offset != mango_css::values::Length::Auto
+            || !matches!(
+                s.text_decoration_thickness,
+                mango_css::values::TextDecorationThickness::Auto
+                    | mango_css::values::TextDecorationThickness::FromFont
+            );
+
         let text_w = box_node.dimensions.content.width();
-        if text_w > 0.0 && !s.text_decoration.is_none() {
+        if text_w > 0.0 && !s.text_decoration.is_none() && has_custom_decor {
             let decor_color = apply_opacity(s.resolved_text_decoration_color(), opacity);
             let thickness_px = match s.text_decoration_thickness {
                 mango_css::values::TextDecorationThickness::Auto
@@ -56,9 +64,20 @@ pub(crate) fn paint_text(
                     len.to_px(s.font_size, 16.0, text_w).max(1.0)
                 }
             };
+            let fm = mango_render::font::font_manager();
+            let font_weight = if is_bold {
+                mango_render::FontWeight::Bold
+            } else {
+                mango_render::FontWeight::Regular
+            };
+            let font = fm.select_font(family, font_weight);
+            let ascent = font
+                .horizontal_line_metrics(s.font_size.max(1.0))
+                .map(|lm| lm.ascent)
+                .unwrap_or(s.font_size * 0.8);
             if s.text_decoration.has_underline() {
                 let offset_px = s.text_underline_offset.to_px(s.font_size, 16.0, text_w);
-                let line_y = content_y + (s.font_size * 0.8) + 2.0 + offset_px;
+                let line_y = (content_y + ascent + 2.0 + offset_px).round();
                 list.push(DisplayCommand::DrawLine {
                     x1: content_x,
                     y1: line_y,
@@ -69,7 +88,7 @@ pub(crate) fn paint_text(
                 });
             }
             if s.text_decoration.has_overline() {
-                let line_y = content_y + 1.0;
+                let line_y = (content_y + 1.0).round();
                 list.push(DisplayCommand::DrawLine {
                     x1: content_x,
                     y1: line_y,
@@ -80,7 +99,7 @@ pub(crate) fn paint_text(
                 });
             }
             if s.text_decoration.has_line_through() {
-                let line_y = content_y + (s.font_size * 0.5);
+                let line_y = (content_y + ascent - (s.font_size * 0.3)).round();
                 list.push(DisplayCommand::DrawLine {
                     x1: content_x,
                     y1: line_y,
@@ -90,6 +109,8 @@ pub(crate) fn paint_text(
                     thickness: thickness_px,
                 });
             }
+            // Suppress default decoration in DrawText so it is not drawn twice
+            decoration = mango_render::TextDecoration::None;
         }
 
         // Paint text-emphasis marks (e.g. ●, ○, •, etc.) above text glyphs

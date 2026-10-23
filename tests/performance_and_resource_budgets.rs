@@ -85,7 +85,7 @@ fn test_memory_footprint_single_and_multi_tab() {
     browser.load_html(sample_html.to_string(), "about:blank".to_string());
     let _ = browser.build_display_list((1280, 900));
     let tab1_mem_bytes = browser
-        .active_tab()
+        .active_tab_mut()
         .map(|t| t.approx_memory_usage())
         .unwrap_or(1024 * 1024);
     let tab1_mb = tab1_mem_bytes as f64 / (1024.0 * 1024.0);
@@ -107,7 +107,11 @@ fn test_memory_footprint_single_and_multi_tab() {
     }
 
     assert_eq!(browser.tab_count(), 5, "Must have 5 active tabs");
-    let total_5_tabs_bytes: usize = browser.tabs().iter().map(|t| t.approx_memory_usage()).sum();
+    let total_5_tabs_bytes: usize = browser
+        .tabs_mut()
+        .iter_mut()
+        .map(|t| t.approx_memory_usage())
+        .sum();
     let total_5_tabs_mb = total_5_tabs_bytes as f64 / (1024.0 * 1024.0);
     println!(
         "[Resource Gate] 5 Active Tabs Memory: {:.2}MB (Budget: < 80MB)",

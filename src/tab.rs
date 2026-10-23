@@ -51,6 +51,9 @@ pub struct Tab {
     history_idx: usize,
     /// Per-tab web contents state (DOM tree, JS runtime, layout, styles).
     pub contents: Option<TabWebContents>,
+    /// Whether this tab has an in-flight navigation. Loading state must be
+    /// per-tab so navigating one tab does not show a spinner on another.
+    pub loading: bool,
     /// Tab-scoped in-memory session storage (survives navigations in this tab, PRD 7.6).
     pub session_storage: mango_js::web_apis::SharedSessionStorage,
 }
@@ -78,6 +81,7 @@ impl Tab {
             history: vec![initial_entry],
             history_idx: 0,
             contents: None,
+            loading: false,
             session_storage: std::sync::Arc::new(std::sync::Mutex::new(
                 std::collections::HashMap::new(),
             )),
@@ -227,17 +231,23 @@ impl Tab {
     }
 
     /// Estimates the approximate memory footprint of this tab in bytes.
-    pub fn approx_memory_usage(&self) -> usize {
+    pub fn approx_memory_usage(&mut self) -> usize {
         let mut bytes = std::mem::size_of::<Self>() + self.url.len() + self.title.len();
         bytes += self.history.len() * std::mem::size_of::<HistoryEntry>();
         for h in &self.history {
             bytes += h.url.len() + h.title.len();
         }
-        if let Some(contents) = &self.contents {
+        if let Some(contents) = &mut self.contents {
             bytes += contents.current_html.len();
             bytes += contents.page_display_list.len() * 64;
             bytes += contents.style_snapshot.len() * 128;
             bytes += contents.cached_stylesheets.len() * 4096;
+            if let Some(doc) = &contents.cached_document {
+                bytes += doc.estimated_memory_usage();
+            }
+            if let Some(rt) = &mut contents.js_runtime {
+                bytes += rt.heap_size_bytes();
+            }
         }
         // Base overhead for tab runtime structures (at least 256KB)
         bytes.max(256 * 1024)

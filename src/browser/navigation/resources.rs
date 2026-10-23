@@ -8,6 +8,30 @@ use mango_render::{FontWeight, font_manager};
 use super::super::types::{
     MAX_CONCURRENT_FETCHES, SUBRESOURCE_FETCH_TIMEOUT, assert_not_on_ui_thread, fetch_with_timeout,
 };
+use std::sync::OnceLock;
+
+static FONT_LOAD_POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+static FONT_FETCH_POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+
+fn font_load_pool() -> &'static rayon::ThreadPool {
+    FONT_LOAD_POOL.get_or_init(|| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(2)
+            .thread_name(|i| format!("mango-font-load-{i}"))
+            .build()
+            .expect("failed to initialize font load pool")
+    })
+}
+
+fn font_fetch_pool() -> &'static rayon::ThreadPool {
+    FONT_FETCH_POOL.get_or_init(|| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(MAX_CONCURRENT_FETCHES)
+            .thread_name(|i| format!("mango-font-fetch-{i}"))
+            .build()
+            .expect("failed to initialize font fetch pool")
+    })
+}
 /// Non-blocking font registration for the UI thread: returns immediately and
 /// fetches + registers web fonts on a detached background thread.
 ///
@@ -19,14 +43,9 @@ pub(crate) fn load_web_fonts_async(
     base_url: Option<Url>,
     stylesheets: Vec<Stylesheet>,
 ) {
-    if let Err(e) = std::thread::Builder::new()
-        .name("mango-font-async".to_string())
-        .spawn(move || {
-            load_web_fonts(&loader, base_url.as_ref(), &stylesheets);
-        })
-    {
-        log::warn!("Failed to spawn async font loader: {e}");
-    }
+    font_load_pool().spawn(move || {
+        load_web_fonts(&loader, base_url.as_ref(), &stylesheets);
+    });
 }
 
 fn collect_font_faces(
@@ -208,32 +227,27 @@ pub fn load_web_fonts(loader: &ResourceLoader, base_url: Option<&Url>, styleshee
                 let loader = loader.clone();
                 let base = base.clone();
                 let url = url.clone();
-                if let Err(e) = std::thread::Builder::new()
-                    .name("mango-font-fetch".to_string())
-                    .spawn(move || {
-                        match fetch_with_timeout(
-                            {
-                                let loader = loader.clone();
-                                let base = base.clone();
-                                let url = url.clone();
-                                move || loader.fetch_font_bytes(&base, &url)
-                            },
-                            SUBRESOURCE_FETCH_TIMEOUT,
-                        ) {
-                            Ok(Ok(bytes)) => {
-                                let _ = tx.send((url, bytes));
-                            }
-                            Ok(Err(e)) => {
-                                log::warn!("Font fetch failed for {url}: {e}");
-                            }
-                            Err(msg) => {
-                                log::warn!("Font fetch timed out for {url}: {msg}");
-                            }
+                font_fetch_pool().spawn(move || {
+                    match fetch_with_timeout(
+                        {
+                            let loader = loader.clone();
+                            let base = base.clone();
+                            let url = url.clone();
+                            move || loader.fetch_font_bytes(&base, &url)
+                        },
+                        SUBRESOURCE_FETCH_TIMEOUT,
+                    ) {
+                        Ok(Ok(bytes)) => {
+                            let _ = tx.send((url, bytes));
                         }
-                    })
-                {
-                    log::warn!("Failed to spawn font fetch thread: {e}");
-                }
+                        Ok(Err(e)) => {
+                            log::warn!("Font fetch failed for {url}: {e}");
+                        }
+                        Err(msg) => {
+                            log::warn!("Font fetch timed out for {url}: {msg}");
+                        }
+                    }
+                });
             }
             drop(tx);
             for _ in 0..n {

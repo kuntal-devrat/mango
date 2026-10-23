@@ -146,6 +146,9 @@ pub struct BrowserChrome {
     pub(crate) local_storage_path: std::path::PathBuf,
     /// Image URLs queued for background prefetch.
     pub(crate) pending_image_fetches: Vec<String>,
+    /// Number of per-frame image-drain batches currently executing in the
+    /// bounded image pool.
+    pub(crate) image_drain_in_flight: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     /// Base URL that `pending_image_fetches` entries resolve against.
     pub(crate) image_fetch_base: Option<Url>,
     /// Built-in Developer Tools & Element Inspector.
@@ -260,6 +263,7 @@ impl BrowserChrome {
             local_storage,
             local_storage_path,
             pending_image_fetches: Vec::new(),
+            image_drain_in_flight: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             image_fetch_base: None,
             devtools: crate::devtools::DevTools::new(),
             extension_manager: crate::extensions::ExtensionManager::new(),

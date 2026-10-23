@@ -300,7 +300,7 @@ pub(crate) fn paint_media(
 
     // 3g. Paint <canvas> Element
     if let BoxType::Canvas {
-        node_id,
+        canvas_key,
         intrinsic_width,
         intrinsic_height,
         pixels,
@@ -318,8 +318,8 @@ pub(crate) fn paint_media(
             *intrinsic_height
         };
         if draw_w > 0.0 && draw_h > 0.0 {
-            let active_pixels = if let Some(nid) = node_id {
-                mango_render::get_canvas_pixels(*nid)
+            let active_pixels = if let Some(key) = canvas_key {
+                mango_render::get_canvas_pixels(*key)
                     .map(|(_, _, px)| px)
                     .or_else(|| pixels.clone())
             } else {

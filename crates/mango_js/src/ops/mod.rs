@@ -64,6 +64,8 @@ extension!(
         dom::op_mango_remove_child,
         dom::op_mango_insert_before,
         dom::op_mango_replace_child,
+        dom::op_mango_retain_js_wrapper,
+        dom::op_mango_release_js_wrapper,
         // DOM Query
         dom::op_mango_get_element_by_id,
         dom::op_mango_query_selector,
@@ -127,6 +129,7 @@ extension!(
         dom::op_mango_cookie_get,
         dom::op_mango_cookie_set,
         // Canvas 2D
+        dom::op_mango_canvas_remove,
         dom::op_mango_canvas_resize,
         dom::op_mango_canvas_set_fill_style,
         dom::op_mango_canvas_set_stroke_style,
@@ -236,6 +239,8 @@ pub const PRELUDE_JS: &str = r##"
     globalThis._setTextContent = (id, text) => ops.op_mango_set_text_content(Number(id), String(text));
     globalThis._appendChild = (p, c) => ops.op_mango_append_child(Number(p), Number(c));
     globalThis._removeChild = (p, c) => ops.op_mango_remove_child(Number(p), Number(c));
+    globalThis._retainWrapper = (id) => ops.op_mango_retain_js_wrapper(Number(id));
+    globalThis._releaseWrapper = (id) => ops.op_mango_release_js_wrapper(Number(id));
     globalThis._setAttribute = (id, name, val) => ops.op_mango_set_attribute(Number(id), String(name), String(val));
     globalThis._removeAttribute = (id, name) => ops.op_mango_remove_attribute(Number(id), String(name));
     globalThis._getAttribute = (id, name) => ops.op_mango_get_attribute(Number(id), String(name));
@@ -358,6 +363,7 @@ pub const PRELUDE_JS: &str = r##"
     globalThis._canvasGetImageData = (id, x, y, w, h) => ops.op_mango_canvas_get_image_data(Number(id), Number(x), Number(y), Number(w), Number(h));
     globalThis._canvasPutImageData = (id, d, dx, dy, dX, dY, dW, dH, srcW) => ops.op_mango_canvas_put_image_data(Number(id), Array.from(d), Number(dx), Number(dy), Number(dX), Number(dY), Number(dW), Number(dH), Number(srcW));
     globalThis._canvasToDataUrl = (id) => ops.op_mango_canvas_to_data_url(Number(id));
+    globalThis._canvasRemove = (id) => ops.op_mango_canvas_remove(Number(id));
 
     // Web APIs
     globalThis._mangoScheduleTimer = (id, delay, repeats) => ops.op_mango_schedule_timer(Number(id), Number(delay), !!repeats, false);

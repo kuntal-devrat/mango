@@ -1,7 +1,7 @@
 //! Open element stack, insertion algorithms, and scope checking.
 
 use super::types::{FormattingEntry, InsertionMode, TreeBuilder};
-use crate::dom::{Document, NodeData, NodeId};
+use crate::dom::{Document, MAX_DOM_DEPTH, NodeData, NodeId};
 use crate::tokenizer::{Token, Tokenizer};
 
 impl<'a> TreeBuilder<'a> {
@@ -206,11 +206,27 @@ impl<'a> TreeBuilder<'a> {
         (target, None)
     }
 
+    /// Keeps the parser's open-element stack within the document depth budget.
+    ///
+    /// HTML permits arbitrarily deep nesting, but Mango's style/layout/clone
+    /// algorithms recurse. Rather than building a tree that would later abort
+    /// the process, close the deepest open elements until there is room for one
+    /// more level. This preserves all content (subsequent nodes become siblings
+    /// at the depth limit) and keeps every created node attached to the tree.
+    fn clamp_open_stack_depth(&mut self) {
+        while self.doc.depth_of(self.current_node()) >= MAX_DOM_DEPTH
+            && self.open_elements.len() > 1
+        {
+            self.open_elements.pop();
+        }
+    }
+
     pub(crate) fn insert_element(
         &mut self,
         name: &str,
         attributes: Vec<(String, String)>,
     ) -> NodeId {
+        self.clamp_open_stack_depth();
         if name.eq_ignore_ascii_case("meta") {
             self.process_meta_attributes(&attributes);
         }
@@ -225,6 +241,7 @@ impl<'a> TreeBuilder<'a> {
     }
 
     pub(crate) fn insert_text(&mut self, text: &str) -> NodeId {
+        self.clamp_open_stack_depth();
         let (parent, before) = self.appropriate_insertion_location();
         let child = self.doc.create_text(text);
         if let Some(before_id) = before {
@@ -236,6 +253,7 @@ impl<'a> TreeBuilder<'a> {
     }
 
     pub(crate) fn insert_comment(&mut self, comment: &str) -> NodeId {
+        self.clamp_open_stack_depth();
         let (parent, before) = self.appropriate_insertion_location();
         let child = self.doc.create_comment(comment);
         if let Some(before_id) = before {

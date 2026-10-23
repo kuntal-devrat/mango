@@ -1,4 +1,81 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Sender, channel};
+use std::thread::JoinHandle;
+use std::time::Duration;
+
 use crate::runtime::JsRuntime;
+
+/// Maximum execution budget granted to a large script (>= 20 KB), including
+/// the per-byte compilation allowance. This is intentionally a hard ceiling:
+/// a runaway script must never freeze the UI for longer than this.
+const MAX_LARGE_SCRIPT_TIMEOUT: Duration = Duration::from_millis(5_000);
+/// Scripts below this size are considered small and use their caller-provided
+/// timeout unchanged.
+const LARGE_SCRIPT_THRESHOLD: usize = 20_000;
+
+/// RAII watchdog that terminates a V8 isolate if an execution exceeds its
+/// budget, then always clears the termination flag and joins the watchdog
+/// thread on all exit paths (success, error, panic, or early return).
+struct ExecutionWatchdog {
+    tx: Option<Sender<()>>,
+    handle: Option<JoinHandle<()>>,
+    timed_out: std::sync::Arc<AtomicBool>,
+    isolate: deno_core::v8::IsolateHandle,
+}
+
+impl ExecutionWatchdog {
+    fn new(isolate: deno_core::v8::IsolateHandle, timeout: Duration, thread_name: &str) -> Self {
+        let (tx, rx) = channel();
+        let timed_out = std::sync::Arc::new(AtomicBool::new(false));
+        let watchdog_timed_out = timed_out.clone();
+        let watchdog_isolate = isolate.clone();
+        let handle = std::thread::Builder::new()
+            .name(thread_name.to_string())
+            .spawn(move || match rx.recv_timeout(timeout) {
+                Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    watchdog_timed_out.store(true, Ordering::SeqCst);
+                    watchdog_isolate.terminate_execution();
+                }
+            })
+            .ok();
+
+        Self {
+            tx: Some(tx),
+            handle,
+            timed_out,
+            isolate,
+        }
+    }
+
+    /// Stops the watchdog, joins its thread, clears any pending V8 termination,
+    /// and reports whether the timeout actually fired.
+    fn finish(mut self) -> bool {
+        if let Some(tx) = self.tx.take() {
+            let _ = tx.send(());
+        }
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+        // A watchdog may have fired just as execution completed. Always clear
+        // the isolate-wide termination flag so one timeout cannot poison every
+        // later script in the same page.
+        self.isolate.cancel_terminate_execution();
+        self.timed_out.load(Ordering::SeqCst)
+    }
+}
+
+impl Drop for ExecutionWatchdog {
+    fn drop(&mut self) {
+        if let Some(tx) = self.tx.take() {
+            let _ = tx.send(());
+        }
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+        self.isolate.cancel_terminate_execution();
+    }
+}
 
 impl JsRuntime {
     /// Executes an ES Module script and resolves any top-level exports or promises.
@@ -29,6 +106,11 @@ impl JsRuntime {
         let effective_timeout = Self::compute_scaled_timeout(source.len(), timeout);
         let _guard = self.enter_isolate();
         let isolate_handle = self.runtime.v8_isolate().thread_safe_handle();
+        let watchdog = ExecutionWatchdog::new(
+            isolate_handle,
+            effective_timeout,
+            "mango-js-module-watchdog",
+        );
 
         let prev_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {}));
@@ -53,30 +135,26 @@ impl JsRuntime {
                 format!("Module load error: {e}")
             })?;
 
-            let (tx, rx) = std::sync::mpsc::channel();
-            let watchdog_handle = isolate_handle.clone();
-            let watchdog = std::thread::Builder::new()
-                .name("mango-js-module-watchdog".to_string())
-                .spawn(move || match rx.recv_timeout(effective_timeout) {
-                    Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {}
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                        watchdog_handle.terminate_execution();
-                    }
-                });
-
             let eval_res = self.runtime.mod_evaluate(mod_id);
-            let eval_result = pollster::block_on(eval_res).map_err(|e| {
+            pollster::block_on(eval_res).map_err(|e| {
                 log::warn!("mod_evaluate error for {url}: {e:?}");
                 format!("Module eval error: {e}")
-            });
-            let _ = tx.send(());
-            if let Ok(handle) = watchdog {
-                let _ = handle.join();
-            }
-            eval_result?;
+            })?;
             Ok::<(), String>(())
         }));
         std::panic::set_hook(prev_hook);
+        let timed_out = watchdog.finish();
+
+        if timed_out {
+            log::warn!(
+                "JS module '{name}' timed out after {:?} and was safely terminated",
+                effective_timeout
+            );
+            return Err(format!(
+                "JS module execution timed out after {:?}",
+                effective_timeout
+            ));
+        }
 
         match res {
             Ok(Ok(_)) => {
@@ -93,7 +171,6 @@ impl JsRuntime {
                 Err(err_msg)
             }
             Err(panic_err) => {
-                let _ = self.runtime.v8_isolate().cancel_terminate_execution();
                 let msg = if let Some(s) = panic_err.downcast_ref::<&str>() {
                     s.to_string()
                 } else if let Some(s) = panic_err.downcast_ref::<String>() {
@@ -119,21 +196,19 @@ impl JsRuntime {
     }
 
     /// Computes a scaled execution timeout based on script size.
-    /// Small scripts (< 20 KB) retain their base timeout.
-    /// Large scripts (e.g. YouTube bundles of 1MB-5MB) scale up to 5,000ms
-    /// to allow V8 compilation and initial evaluation without false watchdog terminations.
-    pub fn compute_scaled_timeout(
-        source_len: usize,
-        base_timeout: std::time::Duration,
-    ) -> std::time::Duration {
-        if source_len < 20_000 {
-            base_timeout.min(std::time::Duration::from_millis(1500))
-        } else {
-            let extra_kb = (source_len - 20_000) / 1024;
-            let extra_ms = (extra_kb as u64) * 2;
-            let scaled = base_timeout + std::time::Duration::from_millis(extra_ms);
-            scaled.min(std::time::Duration::from_millis(1500))
+    /// Small scripts (< 20 KB) retain their caller-provided base timeout.
+    /// Large scripts (e.g. YouTube bundles of 1MB-5MB) receive an additional
+    /// 2 ms per KB of source, capped at 5,000 ms. The cap is a hard upper
+    /// bound: a large script can never run longer than five seconds, and no
+    /// input can reduce a caller's explicit timeout.
+    pub fn compute_scaled_timeout(source_len: usize, base_timeout: Duration) -> Duration {
+        if source_len < LARGE_SCRIPT_THRESHOLD {
+            return base_timeout;
         }
+        let extra_kb = (source_len - LARGE_SCRIPT_THRESHOLD) / 1024;
+        let extra_ms = (extra_kb as u64) * 2;
+        let scaled = base_timeout.saturating_add(Duration::from_millis(extra_ms));
+        scaled.min(MAX_LARGE_SCRIPT_TIMEOUT)
     }
 
     /// Executes a named JavaScript source string with a maximum execution timeout.
@@ -148,16 +223,8 @@ impl JsRuntime {
         let effective_timeout = Self::compute_scaled_timeout(source.len(), timeout);
         let _guard = self.enter_isolate();
         let isolate_handle = self.runtime.v8_isolate().thread_safe_handle();
-        let (tx, rx) = std::sync::mpsc::channel();
-
-        let watchdog = std::thread::Builder::new()
-            .name("mango-js-watchdog".to_string())
-            .spawn(move || match rx.recv_timeout(effective_timeout) {
-                Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {}
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                    isolate_handle.terminate_execution();
-                }
-            });
+        let watchdog =
+            ExecutionWatchdog::new(isolate_handle, effective_timeout, "mango-js-watchdog");
 
         let prev_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {}));
@@ -166,9 +233,17 @@ impl JsRuntime {
             self.runtime.execute_script(name_owned, source.to_string())
         }));
         std::panic::set_hook(prev_hook);
-        let _ = tx.send(());
-        if let Ok(handle) = watchdog {
-            let _ = handle.join();
+        let timed_out = watchdog.finish();
+
+        if timed_out {
+            log::warn!(
+                "JS execution of '{name}' timed out after {:?} and was safely terminated",
+                effective_timeout
+            );
+            return Err(format!(
+                "JS execution timed out after {:?}",
+                effective_timeout
+            ));
         }
 
         match res {
@@ -184,15 +259,8 @@ impl JsRuntime {
             Ok(Err(e)) => {
                 let err_str = e.to_string();
                 if err_str.contains("execution terminated") {
-                    let _ = self.runtime.v8_isolate().cancel_terminate_execution();
-                    log::warn!(
-                        "JS execution of '{name}' timed out after {:?} and was safely terminated",
-                        effective_timeout
-                    );
-                    return Err(format!(
-                        "JS execution timed out after {:?}",
-                        effective_timeout
-                    ));
+                    log::warn!("JS execution of '{name}' was terminated");
+                    return Err(format!("JS execution of '{name}' was terminated"));
                 }
                 if err_str.contains("Cannot use import statement outside a module")
                     || err_str.contains("Unexpected token 'export'")
@@ -209,7 +277,6 @@ impl JsRuntime {
                 Err(err_msg)
             }
             Err(panic_err) => {
-                let _ = self.runtime.v8_isolate().cancel_terminate_execution();
                 let msg = if let Some(s) = panic_err.downcast_ref::<&str>() {
                     s.to_string()
                 } else if let Some(s) = panic_err.downcast_ref::<String>() {
@@ -355,13 +422,36 @@ impl JsRuntime {
         self.event_loop.borrow().next_deadline()
     }
 
+    /// Returns the V8 heap usage in bytes, for tab memory accounting.
+    pub fn heap_size_bytes(&mut self) -> usize {
+        let _guard = self.enter_isolate();
+        self.runtime
+            .v8_isolate()
+            .get_heap_statistics()
+            .used_heap_size()
+    }
+
     /// Forces a complete garbage collection cycle to free unreferenced JS objects.
-    pub fn force_gc() {}
+    pub fn force_gc(&mut self) {
+        self.gc();
+    }
 
     /// Requests a V8 low memory notification garbage collection cycle.
     pub fn gc(&mut self) {
-        let _guard = self.enter_isolate();
-        self.runtime.v8_isolate().low_memory_notification();
+        {
+            let _guard = self.enter_isolate();
+            self.runtime.v8_isolate().low_memory_notification();
+            self.runtime
+                .v8_isolate()
+                .request_garbage_collection_for_testing(deno_core::v8::GarbageCollectionType::Full);
+            // FinalizationRegistry callbacks are queued as microtasks/tasks
+            // after the collection. Run the checkpoint now; the event-loop
+            // drain below executes the cleanup tasks V8 posts for finalized
+            // wrappers.
+            deno_core::v8::scope!(scope, self.runtime.v8_isolate());
+            scope.perform_microtask_checkpoint();
+        }
+        self.run_jobs();
     }
 
     pub(crate) fn eval_bool_script(&mut self, script: &str) -> Result<bool, String> {

@@ -20,7 +20,7 @@
 //!   approximations and no silent skips: when a required sub-resource is
 //!   missing, the harness says so loudly.
 
-use mango_html::dom::{Document, NodeData, NodeId};
+use mango_html::dom::{Document, NodeData, NodeId, node_id_to_js};
 use mango_html::parse_html;
 use mango_js::JsRuntime;
 use std::path::{Path, PathBuf};
@@ -394,7 +394,7 @@ pub fn run_wpt_file(root: &Path, rel_path: &str, timeout: Duration) -> WptFileRe
         );
         let _ = rt.execute_script(&format!(
             "if (typeof __setCurrentScript === 'function') {{ __setCurrentScript({}); }}",
-            script_id.raw()
+            node_id_to_js(script_id)
         ));
         match src_opt {
             Some(src) => {

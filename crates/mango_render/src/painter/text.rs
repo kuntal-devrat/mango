@@ -111,20 +111,20 @@ pub(crate) fn paint_text(
             .horizontal_line_metrics(font_size.max(1.0))
             .map(|lm| lm.ascent)
             .unwrap_or(font_size * 0.8);
-        let thickness = (font_size / 14.0).max(1.0);
+        let thickness = (font_size / 14.0).max(1.0).round();
 
         let line_rect = match decoration {
             TextDecoration::Underline => {
-                let line_y = y + ascent + 2.0;
-                Rect::new(x, line_y, text_w.ceil(), thickness)
+                let line_y = (y + ascent + 2.0).round();
+                Rect::new(x.round(), line_y, text_w.ceil(), thickness)
             }
             TextDecoration::LineThrough => {
-                let line_y = y + ascent - (font_size * 0.3);
-                Rect::new(x, line_y, text_w.ceil(), thickness)
+                let line_y = (y + ascent - (font_size * 0.3)).round();
+                Rect::new(x.round(), line_y, text_w.ceil(), thickness)
             }
             TextDecoration::Overline => {
-                let line_y = y + 1.0;
-                Rect::new(x, line_y, text_w.ceil(), thickness)
+                let line_y = (y + 1.0).round();
+                Rect::new(x.round(), line_y, text_w.ceil(), thickness)
             }
             TextDecoration::None => Rect::new(0.0, 0.0, 0.0, 0.0),
         };
