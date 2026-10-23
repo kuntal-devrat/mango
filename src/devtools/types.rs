@@ -76,6 +76,7 @@ pub struct DevTools {
     pub hovered_node_id: Option<NodeId>,
     pub inspect_mode: bool,
     pub console_entries: Vec<ConsoleEntry>,
+    pub console_scroll: usize,
     pub network_entries: Vec<NetworkEntry>,
     pub performance_metrics: Vec<PerformanceMetric>,
     pub breakpoints: Vec<Breakpoint>,
@@ -100,6 +101,7 @@ impl DevTools {
             hovered_node_id: None,
             inspect_mode: false,
             console_entries: Vec::new(),
+            console_scroll: 0,
             network_entries: Vec::new(),
             performance_metrics: Vec::new(),
             breakpoints: Vec::new(),
@@ -129,6 +131,17 @@ impl DevTools {
             message: msg.into(),
             time_str: "now".to_string(),
         });
+        self.console_scroll = 0;
+    }
+
+    pub fn clear_console(&mut self) {
+        self.console_entries.clear();
+        self.console_scroll = 0;
+    }
+
+    pub fn scroll_console(&mut self, delta: i32) {
+        let max = self.console_entries.len().saturating_sub(1);
+        self.console_scroll = (self.console_scroll as i32 + delta).clamp(0, max as i32) as usize;
     }
 
     /// Records an HTTP network transaction.

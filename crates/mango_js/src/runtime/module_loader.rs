@@ -148,22 +148,8 @@ impl ModuleLoader for MangoModuleLoader {
         log::info!("MangoModuleLoader::load: spec='{module_specifier}'");
         let spec = module_specifier.clone();
         if spec.scheme() == "http" || spec.scheme() == "https" {
-            // Bound the number of module jobs a single page can introduce.
-            // Modern sites can contain thousands of optional modules; loading
-            // all of them into one V8 isolate is not a valid browser policy.
-            const MAX_MODULE_LOADS_PER_PAGE: usize = 16;
-            if self
-                .module_loads
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                >= MAX_MODULE_LOADS_PER_PAGE
-            {
-                return ModuleLoadResponse::Sync(Ok(ModuleSource::new(
-                    ModuleType::JavaScript,
-                    ModuleSourceCode::String(stub_code().to_string().into()),
-                    &spec,
-                    None,
-                )));
-            }
+            self.module_loads
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let url_str = spec.to_string();
             // 1. Check local module loader memory cache
             if let Ok(guard) = self.cache.lock() {
@@ -194,8 +180,9 @@ impl ModuleLoader for MangoModuleLoader {
             }
 
             // 3. Fallback: NEVER block the UI loop on synchronous network I/O.
-            // Dispatch a background worker fetch to warm the cache for subsequent ticks,
-            // and return a non-blocking proxy stub so V8 never starves the compositor heartbeat.
+            // Dispatch a background worker fetch to warm the cache for a later
+            // load, but report the unavailable module instead of fabricating
+            // exports. Fabricated source breaks module semantics silently.
             log::warn!(
                 "Module {url_str} not in memory cache on UI thread; pre-fetching on background worker"
             );
@@ -209,12 +196,9 @@ impl ModuleLoader for MangoModuleLoader {
                 .map(|mut cache| cache.in_flight.insert(target_url.clone()))
                 .unwrap_or(false);
             if !should_fetch {
-                return ModuleLoadResponse::Sync(Ok(ModuleSource::new(
-                    ModuleType::JavaScript,
-                    ModuleSourceCode::String(stub_code().to_string().into()),
-                    &spec,
-                    None,
-                )));
+                return ModuleLoadResponse::Sync(Err(ModuleLoaderError::generic(format!(
+                    "Module resource is already being fetched: {url_str}"
+                ))));
             }
             let _ = std::thread::Builder::new()
                 .name("mango-bg-module-fetch".to_string())
@@ -243,12 +227,14 @@ impl ModuleLoader for MangoModuleLoader {
                     }
                 });
 
-            ModuleLoadResponse::Sync(Ok(ModuleSource::new(
-                ModuleType::JavaScript,
-                ModuleSourceCode::String(stub_code().to_string().into()),
-                &spec,
-                None,
-            )))
+            // The loader API is synchronous here. Do not execute fabricated
+            // module source while the real response is still in flight: that
+            // hides a missing resource and corrupts module semantics. The
+            // background fetch warms the cache for the next navigation/tick,
+            // while this load reports the real unavailable-resource error.
+            ModuleLoadResponse::Sync(Err(ModuleLoaderError::generic(format!(
+                "Module resource is not available yet: {url_str}"
+            ))))
         } else if spec.scheme() == "mango" {
             // Internal synthetic/empty stub module with Proxy exports
             let stub_code = "const _p = new Proxy({}, { get: () => _p, apply: () => _p }); export default _p; export const __esModule = true;";
@@ -265,8 +251,4 @@ impl ModuleLoader for MangoModuleLoader {
             ))))
         }
     }
-}
-
-fn stub_code() -> &'static str {
-    "const _p = new Proxy({}, { get: () => _p, apply: () => _p }); export default _p; export const __esModule = true;"
 }

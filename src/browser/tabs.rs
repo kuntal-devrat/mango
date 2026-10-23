@@ -37,6 +37,7 @@ impl BrowserChrome {
 
     /// Saves the active tab's WebContents (DOM tree, JS runtime, scroll, form state) into `self.tabs`.
     pub fn save_active_tab_state(&mut self) {
+        self.resource_scheduler.set_visible(false);
         // The self-referential stylesheet index is page-local and is rebuilt
         // when the tab is restored; never leave it pointing at moved fields.
         self.style_index_cache = None;
@@ -62,6 +63,7 @@ impl BrowserChrome {
                     mango_layout::display_list::DisplayListCache::new(),
                 ),
                 image_rx: self.image_rx.take(),
+                resource_scheduler: std::mem::take(&mut self.resource_scheduler),
                 has_active_animations: self.anim_state.is_animating(),
                 canvas_bg: self.canvas_bg,
                 engine: None,
@@ -71,6 +73,7 @@ impl BrowserChrome {
 
     /// Restores the active tab's WebContents from `self.tabs[self.active_tab_idx]`.
     pub fn restore_active_tab_state(&mut self) {
+        self.resource_scheduler.set_visible(true);
         if let Some(tab) = self.tabs.get_mut(self.active_tab_idx) {
             self.is_loading = tab.loading;
             self.address_text = tab.url.clone();
@@ -93,6 +96,8 @@ impl BrowserChrome {
                 self.page_display_list = contents.page_display_list;
                 self.display_list_cache = std::sync::Mutex::new(contents.display_list_cache);
                 self.image_rx = contents.image_rx;
+                self.resource_scheduler = contents.resource_scheduler;
+                self.resource_scheduler.set_visible(true);
                 self.canvas_bg = contents.canvas_bg;
                 self.cached_scrollable_height =
                     crate::scroll::compute_scrollable_height(self.root_box.as_ref());

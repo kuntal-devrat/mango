@@ -1,0 +1,28 @@
+# Canonical upstream WPT files selected for the current DuckDuckGo HTML page.
+# These paths are relative to tests/wpt/upstream/ and must remain byte-exact
+# upstream files. This is a focused compatibility profile, not a WPT score.
+
+[[test]]
+path = "dom/nodes/ParentNode-querySelector-matches.html"
+kind = "wpt"
+feature = "result selectors"
+
+[[test]]
+path = "dom/nodes/ParentNode-querySelectorAll-scope-colon-id-class.html"
+kind = "wpt"
+feature = "result selectors"
+
+[[test]]
+path = "css/css-cascade/inline-style-background.html"
+kind = "wpt"
+feature = "inline cascade and background"
+
+[[test]]
+path = "css/css-flexbox/flexbox_flex-0-auto.html"
+kind = "reftest"
+feature = "result layout"
+
+[[test]]
+path = "css/css-position/containing-block-change-button.html"
+kind = "reftest"
+feature = "positioned result layout"

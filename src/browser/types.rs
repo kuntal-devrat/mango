@@ -127,6 +127,12 @@ pub enum ScriptToRun {
     },
 }
 
+#[derive(Debug, Clone)]
+pub struct ScheduledScript {
+    pub script: ScriptToRun,
+    pub resource_id: crate::browser::resource_scheduler::ResourceId,
+}
+
 impl ScriptToRun {
     pub fn is_defer(&self) -> bool {
         match self {

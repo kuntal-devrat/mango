@@ -66,6 +66,7 @@ impl BrowserChrome {
 
     /// Ticks JavaScript timers and background execution. Returns `true` if a DOM mutation occurred.
     pub fn tick_js(&mut self) -> bool {
+        self.resource_scheduler.begin_turn();
         // 1. Check web font epoch: if new web fonts loaded asynchronously, invalidate display list and relayout
         let current_font_epoch = mango_render::web_font_epoch();
         if self.last_font_epoch != current_font_epoch {
@@ -77,8 +78,40 @@ impl BrowserChrome {
         }
 
         // 2. Incremental deferred/async script execution (1 script per tick to prevent UI thread lockup)
-        if let Some(s) = self.pending_scripts.pop_front() {
-            self.execute_pending_script(s);
+        if let Some(scheduled) = self.pending_scripts.pop_front() {
+            let priority = if scheduled.script.is_defer() {
+                crate::browser::resource_scheduler::ResourcePriority::Defer
+            } else if scheduled.script.is_async() {
+                crate::browser::resource_scheduler::ResourcePriority::Async
+            } else {
+                crate::browser::resource_scheduler::ResourcePriority::Blocking
+            };
+            if !self.resource_scheduler.allow_execution(priority) {
+                if let Some(reason) = self.resource_scheduler.execution_block_reason(priority) {
+                    self.resource_scheduler
+                        .reject(scheduled.resource_id, reason);
+                    self.devtools.log(
+                        crate::devtools::ConsoleLevel::Warn,
+                        format!(
+                            "Resource rejected: script; reason={reason:?}; priority={priority:?}"
+                        ),
+                    );
+                } else {
+                    self.pending_scripts.push_front(scheduled);
+                }
+                return false;
+            }
+            self.resource_scheduler.transition(
+                scheduled.resource_id,
+                crate::browser::resource_scheduler::ResourceState::Executing,
+            );
+            let started = std::time::Instant::now();
+            self.execute_pending_script(scheduled.script);
+            self.resource_scheduler.record_script_cpu(started.elapsed());
+            self.resource_scheduler.transition(
+                scheduled.resource_id,
+                crate::browser::resource_scheduler::ResourceState::Completed,
+            );
             if self.pending_scripts.is_empty() {
                 if let Some(ref mut rt) = self.js_runtime {
                     let _ = rt.dispatch_dom_content_loaded();
@@ -89,6 +122,7 @@ impl BrowserChrome {
 
         let mutated = if let Some(ref mut rt) = self.js_runtime {
             let mutated = rt.tick();
+            self.resource_scheduler.record_js_heap(rt.heap_size_bytes());
             if let Some(alert_msg) = rt.take_status_text() {
                 self.status_text = alert_msg;
             }

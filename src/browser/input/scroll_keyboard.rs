@@ -8,6 +8,9 @@ use mango_platform::input::{KeyEvent, MangoKey};
 impl BrowserChrome {
     /// Handles mouse wheel scrolling with clamping.
     pub fn handle_scroll(&mut self, delta_y: f32) {
+        if self.devtools_scroll(delta_y) {
+            return;
+        }
         // While the file picker overlay is open under the cursor, scroll its
         // directory listing instead of the page.
         let (mx, my) = (self.mouse_x, self.mouse_y);

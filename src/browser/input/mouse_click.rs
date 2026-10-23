@@ -37,6 +37,10 @@ impl BrowserChrome {
             return;
         }
 
+        if button == MouseButton::Left && self.devtools_hit_test(state) {
+            return;
+        }
+
         if state == KeyState::Released && button == MouseButton::Left {
             self.scrollbar_dragging = false;
 

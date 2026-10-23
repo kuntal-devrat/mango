@@ -12,9 +12,49 @@ impl DevTools {
         cmds: &mut Vec<DisplayCommand>,
         width: f32,
         content_y: f32,
-        _content_h: f32,
+        content_h: f32,
     ) {
-        let mut row_y = content_y + 16.0;
+        let toolbar_h = 30.0;
+        cmds.push(DisplayCommand::FillRect {
+            rect: mango_core::Rect::new(0.0, content_y, width, toolbar_h),
+            color: Color::rgb(37, 38, 42),
+        });
+        cmds.push(DisplayCommand::draw_text(
+            "Console",
+            14.0,
+            content_y + 19.0,
+            Color::rgb(225, 228, 232),
+            12.0,
+            FontWeight::Bold,
+            FontFamily::SansSerif,
+        ));
+        cmds.push(DisplayCommand::draw_text(
+            format!("{} messages", self.console_entries.len()),
+            82.0,
+            content_y + 19.0,
+            Color::rgb(145, 150, 158),
+            10.0,
+            FontWeight::Regular,
+            FontFamily::SansSerif,
+        ));
+        cmds.push(DisplayCommand::draw_text(
+            "Clear",
+            width - 60.0,
+            content_y + 19.0,
+            Color::rgb(160, 190, 220),
+            10.0,
+            FontWeight::Regular,
+            FontFamily::SansSerif,
+        ));
+
+        let row_y_start = content_y + toolbar_h + 18.0;
+        let visible_rows = ((content_h - toolbar_h - 12.0) / 20.0).max(1.0) as usize;
+        let end = self
+            .console_entries
+            .len()
+            .saturating_sub(self.console_scroll);
+        let start = end.saturating_sub(visible_rows);
+        let mut row_y = row_y_start;
 
         if self.console_entries.is_empty() {
             cmds.push(DisplayCommand::DrawText {
@@ -32,7 +72,7 @@ impl DevTools {
             return;
         }
 
-        for entry in self.console_entries.iter().rev().take(12) {
+        for entry in self.console_entries[start..end].iter().rev() {
             let (icon, color) = match entry.level {
                 ConsoleLevel::Log => ("[log]", Color::rgb(204, 204, 204)),
                 ConsoleLevel::Info => ("[info]", Color::rgb(79, 193, 255)),
@@ -41,7 +81,7 @@ impl DevTools {
             };
 
             cmds.push(DisplayCommand::DrawText {
-                text: format!("{icon} {}", entry.message),
+                text: format!("{icon}  {}  {}", entry.time_str, entry.message),
                 x: 16.0,
                 y: row_y,
                 color,

@@ -154,18 +154,15 @@ fn prepare_document_pipeline_internal(
 
     let mut raw_scripts = Vec::new();
     collect_scripts(&doc, doc.root(), &mut raw_scripts);
-    // Keep network work aligned with the renderer's execution budget. Fetching
-    // dozens of scripts that will later be rejected only creates duplicate
-    // response buffers and lets a page consume memory before JS policy runs.
-    const MAX_PRELOAD_SCRIPTS: usize = 8;
     const SCRIPT_FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
     let mut to_fetch: Vec<(usize, String, Option<String>)> = Vec::new();
     if !is_progressive {
         for (idx, s) in raw_scripts.iter().enumerate() {
             if let ScriptToRun::External { src, nonce, .. } = s {
-                if to_fetch.len() < MAX_PRELOAD_SCRIPTS {
-                    to_fetch.push((idx, src.clone(), nonce.clone()));
-                }
+                // Discovery is complete and independent of execution policy.
+                // The bounded fetch pool limits concurrency; this queue must
+                // not silently drop scripts from large applications.
+                to_fetch.push((idx, src.clone(), nonce.clone()));
             }
         }
     }

@@ -133,6 +133,8 @@ impl BrowserChrome {
                         page_display_list: DisplayList::new(),
                         display_list_cache: mango_layout::display_list::DisplayListCache::new(),
                         image_rx: None,
+                        resource_scheduler:
+                            crate::browser::resource_scheduler::DocumentResourceScheduler::default(),
                         has_active_animations: false,
                         canvas_bg: mango_core::Color::WHITE,
                         engine: None,
@@ -186,6 +188,8 @@ impl BrowserChrome {
             page_display_list: DisplayList::new(),
             display_list_cache: mango_layout::display_list::DisplayListCache::new(),
             image_rx: None,
+            resource_scheduler:
+                crate::browser::resource_scheduler::DocumentResourceScheduler::default(),
             has_active_animations: false,
             canvas_bg: mango_core::Color::WHITE,
             engine: None,

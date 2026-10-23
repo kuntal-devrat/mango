@@ -213,7 +213,13 @@ pub(crate) fn format_media_time(seconds: f32) -> String {
 }
 
 pub(crate) fn lookup_image_cached(url: &str) -> Option<mango_render::image_decode::DecodedImage> {
-    let trimmed = url.trim();
+    let trimmed = url
+        .trim()
+        .strip_prefix("url(")
+        .and_then(|value| value.strip_suffix(')'))
+        .unwrap_or(url.trim())
+        .trim_matches(['\'', '"'])
+        .trim();
     if trimmed.is_empty() {
         return None;
     }

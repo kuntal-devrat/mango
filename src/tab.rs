@@ -30,6 +30,7 @@ pub struct TabWebContents {
     pub page_display_list: mango_render::display_list::DisplayList,
     pub display_list_cache: mango_layout::display_list::DisplayListCache,
     pub image_rx: Option<std::sync::mpsc::Receiver<String>>,
+    pub resource_scheduler: crate::browser::resource_scheduler::DocumentResourceScheduler,
     pub has_active_animations: bool,
     pub canvas_bg: mango_core::Color,
     pub engine: Option<mango_engine::Engine>,
@@ -91,9 +92,9 @@ impl Tab {
     /// Stores a frozen BFCache layout snapshot on the current history entry.
     pub fn store_bfcache_snapshot(&mut self, snapshot: Box<mango_layout::LayoutSnapshot>) {
         // A layout snapshot duplicates a large part of a page's retained
-        // geometry. Keep only one small-page snapshot until snapshots have a
-        // byte budget; four large pages can otherwise consume hundreds of MB.
-        const MAX_BFCACHE_ENTRIES: usize = 1;
+        // geometry. Keep a bounded back/forward pair; two entries are needed
+        // for instant traversal while preventing unbounded retained growth.
+        const MAX_BFCACHE_ENTRIES: usize = 2;
         let current_idx = self.history_idx;
         if let Some(entry) = self.history.get_mut(current_idx) {
             entry.bfcache_snapshot = Some(snapshot);

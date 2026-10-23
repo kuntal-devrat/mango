@@ -422,6 +422,28 @@ pub fn collect_image_sources(doc: &Document, node_id: NodeId, sources: &mut Vec<
     }
 }
 
+/// Collects image URLs together with their owning DOM node. This is used after
+/// layout to prioritize resources whose boxes intersect the viewport.
+pub fn collect_image_node_sources(
+    doc: &Document,
+    node_id: NodeId,
+    sources: &mut Vec<(NodeId, String)>,
+) {
+    if let Some(node) = doc.get(node_id)
+        && let NodeData::Element(elem) = &node.data
+        && elem.tag_name.eq_ignore_ascii_case("img")
+        && let Some(src) = elem.get_attribute("src")
+    {
+        let src = src.trim();
+        if !src.is_empty() && !src.starts_with("data:") {
+            sources.push((node_id, src.to_string()));
+        }
+    }
+    for child in doc.children(node_id) {
+        collect_image_node_sources(doc, child.id, sources);
+    }
+}
+
 pub fn collect_stylesheet_images(
     _doc: &Document,
     stylesheets: &[mango_css::parser::Stylesheet],

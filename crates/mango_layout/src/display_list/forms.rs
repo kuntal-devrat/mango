@@ -579,18 +579,25 @@ pub(crate) fn render_form_control(
                 ));
 
                 if s.appearance != mango_css::values::Appearance::None {
-                    let arrow_x = (content.x() + 124.0)
-                        .min(content.right() - 14.0)
-                        .max(x + 10.0);
-                    list.push(DisplayCommand::draw_text(
-                        "▼",
-                        arrow_x,
-                        y + 1.0,
-                        apply_opacity(Color::rgb(100, 100, 100), opacity),
-                        9.0,
-                        mango_render::FontWeight::Regular,
-                        mango_render::FontFamily::SansSerif,
-                    ));
+                    let arrow_x = content.right() - 13.0;
+                    let arrow_y = content.y() + content.height() * 0.5;
+                    let arrow_color = apply_opacity(Color::rgb(100, 100, 100), opacity);
+                    list.push(DisplayCommand::DrawLine {
+                        x1: arrow_x - 4.0,
+                        y1: arrow_y - 2.0,
+                        x2: arrow_x,
+                        y2: arrow_y + 2.0,
+                        color: arrow_color,
+                        thickness: 1.5,
+                    });
+                    list.push(DisplayCommand::DrawLine {
+                        x1: arrow_x,
+                        y1: arrow_y + 2.0,
+                        x2: arrow_x + 4.0,
+                        y2: arrow_y - 2.0,
+                        color: arrow_color,
+                        thickness: 1.5,
+                    });
                 }
             }
         }

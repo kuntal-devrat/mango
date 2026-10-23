@@ -519,6 +519,17 @@ pub(crate) fn layout_positioned_element(
     let content_y = final_box_y + box_node.dimensions.border.top + box_node.dimensions.padding.top;
     box_node.dimensions.content.origin = Point::new(content_x, content_y);
 
+    // A positioned element may have been laid out once at its static position
+    // before its containing block and offsets were resolved. Rebuild its
+    // formatting descendants from the preserved source children so stale
+    // text/inline boxes are not painted at both the static and final origins.
+    if box_node.raw_children.is_none() && !box_node.children.is_empty() {
+        box_node.raw_children = Some(box_node.children.clone());
+    }
+    if let Some(raw_children) = box_node.raw_children.clone() {
+        box_node.children = raw_children;
+    }
+
     let is_flex_or_grid = matches!(
         style.display,
         Display::Flex | Display::InlineFlex | Display::Grid | Display::InlineGrid
