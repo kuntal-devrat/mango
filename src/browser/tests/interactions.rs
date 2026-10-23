@@ -371,7 +371,11 @@ fn test_stylesheet_image_collection_is_not_capped_at_64() {
 fn test_background_image_backlog_drains_a_few_per_frame() {
     let mut browser = BrowserChrome::new(1024, 768);
     let png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==";
-    browser.pending_image_fetches = (0..10).map(|_| png.to_string()).collect();
+    // Use distinct metadata keys so this test exercises batch draining rather
+    // than the resource deduplicator removing ten identical URLs at once.
+    browser.pending_image_fetches = (0..10)
+        .map(|i| png.replacen("image/png", &format!("image/png;id={i}"), 1))
+        .collect();
     browser.image_fetch_base = Some(Url::parse("https://example.com/").unwrap());
     assert!(browser.has_pending_image_fetches());
 
@@ -384,7 +388,11 @@ fn test_background_image_backlog_drains_a_few_per_frame() {
         10 - IMAGE_PREFETCH_PER_FRAME,
         "exactly a few images per frame"
     );
-    assert!(get_cached_image(png).is_some(), "drained image was cached");
+    let first_variant = png.replacen("image/png", "image/png;id=0", 1);
+    assert!(
+        get_cached_image(&first_variant).is_some(),
+        "drained image was cached"
+    );
 
     while browser.has_pending_image_fetches() {
         browser.drain_pending_images();

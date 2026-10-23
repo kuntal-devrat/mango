@@ -91,6 +91,12 @@ fn duckduckgo_profile_runs_canonical_wpt_entries() {
     let expected = [
         "dom/nodes/ParentNode-querySelector-matches.html",
         "dom/nodes/ParentNode-querySelectorAll-scope-colon-id-class.html",
+        "dom/nodes/Element-closest.html",
+        "dom/nodes/Node-parentElement.html",
+        "dom/nodes/ParentNode-querySelectorAll-svg-class.html",
+        "dom/nodes/ParentNode-querySelector-svg-not-root.html",
+        "dom/nodes/MutationObserver-childList.html",
+        "dom/nodes/Element-childElementCount-dynamic-add.html",
         "css/css-cascade/inline-style-background.html",
     ];
     for relative in expected {

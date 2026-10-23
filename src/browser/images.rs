@@ -17,6 +17,16 @@ const MAX_IMAGE_WORKERS: usize = 4;
 /// Maximum number of per-frame drain batches that may be in flight at once.
 const MAX_IMAGE_DRAIN_JOBS: usize = 4;
 
+/// Result returned by an image worker. Keeping the byte count and decode
+/// outcome together makes resource accounting truthful without retaining the
+/// response buffer on the UI thread.
+#[derive(Debug)]
+pub struct ImageFetchResult {
+    pub src: String,
+    pub bytes: usize,
+    pub decoded: bool,
+}
+
 static IMAGE_POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
 
 fn image_pool() -> &'static rayon::ThreadPool {
@@ -222,6 +232,13 @@ impl BrowserChrome {
         self.image_rx.is_some() || !self.pending_image_fetches.is_empty()
     }
 
+    /// Number of image requests still waiting for a worker result or retry.
+    /// This is intentionally observable so headless callers never have to
+    /// reduce an incomplete drain to a misleading success boolean.
+    pub fn pending_image_fetch_count(&self) -> usize {
+        self.pending_image_fetches.len()
+    }
+
     /// Fetches a slice of the queued image backlog. Returns `true` when at
     /// least one newly cached image is available for painting.
     pub fn drain_pending_images(&mut self) -> bool {
@@ -230,14 +247,15 @@ impl BrowserChrome {
         if let Some(ref rx) = self.image_rx {
             loop {
                 match rx.try_recv() {
-                    Ok(src) => {
-                        if get_cached_image(&src).is_some() {
+                    Ok(result) => {
+                        let src = result.src;
+                        if result.decoded && get_cached_image(&src).is_some() {
                             loaded_any = true;
                             self.resource_scheduler.finish_url(
                                 &src,
                                 crate::browser::resource_scheduler::ResourceState::Completed,
                                 None,
-                                0,
+                                result.bytes,
                             );
                         } else {
                             self.devtools.log(
@@ -247,8 +265,14 @@ impl BrowserChrome {
                             self.resource_scheduler.finish_url(
                                 &src,
                                 crate::browser::resource_scheduler::ResourceState::Failed,
-                                Some(crate::browser::resource_scheduler::RejectReason::NetworkFailure),
-                                0,
+                                Some(if result.decoded {
+                                    crate::browser::resource_scheduler::RejectReason::NetworkFailure
+                                } else if result.bytes > 0 {
+                                    crate::browser::resource_scheduler::RejectReason::DecodeFailure
+                                } else {
+                                    crate::browser::resource_scheduler::RejectReason::NetworkFailure
+                                }),
+                                result.bytes,
                             );
                         }
                         if let Some(pos) = self.pending_image_fetches.iter().position(|s| s == &src)
@@ -265,7 +289,11 @@ impl BrowserChrome {
             }
             if disconnected {
                 self.image_rx = None;
-                self.pending_image_fetches.clear();
+                // The pending vector deliberately retains the in-flight
+                // batch until each worker result is consumed.  A worker can
+                // exit early on navigation cancellation or a panic; clearing
+                // it here silently loses resources and makes later pages
+                // appear to have loaded successfully.
             }
         } else if !self.pending_image_fetches.is_empty() {
             if let Some(base) = self.image_fetch_base.clone() {
@@ -277,57 +305,100 @@ impl BrowserChrome {
                     return loaded_any;
                 };
                 let take = IMAGE_PREFETCH_PER_FRAME.min(self.pending_image_fetches.len());
-                let batch: Vec<String> = self.pending_image_fetches.drain(..take).collect();
+                // Keep ownership in the pending metadata while the worker is
+                // running.  Results remove individual URLs below.  This
+                // makes channel disconnects retryable instead of lossy.
+                let batch: Vec<String> = self.pending_image_fetches[..take].to_vec();
                 let mut remote_to_fetch = Vec::new();
                 for src in batch {
                     if get_cached_image(&src).is_some() {
                         loaded_any = true;
+                        self.pending_image_fetches.retain(|queued| queued != &src);
+                        self.resource_scheduler.finish_url(
+                            &src,
+                            crate::browser::resource_scheduler::ResourceState::Completed,
+                            None,
+                            0,
+                        );
                     } else if src.trim_start().starts_with("data:") {
                         if let Some(decoded) = decode_data_uri(&src) {
                             cache_image(&src, decoded);
                             loaded_any = true;
+                            self.pending_image_fetches.retain(|queued| queued != &src);
+                            self.resource_scheduler.finish_url(
+                                &src,
+                                crate::browser::resource_scheduler::ResourceState::Completed,
+                                None,
+                                0,
+                            );
                         }
                     } else {
                         remote_to_fetch.push(src);
                     }
                 }
                 if !remote_to_fetch.is_empty() {
-                    let (tx, rx) = std::sync::mpsc::channel();
+                    let (tx, rx) = std::sync::mpsc::channel::<ImageFetchResult>();
                     self.image_rx = Some(rx);
-                    let loader = self.loader.clone();
                     let epoch = self.image_epoch.load(Ordering::SeqCst);
-                    let epoch_flag = self.image_epoch.clone();
-                    image_pool().spawn(move || {
-                        for src in remote_to_fetch {
+                    // Submit one task per image to the fixed pool.  The old
+                    // implementation submitted one pool task which fetched
+                    // the entire batch serially, leaving three worker threads
+                    // idle and making image-heavy pages appear capped.
+                    // `IMAGE_PREFETCH_PER_FRAME` bounds this fan-out, while
+                    // the pool bounds total OS threads and decoded work.
+                    for src in remote_to_fetch {
+                        let tx = tx.clone();
+                        let loader = self.loader.clone();
+                        let base = base.clone();
+                        let epoch_flag = self.image_epoch.clone();
+                        image_pool().spawn(move || {
                             if epoch_flag.load(Ordering::SeqCst) != epoch {
-                                break;
+                                return;
                             }
                             if get_cached_image(&src).is_some() {
-                                let _ = tx.send(src);
-                                continue;
+                                let _ = tx.send(ImageFetchResult {
+                                    src,
+                                    bytes: 0,
+                                    decoded: true,
+                                });
+                                return;
                             }
                             let Ok(bytes) = loader.fetch_image_bytes(&base, &src) else {
                                 log::debug!("[mango-img] Image fetch failed for {src}");
-                                let _ = tx.send(src);
-                                continue;
+                                let _ = tx.send(ImageFetchResult {
+                                    src,
+                                    bytes: 0,
+                                    decoded: false,
+                                });
+                                return;
                             };
+                            let byte_len = bytes.len();
                             if epoch_flag.load(Ordering::SeqCst) != epoch {
-                                break;
+                                return;
                             }
-                            if let Some(decoded) = decode_image_bytes(&bytes) {
+                            let decoded_ok = if let Some(decoded) = decode_image_bytes(&bytes) {
                                 cache_image(&src, decoded.clone());
                                 if let Ok(resolved) = base.resolve(&src) {
                                     cache_image(&resolved.as_str(), decoded);
                                 }
-                                mango_core::wake_event_loop();
-                            }
+                                true
+                            } else {
+                                false
+                            };
                             // Completion is reported for both successful
                             // and failed fetch/decode attempts so the
                             // backlog cannot remain permanently pending.
-                            let _ = tx.send(src);
+                            let _ = tx.send(ImageFetchResult {
+                                src,
+                                bytes: byte_len,
+                                decoded: decoded_ok,
+                            });
                             mango_core::wake_event_loop();
-                        }
-                    });
+                        });
+                    }
+                    // The receiver must close once every worker task exits;
+                    // only the cloned senders are retained by the workers.
+                    drop(tx);
                 }
             } else {
                 self.pending_image_fetches.clear();

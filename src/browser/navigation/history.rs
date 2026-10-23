@@ -380,6 +380,12 @@ impl BrowserChrome {
                     if let Err(e) = res {
                         log::warn!("Inline script error: {e}");
                     }
+                    self.resource_scheduler.finish_url(
+                        "inline://document",
+                        crate::browser::resource_scheduler::ResourceState::Completed,
+                        None,
+                        code.len(),
+                    );
                 }
                 ScriptToRun::Preloaded {
                     code,
@@ -403,6 +409,12 @@ impl BrowserChrome {
                     if let Err(e) = res {
                         log::warn!("Preloaded script error ({src}): {e}");
                     }
+                    self.resource_scheduler.finish_url(
+                        &src,
+                        crate::browser::resource_scheduler::ResourceState::Completed,
+                        None,
+                        code.len(),
+                    );
                 }
                 ScriptToRun::External { src, is_module, .. } => {
                     let Some(ref base) = self.base_url else {
@@ -439,6 +451,12 @@ impl BrowserChrome {
                         if let Err(e) = res {
                             log::warn!("External script error ({src}): {e}");
                         }
+                        self.resource_scheduler.finish_url(
+                            &src,
+                            crate::browser::resource_scheduler::ResourceState::Completed,
+                            None,
+                            code.len(),
+                        );
                     }
                 }
             };

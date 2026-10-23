@@ -99,7 +99,12 @@ impl DecodedImage {
             let a = (p >> 24) & 0xFF;
             a > 0 && a < 255
         });
-        let all_zero_alpha = self.pixels.iter().all(|&p| (p >> 24) == 0);
+        // Legacy opaque buffers may omit alpha while carrying RGB data.  A
+        // genuinely transparent SVG, however, is commonly all-zero pixels;
+        // treating that as opaque black destroys CSS backgrounds behind an
+        // empty SVG image.  Only infer legacy opacity when RGB data exists.
+        let all_zero_alpha = self.pixels.iter().all(|&p| (p >> 24) == 0)
+            && self.pixels.iter().any(|&p| (p & 0x00FF_FFFF) != 0);
 
         // Precompute horizontal weights
         let h_contribs = compute_resample_weights(src_w, dst_w);

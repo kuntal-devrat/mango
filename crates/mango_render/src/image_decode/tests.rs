@@ -91,6 +91,21 @@ fn test_decode_svg_data_uri_base64_with_charset() {
 }
 
 #[test]
+fn test_svg_without_intrinsic_dimensions_uses_html_default_object_size() {
+    let uri = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' />";
+    let image = decode_data_uri(uri).expect("empty SVG image should still decode");
+    assert_eq!((image.width, image.height), (300, 150));
+}
+
+#[test]
+fn test_transparent_svg_stays_transparent_when_resized() {
+    let uri = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' />";
+    let image = decode_data_uri(uri).expect("empty SVG image should decode");
+    let resized = image.resize(15, 15);
+    assert!(resized.pixels.iter().all(|pixel| (pixel >> 24) == 0));
+}
+
+#[test]
 fn test_async_image_decode_and_placeholder() {
     let png_bytes = base64_decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==").unwrap();
     let key = "https://example.com/async_test_image.png";
