@@ -101,6 +101,14 @@ impl BrowserChrome {
         self.canvas_bg = canvas_color;
         self.page_display_list = page_dl;
         self.root_box = Some(root_box);
+        let background_images = self.root_box.as_ref().map(|root| {
+            let mut images = Vec::new();
+            crate::browser::navigation::resources::collect_box_background_images(root, &mut images);
+            images
+        });
+        if let (Some(base), Some(background_images)) = (self.base_url.clone(), background_images) {
+            self.queue_additional_image_sources(background_images, base);
+        }
         self.cached_scrollable_height =
             crate::scroll::compute_scrollable_height(self.root_box.as_ref());
         self.page_dirty = true;

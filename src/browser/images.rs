@@ -51,6 +51,35 @@ impl Drop for InFlightGuard {
 }
 
 impl BrowserChrome {
+    pub(crate) fn queue_additional_image_sources(&mut self, sources: Vec<String>, base: Url) {
+        let mut queued = std::collections::HashSet::new();
+        queued.extend(self.pending_image_fetches.iter().cloned());
+        for raw in sources {
+            let src = raw
+                .trim()
+                .strip_prefix("url(")
+                .and_then(|value| value.strip_suffix(')'))
+                .unwrap_or(raw.trim())
+                .trim_matches(['\'', '"'])
+                .trim();
+            if src.is_empty() || get_cached_image(src).is_some() || !queued.insert(src.to_string())
+            {
+                continue;
+            }
+            let id = self.resource_scheduler.discover(
+                crate::browser::resource_scheduler::ResourceKind::Image,
+                crate::browser::resource_scheduler::ResourcePriority::Visible,
+                src.to_string(),
+            );
+            self.resource_scheduler.transition(
+                id,
+                crate::browser::resource_scheduler::ResourceState::Queued,
+            );
+            self.pending_image_fetches.push(src.to_string());
+        }
+        self.image_fetch_base = Some(base);
+    }
+
     /// Reorders pending image work from post-layout geometry. Only resource
     /// metadata and queue order change; image loads never trigger layout.
     pub(crate) fn reprioritize_visible_images(&mut self) {
