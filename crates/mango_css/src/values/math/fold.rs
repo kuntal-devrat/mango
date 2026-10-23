@@ -34,14 +34,14 @@ impl MathExpr {
             MathExpr::Round { val, .. } => val.is_dimensionless_number(),
             MathExpr::Mod(a, _) | MathExpr::Rem(a, _) => a.is_dimensionless_number(),
             MathExpr::Min(list) | MathExpr::Max(list) => {
-                list.first().map_or(false, |item| item.is_dimensionless_number())
+                list.first().is_some_and(|item| item.is_dimensionless_number())
             }
             MathExpr::Clamp { val, .. } => val.is_dimensionless_number(),
             MathExpr::Hypot(list) => {
-                list.first().map_or(true, |item| item.is_dimensionless_number())
+                list.first().is_none_or(|item| item.is_dimensionless_number())
             }
             MathExpr::Var { fallback, .. } => {
-                fallback.as_ref().map_or(false, |fb| fb.is_dimensionless_number())
+                fallback.as_ref().is_some_and(|fb| fb.is_dimensionless_number())
             }
         }
     }

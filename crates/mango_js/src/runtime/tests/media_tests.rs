@@ -357,9 +357,11 @@ fn test_dom_measurement_and_layout() {
         mo.observe(parent, { childList: true, attributes: true, subtree: true, characterData: true });
 
         var newSpan = document.createElement("span");
+        var textNode = document.createTextNode("Initial");
+        newSpan.appendChild(textNode);
         parent.appendChild(newSpan);
         parent.setAttribute("data-test", "val");
-        newSpan.textContent = "Hi";
+        textNode.data = "Hi";
 
         // Test takeRecords() synchronously
         var syncRecords = mo.takeRecords();

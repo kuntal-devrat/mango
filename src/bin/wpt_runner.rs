@@ -33,6 +33,7 @@ fn main() {
         return;
     }
 
+    #[allow(clippy::collapsible_if)]
     if let Some(idx) = args.iter().position(|a| a == "--json") {
         if let Some(rel) = args.get(idx + 1) {
             let result = harness::run_wpt_file(&root, rel, harness::DEFAULT_FILE_TIMEOUT);

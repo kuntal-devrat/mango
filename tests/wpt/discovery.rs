@@ -94,9 +94,7 @@ fn unquote(s: &str) -> String {
     let s = s.trim();
     let s = s.strip_prefix('[').and_then(|r| r.strip_suffix(']')).unwrap_or(s);
     let s = s.trim();
-    if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
-        s[1..s.len() - 1].to_string()
-    } else if s.len() >= 2 && s.starts_with('\'') && s.ends_with('\'') {
+    if s.len() >= 2 && (s.starts_with('"') && s.ends_with('"') || s.starts_with('\'') && s.ends_with('\'')) {
         s[1..s.len() - 1].to_string()
     } else {
         s.to_string()

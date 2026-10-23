@@ -466,10 +466,7 @@ impl CssParser {
                                 "ruby-text" => Some(Display::RubyText),
                                 _ => None,
                             };
-                            match disp {
-                                Some(d) => Some(Value::Display(d)),
-                                None => None,
-                            }
+                            disp.map(Value::Display)
                         } else {
                             None
                         }

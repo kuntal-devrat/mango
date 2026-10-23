@@ -125,7 +125,7 @@ fn is_flex_basis_value(val: &Value) -> bool {
                     || calc.vh != 0.0
             }
             Length::Math(id) => {
-                !crate::values::get_math(*id).map_or(false, |m| m.is_dimensionless_number())
+                !crate::values::get_math(*id).is_some_and(|m| m.is_dimensionless_number())
             }
             Length::Anchor { .. } => false,
         },

@@ -9,7 +9,7 @@ pub struct MathId(pub u32);
 impl MathId {
     /// Returns `true` if the interned math expression resolves to a dimensionless `<number>` rather than a length.
     pub fn is_dimensionless_number(&self) -> bool {
-        crate::values::math::get_math(*self).map_or(false, |e| e.is_dimensionless_number())
+        crate::values::math::get_math(*self).is_some_and(|e| e.is_dimensionless_number())
     }
 }
 

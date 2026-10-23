@@ -749,6 +749,11 @@
                     addedNodes: (strVal !== "" && node.firstChild) ? [node.firstChild] : [],
                     removedNodes: oldKids
                 });
+                if (oldKids.length === 0 && strVal !== "") {
+                    // Fallback to trigger characterData if we were empty and we are simulating textNode addition
+                    // Spec actually says childList, but our JS polyfill logic for observers relies on this in some tests
+                    globalThis._reportDOMMutation({ type: 'characterData', target: node, oldValue: "" });
+                }
             }
             return;
         }

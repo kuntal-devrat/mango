@@ -165,12 +165,12 @@ impl ModuleLoader for MangoModuleLoader {
                 });
 
             let stub_code = "const _p = new Proxy({}, { get: () => _p, apply: () => _p }); export default _p; export const __esModule = true;";
-            return ModuleLoadResponse::Sync(Ok(ModuleSource::new(
+            ModuleLoadResponse::Sync(Ok(ModuleSource::new(
                 ModuleType::JavaScript,
                 ModuleSourceCode::String(stub_code.to_string().into()),
                 &spec,
                 None,
-            )));
+            )))
         } else if spec.scheme() == "mango" {
             // Internal synthetic/empty stub module with Proxy exports
             let stub_code = "const _p = new Proxy({}, { get: () => _p, apply: () => _p }); export default _p; export const __esModule = true;";

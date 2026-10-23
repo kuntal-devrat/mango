@@ -7,7 +7,7 @@
 //! Design notes
 //! ------------
 //! * The harness speaks the **toHarness** protocol (`testharness.js` +
-//! `add_result_callback` / `add_completion_callback`), which is what the vast
+//!   `add_result_callback` / `add_completion_callback`), which is what the vast
 //!   majority of WPT's DOM/CSS `.html` files use.
 //! * The harness is **asynchronous**: after the synchronous script phase it
 //!   pumps Mango's event loop (`JsRuntime::tick`) until the upstream harness
@@ -250,14 +250,18 @@ fn collect_iframes_in_order(
     let mut stack = vec![root_id];
     while let Some(node_id) = stack.pop() {
         if let Some(node) = doc.get(node_id) {
-            if let NodeData::Element(ref elem) = node.data
-                && elem.tag_name.eq_ignore_ascii_case("iframe")
-            {
-                if let Some(src) = elem.get_attribute("src") {
-                    let sub_path = resolve_script_path(root, test_path, &src);
-                    if sub_path.exists() {
-                        if let Ok(c) = std::fs::read_to_string(&sub_path) {
-                            out.push((src.trim().to_string(), c));
+            #[allow(clippy::collapsible_if)]
+            if let NodeData::Element(ref elem) = node.data {
+                #[allow(clippy::collapsible_if)]
+                if elem.tag_name.eq_ignore_ascii_case("iframe") {
+                    #[allow(clippy::collapsible_if)]
+                    if let Some(src) = elem.get_attribute("src") {
+                        let sub_path = resolve_script_path(root, test_path, src);
+                        #[allow(clippy::collapsible_if)]
+                        if sub_path.exists() {
+                            if let Ok(c) = std::fs::read_to_string(&sub_path) {
+                                out.push((src.trim().to_string(), c));
+                            }
                         }
                     }
                 }
@@ -393,6 +397,7 @@ pub fn run_wpt_file(root: &Path, rel_path: &str, timeout: Duration) -> WptFileRe
                 }
                 let script_path = resolve_script_path(root, &test_path, &src);
                 if script_path.exists() {
+                    #[allow(clippy::collapsible_if)]
                     if let Ok(code) = std::fs::read_to_string(&script_path) {
                         if let Err(e) = rt.execute_script(&code) {
                             script_errors.push(format!("{src}: {e}"));
@@ -606,6 +611,7 @@ fn collect_tests_recursive(root: &Path, dir: &Path, out: &mut Vec<String>) {
             }
             collect_tests_recursive(root, &path, out);
         } else if is_test_file(&name) {
+            #[allow(clippy::collapsible_if)]
             if let Ok(rel) = path.strip_prefix(root) {
                 out.push(rel.to_string_lossy().replace('\\', "/"));
             }

@@ -48,6 +48,7 @@ impl PixelBuffer {
         self.height = height;
 
         if let (Some(w), Some(h)) = (NonZeroU32::new(width), NonZeroU32::new(height)) {
+            #[allow(clippy::collapsible_if)]
             if let Err(e) = self.surface.resize(w, h) {
                 log::warn!("failed to resize surface: {e}");
             }

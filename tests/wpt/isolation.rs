@@ -217,7 +217,7 @@ fn run_batch(bin: &str, root: &Path, files: &[String]) -> Option<Vec<WptFileResu
     if let Some(stdout) = child.stdout.take() {
         use std::io::BufRead;
         let reader = std::io::BufReader::new(stdout);
-        for line in reader.lines().flatten() {
+        for line in reader.lines().map_while(Result::ok) {
             let line = line.trim();
             if line.is_empty() {
                 continue;

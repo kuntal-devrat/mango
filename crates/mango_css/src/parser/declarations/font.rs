@@ -222,11 +222,11 @@ pub fn normalize_unitless_zero_lengths(prop: &str, val: Value) -> Value {
         return val;
     }
     match val {
-        Value::Number(n) if n == 0.0 => Value::Length(Length::Px(0.0)),
+        Value::Number(n) if n.abs() < f32::EPSILON => Value::Length(Length::Px(0.0)),
         Value::List(list) => Value::List(
             list.into_iter()
                 .map(|item| match item {
-                    Value::Number(n) if n == 0.0 => Value::Length(Length::Px(0.0)),
+                    Value::Number(n) if n.abs() < f32::EPSILON => Value::Length(Length::Px(0.0)),
                     other => other,
                 })
                 .collect(),
