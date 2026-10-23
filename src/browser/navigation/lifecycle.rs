@@ -262,9 +262,6 @@ impl BrowserChrome {
         // thread in prepare_document_pipeline. Calling load_web_fonts here on the
         // main UI thread would block the UI with redundant network / lock work.
 
-        // Queue images with epoch guarding, dedup, and memory-bounded cap.
-        self.queue_image_backlog(prep.image_sources, final_url.clone());
-
         self.status_text = format!(
             "Loaded {} ({} bytes, HTTP {})",
             final_url,
@@ -290,6 +287,12 @@ impl BrowserChrome {
             true,
             Some(prep.preloaded_scripts),
         );
+        // Start image work only after the document generation has been
+        // established by load_document_internal_with_scripts.  That function
+        // resets the per-document scheduler; queueing before it would make
+        // every image disappear from the resource report and detach image
+        // work from the active generation.
+        self.queue_image_backlog(prep.image_sources, final_url.clone());
         self.address_focused = false;
     }
 

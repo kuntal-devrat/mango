@@ -37,6 +37,14 @@ pub fn resolve_item_cross_size(
             | Length::Content
     ) || (matches!(child_style.height, Length::Percent(_))
         && (container_height <= 0.0 || container_style.height == Length::Auto));
+    let item_align = match child_style.align_self {
+        AlignSelf::Auto => container_style.align_items,
+        AlignSelf::Stretch => AlignItems::Stretch,
+        AlignSelf::FlexStart => AlignItems::FlexStart,
+        AlignSelf::FlexEnd => AlignItems::FlexEnd,
+        AlignSelf::Center => AlignItems::Center,
+        AlignSelf::Baseline => AlignItems::Baseline,
+    };
 
     let mut cross_size = if is_row {
         if !is_child_height_auto {
@@ -143,6 +151,14 @@ pub fn resolve_item_cross_size(
         } else {
             w
         }
+    } else if matches!(item_align, AlignItems::Normal | AlignItems::Stretch)
+        && child_style.width == Length::Auto
+    {
+        // An auto cross size on a column flex item is stretched to the flex
+        // line's cross size, including replaced elements.  Do not let an
+        // intrinsic SVG width bypass stretch: the corresponding main size
+        // remains governed by the replaced element's intrinsic height.
+        (content_width - pad_cross - border_cross - margin_cross.max(0.0)).max(0.0)
     } else if let Some(ratio) = child_style.aspect_ratio
         && ratio > 0.0
         && explicit_main > 0.0
@@ -191,14 +207,6 @@ pub fn resolve_item_cross_size(
     } {
         w
     } else {
-        let item_align = match child_style.align_self {
-            AlignSelf::Auto => container_style.align_items,
-            AlignSelf::Stretch => AlignItems::Stretch,
-            AlignSelf::FlexStart => AlignItems::FlexStart,
-            AlignSelf::FlexEnd => AlignItems::FlexEnd,
-            AlignSelf::Center => AlignItems::Center,
-            AlignSelf::Baseline => AlignItems::Baseline,
-        };
         if matches!(item_align, AlignItems::Normal | AlignItems::Stretch) {
             (content_width - pad_cross - border_cross - margin_cross.max(0.0)).max(0.0)
         } else {

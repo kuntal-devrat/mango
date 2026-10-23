@@ -43,8 +43,12 @@ pub fn decode_data_uri(uri: &str) -> Option<DecodedImage> {
             percent_decode(data)
         };
         let (w_opt, h_opt) = crate::svg::get_svg_intrinsic_dimensions(&svg_str);
-        let w = w_opt.unwrap_or(24.0).max(1.0) as u32;
-        let h = h_opt.unwrap_or(24.0).max(1.0) as u32;
+        // An SVG image without width/height/viewBox has no intrinsic
+        // dimensions.  HTML replaced-element sizing supplies the default
+        // object size of 300x150; using an icon-sized 24x24 fallback makes
+        // flex/grid layout collapse and violates the image sizing rules.
+        let w = w_opt.unwrap_or(300.0).max(1.0) as u32;
+        let h = h_opt.unwrap_or(150.0).max(1.0) as u32;
         return crate::svg::render_svg(&svg_str, w, h, mango_core::Color::BLACK);
     }
 
@@ -76,8 +80,8 @@ pub fn decode_image_bytes(bytes: &[u8]) -> Option<DecodedImage> {
         }
         if trimmed.starts_with("<svg") || trimmed.starts_with("<?xml") {
             let (w_opt, h_opt) = crate::svg::get_svg_intrinsic_dimensions(trimmed);
-            let w = w_opt.unwrap_or(32.0).max(1.0) as u32;
-            let h = h_opt.unwrap_or(32.0).max(1.0) as u32;
+            let w = w_opt.unwrap_or(300.0).max(1.0) as u32;
+            let h = h_opt.unwrap_or(150.0).max(1.0) as u32;
             if (w as u64).saturating_mul(h as u64) > MAX_DECODED_PIXELS {
                 return None;
             }

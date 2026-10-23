@@ -719,6 +719,42 @@ fn test_github_avatar_fetch_and_caching() {
 }
 
 #[test]
+fn test_rust_homepage_image_accounting_has_no_discovery_cap() {
+    // This is the stable image shape of the Rust homepage: a logo, feature
+    // icons, and footer/social SVGs.  Keep this test network-free; it verifies
+    // discovery/accounting, while the fetch/decode path is covered separately.
+    let html = r#"
+        <img src="/static/images/rust-logo-blk.svg">
+        <img src="/static/images/cli.svg">
+        <img src="/static/images/webassembly.svg">
+        <img src="/static/images/networking.svg">
+        <img src="/static/images/embedded.svg">
+        <img src="/static/images/mastodon.svg">
+        <img src="/static/images/bluesky.svg">
+        <img src="/static/images/youtube.svg">
+        <img src="/static/images/github.svg">
+    "#;
+    let document = mango_html::parse_html(html);
+    let mut sources = Vec::new();
+    crate::browser::navigation::resources::collect_image_sources(
+        &document,
+        document.root(),
+        &mut sources,
+    );
+    assert_eq!(sources.len(), 9);
+
+    let mut browser = BrowserChrome::new(1024, 768);
+    browser.resource_scheduler.begin_document(1);
+    browser.queue_image_backlog(sources, Url::parse("https://rust-lang.org/").unwrap());
+    assert_eq!(
+        browser.resource_report().discovered,
+        9,
+        "all homepage image resources must enter the scheduler"
+    );
+    assert!(browser.has_pending_image_fetches());
+}
+
+#[test]
 fn test_tick_navigation_applies_results_for_multiple_tabs() {
     let mut browser = BrowserChrome::new(1024, 768);
     // Tab 0 is background; tab 1 is active.

@@ -275,19 +275,6 @@ fn main() {
         browser.wait_for_navigation();
     }
     println!("Browser status: {}", browser.status_text());
-    let report = browser.resource_report();
-    println!(
-        "Resources: discovered={} completed={} failed={} cancelled={} rejected={} bytes={} script_cpu_ms={} peak_js_heap={}B",
-        report.discovered,
-        report.completed,
-        report.failed,
-        report.cancelled,
-        report.rejected,
-        report.bytes_fetched,
-        report.script_cpu.as_millis(),
-        report.peak_js_heap,
-    );
-
     // Virtual time budget / real-time wait: drive animations and JS timers
     let tick_interval_ms = 16.0;
     let mut loaded_any_images = false;
@@ -338,16 +325,39 @@ fn main() {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
-    // Drain pending images so remote and data URI images are loaded and decoded
-    let mut drained_batches = 0;
-    while browser.has_pending_image_fetches() && drained_batches < 300 {
-        drained_batches += 1;
+    // Drain pending images until the bounded settling deadline.  This avoids
+    // the old arbitrary batch-count truncation while still guaranteeing that
+    // a broken server cannot hold headless rendering forever.
+    let image_deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while browser.has_pending_image_fetches() && std::time::Instant::now() < image_deadline {
         if browser.drain_pending_images() {
             loaded_any_images = true;
         } else {
-            std::thread::sleep(std::time::Duration::from_millis(30));
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }
+    let pending_image_count = browser.pending_image_fetch_count();
+    let pending_images = browser.has_pending_image_fetches();
+    if pending_images {
+        eprintln!(
+            "Image settling deadline reached; pending image resources={} are reported, not silently dropped",
+            pending_image_count
+        );
+    }
+    let report = browser.resource_report();
+    println!(
+        "Resources: discovered={} completed={} failed={} cancelled={} rejected={} bytes={} script_cpu_ms={} peak_js_heap={}B pending_images={} pending_image_count={}",
+        report.discovered,
+        report.completed,
+        report.failed,
+        report.cancelled,
+        report.rejected,
+        report.bytes_fetched,
+        report.script_cpu.as_millis(),
+        report.peak_js_heap,
+        pending_images,
+        pending_image_count,
+    );
     if loaded_any_images {
         browser.relayout();
     }

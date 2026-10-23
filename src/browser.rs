@@ -175,7 +175,8 @@ pub struct BrowserChrome {
     /// Whether network navigations should proceed asynchronously.
     pub async_navigation: bool,
     /// Channel receiver for images decoded by background workers.
-    pub(crate) image_rx: Option<std::sync::mpsc::Receiver<String>>,
+    pub(crate) image_rx:
+        Option<std::sync::mpsc::Receiver<crate::browser::images::ImageFetchResult>>,
     /// Epoch guarding background image workers.
     pub(crate) image_epoch: std::sync::Arc<std::sync::atomic::AtomicU64>,
     /// Resource policy and diagnostics for the active document.

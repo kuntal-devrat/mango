@@ -46,7 +46,30 @@ pub fn measure_box_intrinsic_widths(
     default_family: mango_render::FontFamily,
     memo: &mut HashMap<usize, (f32, f32)>,
 ) -> (f32, f32) {
-    let key = node as *const LayoutBox as usize;
+    measure_box_intrinsic_widths_with_height(
+        node,
+        default_font_size,
+        default_weight,
+        default_family,
+        memo,
+        None,
+    )
+}
+
+fn measure_box_intrinsic_widths_with_height(
+    node: &LayoutBox,
+    default_font_size: f32,
+    default_weight: mango_render::FontWeight,
+    default_family: mango_render::FontFamily,
+    memo: &mut HashMap<usize, (f32, f32)>,
+    containing_height: Option<f32>,
+) -> (f32, f32) {
+    // A percentage-height flex subtree has different intrinsic width when its
+    // containing block height changes. Include that resolution context in the
+    // memo key so a pre-mutation measurement cannot be reused after relayout.
+    let node_key = node as *const LayoutBox as usize;
+    let height_key = containing_height.map(f32::to_bits).unwrap_or(0);
+    let key = node_key.rotate_left(17) ^ height_key as usize;
     if let Some(&res) = memo.get(&key) {
         return res;
     }
@@ -351,6 +374,7 @@ pub fn measure_box_intrinsic_widths(
         let mut min_w = 0.0f32;
         let mut max_w = 0.0f32;
         let mut child_count = 0;
+        let flex_height = child_style_height(node, containing_height);
         for child in &node.children {
             let child_style = child.style.as_ref();
             if child_style
@@ -392,10 +416,41 @@ pub fn measure_box_intrinsic_widths(
                 };
                 to_px(&s.flex_basis).or_else(|| to_px(&s.width))
             });
+            let aspect_ratio_width = if !is_row {
+                child_style.and_then(|s| {
+                    let ratio = s.aspect_ratio.filter(|ratio| *ratio > 0.0)?;
+                    if explicit_w.is_some() || s.width != Length::Auto {
+                        return None;
+                    }
+
+                    // A column flex container's min-content width depends on
+                    // an aspect-ratio item's definite main size. During a
+                    // relayout that size is already resolved on the flex
+                    // container, even when the item's computed height is
+                    // `auto` (the common case in the WPT fixture).
+                    let height = match s.height {
+                        Length::Px(px) if px > 0.0 => Some(px),
+                        _ if flex_height > 0.0 => Some(flex_height),
+                        _ => None,
+                    }?;
+                    Some(height * ratio)
+                })
+            } else {
+                None
+            };
             let (c_min, c_max) = if let Some(w) = explicit_w {
                 (w + child_margin_h, w + child_margin_h)
+            } else if let Some(w) = aspect_ratio_width {
+                (w + child_margin_h, w + child_margin_h)
             } else {
-                measure_box_intrinsic_widths(child, font_size, weight, family, memo)
+                measure_box_intrinsic_widths_with_height(
+                    child,
+                    font_size,
+                    weight,
+                    family,
+                    memo,
+                    if !is_row { Some(flex_height) } else { None },
+                )
             };
             if is_row {
                 if is_wrap {
@@ -556,7 +611,14 @@ pub fn measure_box_intrinsic_widths(
         }) {
             continue;
         }
-        let (c_min, c_max) = measure_box_intrinsic_widths(child, font_size, weight, family, memo);
+        let (c_min, c_max) = measure_box_intrinsic_widths_with_height(
+            child,
+            font_size,
+            weight,
+            family,
+            memo,
+            Some(child_style_height(node, containing_height)),
+        );
         min_w = min_w.max(c_min);
 
         let is_child_inline = child.is_inline()
@@ -596,6 +658,24 @@ pub fn measure_box_intrinsic_widths(
     let res = (min_w + non_content_h, max_w + non_content_h);
     memo.insert(key, res);
     res
+}
+
+fn child_style_height(node: &LayoutBox, containing_height: Option<f32>) -> f32 {
+    let Some(style) = node.style.as_ref() else {
+        return node.dimensions.content.size.height.max(0.0);
+    };
+    let base = containing_height
+        .filter(|height| *height > 0.0)
+        .unwrap_or(node.dimensions.content.size.height);
+    let resolved =
+        style
+            .height
+            .to_px_with_viewport(style.font_size, style.root_font_size, base, base);
+    if resolved > 0.0 {
+        resolved
+    } else {
+        node.dimensions.content.size.height.max(0.0)
+    }
 }
 
 pub fn cell_intrinsic_metrics(

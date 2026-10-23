@@ -8,6 +8,28 @@
         base._props = {};
         base._syncing = false;
 
+        // CSSStyleDeclaration is a live view of the element's existing
+        // `style` attribute.  Start with those declarations so changing one
+        // property does not serialize a new attribute that drops every other
+        // inline declaration (for example, `style.height = '100px'` must
+        // preserve the element's width and background).
+        var initial = "";
+        if (el && typeof el.getAttribute === 'function') {
+            initial = el.getAttribute("style") || "";
+        } else if (nodeId !== undefined && nodeId !== null && typeof _getAttribute === 'function') {
+            initial = _getAttribute(nodeId, "style") || "";
+        }
+        var initialDecls = String(initial).split(';');
+        for (var initialIndex = 0; initialIndex < initialDecls.length; initialIndex++) {
+            var initialDecl = initialDecls[initialIndex].trim();
+            if (!initialDecl) continue;
+            var initialColon = initialDecl.indexOf(':');
+            if (initialColon === -1) continue;
+            var initialProp = initialDecl.slice(0, initialColon).trim().toLowerCase();
+            var initialValue = initialDecl.slice(initialColon + 1).trim();
+            if (initialProp && initialValue) base._props[initialProp] = initialValue;
+        }
+
         function syncToDom() {
             if (base._syncing) return;
             base._syncing = true;
@@ -366,22 +388,27 @@
             enumerable: false
         });
 
-        if (nodeId !== undefined && typeof _getAttribute === 'function') {
-            var rawStyle = _getAttribute(nodeId, "style");
-            if (rawStyle) {
-                var decls = rawStyle.split(';');
-                for (var i = 0; i < decls.length; i++) {
-                    var d = decls[i].trim();
-                    if (!d) continue;
-                    var colon = d.indexOf(':');
-                    if (colon !== -1) {
-                        var prop = d.slice(0, colon).trim().toLowerCase();
-                        var val = d.slice(colon + 1).trim();
-                        base._props[prop] = val;
-                        var camel = prop.replace(/-([a-z])/g, function(g) { return g[1].toUpperCase(); });
-                        base[camel] = val;
-                        base[prop] = val;
-                    }
+        var rawStyle = null;
+        if (el && typeof el.getAttribute === 'function') {
+            rawStyle = el.getAttribute("style");
+        }
+        if ((rawStyle === null || rawStyle === undefined)
+            && nodeId !== undefined && typeof _getAttribute === 'function') {
+            rawStyle = _getAttribute(nodeId, "style");
+        }
+        if (rawStyle) {
+            var decls = rawStyle.split(';');
+            for (var i = 0; i < decls.length; i++) {
+                var d = decls[i].trim();
+                if (!d) continue;
+                var colon = d.indexOf(':');
+                if (colon !== -1) {
+                    var prop = d.slice(0, colon).trim().toLowerCase();
+                    var val = d.slice(colon + 1).trim();
+                    base._props[prop] = val;
+                    var camel = prop.replace(/-([a-z])/g, function(g) { return g[1].toUpperCase(); });
+                    base[camel] = val;
+                    base[prop] = val;
                 }
             }
         }
@@ -646,4 +673,3 @@
             }
         });
     }
-

@@ -13,6 +13,36 @@ kind = "wpt"
 feature = "result selectors"
 
 [[test]]
+path = "dom/nodes/Element-closest.html"
+kind = "wpt"
+feature = "ancestor selectors"
+
+[[test]]
+path = "dom/nodes/Node-parentElement.html"
+kind = "wpt"
+feature = "DOM parent relationships"
+
+[[test]]
+path = "dom/nodes/ParentNode-querySelectorAll-svg-class.html"
+kind = "wpt"
+feature = "SVG DOM selectors"
+
+[[test]]
+path = "dom/nodes/ParentNode-querySelector-svg-not-root.html"
+kind = "wpt"
+feature = "SVG selector scoping"
+
+[[test]]
+path = "dom/nodes/MutationObserver-childList.html"
+kind = "wpt"
+feature = "DOM mutation delivery"
+
+[[test]]
+path = "dom/nodes/Element-childElementCount-dynamic-add.html"
+kind = "wpt"
+feature = "dynamic DOM child updates"
+
+[[test]]
 path = "css/css-cascade/inline-style-background.html"
 kind = "wpt"
 feature = "inline cascade and background"
@@ -26,3 +56,23 @@ feature = "result layout"
 path = "css/css-position/containing-block-change-button.html"
 kind = "reftest"
 feature = "positioned result layout"
+
+[[test]]
+path = "css/css-flexbox/flexbox_justifycontent-spacebetween-only.html"
+kind = "reftest"
+feature = "flexbox distributed alignment"
+
+[[test]]
+path = "css/css-flexbox/flex-svg-no-intrinsic-column-001.html"
+kind = "reftest"
+feature = "SVG replaced-element intrinsic sizing in flex columns"
+
+[[test]]
+path = "css/css-flexbox/flexbox_justifycontent-spacearound.html"
+kind = "reftest"
+feature = "flexbox distributed alignment with space-around"
+
+[[test]]
+path = "css/css-flexbox/flex-aspect-ratio-content-box-padding-001.html"
+kind = "reftest"
+feature = "flex replaced-element aspect ratio and padding"
