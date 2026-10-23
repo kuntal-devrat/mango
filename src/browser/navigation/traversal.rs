@@ -35,7 +35,6 @@ impl BrowserChrome {
             self.page_title = title;
             self.cursor_pos = self.address_text.len();
             self.set_scroll_y_f64(scroll_pos);
-
             if let Some(snapshot) = snapshot {
                 let dl = if self.scroll_y == 0.0 {
                     snapshot.display_list().clone()

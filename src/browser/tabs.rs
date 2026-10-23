@@ -63,10 +63,7 @@ impl BrowserChrome {
                     mango_layout::display_list::DisplayListCache::new(),
                 ),
                 image_rx: self.image_rx.take(),
-                resource_scheduler: std::mem::replace(
-                    &mut self.resource_scheduler,
-                    crate::browser::resource_scheduler::DocumentResourceScheduler::default(),
-                ),
+                resource_scheduler: std::mem::take(&mut self.resource_scheduler),
                 has_active_animations: self.anim_state.is_animating(),
                 canvas_bg: self.canvas_bg,
                 engine: None,
