@@ -287,7 +287,7 @@ fn collect_external_stylesheets(
                     })
                     .unwrap_or(false);
                 if is_stylesheet && let Some(href) = elem.get_attribute("href") {
-                    let href = href.split(['?', '#']).next().unwrap_or(&href);
+                    let href = href.split(['?', '#']).next().unwrap_or(href);
                     let path = if let Some(rest) = href.strip_prefix('/') {
                         upstream_root().join(rest)
                     } else if let Some(dir) = base_dir {

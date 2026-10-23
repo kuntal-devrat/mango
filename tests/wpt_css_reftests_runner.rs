@@ -505,10 +505,10 @@ pub fn run_upstream_wpt_reftests(category: Option<&str>) -> Vec<ReftestResult> {
         if filename.contains("-ref.") || filename.contains("-notref.") {
             continue;
         }
-        if let Ok(filter) = std::env::var("WPT_TEST_FILTER") {
-            if !filename.contains(&filter) {
-                continue;
-            }
+        if let Ok(filter) = std::env::var("WPT_TEST_FILTER")
+            && !filename.contains(&filter)
+        {
+            continue;
         }
 
         let test_content = match fs::read_to_string(&test_path) {

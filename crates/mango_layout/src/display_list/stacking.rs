@@ -43,8 +43,7 @@ pub(crate) fn sticky_shift(
         parent.tag_name.as_deref(),
         Some("tr" | "tbody" | "thead" | "tfoot" | "table")
     );
-    let (cb_top, cb_bottom, cb_left, cb_right) = if is_table_part && active_table.is_some() {
-        let tb = active_table.unwrap();
+    let (cb_top, cb_bottom, cb_left, cb_right) = if is_table_part && let Some(tb) = active_table {
         (tb.y(), tb.bottom(), tb.x(), tb.right())
     } else {
         (
