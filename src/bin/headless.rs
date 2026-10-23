@@ -290,6 +290,7 @@ fn main() {
             let _ = browser.tick_navigation();
             let _ = browser.tick_animations(tick_interval_ms);
             let _ = browser.tick_js();
+            let _ = browser.flush_pending_layout();
             if browser.has_pending_image_fetches() && browser.drain_pending_images() {
                 loaded_any_images = true;
             }
@@ -301,6 +302,7 @@ fn main() {
         for _ in 0..total_ticks {
             let _ = browser.tick_animations(tick_interval_ms);
             let _ = browser.tick_js();
+            let _ = browser.flush_pending_layout();
             if browser.has_pending_image_fetches() && browser.drain_pending_images() {
                 loaded_any_images = true;
             }
@@ -313,12 +315,14 @@ fn main() {
     while browser.has_pending_scripts() && drained_scripts < 64 {
         drained_scripts += 1;
         browser.tick_js();
+        browser.flush_pending_layout();
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     // Allow promises, microtasks, and framework mounts (React/Vue/Svelte) to settle
     for _ in 0..10 {
         let _ = browser.tick_animations(tick_interval_ms);
         let _ = browser.tick_js();
+        let _ = browser.flush_pending_layout();
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
@@ -375,6 +379,7 @@ fn main() {
         for _ in 0..10 {
             let _ = browser.tick_animations(tick_interval_ms);
             let _ = browser.tick_js();
+            let _ = browser.flush_pending_layout();
         }
         browser.relayout();
     }

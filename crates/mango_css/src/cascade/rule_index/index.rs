@@ -91,6 +91,23 @@ impl<'a> Default for RuleIndex<'a> {
 }
 
 impl<'a> RuleIndex<'a> {
+    /// Number of indexed candidate entries, including bucket aliases.
+    /// Useful for profiling stylesheet fan-out without exposing internals.
+    pub fn indexed_entry_count(&self) -> usize {
+        self.id_rules.values().map(Vec::len).sum::<usize>()
+            + self.class_rules.values().map(Vec::len).sum::<usize>()
+            + self.tag_rules.values().map(Vec::len).sum::<usize>()
+            + self.attr_rules.values().map(Vec::len).sum::<usize>()
+            + self.root_rules.len()
+            + self.universal_rules.len()
+            + self
+                .pseudo_rules
+                .values()
+                .map(|b| b.total_rules())
+                .sum::<usize>()
+            + self.container_def_rules.len()
+    }
+
     pub fn new() -> Self {
         Self::default()
     }

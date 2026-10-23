@@ -1,5 +1,6 @@
 pub mod builder;
 pub mod hit_test;
+pub mod margin_trim;
 pub mod media;
 pub mod node;
 pub mod replaced;

@@ -135,8 +135,6 @@ impl ApplicationHandler for MangoApp {
         self.last_frame = Some(now);
 
         let mut any_animating = false;
-        let mut any_loading = false;
-        let mut any_pending_images = false;
         let mut any_pending_scripts = false;
         let mut any_smooth_scroll = false;
         let mut earliest_timer_deadline: Option<Instant> = None;
@@ -187,6 +185,13 @@ impl ApplicationHandler for MangoApp {
                 needs_redraw = true;
             }
 
+            // Coalesce all DOM mutations observed during this turn into one
+            // layout. This keeps a page with many timers/microtasks from
+            // relaying the entire document once per callback.
+            if state.browser.flush_pending_layout() {
+                needs_redraw = true;
+            }
+
             // Keep draining the background image backlog
             if state.browser.has_pending_image_fetches() && state.browser.drain_pending_images() {
                 needs_redraw = true;
@@ -194,12 +199,6 @@ impl ApplicationHandler for MangoApp {
 
             if state.browser.is_animating() {
                 any_animating = true;
-            }
-            if state.browser.has_pending_navigation() {
-                any_loading = true;
-            }
-            if state.browser.has_pending_image_fetches() {
-                any_pending_images = true;
             }
             if state.browser.has_pending_scripts() {
                 any_pending_scripts = true;
@@ -234,7 +233,7 @@ impl ApplicationHandler for MangoApp {
             event_loop.set_control_flow(ControlFlow::WaitUntil(
                 Instant::now() + Duration::from_millis(4),
             ));
-        } else if any_animating || any_loading || any_pending_images || any_smooth_scroll {
+        } else if any_animating || any_smooth_scroll {
             event_loop.set_control_flow(ControlFlow::WaitUntil(
                 Instant::now() + Duration::from_millis(16),
             ));
@@ -253,7 +252,6 @@ impl ApplicationHandler for MangoApp {
             event_loop.set_control_flow(ControlFlow::WaitUntil(
                 Instant::now() + Duration::from_millis(100),
             ));
-            crate::trim_memory();
         }
     }
 
@@ -311,11 +309,16 @@ impl ApplicationHandler for MangoApp {
 
             WindowEvent::MouseWheel { delta, .. } => {
                 if let Some(state) = self.windows.get_mut(&window_id) {
-                    let dy = match delta {
-                        MouseScrollDelta::LineDelta(_, y) => y,
-                        MouseScrollDelta::PixelDelta(pos) => (pos.y / 20.0) as f32,
+                    // Keep winit's sign convention: positive delta scrolls
+                    // towards the top/left of the document. Negating here was
+                    // the source of the inverted-wheel report.
+                    let (dx, dy) = match delta {
+                        MouseScrollDelta::LineDelta(x, y) => (x, y),
+                        MouseScrollDelta::PixelDelta(pos) => {
+                            ((pos.x / 20.0) as f32, (pos.y / 20.0) as f32)
+                        }
                     };
-                    state.browser.handle_scroll(-dy);
+                    state.browser.handle_scroll_2d(dx, dy);
                     state.window.request_redraw();
                 }
             }
@@ -470,7 +473,7 @@ impl ApplicationHandler for MangoApp {
                         }
                         TouchPhase::Moved => {
                             let dy = (y - win_state.browser.mouse_y()) / 45.0;
-                            win_state.browser.handle_scroll(-dy);
+                            win_state.browser.handle_scroll(dy);
                             win_state.browser.handle_mouse_move(x, y);
                         }
                         TouchPhase::Ended | TouchPhase::Cancelled => {

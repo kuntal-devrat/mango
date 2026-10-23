@@ -380,6 +380,19 @@ pub(crate) fn finalize_line(
                     placed.link_frame = atom.link_frame.clone();
                 }
 
+                // Relative positioning offset (CSS 2.1 §9.4.3)
+                if placed.style.as_ref().map(|s| s.position)
+                    == Some(mango_css::values::Position::Relative)
+                {
+                    let cb_dims = crate::dimensions::Dimensions::new(mango_core::Rect::new(
+                        0.0,
+                        0.0,
+                        available_width,
+                        0.0,
+                    ));
+                    crate::block_flow::positioned::apply_relative_offset(&mut placed, &cb_dims);
+                }
+
                 out.push(placed);
                 cursor_x += atom.width;
             }

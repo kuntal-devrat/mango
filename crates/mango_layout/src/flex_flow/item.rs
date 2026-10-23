@@ -44,6 +44,16 @@ pub fn layout_flex_item(
         // Replaced element dimensions already set by flex_flow
     } else if child.box_type.is_inline_block() || child.is_block() {
         child.is_independent_formatting_context = true;
+        if item_cb.content.height() <= 0.0 {
+            child.dimensions.content.size.height = 0.0;
+        } else if child
+            .style
+            .as_ref()
+            .map(|s| s.height == mango_css::values::Length::Auto)
+            .unwrap_or(true)
+        {
+            child.dimensions.content.size.height = item_cb.content.height();
+        }
         crate::block_flow::layout_block_contents(child, item_cb, float_ctx);
     } else if child.is_inline() {
         if child.dimensions.content.size.width <= 0.0 {

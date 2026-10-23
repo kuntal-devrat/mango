@@ -72,7 +72,7 @@ impl BrowserChrome {
             self.last_font_epoch = current_font_epoch;
             self.display_list_cache.lock().unwrap().clear();
             self.page_dirty = true;
-            self.relayout();
+            self.layout_pending = true;
             return true;
         }
 
@@ -122,8 +122,11 @@ impl BrowserChrome {
         };
 
         if mutated && self.root_box.is_some() {
-            self.relayout();
+            self.layout_pending = true;
             return true;
+        }
+        if mutated {
+            self.layout_pending = true;
         }
         false
     }

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use mango_html::dom::{Document, NodeId};
 
 use super::apply::apply_cascaded_properties;
-use super::custom_props::{resolve_value_vars, value_has_vars};
+use super::custom_props::{resolve_value_vars, resolve_value_vars_with_local, value_has_vars};
 use super::style::ComputedStyle;
 use crate::parser::Stylesheet;
 use crate::values::{Display, Value};
@@ -26,21 +26,12 @@ pub fn compute_style_with_shadow_index(
     // ── 1. Inherited properties: start with parent values if available ──
     if let Some(parent) = parent_style {
         style.root_font_size = parent.root_font_size;
-        let mut inherited_cp = (*parent.custom_properties).clone();
-        inherited_cp.retain(|name, _| {
-            if let Some(reg) = author_index.property_rules.get(name) {
-                reg.inherits
-            } else if let Some(shadow) = shadow_index {
-                shadow
-                    .property_rules
-                    .get(name)
-                    .map(|r| r.inherits)
-                    .unwrap_or(true)
-            } else {
-                true
-            }
-        });
-        style.custom_properties = Arc::new(inherited_cp);
+        // Custom properties are inherited by reference. Cloning this map for
+        // every descendant turns a few thousand root variables into gigabytes
+        // on real pages (GitHub ships ~1,900 variables in one stylesheet).
+        // Copy-on-write below preserves CSS semantics when a node overrides a
+        // variable, while the common case remains one shared immutable map.
+        style.custom_properties = Arc::clone(&parent.custom_properties);
         style.color = parent.color;
         style.font_size = parent.font_size;
         style.font_weight = parent.font_weight;
@@ -80,18 +71,44 @@ pub fn compute_style_with_shadow_index(
     let mut custom_props = Vec::new();
     for (prop, val) in &cascaded {
         if prop.starts_with("--") {
-            custom_props.push((prop, val));
+            let non_inherited = author_index
+                .property_rules
+                .get(prop)
+                .or_else(|| shadow_index.and_then(|shadow| shadow.property_rules.get(prop)))
+                .is_some_and(|reg| !reg.inherits);
+            if non_inherited {
+                style
+                    .local_custom_properties
+                    .insert(prop.clone(), val.clone());
+            } else {
+                custom_props.push((prop, val));
+            }
         }
     }
     if !custom_props.is_empty() {
-        let cp = Arc::make_mut(&mut style.custom_properties);
-        for (prop, val) in custom_props {
-            cp.insert(prop.clone(), val.clone());
+        if style.custom_properties.len() > 256 {
+            for (prop, val) in custom_props {
+                style
+                    .local_custom_properties
+                    .insert(prop.clone(), val.clone());
+            }
+        } else {
+            let cp = Arc::make_mut(&mut style.custom_properties);
+            for (prop, val) in custom_props {
+                cp.insert(prop.clone(), val.clone());
+            }
         }
     }
 
     // Apply registered @property initial-values for custom properties not explicitly set
     for (name, reg) in &author_index.property_rules {
+        // Non-inherited registered properties must not be copied into every
+        // descendant's inherited map. Their initial value is resolved at the
+        // declaration site; retaining them here would force a full 2k-entry
+        // map clone for every node on pages such as GitHub.
+        if !reg.inherits {
+            continue;
+        }
         if !style.custom_properties.contains_key(name) {
             if let Some(ref init_val) = reg.initial_value {
                 let cp = Arc::make_mut(&mut style.custom_properties);
@@ -101,6 +118,9 @@ pub fn compute_style_with_shadow_index(
     }
     if let Some(shadow) = shadow_index {
         for (name, reg) in &shadow.property_rules {
+            if !reg.inherits {
+                continue;
+            }
             if !style.custom_properties.contains_key(name) {
                 if let Some(ref init_val) = reg.initial_value {
                     let cp = Arc::make_mut(&mut style.custom_properties);
@@ -110,7 +130,7 @@ pub fn compute_style_with_shadow_index(
         }
     }
 
-    // Pre-resolve custom property var(--*) references in cascaded declarations
+    // Pre-resolve custom property var(--*) references in cascaded declarations.
     let mut resolved_cascaded: HashMap<String, Value> = HashMap::with_capacity(cascaded.len());
     let mut visited = HashSet::new();
     for (prop, val) in &cascaded {
@@ -121,9 +141,17 @@ pub fn compute_style_with_shadow_index(
             resolved_cascaded.insert(prop.clone(), val.clone());
         } else {
             visited.clear();
-            if let Some(resolved_val) =
+            let resolved = if style.local_custom_properties.is_empty() {
                 resolve_value_vars(val, &style.custom_properties, &mut visited)
-            {
+            } else {
+                resolve_value_vars_with_local(
+                    val,
+                    &style.local_custom_properties,
+                    &style.custom_properties,
+                    &mut visited,
+                )
+            };
+            if let Some(resolved_val) = resolved {
                 resolved_cascaded.insert(prop.clone(), resolved_val);
             } else {
                 // CSS Custom Properties Level 1 § 3.2: If a custom property cannot be resolved
@@ -152,6 +180,19 @@ pub fn compute_style_with_shadow_index(
                 apply_cascaded_properties(&mut style, &decls, parent_style);
             }
         }
+    }
+
+    // CSS Overflow 3 §3.3:
+    // If one of overflow-x or overflow-y is visible and the other is not visible,
+    // then visible becomes auto.
+    if style.overflow_x == crate::values::Overflow::Visible
+        && style.overflow_y != crate::values::Overflow::Visible
+    {
+        style.overflow_x = crate::values::Overflow::Auto;
+    } else if style.overflow_y == crate::values::Overflow::Visible
+        && style.overflow_x != crate::values::Overflow::Visible
+    {
+        style.overflow_y = crate::values::Overflow::Auto;
     }
 
     if parent_style.is_none() {

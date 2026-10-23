@@ -8,7 +8,7 @@ use super::super::types::{
     MAX_CONCURRENT_FETCHES, PreparedDocument, SUBRESOURCE_FETCH_TIMEOUT, ScriptToRun,
 };
 use super::super::welcome::preprocess_wikipedia_appearance_html;
-use super::resources::{collect_image_sources, collect_stylesheet_images, load_web_fonts};
+use super::resources::{collect_image_sources, load_web_fonts};
 /// Prepares a fetched document on a background worker thread: parsing HTML, prefetching
 /// external stylesheets, web fonts, and scripts, so the main UI thread never blocks on I/O.
 pub fn prepare_document_pipeline(
@@ -111,7 +111,12 @@ fn prepare_document_pipeline_internal(
     }
     let mut visited_css = std::collections::HashSet::new();
     let mut cached_stylesheets = Vec::new();
-    if !should_cancel() {
+    // Progressive navigation owns only the already-parsed document snapshot.
+    // Do not parse the complete external stylesheet graph twice: the final
+    // preparation below will fetch and parse every stylesheet exactly once.
+    // This is deferral, not stylesheet filtering; the final document still
+    // receives the complete author stylesheet set.
+    if !is_progressive && !should_cancel() {
         load_stylesheets_parallel_cancellable(
             loader,
             &final_url,
@@ -131,7 +136,7 @@ fn prepare_document_pipeline_internal(
             }
         }
     }
-    if !import_links.is_empty() && !should_cancel() {
+    if !is_progressive && !import_links.is_empty() && !should_cancel() {
         load_stylesheets_parallel_cancellable(
             loader,
             &final_url,
@@ -149,18 +154,10 @@ fn prepare_document_pipeline_internal(
 
     let mut raw_scripts = Vec::new();
     collect_scripts(&doc, doc.root(), &mut raw_scripts);
-    for item in &preload_scan.preloads {
-        if item.kind == mango_net::PreloadKind::Script {
-            let loader_clone = loader.clone();
-            let base_clone = final_url.clone();
-            let url_clone = item.url.clone();
-            crate::browser::types::spawn_fetch_task(move || {
-                let _ = loader_clone.fetch_script(&base_clone, &url_clone);
-            });
-        }
-    }
-
-    const MAX_PRELOAD_SCRIPTS: usize = 64;
+    // Keep network work aligned with the renderer's execution budget. Fetching
+    // dozens of scripts that will later be rejected only creates duplicate
+    // response buffers and lets a page consume memory before JS policy runs.
+    const MAX_PRELOAD_SCRIPTS: usize = 8;
     const SCRIPT_FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
     let mut to_fetch: Vec<(usize, String, Option<String>)> = Vec::new();
     if !is_progressive {
@@ -235,9 +232,6 @@ fn prepare_document_pipeline_internal(
                 nonce,
             } => {
                 if let Some(Ok(code)) = fetched_scripts.remove(&idx) {
-                    if is_module {
-                        scan_and_precache_module_imports(loader, &final_url, &src, &code);
-                    }
                     preloaded_scripts.push(ScriptToRun::Preloaded {
                         src,
                         code,
@@ -284,14 +278,10 @@ fn prepare_document_pipeline_internal(
         }
     }
 
-    let mut sheet_images = Vec::new();
-    collect_stylesheet_images(&doc, &cached_stylesheets, &mut sheet_images);
-    collect_stylesheet_images(&doc, &inline_sheets, &mut sheet_images);
-
-    let mut image_sources = Vec::new();
-    // Prioritize visible content images (<img>) over background stylesheet textures
-    image_sources.extend(doc_images);
-    image_sources.extend(sheet_images);
+    // CSS background URLs are resolved lazily after layout/visibility is known.
+    // Harvesting every URL in every stylesheet eagerly decodes off-screen
+    // theme textures and can dominate memory on modern sites.
+    let mut image_sources = doc_images;
 
     let mut seen = std::collections::HashSet::new();
     image_sources.retain(|src| seen.insert(src.clone()));
@@ -532,7 +522,6 @@ fn load_stylesheets_parallel_cancellable(
         if let Some(res) = results_map.remove(&idx) {
             match res {
                 Ok(css_text) => {
-                    log::info!("Loaded external stylesheet: {}", resolved);
                     let mut sheet = parse_stylesheet(&css_text);
                     resolve_font_faces_in_rules(&mut sheet.rules, &resolved);
                     for rule in &sheet.rules {
@@ -578,14 +567,7 @@ fn load_imported_stylesheets_parallel_cancellable(
     out: &mut Vec<Stylesheet>,
     should_cancel: &dyn Fn() -> bool,
 ) {
-    const MAX_IMPORT_DEPTH: usize = 8;
-    let mut depth = 0;
     while !pending_imports.is_empty() && !should_cancel() {
-        if depth >= MAX_IMPORT_DEPTH {
-            log::warn!("Stylesheet @import depth cap reached; abandoning remaining imports");
-            break;
-        }
-        depth += 1;
         let current_batch = std::mem::take(&mut pending_imports);
         let mut to_fetch = Vec::new();
 
@@ -648,7 +630,6 @@ fn load_imported_stylesheets_parallel_cancellable(
             }
             match res {
                 Ok(css_text) => {
-                    log::info!("Loaded external stylesheet: {}", resolved);
                     let mut sheet = parse_stylesheet(&css_text);
                     resolve_font_faces_in_rules(&mut sheet.rules, &resolved);
                     for rule in &sheet.rules {
@@ -661,65 +642,6 @@ fn load_imported_stylesheets_parallel_cancellable(
                 Err(e) => {
                     log::warn!("Failed to fetch external stylesheet {}: {}", resolved, e);
                 }
-            }
-        }
-    }
-}
-
-/// Scans the top lines of an ES module on a background worker thread for static imports
-/// and asynchronously prefetches them into the shared resource cache.
-fn scan_and_precache_module_imports(
-    loader: &ResourceLoader,
-    base_url: &Url,
-    script_src: &str,
-    code: &str,
-) {
-    let script_base = base_url
-        .resolve(script_src)
-        .unwrap_or_else(|_| base_url.clone());
-    let mut import_specs = Vec::new();
-
-    for line in code.lines().take(150) {
-        let trimmed = line.trim();
-        if !trimmed.starts_with("import") && !trimmed.starts_with("export") {
-            continue;
-        }
-        if let Some(pos) = trimmed.find('\'') {
-            if let Some(end) = trimmed[pos + 1..].find('\'') {
-                let spec = &trimmed[pos + 1..pos + 1 + end];
-                if spec.ends_with(".js")
-                    || spec.starts_with("./")
-                    || spec.starts_with("../")
-                    || spec.starts_with("http")
-                {
-                    import_specs.push(spec.to_string());
-                }
-                continue;
-            }
-        }
-        if let Some(pos) = trimmed.find('"') {
-            if let Some(end) = trimmed[pos + 1..].find('"') {
-                let spec = &trimmed[pos + 1..pos + 1 + end];
-                if spec.ends_with(".js")
-                    || spec.starts_with("./")
-                    || spec.starts_with("../")
-                    || spec.starts_with("http")
-                {
-                    import_specs.push(spec.to_string());
-                }
-            }
-        }
-    }
-
-    for spec in import_specs {
-        if let Ok(target) = script_base.resolve(&spec) {
-            let target_str = target.to_string();
-            if loader.cache().get(&target_str).is_none() {
-                let loader_clone = loader.clone();
-                let base_clone = script_base.clone();
-                crate::browser::types::spawn_fetch_task(move || {
-                    let _ = loader_clone.fetch_script(&base_clone, &spec);
-                });
             }
         }
     }

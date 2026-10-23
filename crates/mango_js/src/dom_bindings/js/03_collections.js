@@ -48,6 +48,12 @@
                 if (prop === 'length') {
                     return (getItemsFn() || []).length;
                 }
+                if (prop === Symbol.iterator) {
+                    return function() {
+                        var items = getItemsFn() || [];
+                        return items[Symbol.iterator]();
+                    };
+                }
                 var items = getItemsFn() || [];
                 if (typeof prop === 'string') {
                     var idx = Number(prop);
@@ -142,6 +148,12 @@
                 if (prop === 'length') {
                     return (getItemsFn() || []).length;
                 }
+                if (prop === Symbol.iterator) {
+                    return function() {
+                        var items = getItemsFn() || [];
+                        return items[Symbol.iterator]();
+                    };
+                }
                 if (typeof prop === 'string') {
                     var idx = Number(prop);
                     if (Number.isInteger(idx) && idx >= 0 && String(idx) === prop) {
@@ -155,6 +167,14 @@
                         var i = Number(index);
                         if (isNaN(i) || i < 0 || i >= items.length) return null;
                         return items[i];
+                    };
+                }
+                if (prop === 'forEach') {
+                    return function(callback, thisArg) {
+                        var items = getItemsFn() || [];
+                        for (var i = 0; i < items.length; i++) {
+                            callback.call(thisArg, items[i], i, receiver);
+                        }
                     };
                 }
                 if (prop in target) {

@@ -40,6 +40,9 @@ pub(crate) struct GlyphCacheEntry {
 }
 
 pub(crate) static ACCESS_COUNTER: AtomicU64 = AtomicU64::new(1);
+pub(crate) static GLYPH_CACHE_BYTES: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+pub(crate) const MAX_GLYPH_CACHE_BYTES: usize = 16 * 1024 * 1024;
 static GLYPH_CACHE: OnceLock<RwLock<HashMap<GlyphCacheKey, GlyphCacheEntry>>> = OnceLock::new();
 
 pub(crate) fn glyph_cache() -> &'static RwLock<HashMap<GlyphCacheKey, GlyphCacheEntry>> {

@@ -9,6 +9,16 @@ use crate::dimensions::Dimensions;
 use super::types::LayoutBox;
 
 impl LayoutBox {
+    /// Counts this box and descendants without allocating. Used by browser
+    /// memory policy before retaining a layout snapshot in BFCache.
+    pub fn descendant_count(&self) -> usize {
+        1 + self
+            .children
+            .iter()
+            .map(LayoutBox::descendant_count)
+            .sum::<usize>()
+    }
+
     pub fn new(box_type: BoxType, style: Option<Arc<ComputedStyle>>) -> Self {
         Self {
             box_type,
@@ -26,6 +36,7 @@ impl LayoutBox {
             scroll_offset_x: 0.0,
             scroll_offset_y: 0.0,
             is_independent_formatting_context: false,
+            positioned_descendant_cache: std::sync::OnceLock::new(),
         }
     }
 
@@ -160,7 +171,25 @@ impl LayoutBox {
             scroll_offset_x: 0.0,
             scroll_offset_y: 0.0,
             is_independent_formatting_context: false,
+            positioned_descendant_cache: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Returns whether any descendant (or this box) is positioned, memoized
+    /// for the current tree generation.
+    pub fn has_positioned_descendant(&self) -> bool {
+        if let Some(value) = self.positioned_descendant_cache.get() {
+            return *value;
+        }
+        let value = self.children.iter().any(|child| {
+            child
+                .style
+                .as_ref()
+                .is_some_and(|s| s.position != mango_css::values::Position::Static)
+                || child.has_positioned_descendant()
+        });
+        let _ = self.positioned_descendant_cache.set(value);
+        value
     }
 
     /// Looks up an attribute value by name (case-insensitive).

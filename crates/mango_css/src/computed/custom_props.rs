@@ -125,6 +125,53 @@ pub(crate) fn resolve_value_vars(
     }
 }
 
+/// Resolves variables from an element-local overlay before consulting the
+/// inherited table. This keeps large inherited custom-property maps shared
+/// instead of cloning them for every element that overrides one variable.
+pub(crate) fn resolve_value_vars_with_local(
+    val: &Value,
+    local_props: &HashMap<String, Value>,
+    inherited_props: &HashMap<String, Value>,
+    visited: &mut HashSet<String>,
+) -> Option<Value> {
+    match val {
+        Value::Var { name, fallback } => {
+            if visited.contains(name) {
+                return fallback.as_ref().and_then(|fb| {
+                    resolve_value_vars_with_local(fb, local_props, inherited_props, visited)
+                });
+            }
+            visited.insert(name.clone());
+            let target = local_props.get(name).or_else(|| inherited_props.get(name));
+            let resolved = target
+                .and_then(|v| {
+                    resolve_value_vars_with_local(v, local_props, inherited_props, visited)
+                })
+                .or_else(|| {
+                    fallback.as_ref().and_then(|fb| {
+                        resolve_value_vars_with_local(fb, local_props, inherited_props, visited)
+                    })
+                });
+            visited.remove(name);
+            resolved
+        }
+        Value::List(items) => Some(Value::List(
+            items
+                .iter()
+                .map(|item| {
+                    if value_has_vars(item) {
+                        resolve_value_vars_with_local(item, local_props, inherited_props, visited)
+                            .unwrap_or_else(|| item.clone())
+                    } else {
+                        item.clone()
+                    }
+                })
+                .collect(),
+        )),
+        _ => resolve_value_vars(val, inherited_props, visited),
+    }
+}
+
 pub(crate) fn resolve_math_expr_vars(
     expr: &MathExpr,
     custom_props: &HashMap<String, Value>,

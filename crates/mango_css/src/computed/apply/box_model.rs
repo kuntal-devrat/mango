@@ -420,6 +420,16 @@ pub(crate) fn apply_box_model_property(style: &mut ComputedStyle, prop: &str, va
         },
         "margin-trim" => match val {
             Value::Keyword(k) | Value::String(k) => style.margin_trim = k.clone(),
+            Value::List(list) => {
+                let parts: Vec<String> = list
+                    .iter()
+                    .filter_map(|v| match v {
+                        Value::Keyword(k) | Value::String(k) => Some(k.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                style.margin_trim = parts.join(" ");
+            }
             Value::Display(Display::Block) => style.margin_trim = "block".to_string(),
             Value::Display(Display::Inline) => style.margin_trim = "inline".to_string(),
             _ => {}

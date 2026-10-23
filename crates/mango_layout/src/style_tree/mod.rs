@@ -4,6 +4,7 @@
 //! are filtered out, producing a clean tree of rendered styled nodes.
 
 pub mod builder;
+pub mod cache;
 pub mod counters;
 pub mod extract;
 pub mod invalidation;
@@ -13,7 +14,11 @@ pub mod pseudo;
 #[cfg(test)]
 mod tests;
 
-pub use builder::{build_style_tree, build_style_tree_with_env, build_style_tree_with_size};
+pub use builder::{
+    build_style_tree, build_style_tree_with_cached_index, build_style_tree_with_env,
+    build_style_tree_with_size,
+};
+pub use cache::PageStyleIndex;
 pub use counters::CounterContext;
 pub use extract::{
     collect_image_maps, extract_shadow_stylesheets, extract_style_elements, scan_all_shadow_roots,

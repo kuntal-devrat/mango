@@ -90,7 +90,10 @@ impl Tab {
 
     /// Stores a frozen BFCache layout snapshot on the current history entry.
     pub fn store_bfcache_snapshot(&mut self, snapshot: Box<mango_layout::LayoutSnapshot>) {
-        const MAX_BFCACHE_ENTRIES: usize = 4;
+        // A layout snapshot duplicates a large part of a page's retained
+        // geometry. Keep only one small-page snapshot until snapshots have a
+        // byte budget; four large pages can otherwise consume hundreds of MB.
+        const MAX_BFCACHE_ENTRIES: usize = 1;
         let current_idx = self.history_idx;
         if let Some(entry) = self.history.get_mut(current_idx) {
             entry.bfcache_snapshot = Some(snapshot);

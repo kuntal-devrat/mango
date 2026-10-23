@@ -28,3 +28,6 @@ diffs/
 # Python cache
 __pycache__/
 *.pyc
+
+# Git worktrees (local development)
+/.worktrees/

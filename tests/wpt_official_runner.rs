@@ -60,7 +60,13 @@ fn run_category(subdir: &str) -> WptSuiteResult {
 
     let mut skipped = Vec::new();
     let mut to_run = Vec::new();
+    let filter = std::env::var("WPT_TEST_FILTER").ok();
     for rel in harness::discover_tests(&root, &dir) {
+        if let Some(filter) = &filter
+            && !rel.contains(filter.as_str())
+        {
+            continue;
+        }
         if discovery::is_skipped(&root, &rel) {
             skipped.push(rel);
         } else {
@@ -144,7 +150,12 @@ fn print_failures(suite: &WptSuiteResult, limit: usize) {
             out.push_str(&format!("      {first}\n"));
         }
         for t in r.subtests.iter().filter(|t| !t.is_pass()).take(3) {
-            out.push_str(&format!("      - {}: {}\n", t.name, t.status));
+            let detail = t
+                .message
+                .as_deref()
+                .and_then(|m| m.lines().next())
+                .unwrap_or("");
+            out.push_str(&format!("      - {}: {} {}\n", t.name, t.status, detail));
         }
         shown += 1;
     }

@@ -6,7 +6,7 @@ use mango_core::{Color, Size};
 use mango_css::Stylesheet;
 use mango_css::computed::ComputedStyle;
 use mango_html::parse_html;
-use mango_layout::layout_document;
+use mango_layout::{extract_style_elements, layout_document, layout_document_with_style_index};
 
 use super::super::BrowserChrome;
 use super::super::types::DocumentView;
@@ -46,12 +46,54 @@ impl BrowserChrome {
     /// on every resize, JS mutation and animation frame, so a deep copy here would
     /// dominate the frame cost on large documents.
     pub fn relayout(&mut self) {
+        self.layout_pending = false;
         let viewport = Size::new(self.width as f32, self.content_height());
+
+        // Do not retain the previous full-page representation while building
+        // the replacement. On large documents the old layout tree, old paint
+        // list, and cache can otherwise coexist with the new ones and create
+        // a multi-gigabyte peak even though only one page state is needed.
+        self.root_box = None;
+        self.page_display_list = mango_render::display_list::DisplayList::new();
+        self.display_list_cache.lock().unwrap().clear();
+
+        // Build the page stylesheet index once per DOM version. Animations,
+        // image completion, scrolling, and other relayouts reuse it without
+        // reparsing or re-indexing every external rule.
+        let (doc_version, embedded_sheets) = {
+            let doc = self.document_view();
+            (doc.version, extract_style_elements(&doc))
+        };
+        let viewport_key = (self.width, self.height);
+        if self.style_index_cache.is_none()
+            || self.style_index_version != doc_version
+            || self.style_index_viewport != viewport_key
+        {
+            let mut sheets = self.cached_stylesheets.clone();
+            sheets.extend(embedded_sheets);
+            self.style_index_cache = Some(mango_layout::PageStyleIndex::from_stylesheets(
+                sheets,
+                mango_css::current_media_environment(),
+            ));
+            if let Some(index) = &self.style_index_cache {
+                log::debug!(
+                    "built page stylesheet index: {} sheets, {} indexed entries",
+                    index.stylesheet_count(),
+                    index.indexed_entry_count()
+                );
+            }
+            self.style_index_version = doc_version;
+            self.style_index_viewport = viewport_key;
+        }
 
         let (root_box, page_dl, canvas_color) = {
             let doc = self.document_view();
-            let author_sheets: Vec<&Stylesheet> = self.cached_stylesheets.iter().collect();
-            let (root_box, page_dl) = layout_document(&doc, &author_sheets, viewport);
+            let (root_box, page_dl) = if let Some(index) = &self.style_index_cache {
+                layout_document_with_style_index(&doc, index, viewport)
+            } else {
+                let author_sheets: Vec<&Stylesheet> = self.cached_stylesheets.iter().collect();
+                layout_document(&doc, &author_sheets, viewport)
+            };
             let canvas_color = canvas_background_color(&root_box);
             (root_box, page_dl, canvas_color)
         };
@@ -66,6 +108,16 @@ impl BrowserChrome {
 
         self.refresh_animation_targets();
         self.publish_layout_bounds();
+    }
+
+    /// Flushes a DOM/style invalidation once per event-loop turn.
+    pub fn flush_pending_layout(&mut self) -> bool {
+        if self.layout_pending {
+            self.relayout();
+            true
+        } else {
+            false
+        }
     }
 
     /// Publishes DOM node geometry to the JS runtime so measurement APIs

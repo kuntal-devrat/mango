@@ -48,6 +48,7 @@ pub fn build_display_list_with_scroll_xy(
         scroll_x,
         scroll_y,
         None,
+        None,
     );
     list
 }
@@ -62,7 +63,8 @@ pub(crate) fn render_layout_box(
     offset_y: f32,
     scroll_x: f32,
     scroll_y: f32,
-    containing_block_rect: Option<Rect>,
+    scroll_viewport: Option<Rect>,
+    table_rect: Option<Rect>,
 ) {
     let s_ref = box_node.style.as_ref();
 
@@ -145,7 +147,8 @@ pub(crate) fn render_layout_box(
         offset_y,
         scroll_x,
         scroll_y,
-        containing_block_rect,
+        scroll_viewport,
+        table_rect,
     );
 
     if push_backdrop {
@@ -173,7 +176,8 @@ fn render_layout_box_inner(
     offset_y: f32,
     scroll_x: f32,
     scroll_y: f32,
-    _containing_block_rect: Option<Rect>,
+    scroll_viewport: Option<Rect>,
+    table_rect: Option<Rect>,
 ) {
     let style = box_node.style.as_deref();
     let is_visible = style.is_none_or(|s| s.is_visible());
@@ -260,6 +264,16 @@ fn render_layout_box_inner(
     }
 
     paint_children_and_scrollbars(
-        box_node, style, pad_box, offset_x, offset_y, scroll_x, scroll_y, opacity, list,
+        box_node,
+        style,
+        pad_box,
+        offset_x,
+        offset_y,
+        scroll_x,
+        scroll_y,
+        opacity,
+        list,
+        scroll_viewport,
+        table_rect,
     );
 }

@@ -65,6 +65,29 @@ pub fn build_style_tree_with_env(
         env.clone(),
     );
 
+    build_style_tree_with_author_index(doc, &author_index, env)
+}
+
+/// Builds a styled tree using a page-level author index that was constructed
+/// once and retained by the caller. Embedded styles are still extracted here
+/// because DOM mutations can add/remove `<style>` elements; the expensive
+/// external stylesheet index is supplied by the page cache.
+pub fn build_style_tree_with_cached_index(
+    doc: &Document,
+    author_index: &RuleIndex<'_>,
+    env: &mango_css::MediaEnvironment,
+) -> Option<StyledNode> {
+    mango_css::set_current_viewport(env.viewport_width, env.viewport_height);
+    scan_and_register_global_svg_symbols(doc);
+    scan_and_register_image_maps(doc);
+    build_style_tree_with_author_index(doc, author_index, env)
+}
+
+fn build_style_tree_with_author_index(
+    doc: &Document,
+    author_index: &RuleIndex<'_>,
+    env: &mango_css::MediaEnvironment,
+) -> Option<StyledNode> {
     // 2.5 Extract stylesheets and build RuleIndexes for all shadow roots
     let all_shadow_roots = scan_all_shadow_roots(doc);
     let mut shadow_sheets: HashMap<NodeId, Vec<Stylesheet>> = HashMap::new();
@@ -86,7 +109,7 @@ pub fn build_style_tree_with_env(
     build_styled_node(
         doc,
         doc.root(),
-        &author_index,
+        author_index,
         &shadow_indexes,
         None,
         None,
@@ -233,6 +256,14 @@ pub fn build_styled_node<'a>(
                 host_shadow_index,
                 parent_style,
             );
+            if style.custom_properties.len() > 1000 {
+                log::debug!(
+                    "large custom-property map: node={} tag={} entries={}",
+                    node_id.raw(),
+                    el.tag_name,
+                    style.custom_properties.len()
+                );
+            }
             if style.display == Display::None {
                 return None;
             }
@@ -561,9 +592,25 @@ pub fn build_styled_node<'a>(
                 } else if let Some(parent_id) = node.parent {
                     let siblings: Vec<_> = doc.children(parent_id).collect();
                     if let Some(pos) = siblings.iter().position(|c| c.id == node_id) {
-                        let prev_meaningful =
-                            siblings[..pos].iter().rev().find(|s| match &s.data {
+                        let has_preceding_whitespace = siblings[..pos]
+                            .iter()
+                            .rev()
+                            .take_while(|s| match &s.data {
+                                NodeData::Comment(_) => true,
+                                NodeData::Text(t) => t.chars().all(|c| c.is_ascii_whitespace()),
+                                _ => false,
+                            })
+                            .any(|s| match &s.data {
+                                NodeData::Text(t) => t.chars().all(|c| c.is_ascii_whitespace()),
+                                _ => false,
+                            });
+
+                        if has_preceding_whitespace {
+                            false
+                        } else {
+                            let is_meaningful = |s: &&&mango_html::dom::Node| match &s.data {
                                 NodeData::Comment(_) => false,
+                                NodeData::Text(t) => !t.chars().all(|c| c.is_ascii_whitespace()),
                                 NodeData::Element(el) => {
                                     el.get_attribute("hidden").is_none()
                                         && !el.tag_name.eq_ignore_ascii_case("template")
@@ -574,32 +621,22 @@ pub fn build_styled_node<'a>(
                                         && !el.tag_name.eq_ignore_ascii_case("meta")
                                 }
                                 _ => true,
+                            };
+                            let prev_meaningful = siblings[..pos].iter().rev().find(is_meaningful);
+                            let next_meaningful = siblings[pos + 1..].iter().find(is_meaningful);
+                            let effective_index = if let Some(ctx) = shadow_ctx {
+                                ctx.rule_index
+                            } else {
+                                author_index
+                            };
+                            let prev_inline = prev_meaningful.is_some_and(|s| {
+                                is_node_inline(doc, s.id, effective_index, parent_style)
                             });
-                        let next_meaningful = siblings[pos + 1..].iter().find(|s| match &s.data {
-                            NodeData::Comment(_) => false,
-                            NodeData::Element(el) => {
-                                el.get_attribute("hidden").is_none()
-                                    && !el.tag_name.eq_ignore_ascii_case("template")
-                                    && !el.tag_name.eq_ignore_ascii_case("head")
-                                    && !el.tag_name.eq_ignore_ascii_case("style")
-                                    && !el.tag_name.eq_ignore_ascii_case("script")
-                                    && !el.tag_name.eq_ignore_ascii_case("link")
-                                    && !el.tag_name.eq_ignore_ascii_case("meta")
-                            }
-                            _ => true,
-                        });
-                        let effective_index = if let Some(ctx) = shadow_ctx {
-                            ctx.rule_index
-                        } else {
-                            author_index
-                        };
-                        let prev_inline = prev_meaningful.is_some_and(|s| {
-                            is_node_inline(doc, s.id, effective_index, parent_style)
-                        });
-                        let next_inline = next_meaningful.is_some_and(|s| {
-                            is_node_inline(doc, s.id, effective_index, parent_style)
-                        });
-                        prev_inline && next_inline
+                            let next_inline = next_meaningful.is_some_and(|s| {
+                                is_node_inline(doc, s.id, effective_index, parent_style)
+                            });
+                            prev_inline && next_inline
+                        }
                     } else {
                         false
                     }

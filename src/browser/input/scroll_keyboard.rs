@@ -25,9 +25,9 @@ impl BrowserChrome {
             let has_parent = dir.parent().is_some();
             let total = entries.len() + usize::from(has_parent);
             let max_off = total.saturating_sub(PICKER_FILE_ROWS);
-            let delta = if delta_y > 0.0 {
+            let delta = if delta_y < 0.0 {
                 2
-            } else if delta_y < 0.0 {
+            } else if delta_y > 0.0 {
                 -2
             } else {
                 0

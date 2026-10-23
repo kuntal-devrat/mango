@@ -450,6 +450,7 @@
                 if (this === document.body || this === document.documentElement) {
                     if (typeof window !== 'undefined') window.scrollY = this._scrollTop;
                 }
+                this.setAttribute('_mango_scroll_top', String(this._scrollTop));
             },
             get scrollLeft() { return this._scrollLeft || 0; },
             set scrollLeft(v) {
@@ -457,6 +458,7 @@
                 if (this === document.body || this === document.documentElement) {
                     if (typeof window !== 'undefined') window.scrollX = this._scrollLeft;
                 }
+                this.setAttribute('_mango_scroll_left', String(this._scrollLeft));
             },
             scrollTo: function(x, y) {
                 if (typeof x === 'object' && x !== null) {

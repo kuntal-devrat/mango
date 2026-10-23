@@ -144,13 +144,43 @@ impl EventLoop {
         }
     }
 
+    /// Returns the number of live (non-cancelled) timers.
+    pub fn pending_count(&self) -> usize {
+        self.timers.values().filter(|t| !t.cancelled).count()
+    }
+
+    /// Makes every outstanding timer due immediately.
+    ///
+    /// Used by deterministic test harnesses that advance virtual time instead
+    /// of sleeping for real wall-clock delays. Returns the number of live
+    /// timers that were expedited.
+    pub fn expedite_timers(&mut self) -> usize {
+        let now = Instant::now();
+        let mut count = 0;
+        for timer in self.timers.values_mut() {
+            if !timer.cancelled {
+                timer.fire_at = now;
+                count += 1;
+            }
+        }
+        count
+    }
+
     /// Collects and reschedules/removes all due tasks and timer scripts.
     pub fn drain_due(&mut self) -> Vec<String> {
+        self.drain_due_limited(usize::MAX)
+    }
+
+    /// Drains at most `limit` callbacks. A hostile page must not be able to
+    /// monopolize the browser thread by making thousands of timers due at
+    /// once; unprocessed timers remain scheduled for the next frame.
+    pub fn drain_due_limited(&mut self, limit: usize) -> Vec<String> {
         let mut scripts = Vec::new();
 
         // Drain background tasks (e.g. async fetch resolutions)
         if let Ok(mut q) = self.tasks.lock() {
-            scripts.extend(std::mem::take(&mut *q));
+            let take = q.len().min(limit);
+            scripts.extend(q.drain(..take));
         }
 
         let now = Instant::now();
@@ -163,7 +193,10 @@ impl EventLoop {
             .map(|(id, _)| *id)
             .collect();
 
-        for id in expired {
+        for id in expired
+            .into_iter()
+            .take(limit.saturating_sub(scripts.len()))
+        {
             let (source, interval) = {
                 let timer = match self.timers.get(&id) {
                     Some(t) if !t.cancelled => t,

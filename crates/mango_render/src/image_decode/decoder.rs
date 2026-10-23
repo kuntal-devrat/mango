@@ -58,6 +58,16 @@ pub fn decode_data_uri(uri: &str) -> Option<DecodedImage> {
 
 /// Decodes raw image bytes (PNG, JPEG, GIF, WebP, SVG, or data URI) into a `DecodedImage`.
 pub fn decode_image_bytes(bytes: &[u8]) -> Option<DecodedImage> {
+    // Check limits before image::load_from_memory allocates a decompressed
+    // pixel buffer. Compressed images with huge dimensions can otherwise
+    // create multi-gigabyte peaks before the bounded cache gets a chance to
+    // evict them.
+    const MAX_COMPRESSED_IMAGE_BYTES: usize = 16 * 1024 * 1024;
+    const MAX_DECODED_PIXELS: u64 = 16 * 1024 * 1024;
+    if bytes.len() > MAX_COMPRESSED_IMAGE_BYTES {
+        return None;
+    }
+
     // Check if raw bytes are data URI or SVG XML
     if let Ok(text) = std::str::from_utf8(bytes) {
         let trimmed = text.trim();
@@ -68,6 +78,9 @@ pub fn decode_image_bytes(bytes: &[u8]) -> Option<DecodedImage> {
             let (w_opt, h_opt) = crate::svg::get_svg_intrinsic_dimensions(trimmed);
             let w = w_opt.unwrap_or(32.0).max(1.0) as u32;
             let h = h_opt.unwrap_or(32.0).max(1.0) as u32;
+            if (w as u64).saturating_mul(h as u64) > MAX_DECODED_PIXELS {
+                return None;
+            }
             if let Some(svg_img) = crate::svg::render_svg(trimmed, w, h, mango_core::Color::BLACK) {
                 return Some(svg_img);
             }
@@ -76,6 +89,9 @@ pub fn decode_image_bytes(bytes: &[u8]) -> Option<DecodedImage> {
 
     let img = image::load_from_memory(bytes).ok()?;
     let (width, height) = img.dimensions();
+    if (width as u64).saturating_mul(height as u64) > MAX_DECODED_PIXELS {
+        return None;
+    }
     let rgba = img.to_rgba8();
 
     let mut pixels = Vec::with_capacity((width * height) as usize);

@@ -83,6 +83,14 @@ pub struct BrowserChrome {
     pub(crate) base_url: Option<Url>,
     /// External author stylesheets downloaded via <link rel="stylesheet">.
     pub(crate) cached_stylesheets: Vec<Stylesheet>,
+    /// Page-owned stylesheet/index pair reused across relayouts. The cache is
+    /// invalidated when the DOM mutation version changes.
+    pub(crate) style_index_cache: Option<mango_layout::PageStyleIndex>,
+    pub(crate) style_index_version: u64,
+    pub(crate) style_index_viewport: (u32, u32),
+    /// DOM/style changes requested during a JS turn. The UI loop flushes this
+    /// once after script and animation work instead of relayouting per callback.
+    pub(crate) layout_pending: bool,
     /// HTTP and resource loader.
     pub(crate) loader: ResourceLoader,
     /// Vertical scroll offset in the content area (f32 for rendering/layout interoperability).
@@ -229,6 +237,10 @@ impl BrowserChrome {
             cached_document: None,
             base_url: None,
             cached_stylesheets: Vec::new(),
+            style_index_cache: None,
+            style_index_version: u64::MAX,
+            style_index_viewport: (0, 0),
+            layout_pending: false,
             scroll_y: 0.0,
             scroll_y_f64: 0.0,
             config: Config::new(),

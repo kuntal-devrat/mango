@@ -67,8 +67,9 @@ pub use shaping::{
 };
 pub use snapshot::LayoutSnapshot;
 pub use style_tree::{
-    StyleInvalidator, StyledNode, build_style_tree, build_style_tree_with_env,
-    build_style_tree_with_size, collect_image_maps, extract_style_elements,
+    PageStyleIndex, StyleInvalidator, StyledNode, build_style_tree,
+    build_style_tree_with_cached_index, build_style_tree_with_env, build_style_tree_with_size,
+    collect_image_maps, extract_style_elements,
 };
 pub use table_flow::layout_table;
 
@@ -172,6 +173,33 @@ pub fn layout_document_with_env(
         return (LayoutBox::new(BoxType::BlockNode, None), DisplayList::new());
     };
 
+    layout_styled_document(doc, styled_root, env, scroll_x, scroll_y)
+}
+
+/// Lays out a document using a caller-owned page stylesheet index. The index
+/// is not rebuilt during this operation, which is the hot path for relayouts.
+pub fn layout_document_with_style_index(
+    doc: &Document,
+    style_index: &PageStyleIndex,
+    viewport: Size,
+) -> (LayoutBox, DisplayList) {
+    let mut env = mango_css::current_media_environment();
+    env.viewport_width = viewport.width;
+    env.viewport_height = viewport.height;
+    let Some(styled_root) = build_style_tree_with_cached_index(doc, style_index.index(), &env)
+    else {
+        return (LayoutBox::new(BoxType::BlockNode, None), DisplayList::new());
+    };
+    layout_styled_document(doc, styled_root, &env, 0.0, 0.0)
+}
+
+fn layout_styled_document(
+    doc: &Document,
+    styled_root: StyledNode,
+    env: &mango_css::MediaEnvironment,
+    scroll_x: f32,
+    scroll_y: f32,
+) -> (LayoutBox, DisplayList) {
     let maps = collect_image_maps(doc);
     let mut root_box = build_box_tree_with_maps(&styled_root, Some(&maps));
 
@@ -181,9 +209,22 @@ pub fn layout_document_with_env(
 
     layout_block(&mut root_box, &containing_block, &mut float_ctx);
 
+    clamp_scroll_offsets(&mut root_box);
+
     let display_list = build_display_list_with_scroll_xy(&root_box, scroll_x, scroll_y);
 
     (root_box, display_list)
+}
+
+fn clamp_scroll_offsets(box_node: &mut LayoutBox) {
+    if box_node.is_scroll_container() {
+        let (max_x, max_y) = box_node.max_scroll();
+        box_node.scroll_offset_x = box_node.scroll_offset_x.clamp(0.0, max_x);
+        box_node.scroll_offset_y = box_node.scroll_offset_y.clamp(0.0, max_y);
+    }
+    for child in &mut box_node.children {
+        clamp_scroll_offsets(child);
+    }
 }
 
 /// Fully lays out an HTML DOM [`Document`], applying author stylesheets and inline styles,
@@ -261,5 +302,46 @@ mod tests {
 
         let dl_relayout = relayout_box_tree_with_scroll_xy(&mut root, viewport, 20.0, 40.0);
         assert!(!dl_relayout.is_empty());
+    }
+
+    #[test]
+    fn test_cached_style_index_handles_variable_heavy_page() {
+        let started = std::time::Instant::now();
+        let variables = (0..1200)
+            .map(|i| format!("--github-token-{i}: {i}px;"))
+            .collect::<String>();
+        let css = mango_css::parse_stylesheet(&format!(
+            ":root {{ {variables} }} .item {{ color: #333; padding: 2px; }}"
+        ));
+        let body = (0..1200)
+            .map(|i| format!("<div class=\"item\">item {i}</div>"))
+            .collect::<String>();
+        let doc = parse_html(&format!("<html><body>{body}</body></html>"));
+        let index =
+            PageStyleIndex::from_stylesheets(vec![css], mango_css::current_media_environment());
+
+        // Repeated layout is the stress case: the stylesheet/index must be
+        // reusable and the test must complete without rebuilding the rule
+        // index or cloning the inherited variable map per node.
+        for _ in 0..4 {
+            let (root, display_list) =
+                layout_document_with_style_index(&doc, &index, Size::new(800.0, 600.0));
+            assert!(root.descendant_count() >= 1200);
+            assert!(!display_list.is_empty());
+        }
+
+        // Keep this generous enough for debug CI, while catching accidental
+        // O(stylesheets × DOM nodes) regressions and pathological CPU churn.
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+        #[cfg(target_os = "linux")]
+        if let Ok(status) = std::fs::read_to_string("/proc/self/status")
+            && let Some(rss_kib) = status.lines().find_map(|line| {
+                line.strip_prefix("VmRSS:")
+                    .and_then(|v| v.split_whitespace().next())
+                    .and_then(|v| v.parse::<u64>().ok())
+            })
+        {
+            assert!(rss_kib < 768 * 1024, "stress layout RSS was {rss_kib} KiB");
+        }
     }
 }

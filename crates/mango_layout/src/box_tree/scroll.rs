@@ -8,10 +8,14 @@ impl LayoutBox {
         if let Some(s) = &self.style {
             matches!(
                 s.overflow_x,
-                mango_css::values::Overflow::Scroll | mango_css::values::Overflow::Auto
+                mango_css::values::Overflow::Scroll
+                    | mango_css::values::Overflow::Auto
+                    | mango_css::values::Overflow::Hidden
             ) || matches!(
                 s.overflow_y,
-                mango_css::values::Overflow::Scroll | mango_css::values::Overflow::Auto
+                mango_css::values::Overflow::Scroll
+                    | mango_css::values::Overflow::Auto
+                    | mango_css::values::Overflow::Hidden
             )
         } else {
             false
@@ -21,22 +25,34 @@ impl LayoutBox {
     /// Returns true if this box can be scrolled interactively by the user via mouse wheel or scrollbars.
     #[inline]
     pub fn is_user_scrollable(&self) -> bool {
-        if !self.is_scroll_container() {
+        if let Some(s) = &self.style {
+            let can_user = matches!(
+                s.overflow_x,
+                mango_css::values::Overflow::Scroll | mango_css::values::Overflow::Auto
+            ) || matches!(
+                s.overflow_y,
+                mango_css::values::Overflow::Scroll | mango_css::values::Overflow::Auto
+            );
+            if !can_user {
+                return false;
+            }
+        } else {
             return false;
         }
         let (max_x, max_y) = self.max_scroll();
         max_x > 0.0 || max_y > 0.0
     }
 
-    /// Computes the bounding extent of all in-flow child boxes relative to content box origin.
+    /// Computes the bounding extent of all in-flow child boxes relative to padding box origin.
     ///
-    /// Implements CSS Overflow 3 §3.2: includes in-flow descendants and positioned
-    /// descendants whose containing block is this scroll container.
+    /// Implements CSS Overflow 3 §3.2 and CSSOM View scrollWidth/scrollHeight:
+    /// includes in-flow descendants and positioned descendants whose containing block is this scroll container.
     pub fn scrollable_extent(&self) -> (f32, f32) {
-        let mut max_x = self.dimensions.content.width();
-        let mut max_y = self.dimensions.content.height();
-        let content_origin_x = self.dimensions.content.x();
-        let content_origin_y = self.dimensions.content.y();
+        let pad_box = self.dimensions.padding_box();
+        let mut max_x = pad_box.width();
+        let mut max_y = pad_box.height();
+        let pad_origin_x = pad_box.x();
+        let pad_origin_y = pad_box.y();
 
         let self_is_cb = self
             .style
@@ -57,9 +73,14 @@ impl LayoutBox {
                 continue;
             }
 
+            let bb = child.dimensions.border_box();
             let mb = child.dimensions.margin_box();
-            max_x = max_x.max(mb.right() - content_origin_x);
-            max_y = max_y.max(mb.bottom() - content_origin_y);
+            max_x = max_x
+                .max(bb.right() - pad_origin_x)
+                .max(mb.right() - pad_origin_x);
+            max_y = max_y
+                .max(bb.bottom() - pad_origin_y)
+                .max(mb.bottom() - pad_origin_y);
 
             // If child has visible overflow, its overflowing contents expand this container's scroll extent
             let clips = child.is_scroll_container()
@@ -69,10 +90,10 @@ impl LayoutBox {
                 });
             if !clips && !child.children.is_empty() {
                 let (c_ext_x, c_ext_y) = child.scrollable_extent();
-                let child_content_x = child.dimensions.content.x();
-                let child_content_y = child.dimensions.content.y();
-                max_x = max_x.max((child_content_x + c_ext_x) - content_origin_x);
-                max_y = max_y.max((child_content_y + c_ext_y) - content_origin_y);
+                let child_pad_x = child.dimensions.padding_box().x();
+                let child_pad_y = child.dimensions.padding_box().y();
+                max_x = max_x.max((child_pad_x + c_ext_x) - pad_origin_x);
+                max_y = max_y.max((child_pad_y + c_ext_y) - pad_origin_y);
             }
         }
         (max_x, max_y)
@@ -81,8 +102,9 @@ impl LayoutBox {
     /// Returns the maximum allowed scroll offsets (max_scroll_x, max_scroll_y).
     pub fn max_scroll(&self) -> (f32, f32) {
         let (extent_x, extent_y) = self.scrollable_extent();
-        let max_x = (extent_x - self.dimensions.content.width()).max(0.0);
-        let max_y = (extent_y - self.dimensions.content.height()).max(0.0);
+        let pad_box = self.dimensions.padding_box();
+        let max_x = (extent_x - pad_box.width()).max(0.0);
+        let max_y = (extent_y - pad_box.height()).max(0.0);
         (max_x, max_y)
     }
 

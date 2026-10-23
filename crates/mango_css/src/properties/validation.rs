@@ -196,17 +196,17 @@ pub fn is_valid_property_value(property_name: &str, value: &Value) -> bool {
         },
 
         "margin-trim" => match value {
-            Value::Keyword(k) => matches!(
+            Value::Keyword(k) | Value::String(k) => matches!(
                 k.to_ascii_lowercase().as_str(),
                 "none" | "block" | "block-start" | "block-end"
             ),
             Value::List(list) if list.len() == 2 => {
                 let w1 = match &list[0] {
-                    Value::Keyword(k) => k.to_ascii_lowercase(),
+                    Value::Keyword(k) | Value::String(k) => k.to_ascii_lowercase(),
                     _ => return false,
                 };
                 let w2 = match &list[1] {
-                    Value::Keyword(k) => k.to_ascii_lowercase(),
+                    Value::Keyword(k) | Value::String(k) => k.to_ascii_lowercase(),
                     _ => return false,
                 };
                 (w1 == "block-start" && w2 == "block-end")

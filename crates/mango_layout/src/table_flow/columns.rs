@@ -195,36 +195,50 @@ pub fn compute_auto_column_widths(
             col_widths[i] = (col_min_widths[i] + extra * (col_diff / diff_sum)).max(1.0);
         }
     } else {
-        let surplus = available_w - sum_max;
-        let num_auto = col_explicit_widths.iter().filter(|w| w.is_none()).count();
-        if num_auto > 0 {
-            let auto_max_sum: f32 = col_max_widths
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| col_explicit_widths[*i].is_none())
-                .map(|(_, m)| *m)
-                .sum();
+        // CSS 2.1 §17.5.2: If width: auto and no explicit HTML width, table does not expand beyond max-width
+        let is_auto_table_width = table_box
+            .style
+            .as_ref()
+            .map(|s| s.width == mango_css::values::Length::Auto)
+            .unwrap_or(true)
+            && table_box.get_attribute("width").is_none();
+
+        if is_auto_table_width {
             for i in 0..num_cols {
-                if col_explicit_widths[i].is_none() {
-                    let share = if auto_max_sum > 0.0 {
-                        col_max_widths[i] / auto_max_sum
-                    } else {
-                        1.0 / num_auto as f32
-                    };
-                    col_widths[i] = (col_max_widths[i] + surplus * share).max(1.0);
-                } else {
-                    col_widths[i] = col_max_widths[i].max(1.0);
-                }
-            }
-        } else if sum_max > 0.0 {
-            for i in 0..num_cols {
-                col_widths[i] =
-                    (col_max_widths[i] + surplus * (col_max_widths[i] / sum_max)).max(1.0);
+                col_widths[i] = col_max_widths[i];
             }
         } else {
-            let eq = (available_w / num_cols as f32).max(1.0);
-            for i in 0..num_cols {
-                col_widths[i] = eq;
+            let surplus = available_w - sum_max;
+            let num_auto = col_explicit_widths.iter().filter(|w| w.is_none()).count();
+            if num_auto > 0 {
+                let auto_max_sum: f32 = col_max_widths
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| col_explicit_widths[*i].is_none())
+                    .map(|(_, m)| *m)
+                    .sum();
+                for i in 0..num_cols {
+                    if col_explicit_widths[i].is_none() {
+                        let share = if auto_max_sum > 0.0 {
+                            col_max_widths[i] / auto_max_sum
+                        } else {
+                            1.0 / num_auto as f32
+                        };
+                        col_widths[i] = (col_max_widths[i] + surplus * share).max(1.0);
+                    } else {
+                        col_widths[i] = col_max_widths[i].max(1.0);
+                    }
+                }
+            } else if sum_max > 0.0 {
+                for i in 0..num_cols {
+                    col_widths[i] =
+                        (col_max_widths[i] + surplus * (col_max_widths[i] / sum_max)).max(1.0);
+                }
+            } else {
+                let eq = (available_w / num_cols as f32).max(1.0);
+                for i in 0..num_cols {
+                    col_widths[i] = eq;
+                }
             }
         }
     }
