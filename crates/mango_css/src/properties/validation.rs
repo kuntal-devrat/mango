@@ -196,22 +196,47 @@ pub fn is_valid_property_value(property_name: &str, value: &Value) -> bool {
         },
 
         "margin-trim" => match value {
-            Value::Keyword(k) | Value::String(k) => matches!(
-                k.to_ascii_lowercase().as_str(),
-                "none" | "block" | "block-start" | "block-end"
-            ),
-            Value::List(list) if list.len() == 2 => {
-                let w1 = match &list[0] {
-                    Value::Keyword(k) | Value::String(k) => k.to_ascii_lowercase(),
-                    _ => return false,
-                };
-                let w2 = match &list[1] {
-                    Value::Keyword(k) | Value::String(k) => k.to_ascii_lowercase(),
-                    _ => return false,
-                };
-                (w1 == "block-start" && w2 == "block-end")
-                    || (w1 == "block-end" && w2 == "block-start")
+            Value::Keyword(k) | Value::String(k) => {
+                let lower = k.to_ascii_lowercase();
+                let items: Vec<_> = lower.split_whitespace().collect();
+                if items.len() > 4 || items.is_empty() {
+                    false
+                } else if items.len() == 1 && items[0] == "none" {
+                    true
+                } else {
+                    items.iter().all(|item| {
+                        matches!(
+                            *item,
+                            "block"
+                                | "block-start"
+                                | "block-end"
+                                | "inline"
+                                | "inline-start"
+                                | "inline-end"
+                        )
+                    }) && items.windows(2).all(|pair| pair[0] != pair[1])
+                }
             }
+            Value::List(list) if !list.is_empty() && list.len() <= 4 => list
+                .iter()
+                .map(|item| match item {
+                    Value::Keyword(k) | Value::String(k) => Some(k.to_ascii_lowercase()),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()
+                .is_some_and(|items| {
+                    items.iter().all(|item| {
+                        matches!(
+                            item.as_str(),
+                            "block"
+                                | "block-start"
+                                | "block-end"
+                                | "inline"
+                                | "inline-start"
+                                | "inline-end"
+                        )
+                    }) && items.windows(2).all(|pair| pair[0] != pair[1])
+                }),
             _ => false,
         },
 

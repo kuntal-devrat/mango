@@ -666,9 +666,8 @@ impl CssParser {
                 }
                 "margin-trim" => {
                     // CSS Box 4 grammar:
-                    //   none | block | block-start | block-end
-                    //     | [block-start || block-end]
-                    // The two longhands serialize back to `block`.
+                    //   none | block | block-start | block-end | inline |
+                    //   inline-start | inline-end | [block-start || block-end]
                     let mut idents: Vec<String> = Vec::new();
                     let mut only_idents = true;
                     for token in value_tokens {
@@ -681,22 +680,26 @@ impl CssParser {
                     if !only_idents {
                         None
                     } else {
-                        match idents.as_slice() {
-                            [single]
-                                if matches!(
-                                    single.as_str(),
-                                    "none" | "block" | "block-start" | "block-end"
-                                ) =>
-                            {
-                                Some(Value::Keyword(single.clone()))
-                            }
-                            [a, b]
-                                if (a == "block-start" && b == "block-end")
-                                    || (a == "block-end" && b == "block-start") =>
-                            {
-                                Some(Value::Keyword("block".to_string()))
-                            }
-                            _ => None,
+                        if idents.len() == 1 && idents[0] == "none" {
+                            Some(Value::Keyword("none".to_string()))
+                        } else if !idents.is_empty()
+                            && idents.len() <= 4
+                            && idents.iter().all(|ident| {
+                                matches!(
+                                    ident.as_str(),
+                                    "block"
+                                        | "block-start"
+                                        | "block-end"
+                                        | "inline"
+                                        | "inline-start"
+                                        | "inline-end"
+                                )
+                            })
+                            && idents.windows(2).all(|pair| pair[0] != pair[1])
+                        {
+                            Some(Value::Keyword(idents.join(" ")))
+                        } else {
+                            None
                         }
                     }
                 }
