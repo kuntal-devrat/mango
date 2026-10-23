@@ -2,6 +2,19 @@
 
 use super::BrowserChrome;
 use std::path::Path;
+use std::sync::OnceLock;
+
+static PROFILE_POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+
+fn profile_pool() -> &'static rayon::ThreadPool {
+    PROFILE_POOL.get_or_init(|| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .thread_name(|i| format!("mango-profile-{i}"))
+            .build()
+            .expect("failed to initialize profile persistence pool")
+    })
+}
 
 /// Restores a `localStorage` profile (`<key>\t<value>` or `<origin>\t<key>\t<value>` per line) into the store.
 pub fn load_local_storage(path: &Path, store: &mango_js::web_apis::SharedLocalStorage) {
@@ -28,7 +41,7 @@ impl BrowserChrome {
     pub fn persist_cookies(&self) {
         let jar = self.cookie_jar.clone();
         let path = self.cookie_store_path.clone();
-        std::thread::spawn(move || {
+        profile_pool().spawn(move || {
             if let Ok(jar) = jar.lock() {
                 if let Err(e) = jar.save_to_file(&path) {
                     log::warn!("Could not persist cookies: {e}");

@@ -145,8 +145,9 @@ impl ApplicationHandler for MangoApp {
         for state in self.windows.values_mut() {
             let mut needs_redraw = false;
 
-            // Check for completed background navigation
-            if state.browser.is_loading() && state.browser.tick_navigation() {
+            // Check for completed background navigation. Always poll: a
+            // background tab may finish while the active tab is idle.
+            if state.browser.tick_navigation() {
                 needs_redraw = true;
             }
 
@@ -194,7 +195,7 @@ impl ApplicationHandler for MangoApp {
             if state.browser.is_animating() {
                 any_animating = true;
             }
-            if state.browser.is_loading() {
+            if state.browser.has_pending_navigation() {
                 any_loading = true;
             }
             if state.browser.has_pending_image_fetches() {

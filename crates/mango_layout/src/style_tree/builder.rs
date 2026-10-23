@@ -92,6 +92,7 @@ pub fn build_style_tree_with_env(
         None,
         &mut counter_ctx,
         &mut visited,
+        0,
     )
 }
 
@@ -133,8 +134,9 @@ pub fn build_styled_node<'a>(
     parent_style: Option<&ComputedStyle>,
     counter_ctx: &mut CounterContext,
     visited: &mut HashSet<NodeId>,
+    depth: usize,
 ) -> Option<StyledNode> {
-    if !visited.insert(node_id) {
+    if depth >= mango_html::dom::MAX_DOM_DEPTH || !visited.insert(node_id) {
         return None;
     }
     let node = doc.get(node_id)?;
@@ -155,6 +157,7 @@ pub fn build_styled_node<'a>(
                         parent_style,
                         counter_ctx,
                         visited,
+                        depth + 1,
                     );
                 }
             }
@@ -170,6 +173,7 @@ pub fn build_styled_node<'a>(
                         parent_style,
                         counter_ctx,
                         visited,
+                        depth + 1,
                     );
                 }
             }
@@ -321,6 +325,7 @@ pub fn build_styled_node<'a>(
                                 Some(&style),
                                 counter_ctx,
                                 visited,
+                                depth + 1,
                             ) {
                                 styled_children.push(styled_child);
                             }
@@ -337,6 +342,7 @@ pub fn build_styled_node<'a>(
                                 Some(&style),
                                 counter_ctx,
                                 visited,
+                                depth + 1,
                             ) {
                                 styled_children.push(styled_child);
                             }
@@ -351,6 +357,7 @@ pub fn build_styled_node<'a>(
                     Some(&style),
                     counter_ctx,
                     visited,
+                    depth + 1,
                 ) {
                     styled_children.push(styled_child);
                 }
@@ -390,6 +397,7 @@ pub fn build_styled_node<'a>(
             // Capture tag name and attributes for downstream use (e.g. <img> detection)
             if let NodeData::Element(el) = &node.data {
                 styled_node.tag_name = Some(el.tag_name.to_lowercase());
+                styled_node.canvas_key = doc.canvas_key(node_id);
                 styled_node.attributes = el
                     .attributes
                     .iter()

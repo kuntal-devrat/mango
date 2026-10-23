@@ -1,6 +1,7 @@
     function _wrapElement(nodeId) {
         if (nodeId === null || nodeId === undefined) return null;
-        if (_wrapperCache[nodeId]) return _wrapperCache[nodeId];
+        var cached = _getCachedWrapper(nodeId);
+        if (cached) return cached;
         var el = {
             _nodeId: nodeId,
             _listeners: {},

@@ -264,6 +264,32 @@ impl<T> Arena<T> {
         }
     }
 
+    /// Frees an active slot unless its generation has reached `max_generation`.
+    ///
+    /// Retired slots keep their value cleared and are deliberately kept out of
+    /// the free list. This is used to preserve the validity of packed handles
+    /// whose generation field is narrower than the arena's `u32` generation.
+    pub fn free_raw_below_generation(&mut self, index: u32, max_generation: u32) -> Option<T> {
+        let slot = self.items.get_mut(index as usize)?;
+        let value = slot.value.take()?;
+        self.active_count = self.active_count.saturating_sub(1);
+        if slot.generation < max_generation {
+            self.free_list.push(index);
+        }
+        Some(value)
+    }
+
+    /// Returns the active id at a raw slot index, including its current generation.
+    #[inline]
+    pub fn id_at(&self, index: u32) -> Option<Id<T>> {
+        let slot = self.items.get(index as usize)?;
+        slot.value.as_ref().map(|_| Id {
+            index,
+            generation: slot.generation,
+            _marker: std::marker::PhantomData,
+        })
+    }
+
     /// Returns `true` if the item at the given id is currently active (not freed or superseded).
     #[inline]
     pub fn is_alive(&self, id: Id<T>) -> bool {

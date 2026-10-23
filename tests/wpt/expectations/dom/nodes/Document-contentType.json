@@ -1,0 +1,50 @@
+{
+  "suite": "dom/nodes/Document-contentType",
+  "files": {
+    "dom/nodes/Document-contentType/contentType/contenttype_bmp.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Document-contentType/contentType/contenttype_css.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Document-contentType/contentType/contenttype_datauri_02.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Document-contentType/contentType/contenttype_gif.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Document-contentType/contentType/contenttype_html.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Document-contentType/contentType/contenttype_javascripturi.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Document-contentType/contentType/contenttype_jpg.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Document-contentType/contentType/contenttype_mimeheader_01.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Document-contentType/contentType/contenttype_mimeheader_02.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Document-contentType/contentType/contenttype_png.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Document-contentType/contentType/contenttype_txt.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Document-contentType/contentType/contenttype_xml.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Document-contentType/contentType/createDocument.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Document-contentType/contentType/createHTMLDocument.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Document-contentType/contentType/xhr_responseType_document.html": {
+      "status": "Pass"
+    }
+  }
+}

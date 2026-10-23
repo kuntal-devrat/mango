@@ -11,6 +11,7 @@ pub const DOM_SHIM: &str = concat!(
     include_str!("js/02_styles.js"),
     include_str!("js/03_collections.js"),
     include_str!("js/04_canvas.js"),
+    include_str!("js/05_lifecycle.js"),
     include_str!("js/05_mutation.js"),
     include_str!("js/06_prototypes.js"),
     include_str!("js/07_wrap_core.js"),

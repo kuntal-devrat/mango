@@ -5,10 +5,54 @@ use super::types::assert_not_on_ui_thread;
 use crate::chrome_ui::IMAGE_PREFETCH_PER_FRAME;
 use mango_net::Url;
 use mango_render::{cache_image, decode_data_uri, decode_image_bytes, get_cached_image};
+use std::sync::Arc;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Maximum number of queued image fetches retained in memory to prevent
 /// unbounded backlog growth on malicious/image-heavy pages.
 pub const MAX_PENDING_IMAGE_FETCHES: usize = 256;
+
+/// Fixed number of OS threads used to fetch and decode images. A fixed pool
+/// prevents image-heavy pages from creating one thread per image (or one
+/// thread per frame while draining).
+const MAX_IMAGE_WORKERS: usize = 4;
+
+/// Maximum number of per-frame drain batches that may be in flight at once.
+const MAX_IMAGE_DRAIN_JOBS: usize = 4;
+
+static IMAGE_POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+
+fn image_pool() -> &'static rayon::ThreadPool {
+    IMAGE_POOL.get_or_init(|| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(MAX_IMAGE_WORKERS)
+            .thread_name(|i| format!("mango-image-pool-{i}"))
+            .build()
+            .expect("failed to initialize image decode pool")
+    })
+}
+
+/// RAII counter for queued image work. The counter is decremented even if a
+/// worker panics, so a failed decode can never permanently exhaust the
+/// per-frame in-flight budget.
+struct InFlightGuard(Arc<AtomicUsize>);
+
+impl InFlightGuard {
+    fn acquire(counter: &Arc<AtomicUsize>, limit: usize) -> Option<Self> {
+        if counter.fetch_add(1, Ordering::SeqCst) >= limit {
+            counter.fetch_sub(1, Ordering::SeqCst);
+            return None;
+        }
+        Some(Self(Arc::clone(counter)))
+    }
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
 
 impl BrowserChrome {
     /// Downloads and decodes one image into the shared render cache.
@@ -87,57 +131,38 @@ impl BrowserChrome {
         }
         let loader = self.loader.clone();
         let epoch_flag = self.image_epoch.clone();
-        let work_queue = std::sync::Arc::new(std::sync::Mutex::new(
-            std::collections::VecDeque::from(remote),
-        ));
-        let num_workers = 4.min(work_queue.lock().unwrap().len());
-        for worker_idx in 0..num_workers {
+        for src in remote {
             let tx = tx.clone();
             let loader = loader.clone();
             let base = base.clone();
             let epoch_flag = epoch_flag.clone();
-            let queue = work_queue.clone();
-            if let Err(e) = std::thread::Builder::new()
-                .name(format!("mango-img-worker-{worker_idx}"))
-                .spawn(move || {
-                    while let Some(src) = {
-                        let mut q = queue.lock().unwrap();
-                        q.pop_front()
-                    } {
-                        if epoch_flag.load(std::sync::atomic::Ordering::SeqCst) != epoch {
-                            break;
-                        }
-                        if get_cached_image(&src).is_some() {
+            image_pool().spawn(move || {
+                if epoch_flag.load(Ordering::SeqCst) != epoch {
+                    return;
+                }
+                if get_cached_image(&src).is_none() {
+                    let bytes = match loader.fetch_image_bytes(&base, &src) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            log::debug!("[mango-img] Image fetch failed for {src}: {e:?}");
                             let _ = tx.send(src);
                             mango_core::wake_event_loop();
-                            continue;
+                            return;
                         }
-                        let fetch_res = loader.fetch_image_bytes(&base, &src);
-                        let bytes = match fetch_res {
-                            Ok(b) => b,
-                            Err(e) => {
-                                log::debug!("[mango-img] Image fetch failed for {src}: {e:?}");
-                                let _ = tx.send(src);
-                                mango_core::wake_event_loop();
-                                continue;
-                            }
-                        };
-                        if epoch_flag.load(std::sync::atomic::Ordering::SeqCst) != epoch {
-                            break;
-                        }
-                        if let Some(decoded) = decode_image_bytes(&bytes) {
-                            cache_image(&src, decoded.clone());
-                            if let Ok(resolved) = base.resolve(&src) {
-                                cache_image(&resolved.as_str(), decoded);
-                            }
-                        }
-                        let _ = tx.send(src);
-                        mango_core::wake_event_loop();
+                    };
+                    if epoch_flag.load(Ordering::SeqCst) != epoch {
+                        return;
                     }
-                })
-            {
-                log::warn!("Failed to spawn image worker {worker_idx}: {e}");
-            }
+                    if let Some(decoded) = decode_image_bytes(&bytes) {
+                        cache_image(&src, decoded.clone());
+                        if let Ok(resolved) = base.resolve(&src) {
+                            cache_image(&resolved.as_str(), decoded);
+                        }
+                    }
+                }
+                let _ = tx.send(src);
+                mango_core::wake_event_loop();
+            });
         }
         drop(tx);
     }
@@ -177,6 +202,13 @@ impl BrowserChrome {
             }
         } else if !self.pending_image_fetches.is_empty() {
             if let Some(base) = self.image_fetch_base.clone() {
+                let Some(_guard) =
+                    InFlightGuard::acquire(&self.image_drain_in_flight, MAX_IMAGE_DRAIN_JOBS)
+                else {
+                    // The pool is still busy with earlier per-frame batches;
+                    // leave the backlog queued instead of spawning more work.
+                    return loaded_any;
+                };
                 let take = IMAGE_PREFETCH_PER_FRAME.min(self.pending_image_fetches.len());
                 let batch: Vec<String> = self.pending_image_fetches.drain(..take).collect();
                 let mut remote_to_fetch = Vec::new();
@@ -193,45 +225,35 @@ impl BrowserChrome {
                     }
                 }
                 if !remote_to_fetch.is_empty() {
-                    let mut requeue = remote_to_fetch.clone();
-                    requeue.extend(self.pending_image_fetches.drain(..));
-                    requeue.truncate(MAX_PENDING_IMAGE_FETCHES);
-                    self.pending_image_fetches = requeue;
                     let (tx, rx) = std::sync::mpsc::channel();
                     self.image_rx = Some(rx);
                     let loader = self.loader.clone();
-                    let epoch = self.image_epoch.load(std::sync::atomic::Ordering::SeqCst);
+                    let epoch = self.image_epoch.load(Ordering::SeqCst);
                     let epoch_flag = self.image_epoch.clone();
-                    let first_batch = remote_to_fetch;
-                    if let Err(e) = std::thread::Builder::new()
-                        .name("mango-image-drain".to_string())
-                        .spawn(move || {
-                            for src in first_batch {
-                                if epoch_flag.load(std::sync::atomic::Ordering::SeqCst) != epoch {
-                                    break;
-                                }
-                                if get_cached_image(&src).is_some() {
-                                    continue;
-                                }
-                                let Ok(bytes) = loader.fetch_image_bytes(&base, &src) else {
-                                    continue;
-                                };
-                                if epoch_flag.load(std::sync::atomic::Ordering::SeqCst) != epoch {
-                                    break;
-                                }
-                                if let Some(decoded) = decode_image_bytes(&bytes) {
-                                    cache_image(&src, decoded.clone());
-                                    if let Ok(resolved) = base.resolve(&src) {
-                                        cache_image(&resolved.as_str(), decoded);
-                                    }
-                                    let _ = tx.send(src);
-                                    mango_core::wake_event_loop();
-                                }
+                    image_pool().spawn(move || {
+                        for src in remote_to_fetch {
+                            if epoch_flag.load(Ordering::SeqCst) != epoch {
+                                break;
                             }
-                        })
-                    {
-                        log::warn!("Failed to spawn image drain thread: {e}");
-                    }
+                            if get_cached_image(&src).is_some() {
+                                continue;
+                            }
+                            let Ok(bytes) = loader.fetch_image_bytes(&base, &src) else {
+                                continue;
+                            };
+                            if epoch_flag.load(Ordering::SeqCst) != epoch {
+                                break;
+                            }
+                            if let Some(decoded) = decode_image_bytes(&bytes) {
+                                cache_image(&src, decoded.clone());
+                                if let Ok(resolved) = base.resolve(&src) {
+                                    cache_image(&resolved.as_str(), decoded);
+                                }
+                                let _ = tx.send(src);
+                                mango_core::wake_event_loop();
+                            }
+                        }
+                    });
                 }
             } else {
                 self.pending_image_fetches.clear();

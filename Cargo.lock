@@ -1801,7 +1801,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "mango-browser"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "arboard",
  "env_logger",
@@ -1829,11 +1829,11 @@ dependencies = [
 
 [[package]]
 name = "mango_core"
-version = "0.1.15"
+version = "0.1.16"
 
 [[package]]
 name = "mango_css"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "log",
  "mango_core",
@@ -1843,7 +1843,7 @@ dependencies = [
 
 [[package]]
 name = "mango_engine"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "log",
  "mango_core",
@@ -1858,14 +1858,14 @@ dependencies = [
 
 [[package]]
 name = "mango_events"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "mango_core",
 ]
 
 [[package]]
 name = "mango_html"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "log",
  "mango_core",
@@ -1873,7 +1873,7 @@ dependencies = [
 
 [[package]]
 name = "mango_ipc"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "log",
  "mango_core",
@@ -1883,7 +1883,7 @@ dependencies = [
 
 [[package]]
 name = "mango_js"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "deno_core",
  "log",
@@ -1900,7 +1900,7 @@ dependencies = [
 
 [[package]]
 name = "mango_layout"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "log",
  "mango_core",
@@ -1912,7 +1912,7 @@ dependencies = [
 
 [[package]]
 name = "mango_net"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "getrandom 0.2.17",
  "log",
@@ -1925,7 +1925,7 @@ dependencies = [
 
 [[package]]
 name = "mango_platform"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "arboard",
  "bytemuck",
@@ -1940,7 +1940,7 @@ dependencies = [
 
 [[package]]
 name = "mango_render"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "fontdue",
  "image",

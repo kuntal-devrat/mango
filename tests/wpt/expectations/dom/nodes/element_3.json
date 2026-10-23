@@ -1,0 +1,201 @@
+{
+  "suite": "dom/nodes/element_3",
+  "files": {
+    "dom/nodes/Element-closest-null-selectors.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Element-closest.html": {
+      "status": "Fail",
+      "subtests": {
+        "Element.closest with context node 'test1' and selector 'div#test7'": "PASS",
+        "Element.closest with context node 'test10' and selector ':empty'": "PASS",
+        "Element.closest with context node 'test11' and selector ':invalid'": "FAIL",
+        "Element.closest with context node 'test11' and selector ':last-child'": "PASS",
+        "Element.closest with context node 'test11' and selector '[selected]'": "PASS",
+        "Element.closest with context node 'test12' and selector '.div3 > .div1'": "PASS",
+        "Element.closest with context node 'test12' and selector '.div3 > .div2'": "PASS",
+        "Element.closest with context node 'test12' and selector ':first-child'": "PASS",
+        "Element.closest with context node 'test12' and selector '[name=\"form-a\"]'": "PASS",
+        "Element.closest with context node 'test12' and selector 'fieldset > select[required]'": "PASS",
+        "Element.closest with context node 'test12' and selector 'select'": "PASS",
+        "Element.closest with context node 'test13' and selector 'div'": "PASS",
+        "Element.closest with context node 'test13' and selector 'div:not(.div1)'": "PASS",
+        "Element.closest with context node 'test13' and selector 'fieldset'": "PASS",
+        "Element.closest with context node 'test13' and selector 'form[name=\"form-a\"]'": "PASS",
+        "Element.closest with context node 'test3' and selector 'body'": "PASS",
+        "Element.closest with context node 'test3' and selector 'form + form'": "PASS",
+        "Element.closest with context node 'test4' and selector ':has(> :scope)'": "FAIL",
+        "Element.closest with context node 'test4' and selector ':scope'": "FAIL",
+        "Element.closest with context node 'test4' and selector '[default]'": "PASS",
+        "Element.closest with context node 'test4' and selector '[selected]'": "PASS",
+        "Element.closest with context node 'test4' and selector 'div > :scope'": "PASS",
+        "Element.closest with context node 'test4' and selector 'select > :scope'": "FAIL",
+        "Element.closest with context node 'test5' and selector 'form + form'": "PASS",
+        "Element.closest with context node 'test6' and selector 'div.div3'": "PASS",
+        "Element.closest with context node 'test6' and selector 'input + fieldset'": "PASS",
+        "Element.closest with context node 'test9' and selector 'form > input[required]'": "PASS",
+        "Element.closest with context node 'test9' and selector 'input[required]'": "PASS",
+        "Element.closest with context node 'test9' and selector 'select[required]'": "PASS"
+      }
+    },
+    "dom/nodes/Element-firstElementChild-entity-xhtml.xhtml": {
+      "status": "Error"
+    },
+    "dom/nodes/Element-firstElementChild-namespace-xhtml.xhtml": {
+      "status": "Error"
+    },
+    "dom/nodes/Element-firstElementChild-namespace.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Element-firstElementChild-xhtml.xhtml": {
+      "status": "Error"
+    },
+    "dom/nodes/Element-firstElementChild.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Element-getElementsByClassName.html": {
+      "status": "Fail",
+      "subtests": {
+        "Interface should be correct.": "PASS",
+        "getElementsByClassName should work on disconnected subtrees.": "PASS",
+        "getElementsByClassName() should be a live collection": "FAIL"
+      }
+    },
+    "dom/nodes/Element-getElementsByTagName-change-document-HTMLNess.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Element-getElementsByTagName.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Element-getElementsByTagNameNS.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Element-hasAttribute.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Element-hasAttributes.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Element-insertAdjacentElement.html": {
+      "status": "Fail",
+      "subtests": {
+        "Adding more than one child to document should cause a HierarchyRequestError exception": "FAIL",
+        "Inserted element should be target element's first child for 'afterbegin' case": "PASS",
+        "Inserted element should be target element's last child for 'beforeend' case": "PASS",
+        "Inserted element should be target element's next sibling for 'afterend' case": "PASS",
+        "Inserted element should be target element's previous sibling for 'beforebegin' case": "PASS",
+        "Inserting to an invalid location should cause a Syntax Error exception": "PASS"
+      }
+    },
+    "dom/nodes/Element-insertAdjacentText.html": {
+      "status": "Fail",
+      "subtests": {
+        "Adding more than one child to document should cause a HierarchyRequestError exception": "FAIL",
+        "Inserted text node should be target element's first child for 'afterbegin' case": "PASS",
+        "Inserted text node should be target element's last child for 'beforeend' case": "PASS",
+        "Inserted text node should be target element's next sibling for 'afterend' case": "PASS",
+        "Inserted text node should be target element's previous sibling for 'beforebegin' case": "PASS",
+        "Inserting to an invalid location should cause a Syntax Error exception": "PASS"
+      }
+    },
+    "dom/nodes/Element-lastElementChild-xhtml.xhtml": {
+      "status": "Error"
+    },
+    "dom/nodes/Element-lastElementChild.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Element-matches-active-pseudo-class.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Element-matches-complex-nth-last-of-type.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Element-matches-disabled-pseudo-class.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Element-matches-namespaced-elements.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Element-matches.html": {
+      "status": "Fail",
+      "subtests": {
+        "Selectors-API Level 2 Test Suite: HTML with Selectors Level 3": "FAIL"
+      }
+    },
+    "dom/nodes/Element-nextElementSibling-xhtml.xhtml": {
+      "status": "Error"
+    },
+    "dom/nodes/Element-nextElementSibling.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Element-previousElementSibling-xhtml.xhtml": {
+      "status": "Error"
+    },
+    "dom/nodes/Element-previousElementSibling.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Element-querySelectorAll-context-element.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Element-remove.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Element-removeAttribute.html": {
+      "status": "Fail",
+      "subtests": {
+        "removeAttribute should remove the first attribute, irrespective of namespace, when the first attribute is in a namespace": "FAIL",
+        "removeAttribute should remove the first attribute, irrespective of namespace, when the first attribute is not in a namespace": "FAIL"
+      }
+    },
+    "dom/nodes/Element-removeAttributeNS.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Element-setAttribute-crbug-1138487.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Element-setAttribute.html": {
+      "status": "Fail",
+      "subtests": {
+        "setAttribute should change the first attribute, irrespective of namespace": "FAIL",
+        "setAttribute should lowercase before setting": "FAIL"
+      }
+    },
+    "dom/nodes/Element-setAttributeNodeNS.html": {
+      "status": "Fail",
+      "subtests": {
+        "Replacing an attribute prefix preserves name lookup order with namespacedFirst=false": "FAIL",
+        "Replacing an attribute prefix preserves name lookup order with namespacedFirst=true": "FAIL",
+        "Replacing an attribute prefix preserves other attributes with the old qualified name": "PASS"
+      }
+    },
+    "dom/nodes/Element-siblingElement-null-xhtml.xhtml": {
+      "status": "Error"
+    },
+    "dom/nodes/Element-siblingElement-null.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Element-tagName-adopt.html": {
+      "status": "Fail",
+      "subtests": {
+        "tagName should not be uppercased when appended to XML document": "FAIL"
+      }
+    },
+    "dom/nodes/Element-tagName.html": {
+      "status": "Fail",
+      "subtests": {
+        "tagName should be updated when changing ownerDocument": "FAIL",
+        "tagName should be updated when changing ownerDocument (createDocument with prefix)": "FAIL",
+        "tagName should be updated when changing ownerDocument (createDocument without prefix)": "FAIL",
+        "tagName should not upper-case for SVG elements in HTML documents.": "PASS",
+        "tagName should not upper-case for other non-HTML namespaces": "PASS",
+        "tagName should upper-case for HTML elements in HTML documents.": "PASS"
+      }
+    },
+    "dom/nodes/Element-webkitMatchesSelector.html": {
+      "status": "Fail",
+      "subtests": {
+        "Selectors-API Level 2 Test Suite: HTML with Selectors Level 3": "FAIL"
+      }
+    }
+  }
+}

@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{OnceLock, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use fontdue::Font;
 
@@ -95,8 +95,8 @@ pub(crate) static FONT_ACCESS_TICK: AtomicU64 = AtomicU64::new(1);
 pub(crate) struct WebFontEntry {
     #[allow(dead_code)]
     pub(crate) family_name: String,
-    pub(crate) regular: Vec<&'static Font>,
-    pub(crate) bold: Vec<&'static Font>,
+    pub(crate) regular: Vec<Arc<Font>>,
+    pub(crate) bold: Vec<Arc<Font>>,
     pub(crate) is_system: bool,
     pub(crate) last_accessed: AtomicU64,
 }

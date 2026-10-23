@@ -266,7 +266,7 @@ impl BrowserChrome {
                         __el.removeAttribute('data-mango-fire');
                     }}
                 }}"#,
-                node_id.raw(),
+                mango_html::dom::node_id_to_js(node_id),
                 evt = event_type
             );
             let _ = rt.execute_script(&script);

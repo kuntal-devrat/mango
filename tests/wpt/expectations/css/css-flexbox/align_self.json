@@ -1,0 +1,11 @@
+{
+  "suite": "css/css-flexbox/align_self",
+  "files": {
+    "css/css-flexbox/align-self-014.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/align-self-baseline-with-flex-wrap.html": {
+      "status": "Error"
+    }
+  }
+}

@@ -12,7 +12,7 @@ impl JsRuntime {
         event_dict_json: &str,
     ) -> Result<bool, String> {
         let node_id_js = match target_node_id {
-            Some(id) => id.raw().to_string(),
+            Some(id) => mango_html::dom::node_id_to_js(id).to_string(),
             None => "null".to_string(),
         };
         let script = format!(

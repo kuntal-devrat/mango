@@ -1,0 +1,233 @@
+{
+  "suite": "dom/nodes/misc_3",
+  "files": {
+    "dom/nodes/node-creation-realm.html": {
+      "status": "Fail",
+      "subtests": {
+        "DOMImplementation.createDocument() creates the document in the target realm": "PASS",
+        "DOMImplementation.createDocumentType() creates a node in the associated document's realm": "PASS",
+        "DOMImplementation.createHTMLDocument() creates the document and its contents in the target realm": "PASS",
+        "Document.createAttribute() creates a node in the target document's realm": "FAIL",
+        "Document.createCDATASection() creates a node in the target document's realm": "PASS",
+        "Document.createComment() creates a node in the target document's realm": "PASS",
+        "Document.createDocumentFragment() creates a node in the target document's realm": "PASS",
+        "Document.createProcessingInstruction() creates a node in the target document's realm": "PASS",
+        "Document.createTextNode() creates a node in the target document's realm": "PASS",
+        "Range.cloneContents() builds the fragment in the range's node document realm": "PASS",
+        "cloneNode() clones into the node's node document realm": "PASS",
+        "importNode() imports into the target document's realm": "PASS",
+        "innerHTML parses Text and Comment nodes in the node document's realm after adoption": "PASS"
+      }
+    },
+    "dom/nodes/node-realm-adoption-after-frame-removal.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/node-realm-mixed-across-adoption.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/node-realm-preserved-across-adoption.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/node-realm-preserved-across-frameless-adoption.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/post-connection-steps-shadow-tree.html": {
+      "status": "Fail",
+      "subtests": {
+        "Script post-connection steps run in a newly-connected shadow tree": "FAIL"
+      }
+    },
+    "dom/nodes/prepend-on-Document.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/processing-instruction-attributes.html": {
+      "status": "Fail",
+      "subtests": {
+        "Distinct attribute name (source: html-dom): ABC and abc": "FAIL",
+        "Distinct attribute name (source: html-dom): abC and abc": "FAIL",
+        "Distinct attribute name (source: html-dom): x123A and x123a": "FAIL",
+        "Distinct attribute name (source: html-parser): ABC and abc": "FAIL",
+        "Distinct attribute name (source: html-parser): abC and abc": "FAIL",
+        "Distinct attribute name (source: html-parser): x123A and x123a": "FAIL",
+        "Distinct attribute name (source: xml-dom): ABC and abc": "FAIL",
+        "Distinct attribute name (source: xml-dom): abC and abc": "FAIL",
+        "Distinct attribute name (source: xml-dom): x123A and x123a": "FAIL",
+        "Distinct attribute name (source: xml-parser): ABC and abc": "FAIL",
+        "Distinct attribute name (source: xml-parser): abC and abc": "FAIL",
+        "Distinct attribute name (source: xml-parser): x123A and x123a": "FAIL",
+        "Invalid attribute name: \tx (source: html-dom)": "FAIL",
+        "Invalid attribute name: \tx (source: html-parser)": "FAIL",
+        "Invalid attribute name: \tx (source: xml-dom)": "FAIL",
+        "Invalid attribute name: \tx (source: xml-parser)": "FAIL",
+        "Invalid attribute name: \nx (source: html-dom)": "FAIL",
+        "Invalid attribute name: \nx (source: html-parser)": "FAIL",
+        "Invalid attribute name: \nx (source: xml-dom)": "FAIL",
+        "Invalid attribute name: \nx (source: xml-parser)": "FAIL",
+        "Invalid attribute name: \rx (source: html-dom)": "FAIL",
+        "Invalid attribute name: \rx (source: html-parser)": "FAIL",
+        "Invalid attribute name: \rx (source: xml-dom)": "FAIL",
+        "Invalid attribute name: \rx (source: xml-parser)": "FAIL",
+        "Invalid attribute name: / (source: html-dom)": "FAIL",
+        "Invalid attribute name: / (source: html-parser)": "FAIL",
+        "Invalid attribute name: / (source: xml-dom)": "FAIL",
+        "Invalid attribute name: / (source: xml-parser)": "FAIL",
+        "Invalid attribute name: /x/ (source: html-dom)": "FAIL",
+        "Invalid attribute name: /x/ (source: html-parser)": "FAIL",
+        "Invalid attribute name: /x/ (source: xml-dom)": "FAIL",
+        "Invalid attribute name: /x/ (source: xml-parser)": "FAIL",
+        "Invalid attribute name: = (source: html-dom)": "FAIL",
+        "Invalid attribute name: = (source: html-parser)": "FAIL",
+        "Invalid attribute name: = (source: xml-dom)": "FAIL",
+        "Invalid attribute name: = (source: xml-parser)": "FAIL",
+        "Invalid attribute name: =x (source: html-dom)": "FAIL",
+        "Invalid attribute name: =x (source: html-parser)": "FAIL",
+        "Invalid attribute name: =x (source: xml-dom)": "FAIL",
+        "Invalid attribute name: =x (source: xml-parser)": "FAIL",
+        "Invalid attribute name: > (source: html-dom)": "FAIL",
+        "Invalid attribute name: > (source: html-parser)": "FAIL",
+        "Invalid attribute name: > (source: xml-dom)": "FAIL",
+        "Invalid attribute name: > (source: xml-parser)": "FAIL",
+        "Invalid attribute name: >x (source: html-dom)": "FAIL",
+        "Invalid attribute name: >x (source: html-parser)": "FAIL",
+        "Invalid attribute name: >x (source: xml-dom)": "FAIL",
+        "Invalid attribute name: >x (source: xml-parser)": "FAIL",
+        "Invalid attribute name: a= (source: html-dom)": "FAIL",
+        "Invalid attribute name: a= (source: html-parser)": "FAIL",
+        "Invalid attribute name: a= (source: xml-dom)": "FAIL",
+        "Invalid attribute name: a= (source: xml-parser)": "FAIL",
+        "Invalid attribute name: b> (source: html-dom)": "FAIL",
+        "Invalid attribute name: b> (source: html-parser)": "FAIL",
+        "Invalid attribute name: b> (source: xml-dom)": "FAIL",
+        "Invalid attribute name: b> (source: xml-parser)": "FAIL",
+        "Invalid attribute name: x\t (source: html-dom)": "FAIL",
+        "Invalid attribute name: x\t (source: html-parser)": "FAIL",
+        "Invalid attribute name: x\t (source: xml-dom)": "FAIL",
+        "Invalid attribute name: x\t (source: xml-parser)": "FAIL",
+        "Invalid attribute name: x\n (source: html-dom)": "FAIL",
+        "Invalid attribute name: x\n (source: html-parser)": "FAIL",
+        "Invalid attribute name: x\n (source: xml-dom)": "FAIL",
+        "Invalid attribute name: x\n (source: xml-parser)": "FAIL",
+        "Invalid attribute name: x\r (source: html-dom)": "FAIL",
+        "Invalid attribute name: x\r (source: html-parser)": "FAIL",
+        "Invalid attribute name: x\r (source: xml-dom)": "FAIL",
+        "Invalid attribute name: x\r (source: xml-parser)": "FAIL",
+        "Invalid attribute name: x/ (source: html-dom)": "FAIL",
+        "Invalid attribute name: x/ (source: html-parser)": "FAIL",
+        "Invalid attribute name: x/ (source: xml-dom)": "FAIL",
+        "Invalid attribute name: x/ (source: xml-parser)": "FAIL",
+        "Processing instruction attribute mutation from html-dom": "FAIL",
+        "Processing instruction attribute mutation from html-parser": "FAIL",
+        "Processing instruction attribute mutation from xml-dom": "FAIL",
+        "Processing instruction attribute mutation from xml-parser": "FAIL",
+        "Processing instruction attribute parsing allows _ in attribute names from html-dom": "FAIL",
+        "Processing instruction attribute parsing allows _ in attribute names from html-parser": "FAIL",
+        "Processing instruction attribute parsing allows _ in attribute names from xml-dom": "FAIL",
+        "Processing instruction attribute parsing allows _ in attribute names from xml-parser": "FAIL",
+        "Processing instruction attribute parsing rejects unquoted attributes from html-dom": "FAIL",
+        "Processing instruction attribute parsing rejects unquoted attributes from html-parser": "FAIL",
+        "Processing instruction attribute parsing rejects unquoted attributes from xml-dom": "FAIL",
+        "Processing instruction attribute parsing rejects unquoted attributes from xml-parser": "FAIL",
+        "Processing instruction attributes with xml-stylesheet from html-dom": "FAIL",
+        "Processing instruction attributes with xml-stylesheet from xml-dom": "FAIL",
+        "Processing instruction attributes with xml-stylesheet from xml-parser": "FAIL",
+        "Processing instruction in main parser": "FAIL",
+        "Processing instruction toggleAttribute from html-dom": "FAIL",
+        "Processing instruction toggleAttribute from html-parser": "FAIL",
+        "Processing instruction toggleAttribute from xml-dom": "FAIL",
+        "Processing instruction toggleAttribute from xml-parser": "FAIL",
+        "Valid attribute name: $ (source: html-dom)": "FAIL",
+        "Valid attribute name: $ (source: html-parser)": "FAIL",
+        "Valid attribute name: $ (source: xml-dom)": "FAIL",
+        "Valid attribute name: $ (source: xml-parser)": "FAIL",
+        "Valid attribute name: $foo (source: html-dom)": "FAIL",
+        "Valid attribute name: $foo (source: html-parser)": "FAIL",
+        "Valid attribute name: $foo (source: xml-dom)": "FAIL",
+        "Valid attribute name: $foo (source: xml-parser)": "FAIL",
+        "Valid attribute name: _ (source: html-dom)": "FAIL",
+        "Valid attribute name: _ (source: html-parser)": "FAIL",
+        "Valid attribute name: _ (source: xml-dom)": "FAIL",
+        "Valid attribute name: _ (source: xml-parser)": "FAIL",
+        "Valid attribute name: _bar (source: html-dom)": "FAIL",
+        "Valid attribute name: _bar (source: html-parser)": "FAIL",
+        "Valid attribute name: _bar (source: xml-dom)": "FAIL",
+        "Valid attribute name: _bar (source: xml-parser)": "FAIL",
+        "Valid attribute name: a$b (source: html-dom)": "FAIL",
+        "Valid attribute name: a$b (source: html-parser)": "FAIL",
+        "Valid attribute name: a$b (source: xml-dom)": "FAIL",
+        "Valid attribute name: a$b (source: xml-parser)": "FAIL",
+        "Valid attribute name: a_b (source: html-dom)": "FAIL",
+        "Valid attribute name: a_b (source: html-parser)": "FAIL",
+        "Valid attribute name: a_b (source: xml-dom)": "FAIL",
+        "Valid attribute name: a_b (source: xml-parser)": "FAIL",
+        "check attribute value: \"'\"\"'\" (source: \"html-dom\")": "FAIL",
+        "check attribute value: \"'\"\"'\" (source: \"html-parser\")": "FAIL",
+        "check attribute value: \"'\"\"'\" (source: \"xml-dom\")": "FAIL",
+        "check attribute value: \"'\"\"'\" (source: \"xml-parser\")": "FAIL",
+        "check attribute value: \"=\" (source: \"html-dom\")": "FAIL",
+        "check attribute value: \"=\" (source: \"html-parser\")": "FAIL",
+        "check attribute value: \"=\" (source: \"xml-dom\")": "FAIL",
+        "check attribute value: \"=\" (source: \"xml-parser\")": "FAIL",
+        "check attribute value: \"aa\"aa\"\" (source: \"html-dom\")": "FAIL",
+        "check attribute value: \"aa\"aa\"\" (source: \"html-parser\")": "FAIL",
+        "check attribute value: \"aa\"aa\"\" (source: \"xml-dom\")": "FAIL",
+        "check attribute value: \"aa\"aa\"\" (source: \"xml-parser\")": "FAIL",
+        "check attribute value: \"axx\"\" (source: \"html-dom\")": "FAIL",
+        "check attribute value: \"axx\"\" (source: \"html-parser\")": "FAIL",
+        "check attribute value: \"axx\"\" (source: \"xml-dom\")": "FAIL",
+        "check attribute value: \"axx\"\" (source: \"xml-parser\")": "FAIL",
+        "check attribute value: \"axx>\" (source: \"html-dom\")": "FAIL",
+        "check attribute value: \"axx>\" (source: \"html-parser\")": "FAIL",
+        "check attribute value: \"axx>\" (source: \"xml-dom\")": "FAIL",
+        "check attribute value: \"axx>\" (source: \"xml-parser\")": "FAIL",
+        "check attribute value: \"some<>\" (source: \"html-dom\")": "FAIL",
+        "check attribute value: \"some<>\" (source: \"html-parser\")": "FAIL",
+        "check attribute value: \"some<>\" (source: \"xml-dom\")": "FAIL",
+        "check attribute value: \"some<>\" (source: \"xml-parser\")": "FAIL"
+      }
+    },
+    "dom/nodes/query-target-in-load-event.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/querySelector-empty-id.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/querySelector-id-nth-child.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/querySelector-mixed-case.html": {
+      "status": "Fail",
+      "subtests": {
+        "Mixed HTML/SVG/MathML tree with various mixed-case attributes": "FAIL"
+      }
+    },
+    "dom/nodes/remove-and-adopt-thcrash.html": {
+      "status": "Fail",
+      "subtests": {
+        "Check that removing a node and then adopting its parent into a different window/document doesn't crash.": "FAIL"
+      }
+    },
+    "dom/nodes/remove-next-sibling-during-replace-with.html": {
+      "status": "Fail",
+      "subtests": {
+        "": "FAIL"
+      }
+    },
+    "dom/nodes/remove-unscopable.html": {
+      "status": "Fail",
+      "subtests": {
+        "after() should be unscopable": "FAIL",
+        "append() should be unscopable": "FAIL",
+        "before() should be unscopable": "FAIL",
+        "prepend() should be unscopable": "FAIL",
+        "remove() should be unscopable": "FAIL",
+        "replaceWith() should be unscopable": "FAIL"
+      }
+    },
+    "dom/nodes/rootNode.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/svg-template-querySelector.html": {
+      "status": "Pass"
+    }
+  }
+}

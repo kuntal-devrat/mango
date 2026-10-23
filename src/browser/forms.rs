@@ -294,7 +294,7 @@ impl BrowserChrome {
             log::info!("Form submitted (POST): sending to {}", resolved_action);
             if let Ok(parsed_url) = Url::parse(&resolved_action) {
                 self.status_text = format!("Submitting to {}...", parsed_url);
-                self.is_loading = true;
+                self.set_tab_loading(self.active_tab_idx, true);
                 self.address_focused = false;
                 self.nav_actor.post(
                     self.active_tab_idx,

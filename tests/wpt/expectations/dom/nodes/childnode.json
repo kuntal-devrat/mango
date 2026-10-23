@@ -1,0 +1,14 @@
+{
+  "suite": "dom/nodes/childnode",
+  "files": {
+    "dom/nodes/ChildNode-after.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ChildNode-before.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ChildNode-replaceWith.html": {
+      "status": "Pass"
+    }
+  }
+}

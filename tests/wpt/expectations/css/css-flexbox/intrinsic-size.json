@@ -1,0 +1,60 @@
+{
+  "suite": "css/css-flexbox/intrinsic-size",
+  "files": {
+    "css/css-flexbox/intrinsic-size/col-wrap-004.html": {
+      "status": "Fail",
+      "subtests": {
+        "body > div 1": "FAIL"
+      }
+    },
+    "css/css-flexbox/intrinsic-size/col-wrap-005.html": {
+      "status": "Fail",
+      "subtests": {
+        "body > div 1": "FAIL"
+      }
+    },
+    "css/css-flexbox/intrinsic-size/col-wrap-010.html": {
+      "status": "Pass"
+    },
+    "css/css-flexbox/intrinsic-size/col-wrap-018.html": {
+      "status": "Fail",
+      "subtests": {
+        "body > div 1": "FAIL"
+      }
+    },
+    "css/css-flexbox/intrinsic-size/col-wrap-019.html": {
+      "status": "Fail",
+      "subtests": {
+        "body > div 1": "FAIL"
+      }
+    },
+    "css/css-flexbox/intrinsic-size/row-005.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/intrinsic-size/row-008.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/intrinsic-size/row-compat-001.html": {
+      "status": "Fail",
+      "subtests": {
+        "#bug1454306 2": "FAIL",
+        "#gmail-tables .flex 3": "PASS",
+        "#wrapping-broke .flex 1": "PASS"
+      }
+    },
+    "css/css-flexbox/intrinsic-size/row-use-cases-001.html": {
+      "status": "Fail",
+      "subtests": {
+        "left < right": "FAIL",
+        "no overflow": "PASS",
+        "no overflow 2": "PASS",
+        "same heights": "PASS",
+        "same widths": "PASS",
+        "zero width": "FAIL"
+      }
+    },
+    "css/css-flexbox/intrinsic-size/row-wrap-001.html": {
+      "status": "Error"
+    }
+  }
+}

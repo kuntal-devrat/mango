@@ -52,6 +52,28 @@ impl Drop for IsolateScopeGuard {
     }
 }
 
+/// RAII guard that only exits an already-entered isolate on drop.
+///
+/// `deno_core::JsRuntime::new` leaves its isolate entered; constructor-time
+/// setup must balance that single enter even if a shim panics.
+pub(crate) struct IsolateExitGuard(*mut deno_core::v8::Isolate);
+
+impl IsolateExitGuard {
+    #[inline]
+    pub(crate) fn new(isolate: &mut deno_core::v8::Isolate) -> Self {
+        Self(isolate as *mut _)
+    }
+}
+
+impl Drop for IsolateExitGuard {
+    #[inline]
+    fn drop(&mut self) {
+        unsafe {
+            (*self.0).exit();
+        }
+    }
+}
+
 /// The Mango JavaScript runtime — one per page.
 pub struct JsRuntime {
     pub(crate) runtime: deno_core::JsRuntime,
@@ -278,31 +300,31 @@ impl JsRuntime {
             state.put(crate::ops::dom::PageUrl(page_url.to_string()));
         }
 
-        // Install prelude, DOM shim, and Web APIs shim
-        if let Err(e) = runtime.execute_script("<prelude>", crate::ops::PRELUDE_JS) {
-            eprintln!("Failed to install Mango prelude: {e}");
-            panic!("Failed to install Mango prelude: {e}");
-        }
-        if let Err(e) = runtime.execute_script("<dom_shim>", crate::dom_bindings::DOM_SHIM) {
-            eprintln!("Failed to install Mango DOM shim: {e}");
-            panic!("Failed to install Mango DOM shim: {e}");
-        }
-        let web_shim = crate::web_apis::build_web_apis_shim(page_url);
-        if let Err(e) = runtime.execute_script("<web_apis>", web_shim) {
-            eprintln!("Failed to install Mango Web APIs shim: {e}");
-            panic!("Failed to install Mango Web APIs shim: {e}");
-        }
+        // Install prelude, DOM shim, and Web APIs shim. `JsRuntime::new`
+        // leaves the isolate entered; keep that balanced even on panic.
+        {
+            let _isolate_guard = IsolateExitGuard::new(runtime.v8_isolate());
+            if let Err(e) = runtime.execute_script("<prelude>", crate::ops::PRELUDE_JS) {
+                eprintln!("Failed to install Mango prelude: {e}");
+                panic!("Failed to install Mango prelude: {e}");
+            }
+            if let Err(e) = runtime.execute_script("<dom_shim>", crate::dom_bindings::DOM_SHIM) {
+                eprintln!("Failed to install Mango DOM shim: {e}");
+                panic!("Failed to install Mango DOM shim: {e}");
+            }
+            let web_shim = crate::web_apis::build_web_apis_shim(page_url);
+            if let Err(e) = runtime.execute_script("<web_apis>", web_shim) {
+                eprintln!("Failed to install Mango Web APIs shim: {e}");
+                panic!("Failed to install Mango Web APIs shim: {e}");
+            }
 
-        // Set viewport width and height
-        let _ = runtime.execute_script(
-            "<viewport>",
-            format!(
-                "globalThis.innerWidth = {viewport_width}; globalThis.innerHeight = {viewport_height}; if (typeof globalThis.window !== 'undefined') {{ globalThis.window.innerWidth = {viewport_width}; globalThis.window.innerHeight = {viewport_height}; }}"
-            ),
-        );
-
-        unsafe {
-            runtime.v8_isolate().exit();
+            // Set viewport width and height
+            let _ = runtime.execute_script(
+                "<viewport>",
+                format!(
+                    "globalThis.innerWidth = {viewport_width}; globalThis.innerHeight = {viewport_height}; if (typeof globalThis.window !== 'undefined') {{ globalThis.window.innerWidth = {viewport_width}; globalThis.window.innerHeight = {viewport_height}; }}"
+                ),
+            );
         }
 
         Self {
@@ -373,10 +395,16 @@ impl JsRuntime {
 impl Drop for JsRuntime {
     fn drop(&mut self) {
         self.clear_timers();
+        // Canvas backing stores are process-global; release every store owned
+        // by this document even if the browser did not navigate away first.
+        if let Ok(doc) = self.document.try_borrow() {
+            mango_render::remove_canvases_for_document(doc.id());
+        }
         self.worker_manager.terminate_all();
         unsafe {
-            self.runtime.v8_isolate().enter();
-            self.runtime.v8_isolate().low_memory_notification();
+            let isolate = self.runtime.v8_isolate();
+            isolate.enter();
+            isolate.low_memory_notification();
         }
     }
 }

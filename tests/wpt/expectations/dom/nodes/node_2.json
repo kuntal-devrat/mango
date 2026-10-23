@@ -1,0 +1,8 @@
+{
+  "suite": "dom/nodes/node_2",
+  "files": {
+    "dom/nodes/Node-compareDocumentPosition.html": {
+      "status": "Pass"
+    }
+  }
+}

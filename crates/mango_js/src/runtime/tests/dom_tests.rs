@@ -601,3 +601,54 @@ fn test_scope_template_clone() {
         panic!("test_scope_template_clone failed: {}", e);
     }
 }
+
+#[test]
+fn test_detached_nodes_are_recycled_after_gc() {
+    let html = r#"<!doctype html><html><body><div id="churn-host"></div></body></html>"#;
+    let doc = parse_html(html);
+    let mut rt = JsRuntime::new(doc, 800.0, 600.0);
+
+    rt.execute_script(
+        r#"
+        globalThis.__churn = function(n) {
+            var host = document.getElementById('churn-host');
+            host.innerHTML = '';
+            for (var i = 0; i < n; i++) {
+                var d = document.createElement('div');
+                d.appendChild(document.createTextNode('x'));
+                host.appendChild(d);
+                host.innerHTML = '';
+            }
+        };
+        "#,
+    )
+    .unwrap();
+
+    rt.execute_script("__churn(500)").unwrap();
+    let first_slots = rt.document_ref().arena_slot_count();
+    rt.gc();
+    let (live_after_gc, slots_after_gc, free_after_gc) = {
+        let d = rt.document_ref();
+        (
+            d.live_node_count(),
+            d.arena_slot_count(),
+            d.free_arena_slots(),
+        )
+    };
+    assert!(
+        live_after_gc < 64,
+        "detached DOM nodes were not reclaimed: live={live_after_gc}"
+    );
+    assert!(
+        free_after_gc > 900,
+        "expected detached slots to return to the free list: free={free_after_gc}"
+    );
+
+    rt.execute_script("__churn(500)").unwrap();
+    rt.gc();
+    let slots_after_second = rt.document_ref().arena_slot_count();
+    assert!(
+        slots_after_second <= slots_after_gc + 32,
+        "arena grew across GC cycles instead of reusing freed slots: first={first_slots} after_gc={slots_after_gc} second={slots_after_second}"
+    );
+}

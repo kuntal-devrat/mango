@@ -722,3 +722,55 @@ fn test_github_avatar_fetch_and_caching() {
         );
     }
 }
+
+#[test]
+fn test_tick_navigation_applies_results_for_multiple_tabs() {
+    let mut browser = BrowserChrome::new(1024, 768);
+    // Tab 0 is background; tab 1 is active.
+    browser.new_tab();
+    assert_eq!(browser.active_tab_idx, 1);
+
+    fn make_prep(url: &str, title: &str) -> crate::browser::PreparedDocument {
+        let html = format!(
+            "<html><head><title>{title}</title></head><body><h1>{title}</h1></body></html>"
+        );
+        crate::browser::PreparedDocument {
+            url: Url::parse(url).unwrap(),
+            doc: mango_html::parse_html(&html),
+            html,
+            status: 200,
+            content_type: "text/html".to_string(),
+            encoding: mango_net::encoding::Encoding::Utf8,
+            cached_stylesheets: Vec::new(),
+            preloaded_scripts: Vec::new(),
+            image_sources: Vec::new(),
+        }
+    }
+
+    let bg_epoch = browser.nav_actor.active_epoch_for(0);
+    browser
+        .nav_actor
+        .inject_result_for_test(crate::navigation_actor::NavResult::DocumentReady {
+            tab_id: 0,
+            prep: make_prep("https://example.com/background", "Background"),
+            push_history: true,
+            epoch: bg_epoch,
+        });
+    let active_epoch = browser.nav_actor.active_epoch_for(1);
+    browser
+        .nav_actor
+        .inject_result_for_test(crate::navigation_actor::NavResult::DocumentReady {
+            tab_id: 1,
+            prep: make_prep("https://example.com/active", "Active"),
+            push_history: true,
+            epoch: active_epoch,
+        });
+
+    assert!(browser.tick_navigation());
+    assert_eq!(
+        browser.tabs[0].title, "Background",
+        "background result must still be applied when another tab has a result in the same batch"
+    );
+    assert_eq!(browser.page_title, "Active");
+    assert_eq!(browser.active_tab_idx, 1);
+}

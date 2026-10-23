@@ -101,7 +101,7 @@ fn test_box_type_predicates() {
     assert!(!audio.is_video());
 
     let canvas = BoxType::Canvas {
-        node_id: None,
+        canvas_key: None,
         width: 800,
         height: 600,
         intrinsic_width: 800.0,

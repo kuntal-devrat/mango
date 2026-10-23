@@ -1,0 +1,548 @@
+{
+  "suite": "dom/nodes/misc_2",
+  "files": {
+    "dom/nodes/case.html": {
+      "status": "Fail",
+      "subtests": {
+        "createElement ABC": "PASS",
+        "createElement Abc": "PASS",
+        "createElement abc": "PASS",
+        "createElement \u00c4": "PASS",
+        "createElement \u00e4": "PASS",
+        "createElementNS ABC": "PASS",
+        "createElementNS Abc": "PASS",
+        "createElementNS abc": "PASS",
+        "createElementNS http://FOO,ABC,ABC": "PASS",
+        "createElementNS http://FOO,ABC,Abc": "PASS",
+        "createElementNS http://FOO,ABC,abc": "PASS",
+        "createElementNS http://FOO,ABC,\u00c4": "PASS",
+        "createElementNS http://FOO,ABC,\u00e4": "PASS",
+        "createElementNS http://FOO,Abc,ABC": "PASS",
+        "createElementNS http://FOO,Abc,Abc": "PASS",
+        "createElementNS http://FOO,Abc,abc": "PASS",
+        "createElementNS http://FOO,Abc,\u00c4": "PASS",
+        "createElementNS http://FOO,Abc,\u00e4": "PASS",
+        "createElementNS http://FOO,abc,ABC": "PASS",
+        "createElementNS http://FOO,abc,Abc": "PASS",
+        "createElementNS http://FOO,abc,abc": "PASS",
+        "createElementNS http://FOO,abc,\u00c4": "PASS",
+        "createElementNS http://FOO,abc,\u00e4": "PASS",
+        "createElementNS http://FOO,\u00c4,ABC": "PASS",
+        "createElementNS http://FOO,\u00c4,Abc": "PASS",
+        "createElementNS http://FOO,\u00c4,abc": "PASS",
+        "createElementNS http://FOO,\u00c4,\u00c4": "PASS",
+        "createElementNS http://FOO,\u00c4,\u00e4": "PASS",
+        "createElementNS http://FOO,\u00e4,ABC": "PASS",
+        "createElementNS http://FOO,\u00e4,Abc": "PASS",
+        "createElementNS http://FOO,\u00e4,abc": "PASS",
+        "createElementNS http://FOO,\u00e4,\u00c4": "PASS",
+        "createElementNS http://FOO,\u00e4,\u00e4": "PASS",
+        "createElementNS http://www.w3.org/1999/xhtml,ABC,ABC": "PASS",
+        "createElementNS http://www.w3.org/1999/xhtml,ABC,Abc": "PASS",
+        "createElementNS http://www.w3.org/1999/xhtml,ABC,abc": "PASS",
+        "createElementNS http://www.w3.org/1999/xhtml,ABC,\u00c4": "PASS",
+        "createElementNS http://www.w3.org/1999/xhtml,ABC,\u00e4": "PASS",
+        "createElementNS http://www.w3.org/1999/xhtml,Abc,ABC": "PASS",
+        "createElementNS http://www.w3.org/1999/xhtml,Abc,Abc": "PASS",
+        "createElementNS http://www.w3.org/1999/xhtml,Abc,abc": "PASS",
+        "createElementNS http://www.w3.org/1999/xhtml,Abc,\u00c4": "PASS",
+        "createElementNS http://www.w3.org/1999/xhtml,Abc,\u00e4": "PASS",
+        "createElementNS http://www.w3.org/1999/xhtml,abc,ABC": "PASS",
+        "createElementNS http://www.w3.org/1999/xhtml,abc,Abc": "PASS",
+        "createElementNS http://www.w3.org/1999/xhtml,abc,abc": "PASS",
+        "createElementNS http://www.w3.org/1999/xhtml,abc,\u00c4": "PASS",
+        "createElementNS http://www.w3.org/1999/xhtml,abc,\u00e4": "PASS",
+        "createElementNS http://www.w3.org/1999/xhtml,\u00c4,ABC": "PASS",
+        "createElementNS http://www.w3.org/1999/xhtml,\u00c4,Abc": "PASS",
+        "createElementNS http://www.w3.org/1999/xhtml,\u00c4,abc": "PASS",
+        "createElementNS http://www.w3.org/1999/xhtml,\u00c4,\u00c4": "PASS",
+        "createElementNS http://www.w3.org/1999/xhtml,\u00c4,\u00e4": "PASS",
+        "createElementNS http://www.w3.org/1999/xhtml,\u00e4,ABC": "PASS",
+        "createElementNS http://www.w3.org/1999/xhtml,\u00e4,Abc": "PASS",
+        "createElementNS http://www.w3.org/1999/xhtml,\u00e4,abc": "PASS",
+        "createElementNS http://www.w3.org/1999/xhtml,\u00e4,\u00c4": "PASS",
+        "createElementNS http://www.w3.org/1999/xhtml,\u00e4,\u00e4": "PASS",
+        "createElementNS http://www.w3.org/2000/svg,ABC,ABC": "PASS",
+        "createElementNS http://www.w3.org/2000/svg,ABC,Abc": "PASS",
+        "createElementNS http://www.w3.org/2000/svg,ABC,abc": "PASS",
+        "createElementNS http://www.w3.org/2000/svg,ABC,\u00c4": "PASS",
+        "createElementNS http://www.w3.org/2000/svg,ABC,\u00e4": "PASS",
+        "createElementNS http://www.w3.org/2000/svg,Abc,ABC": "PASS",
+        "createElementNS http://www.w3.org/2000/svg,Abc,Abc": "PASS",
+        "createElementNS http://www.w3.org/2000/svg,Abc,abc": "PASS",
+        "createElementNS http://www.w3.org/2000/svg,Abc,\u00c4": "PASS",
+        "createElementNS http://www.w3.org/2000/svg,Abc,\u00e4": "PASS",
+        "createElementNS http://www.w3.org/2000/svg,abc,ABC": "PASS",
+        "createElementNS http://www.w3.org/2000/svg,abc,Abc": "PASS",
+        "createElementNS http://www.w3.org/2000/svg,abc,abc": "PASS",
+        "createElementNS http://www.w3.org/2000/svg,abc,\u00c4": "PASS",
+        "createElementNS http://www.w3.org/2000/svg,abc,\u00e4": "PASS",
+        "createElementNS http://www.w3.org/2000/svg,\u00c4,ABC": "PASS",
+        "createElementNS http://www.w3.org/2000/svg,\u00c4,Abc": "PASS",
+        "createElementNS http://www.w3.org/2000/svg,\u00c4,abc": "PASS",
+        "createElementNS http://www.w3.org/2000/svg,\u00c4,\u00c4": "PASS",
+        "createElementNS http://www.w3.org/2000/svg,\u00c4,\u00e4": "PASS",
+        "createElementNS http://www.w3.org/2000/svg,\u00e4,ABC": "PASS",
+        "createElementNS http://www.w3.org/2000/svg,\u00e4,Abc": "PASS",
+        "createElementNS http://www.w3.org/2000/svg,\u00e4,abc": "PASS",
+        "createElementNS http://www.w3.org/2000/svg,\u00e4,\u00c4": "PASS",
+        "createElementNS http://www.w3.org/2000/svg,\u00e4,\u00e4": "PASS",
+        "createElementNS \u00c4": "PASS",
+        "createElementNS \u00e4": "PASS",
+        "getAttribute ABC": "PASS",
+        "getAttribute Abc": "PASS",
+        "getAttribute abc": "PASS",
+        "getAttribute \u00c4": "PASS",
+        "getAttribute \u00e4": "PASS",
+        "getAttributeNS ABC": "PASS",
+        "getAttributeNS Abc": "PASS",
+        "getAttributeNS abc": "PASS",
+        "getAttributeNS http://FOO,ABC,ABC": "PASS",
+        "getAttributeNS http://FOO,ABC,Abc": "PASS",
+        "getAttributeNS http://FOO,ABC,abc": "PASS",
+        "getAttributeNS http://FOO,ABC,\u00c4": "PASS",
+        "getAttributeNS http://FOO,ABC,\u00e4": "PASS",
+        "getAttributeNS http://FOO,Abc,ABC": "PASS",
+        "getAttributeNS http://FOO,Abc,Abc": "PASS",
+        "getAttributeNS http://FOO,Abc,abc": "PASS",
+        "getAttributeNS http://FOO,Abc,\u00c4": "PASS",
+        "getAttributeNS http://FOO,Abc,\u00e4": "PASS",
+        "getAttributeNS http://FOO,abc,ABC": "PASS",
+        "getAttributeNS http://FOO,abc,Abc": "PASS",
+        "getAttributeNS http://FOO,abc,abc": "PASS",
+        "getAttributeNS http://FOO,abc,\u00c4": "PASS",
+        "getAttributeNS http://FOO,abc,\u00e4": "PASS",
+        "getAttributeNS http://FOO,\u00c4,ABC": "PASS",
+        "getAttributeNS http://FOO,\u00c4,Abc": "PASS",
+        "getAttributeNS http://FOO,\u00c4,abc": "PASS",
+        "getAttributeNS http://FOO,\u00c4,\u00c4": "PASS",
+        "getAttributeNS http://FOO,\u00c4,\u00e4": "PASS",
+        "getAttributeNS http://FOO,\u00e4,ABC": "PASS",
+        "getAttributeNS http://FOO,\u00e4,Abc": "PASS",
+        "getAttributeNS http://FOO,\u00e4,abc": "PASS",
+        "getAttributeNS http://FOO,\u00e4,\u00c4": "PASS",
+        "getAttributeNS http://FOO,\u00e4,\u00e4": "PASS",
+        "getAttributeNS http://www.w3.org/1999/xhtml,ABC,ABC": "PASS",
+        "getAttributeNS http://www.w3.org/1999/xhtml,ABC,Abc": "PASS",
+        "getAttributeNS http://www.w3.org/1999/xhtml,ABC,abc": "PASS",
+        "getAttributeNS http://www.w3.org/1999/xhtml,ABC,\u00c4": "PASS",
+        "getAttributeNS http://www.w3.org/1999/xhtml,ABC,\u00e4": "PASS",
+        "getAttributeNS http://www.w3.org/1999/xhtml,Abc,ABC": "PASS",
+        "getAttributeNS http://www.w3.org/1999/xhtml,Abc,Abc": "PASS",
+        "getAttributeNS http://www.w3.org/1999/xhtml,Abc,abc": "PASS",
+        "getAttributeNS http://www.w3.org/1999/xhtml,Abc,\u00c4": "PASS",
+        "getAttributeNS http://www.w3.org/1999/xhtml,Abc,\u00e4": "PASS",
+        "getAttributeNS http://www.w3.org/1999/xhtml,abc,ABC": "PASS",
+        "getAttributeNS http://www.w3.org/1999/xhtml,abc,Abc": "PASS",
+        "getAttributeNS http://www.w3.org/1999/xhtml,abc,abc": "PASS",
+        "getAttributeNS http://www.w3.org/1999/xhtml,abc,\u00c4": "PASS",
+        "getAttributeNS http://www.w3.org/1999/xhtml,abc,\u00e4": "PASS",
+        "getAttributeNS http://www.w3.org/1999/xhtml,\u00c4,ABC": "PASS",
+        "getAttributeNS http://www.w3.org/1999/xhtml,\u00c4,Abc": "PASS",
+        "getAttributeNS http://www.w3.org/1999/xhtml,\u00c4,abc": "PASS",
+        "getAttributeNS http://www.w3.org/1999/xhtml,\u00c4,\u00c4": "PASS",
+        "getAttributeNS http://www.w3.org/1999/xhtml,\u00c4,\u00e4": "PASS",
+        "getAttributeNS http://www.w3.org/1999/xhtml,\u00e4,ABC": "PASS",
+        "getAttributeNS http://www.w3.org/1999/xhtml,\u00e4,Abc": "PASS",
+        "getAttributeNS http://www.w3.org/1999/xhtml,\u00e4,abc": "PASS",
+        "getAttributeNS http://www.w3.org/1999/xhtml,\u00e4,\u00c4": "PASS",
+        "getAttributeNS http://www.w3.org/1999/xhtml,\u00e4,\u00e4": "PASS",
+        "getAttributeNS http://www.w3.org/2000/svg,ABC,ABC": "PASS",
+        "getAttributeNS http://www.w3.org/2000/svg,ABC,Abc": "PASS",
+        "getAttributeNS http://www.w3.org/2000/svg,ABC,abc": "PASS",
+        "getAttributeNS http://www.w3.org/2000/svg,ABC,\u00c4": "PASS",
+        "getAttributeNS http://www.w3.org/2000/svg,ABC,\u00e4": "PASS",
+        "getAttributeNS http://www.w3.org/2000/svg,Abc,ABC": "PASS",
+        "getAttributeNS http://www.w3.org/2000/svg,Abc,Abc": "PASS",
+        "getAttributeNS http://www.w3.org/2000/svg,Abc,abc": "PASS",
+        "getAttributeNS http://www.w3.org/2000/svg,Abc,\u00c4": "PASS",
+        "getAttributeNS http://www.w3.org/2000/svg,Abc,\u00e4": "PASS",
+        "getAttributeNS http://www.w3.org/2000/svg,abc,ABC": "PASS",
+        "getAttributeNS http://www.w3.org/2000/svg,abc,Abc": "PASS",
+        "getAttributeNS http://www.w3.org/2000/svg,abc,abc": "PASS",
+        "getAttributeNS http://www.w3.org/2000/svg,abc,\u00c4": "PASS",
+        "getAttributeNS http://www.w3.org/2000/svg,abc,\u00e4": "PASS",
+        "getAttributeNS http://www.w3.org/2000/svg,\u00c4,ABC": "PASS",
+        "getAttributeNS http://www.w3.org/2000/svg,\u00c4,Abc": "PASS",
+        "getAttributeNS http://www.w3.org/2000/svg,\u00c4,abc": "PASS",
+        "getAttributeNS http://www.w3.org/2000/svg,\u00c4,\u00c4": "PASS",
+        "getAttributeNS http://www.w3.org/2000/svg,\u00c4,\u00e4": "PASS",
+        "getAttributeNS http://www.w3.org/2000/svg,\u00e4,ABC": "PASS",
+        "getAttributeNS http://www.w3.org/2000/svg,\u00e4,Abc": "PASS",
+        "getAttributeNS http://www.w3.org/2000/svg,\u00e4,abc": "PASS",
+        "getAttributeNS http://www.w3.org/2000/svg,\u00e4,\u00c4": "PASS",
+        "getAttributeNS http://www.w3.org/2000/svg,\u00e4,\u00e4": "PASS",
+        "getAttributeNS \u00c4": "PASS",
+        "getAttributeNS \u00e4": "PASS",
+        "getElementsByTagName ABC": "PASS",
+        "getElementsByTagName Abc": "PASS",
+        "getElementsByTagName a:ABC": "PASS",
+        "getElementsByTagName a:Abc": "PASS",
+        "getElementsByTagName a:abc": "PASS",
+        "getElementsByTagName a:\u00c4": "PASS",
+        "getElementsByTagName a:\u00e4": "PASS",
+        "getElementsByTagName abc": "PASS",
+        "getElementsByTagName \u00c4": "PASS",
+        "getElementsByTagName \u00e4": "PASS",
+        "getElementsByTagNameNS ,ABC": "PASS",
+        "getElementsByTagNameNS ,Abc": "PASS",
+        "getElementsByTagNameNS ,abc": "PASS",
+        "getElementsByTagNameNS ,\u00c4": "PASS",
+        "getElementsByTagNameNS ,\u00e4": "PASS",
+        "getElementsByTagNameNS http://FOO,ABC": "PASS",
+        "getElementsByTagNameNS http://FOO,Abc": "PASS",
+        "getElementsByTagNameNS http://FOO,abc": "PASS",
+        "getElementsByTagNameNS http://FOO,\u00c4": "PASS",
+        "getElementsByTagNameNS http://FOO,\u00e4": "PASS",
+        "getElementsByTagNameNS http://www.w3.org/1999/xhtml,ABC": "PASS",
+        "getElementsByTagNameNS http://www.w3.org/1999/xhtml,Abc": "PASS",
+        "getElementsByTagNameNS http://www.w3.org/1999/xhtml,abc": "PASS",
+        "getElementsByTagNameNS http://www.w3.org/1999/xhtml,\u00c4": "PASS",
+        "getElementsByTagNameNS http://www.w3.org/1999/xhtml,\u00e4": "PASS",
+        "getElementsByTagNameNS http://www.w3.org/2000/svg,ABC": "PASS",
+        "getElementsByTagNameNS http://www.w3.org/2000/svg,Abc": "PASS",
+        "getElementsByTagNameNS http://www.w3.org/2000/svg,abc": "PASS",
+        "getElementsByTagNameNS http://www.w3.org/2000/svg,\u00c4": "PASS",
+        "getElementsByTagNameNS http://www.w3.org/2000/svg,\u00e4": "PASS",
+        "setAttribute ABC": "FAIL",
+        "setAttribute Abc": "FAIL",
+        "setAttribute abc": "PASS",
+        "setAttribute \u00c4": "PASS",
+        "setAttribute \u00e4": "PASS",
+        "setAttributeNS ABC": "PASS",
+        "setAttributeNS Abc": "PASS",
+        "setAttributeNS abc": "PASS",
+        "setAttributeNS http://FOO,ABC,ABC": "PASS",
+        "setAttributeNS http://FOO,ABC,Abc": "PASS",
+        "setAttributeNS http://FOO,ABC,abc": "PASS",
+        "setAttributeNS http://FOO,ABC,\u00c4": "PASS",
+        "setAttributeNS http://FOO,ABC,\u00e4": "PASS",
+        "setAttributeNS http://FOO,Abc,ABC": "PASS",
+        "setAttributeNS http://FOO,Abc,Abc": "PASS",
+        "setAttributeNS http://FOO,Abc,abc": "PASS",
+        "setAttributeNS http://FOO,Abc,\u00c4": "PASS",
+        "setAttributeNS http://FOO,Abc,\u00e4": "PASS",
+        "setAttributeNS http://FOO,abc,ABC": "PASS",
+        "setAttributeNS http://FOO,abc,Abc": "PASS",
+        "setAttributeNS http://FOO,abc,abc": "PASS",
+        "setAttributeNS http://FOO,abc,\u00c4": "PASS",
+        "setAttributeNS http://FOO,abc,\u00e4": "PASS",
+        "setAttributeNS http://FOO,\u00c4,ABC": "PASS",
+        "setAttributeNS http://FOO,\u00c4,Abc": "PASS",
+        "setAttributeNS http://FOO,\u00c4,abc": "PASS",
+        "setAttributeNS http://FOO,\u00c4,\u00c4": "PASS",
+        "setAttributeNS http://FOO,\u00c4,\u00e4": "PASS",
+        "setAttributeNS http://FOO,\u00e4,ABC": "PASS",
+        "setAttributeNS http://FOO,\u00e4,Abc": "PASS",
+        "setAttributeNS http://FOO,\u00e4,abc": "PASS",
+        "setAttributeNS http://FOO,\u00e4,\u00c4": "PASS",
+        "setAttributeNS http://FOO,\u00e4,\u00e4": "PASS",
+        "setAttributeNS http://www.w3.org/1999/xhtml,ABC,ABC": "PASS",
+        "setAttributeNS http://www.w3.org/1999/xhtml,ABC,Abc": "PASS",
+        "setAttributeNS http://www.w3.org/1999/xhtml,ABC,abc": "PASS",
+        "setAttributeNS http://www.w3.org/1999/xhtml,ABC,\u00c4": "PASS",
+        "setAttributeNS http://www.w3.org/1999/xhtml,ABC,\u00e4": "PASS",
+        "setAttributeNS http://www.w3.org/1999/xhtml,Abc,ABC": "PASS",
+        "setAttributeNS http://www.w3.org/1999/xhtml,Abc,Abc": "PASS",
+        "setAttributeNS http://www.w3.org/1999/xhtml,Abc,abc": "PASS",
+        "setAttributeNS http://www.w3.org/1999/xhtml,Abc,\u00c4": "PASS",
+        "setAttributeNS http://www.w3.org/1999/xhtml,Abc,\u00e4": "PASS",
+        "setAttributeNS http://www.w3.org/1999/xhtml,abc,ABC": "PASS",
+        "setAttributeNS http://www.w3.org/1999/xhtml,abc,Abc": "PASS",
+        "setAttributeNS http://www.w3.org/1999/xhtml,abc,abc": "PASS",
+        "setAttributeNS http://www.w3.org/1999/xhtml,abc,\u00c4": "PASS",
+        "setAttributeNS http://www.w3.org/1999/xhtml,abc,\u00e4": "PASS",
+        "setAttributeNS http://www.w3.org/1999/xhtml,\u00c4,ABC": "PASS",
+        "setAttributeNS http://www.w3.org/1999/xhtml,\u00c4,Abc": "PASS",
+        "setAttributeNS http://www.w3.org/1999/xhtml,\u00c4,abc": "PASS",
+        "setAttributeNS http://www.w3.org/1999/xhtml,\u00c4,\u00c4": "PASS",
+        "setAttributeNS http://www.w3.org/1999/xhtml,\u00c4,\u00e4": "PASS",
+        "setAttributeNS http://www.w3.org/1999/xhtml,\u00e4,ABC": "PASS",
+        "setAttributeNS http://www.w3.org/1999/xhtml,\u00e4,Abc": "PASS",
+        "setAttributeNS http://www.w3.org/1999/xhtml,\u00e4,abc": "PASS",
+        "setAttributeNS http://www.w3.org/1999/xhtml,\u00e4,\u00c4": "PASS",
+        "setAttributeNS http://www.w3.org/1999/xhtml,\u00e4,\u00e4": "PASS",
+        "setAttributeNS http://www.w3.org/2000/svg,ABC,ABC": "PASS",
+        "setAttributeNS http://www.w3.org/2000/svg,ABC,Abc": "PASS",
+        "setAttributeNS http://www.w3.org/2000/svg,ABC,abc": "PASS",
+        "setAttributeNS http://www.w3.org/2000/svg,ABC,\u00c4": "PASS",
+        "setAttributeNS http://www.w3.org/2000/svg,ABC,\u00e4": "PASS",
+        "setAttributeNS http://www.w3.org/2000/svg,Abc,ABC": "PASS",
+        "setAttributeNS http://www.w3.org/2000/svg,Abc,Abc": "PASS",
+        "setAttributeNS http://www.w3.org/2000/svg,Abc,abc": "PASS",
+        "setAttributeNS http://www.w3.org/2000/svg,Abc,\u00c4": "PASS",
+        "setAttributeNS http://www.w3.org/2000/svg,Abc,\u00e4": "PASS",
+        "setAttributeNS http://www.w3.org/2000/svg,abc,ABC": "PASS",
+        "setAttributeNS http://www.w3.org/2000/svg,abc,Abc": "PASS",
+        "setAttributeNS http://www.w3.org/2000/svg,abc,abc": "PASS",
+        "setAttributeNS http://www.w3.org/2000/svg,abc,\u00c4": "PASS",
+        "setAttributeNS http://www.w3.org/2000/svg,abc,\u00e4": "PASS",
+        "setAttributeNS http://www.w3.org/2000/svg,\u00c4,ABC": "PASS",
+        "setAttributeNS http://www.w3.org/2000/svg,\u00c4,Abc": "PASS",
+        "setAttributeNS http://www.w3.org/2000/svg,\u00c4,abc": "PASS",
+        "setAttributeNS http://www.w3.org/2000/svg,\u00c4,\u00c4": "PASS",
+        "setAttributeNS http://www.w3.org/2000/svg,\u00c4,\u00e4": "PASS",
+        "setAttributeNS http://www.w3.org/2000/svg,\u00e4,ABC": "PASS",
+        "setAttributeNS http://www.w3.org/2000/svg,\u00e4,Abc": "PASS",
+        "setAttributeNS http://www.w3.org/2000/svg,\u00e4,abc": "PASS",
+        "setAttributeNS http://www.w3.org/2000/svg,\u00e4,\u00c4": "PASS",
+        "setAttributeNS http://www.w3.org/2000/svg,\u00e4,\u00e4": "PASS",
+        "setAttributeNS \u00c4": "PASS",
+        "setAttributeNS \u00e4": "PASS"
+      }
+    },
+    "dom/nodes/create-element-realm-after-adoption.html": {
+      "status": "Fail",
+      "subtests": {
+        "Built-in element: innerHTML creates it in the node document's realm": "PASS",
+        "Built-in element: the created element's realm is independent of the setter's realm": "FAIL",
+        "Custom element: innerHTML upgrades it using the node document's registry": "PASS",
+        "Custom element: the registry used is independent of the setter's realm": "FAIL",
+        "Precondition: the host's node document and relevant realm differ after adoption": "PASS"
+      }
+    },
+    "dom/nodes/getElementById-namespaced-id.html": {
+      "status": "Fail",
+      "subtests": {
+        "append a namespaced ID preserves ID lookup and form association": "FAIL",
+        "change a namespaced ID preserves ID lookup and form association": "FAIL",
+        "remove a namespaced ID preserves ID lookup and form association": "FAIL",
+        "replace a namespaced ID preserves ID lookup and form association": "FAIL"
+      }
+    },
+    "dom/nodes/getElementsByClassName-01.htm": {
+      "status": "Fail",
+      "subtests": {
+        "document.getElementsByClassName(): simple": "FAIL"
+      }
+    },
+    "dom/nodes/getElementsByClassName-02.htm": {
+      "status": "Pass"
+    },
+    "dom/nodes/getElementsByClassName-03.htm": {
+      "status": "Pass"
+    },
+    "dom/nodes/getElementsByClassName-04.htm": {
+      "status": "Pass"
+    },
+    "dom/nodes/getElementsByClassName-05.htm": {
+      "status": "Pass"
+    },
+    "dom/nodes/getElementsByClassName-06.htm": {
+      "status": "Pass"
+    },
+    "dom/nodes/getElementsByClassName-07.htm": {
+      "status": "Fail",
+      "subtests": {
+        "document.getElementsByClassName(): multiple classes": "FAIL"
+      }
+    },
+    "dom/nodes/getElementsByClassName-08.htm": {
+      "status": "Fail",
+      "subtests": {
+        "document.getElementsByClassName(): multiple classes": "FAIL"
+      }
+    },
+    "dom/nodes/getElementsByClassName-09.htm": {
+      "status": "Fail",
+      "subtests": {
+        "document.getElementsByClassName(): case sensitive": "FAIL"
+      }
+    },
+    "dom/nodes/getElementsByClassName-12.htm": {
+      "status": "Pass"
+    },
+    "dom/nodes/getElementsByClassName-13.htm": {
+      "status": "Fail",
+      "subtests": {
+        "element.getElementsByClassName(): adding an element": "FAIL"
+      }
+    },
+    "dom/nodes/getElementsByClassName-14.htm": {
+      "status": "Fail",
+      "subtests": {
+        "Unicode-case should be sensitive even in quirks mode.": "PASS",
+        "document.getElementsByClassName(): case-insensitive (quirks mode)": "FAIL"
+      }
+    },
+    "dom/nodes/getElementsByClassName-15.htm": {
+      "status": "Pass"
+    },
+    "dom/nodes/getElementsByClassName-16.htm": {
+      "status": "Fail",
+      "subtests": {
+        "document.getElementsByClassName(array): \"b\",\"a\"": "FAIL"
+      }
+    },
+    "dom/nodes/getElementsByClassName-17.htm": {
+      "status": "Fail",
+      "subtests": {
+        "document.getElementsByClassName(array): \"b a\"": "FAIL"
+      }
+    },
+    "dom/nodes/getElementsByClassName-18.htm": {
+      "status": "Pass"
+    },
+    "dom/nodes/getElementsByClassName-19.htm": {
+      "status": "Pass"
+    },
+    "dom/nodes/getElementsByClassName-20.htm": {
+      "status": "Fail",
+      "subtests": {
+        "get elements in document then add element to collection": "FAIL"
+      }
+    },
+    "dom/nodes/getElementsByClassName-21.htm": {
+      "status": "Fail",
+      "subtests": {
+        "delete element from collection": "FAIL"
+      }
+    },
+    "dom/nodes/getElementsByClassName-22.htm": {
+      "status": "Fail",
+      "subtests": {
+        "move item in collection order": "FAIL"
+      }
+    },
+    "dom/nodes/getElementsByClassName-23.htm": {
+      "status": "Fail",
+      "subtests": {
+        "multiple defined classes": "FAIL"
+      }
+    },
+    "dom/nodes/getElementsByClassName-24.htm": {
+      "status": "Pass"
+    },
+    "dom/nodes/getElementsByClassName-25.htm": {
+      "status": "Fail",
+      "subtests": {
+        "verify spacing is handled correctly": "FAIL"
+      }
+    },
+    "dom/nodes/getElementsByClassName-26.htm": {
+      "status": "Fail",
+      "subtests": {
+        "multiple class attributes": "FAIL"
+      }
+    },
+    "dom/nodes/getElementsByClassName-27.htm": {
+      "status": "Fail",
+      "subtests": {
+        "generic element listed": "FAIL"
+      }
+    },
+    "dom/nodes/getElementsByClassName-28.htm": {
+      "status": "Fail",
+      "subtests": {
+        "generic element listed": "FAIL"
+      }
+    },
+    "dom/nodes/getElementsByClassName-29.htm": {
+      "status": "Pass"
+    },
+    "dom/nodes/getElementsByClassName-30.htm": {
+      "status": "Pass"
+    },
+    "dom/nodes/getElementsByClassName-31.htm": {
+      "status": "Fail",
+      "subtests": {
+        "getElementsByClassName across documents": "FAIL"
+      }
+    },
+    "dom/nodes/getElementsByClassName-32.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/getElementsByClassName-empty-set.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/getElementsByClassName-whitespace-class-names.html": {
+      "status": "Fail",
+      "subtests": {
+        "Passing a EM QUAD to getElementsByClassName still finds the span": "PASS",
+        "Passing a EM SPACE to getElementsByClassName still finds the span": "PASS",
+        "Passing a EN QUAD to getElementsByClassName still finds the span": "PASS",
+        "Passing a EN SPACE to getElementsByClassName still finds the span": "PASS",
+        "Passing a FIGURE SPACE to getElementsByClassName still finds the span": "PASS",
+        "Passing a FOUR-PER-EM SPACE to getElementsByClassName still finds the span": "PASS",
+        "Passing a HAIR SPACE to getElementsByClassName still finds the span": "PASS",
+        "Passing a IDEOGRAPHIC SPACE to getElementsByClassName still finds the span": "PASS",
+        "Passing a LINE SEPARATOR to getElementsByClassName still finds the span": "PASS",
+        "Passing a LINE TABULATION to getElementsByClassName still finds the span": "FAIL",
+        "Passing a MEDIUM MATHEMATICAL SPACE to getElementsByClassName still finds the span": "PASS",
+        "Passing a MONGOLIAN VOWEL SEPARATOR to getElementsByClassName still finds the span": "PASS",
+        "Passing a NARROW NO-BREAK SPACE to getElementsByClassName still finds the span": "PASS",
+        "Passing a NEXT LINE to getElementsByClassName still finds the span": "PASS",
+        "Passing a NO-BREAK SPACE to getElementsByClassName still finds the span": "PASS",
+        "Passing a OGHAM SPACE MARK to getElementsByClassName still finds the span": "PASS",
+        "Passing a PARAGRAPH SEPARATOR to getElementsByClassName still finds the span": "PASS",
+        "Passing a PUNCTUATION SPACE to getElementsByClassName still finds the span": "PASS",
+        "Passing a SIX-PER-EM SPACE to getElementsByClassName still finds the span": "PASS",
+        "Passing a THIN SPACE to getElementsByClassName still finds the span": "PASS",
+        "Passing a THREE-PER-EM SPACE to getElementsByClassName still finds the span": "PASS",
+        "Passing a WORD JOINER to getElementsByClassName still finds the span": "PASS",
+        "Passing a ZERO WIDTH JOINER to getElementsByClassName still finds the span": "PASS",
+        "Passing a ZERO WIDTH NON-BREAKING SPACE to getElementsByClassName still finds the span": "PASS",
+        "Passing a ZERO WIDTH NON-JOINER to getElementsByClassName still finds the span": "PASS",
+        "Passing a ZERO WIDTH SPACE to getElementsByClassName still finds the span": "PASS"
+      }
+    },
+    "dom/nodes/insert-adjacent.html": {
+      "status": "Fail",
+      "subtests": {
+        "insertAdjacentElement(afterbegin, [object Object] )": "PASS",
+        "insertAdjacentElement(afterend, [object Object] )": "PASS",
+        "insertAdjacentElement(beforebegin, [object Object] )": "PASS",
+        "insertAdjacentElement(beforeend, [object Object] )": "PASS",
+        "insertAdjacentText should return null": "PASS",
+        "insertAdjacentText(afterbegin, tartiflette )": "PASS",
+        "insertAdjacentText(afterend, gateau aux pommes )": "PASS",
+        "insertAdjacentText(beforebegin, raclette )": "PASS",
+        "insertAdjacentText(beforeend, lasagne )": "PASS",
+        "invalid caller object insertAdjacentElement": "FAIL",
+        "invalid caller object insertAdjacentText": "FAIL",
+        "invalid object argument insertAdjacentElement": "PASS",
+        "invalid syntax for insertAdjacentElement": "PASS",
+        "invalid syntax for insertAdjacentText": "PASS"
+      }
+    },
+    "dom/nodes/name-validation.html": {
+      "status": "Fail",
+      "subtests": {
+        "Valid and invalid characters in createDocumentType.": "PASS",
+        "Valid and invalid characters in createElement.": "FAIL",
+        "Valid and invalid characters in createElementNS and createDocument.": "FAIL",
+        "Valid and invalid characters in setAttribute, toggleAttribute, and createAttribute.": "FAIL",
+        "Valid and invalid characters in setAttributeNS and createAttributeNS.": "FAIL"
+      }
+    },
+    "dom/nodes/namespaced-attribute-mutations.html": {
+      "status": "Fail",
+      "subtests": {
+        "A namespaced multiple attribute does not reset a select": "PASS",
+        "A namespaced open attribute does not fire a toggle event": "FAIL",
+        "A namespaced selected attribute does not change an option's selectedness": "FAIL",
+        "A namespaced size attribute does not reset a select": "FAIL",
+        "A namespaced slot attribute does not assign a slot": "FAIL",
+        "A namespaced src attribute does not navigate an iframe": "FAIL",
+        "A namespaced src attribute does not prepare a script": "PASS",
+        "A namespaced type attribute does not change an input's state": "FAIL",
+        "append a namespaced event handler attribute preserves an HTML event handler": "PASS",
+        "append a namespaced event handler attribute preserves an SVG event handler": "PASS",
+        "append a namespaced style attribute preserves HTML inline style": "FAIL",
+        "append a namespaced style attribute preserves SVG inline style": "FAIL",
+        "change a namespaced event handler attribute preserves an HTML event handler": "PASS",
+        "change a namespaced event handler attribute preserves an SVG event handler": "PASS",
+        "change a namespaced style attribute preserves HTML inline style": "FAIL",
+        "change a namespaced style attribute preserves SVG inline style": "FAIL",
+        "remove a namespaced event handler attribute preserves an HTML event handler": "PASS",
+        "remove a namespaced event handler attribute preserves an SVG event handler": "PASS",
+        "remove a namespaced style attribute preserves HTML inline style": "PASS",
+        "remove a namespaced style attribute preserves SVG inline style": "PASS",
+        "replace a namespaced event handler attribute preserves an HTML event handler": "PASS",
+        "replace a namespaced event handler attribute preserves an SVG event handler": "PASS",
+        "replace a namespaced style attribute preserves HTML inline style": "FAIL",
+        "replace a namespaced style attribute preserves SVG inline style": "FAIL"
+      }
+    }
+  }
+}

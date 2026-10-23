@@ -60,7 +60,8 @@ pub enum BoxType {
     },
     /// A replaced `<canvas>` element with backing pixel buffer and intrinsic dimensions.
     Canvas {
-        node_id: Option<usize>,
+        /// Document-scoped canvas backing-store key.
+        canvas_key: Option<u64>,
         width: u32,
         height: u32,
         intrinsic_width: f32,

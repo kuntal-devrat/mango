@@ -1,0 +1,76 @@
+{
+  "suite": "css/css-flexbox/flex_factors",
+  "files": {
+    "css/css-flexbox/flex-basis-009.html": {
+      "status": "Fail",
+      "subtests": {
+        "#flexbox 1": "FAIL"
+      }
+    },
+    "css/css-flexbox/flex-basis-013.html": {
+      "status": "Fail",
+      "subtests": {
+        ".container 1": "FAIL",
+        ".container 10": "FAIL",
+        ".container 11": "FAIL",
+        ".container 12": "FAIL",
+        ".container 13": "FAIL",
+        ".container 14": "FAIL",
+        ".container 15": "FAIL",
+        ".container 16": "FAIL",
+        ".container 17": "FAIL",
+        ".container 18": "FAIL",
+        ".container 19": "FAIL",
+        ".container 2": "FAIL",
+        ".container 20": "FAIL",
+        ".container 3": "FAIL",
+        ".container 4": "FAIL",
+        ".container 5": "FAIL",
+        ".container 6": "FAIL",
+        ".container 7": "FAIL",
+        ".container 8": "FAIL",
+        ".container 9": "FAIL"
+      }
+    },
+    "css/css-flexbox/flex-basis-014.html": {
+      "status": "Fail",
+      "subtests": {
+        ".item 1": "PASS",
+        ".item 2": "PASS",
+        ".item 3": "PASS",
+        ".item 4": "FAIL",
+        ".item 5": "FAIL",
+        ".item 6": "FAIL",
+        ".item 7": "FAIL",
+        ".item 8": "FAIL",
+        ".item 9": "FAIL"
+      }
+    },
+    "css/css-flexbox/flex-basis-content-percentage-height.html": {
+      "status": "Fail",
+      "subtests": {
+        "flex-basis: auto preserves specified height as definite for percentage children": "PASS",
+        "flex-basis: content makes specified height indefinite for partial percentage children": "FAIL",
+        "flex-basis: content makes specified height indefinite for percentage children": "FAIL",
+        "flex-basis: content on row flex does not affect cross-axis percentage resolution": "PASS"
+      }
+    },
+    "css/css-flexbox/flex-basis-intrinsics-001.html": {
+      "status": "Fail",
+      "subtests": {
+        ".flex-item 1": "FAIL",
+        ".flex-item 10": "FAIL",
+        ".flex-item 11": "FAIL",
+        ".flex-item 12": "FAIL",
+        ".flex-item 2": "FAIL",
+        ".flex-item 3": "FAIL",
+        ".flex-item 4": "FAIL",
+        ".flex-item 5": "FAIL",
+        ".flex-item 6": "FAIL",
+        ".flex-item 7": "PASS",
+        ".flex-item 8": "FAIL",
+        ".flex-item 9": "PASS"
+      }
+    }
+  }
+}

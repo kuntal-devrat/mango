@@ -1,0 +1,304 @@
+{
+  "suite": "dom/nodes/misc_1",
+  "files": {
+    "dom/nodes/Attr-prefix-xhtml.xhtml": {
+      "status": "Pass"
+    },
+    "dom/nodes/Attr-prefix.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/MutationObserver-attributes.html": {
+      "status": "Fail",
+      "subtests": {
+        "attributeFilter alone Element.id/Element.className: multiple filter update mutation": "FAIL",
+        "attributeOldValue alone Element.id: update mutation": "PASS",
+        "attributes Element.attributes.value: same id mutation": "PASS",
+        "attributes Element.attributes.value: update mutation": "PASS",
+        "attributes Element.classList.add: invalid character/no mutation": "FAIL",
+        "attributes Element.classList.add: multiple tokens addition mutation": "FAIL",
+        "attributes Element.classList.add: same value mutation": "FAIL",
+        "attributes Element.classList.add: single token addition mutation": "FAIL",
+        "attributes Element.classList.add: syntax err/no mutation": "FAIL",
+        "attributes Element.classList.remove: missing token removal mutation": "FAIL",
+        "attributes Element.classList.remove: multiple tokens removal mutation": "FAIL",
+        "attributes Element.classList.remove: single token removal mutation": "FAIL",
+        "attributes Element.classList.toggle: forced existing token addition no mutation": "PASS",
+        "attributes Element.classList.toggle: forced missing token removal no mutation": "PASS",
+        "attributes Element.classList.toggle: forced token addition mutation": "FAIL",
+        "attributes Element.classList.toggle: forced token removal mutation": "FAIL",
+        "attributes Element.classList.toggle: token addition mutation": "FAIL",
+        "attributes Element.classList.toggle: token removal mutation": "FAIL",
+        "attributes Element.className: empty string update mutation": "PASS",
+        "attributes Element.className: new value mutation": "PASS",
+        "attributes Element.className: same multiple values mutation": "PASS",
+        "attributes Element.className: same value mutation": "PASS",
+        "attributes Element.id: empty string update mutation": "PASS",
+        "attributes Element.id: same value mutation": "PASS",
+        "attributes Element.id: update mutation": "PASS",
+        "attributes Element.id: update, no oldValue, mutation": "PASS",
+        "attributes Element.removeAttribute: removal mutation": "PASS",
+        "attributes Element.removeAttribute: removal no mutation": "FAIL",
+        "attributes Element.removeAttributeNS: prefixed attribute removal no mutation": "PASS",
+        "attributes Element.removeAttributeNS: removal mutation": "FAIL",
+        "attributes Element.removeAttributeNS: removal no mutation": "PASS",
+        "attributes Element.setAttribute: classname mutation": "PASS",
+        "attributes Element.setAttribute: id mutation": "PASS",
+        "attributes Element.setAttribute: same class mutation": "PASS",
+        "attributes Element.setAttributeNS: creation mutation": "FAIL",
+        "attributes Element.setAttributeNS: prefixed attribute creation mutation": "FAIL",
+        "attributes Element.unknown: IDL attribute no mutation": "PASS",
+        "attributes HTMLInputElement.type: type update mutation": "FAIL",
+        "attributes/attributeFilter Element.id/Element.className: multiple filter update mutation": "FAIL",
+        "attributes/attributeFilter Element.id/Element.className: update mutation": "FAIL",
+        "childList HTMLInputElement.removeAttribute: type removal mutation": "PASS",
+        "childList false: no childList mutation": "PASS"
+      }
+    },
+    "dom/nodes/MutationObserver-callback-arguments.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/MutationObserver-callback-tricky.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/MutationObserver-characterData.html": {
+      "status": "Fail",
+      "subtests": {
+        "Range (r70) is created": "PASS",
+        "Range (r71) is created": "PASS",
+        "Range (r80) is created": "PASS",
+        "Range (r81) is created": "PASS",
+        "characterData Comment: data mutations": "TIMEOUT",
+        "characterData ProcessingInstruction: data mutations": "TIMEOUT",
+        "characterData Range.deleteContents: child and data removal mutation": "PASS",
+        "characterData Range.deleteContents: child and data removal mutation (2)": "PASS",
+        "characterData Range.extractContents: child and data removal mutation": "PASS",
+        "characterData Range.extractContents: child and data removal mutation (2)": "PASS",
+        "characterData Text.appendData: empty string mutation": "TIMEOUT",
+        "characterData Text.appendData: null string mutation": "TIMEOUT",
+        "characterData Text.appendData: simple mutation": "TIMEOUT",
+        "characterData Text.data: simple mutation": "TIMEOUT",
+        "characterData Text.data: simple mutation without oldValue": "TIMEOUT",
+        "characterData Text.deleteData: empty mutation": "TIMEOUT",
+        "characterData Text.deleteData: simple mutation": "TIMEOUT",
+        "characterData Text.insertData: empty string mutation": "FAIL",
+        "characterData Text.insertData: null string mutation": "FAIL",
+        "characterData Text.insertData: simple mutation": "FAIL",
+        "characterData Text.replaceData: empty mutation": "TIMEOUT",
+        "characterData Text.replaceData: simple mutation": "TIMEOUT",
+        "characterData/characterDataOldValue alone Text.data: simple mutation": "TIMEOUT"
+      }
+    },
+    "dom/nodes/MutationObserver-childList.html": {
+      "status": "Fail",
+      "subtests": {
+        "Range (r100) is created": "PASS",
+        "Range (r70) is created": "PASS",
+        "Range (r71) is created": "PASS",
+        "Range (r80) is created": "PASS",
+        "Range (r81) is created": "PASS",
+        "Range (r90) is created": "PASS",
+        "Range (r91) is created": "PASS",
+        "childList Node.appendChild: addition mutation": "FAIL",
+        "childList Node.appendChild: addition outside document tree mutation": "PASS",
+        "childList Node.appendChild: fragment addition mutations": "FAIL",
+        "childList Node.appendChild: fragment removal mutations": "TIMEOUT",
+        "childList Node.appendChild: removal and addition mutations": "FAIL",
+        "childList Node.appendChild: removal mutation": "PASS",
+        "childList Node.insertBefore: addition mutation": "PASS",
+        "childList Node.insertBefore: fragment addition mutations": "PASS",
+        "childList Node.insertBefore: fragment removal mutations": "TIMEOUT",
+        "childList Node.insertBefore: last child addition mutation": "FAIL",
+        "childList Node.insertBefore: removal and addition mutations": "FAIL",
+        "childList Node.insertBefore: removal mutation": "PASS",
+        "childList Node.nodeValue: no mutation": "PASS",
+        "childList Node.normalize mutation": "FAIL",
+        "childList Node.normalize mutations": "FAIL",
+        "childList Node.removeChild: removal mutation": "PASS",
+        "childList Node.replaceChild: internal replacement mutation": "FAIL",
+        "childList Node.replaceChild: removal mutation": "PASS",
+        "childList Node.replaceChild: replacement mutation": "PASS",
+        "childList Node.replaceChild: self internal replacement mutation": "TIMEOUT",
+        "childList Node.textContent: empty string mutation": "PASS",
+        "childList Node.textContent: no previous content mutation": "PASS",
+        "childList Node.textContent: replace content mutation": "PASS",
+        "childList Node.textContent: textContent no mutation": "FAIL",
+        "childList ParentNode.replaceChildren: move an existing child": "PASS",
+        "childList ParentNode.replaceChildren: self replacement of only child": "PASS",
+        "childList Range.deleteContents: child and data removal mutation": "TIMEOUT",
+        "childList Range.deleteContents: child removal mutation": "FAIL",
+        "childList Range.extractContents: child and data removal mutation": "TIMEOUT",
+        "childList Range.extractContents: child removal mutation": "FAIL",
+        "childList Range.insertNode: child insertion mutation": "FAIL",
+        "childList Range.insertNode: children insertion mutation": "FAIL",
+        "childList Range.surroundContents: children removal and addition mutation": "FAIL"
+      }
+    },
+    "dom/nodes/MutationObserver-cross-realm-callback-report-exception.html": {
+      "status": "Fail",
+      "subtests": {
+        "MutationObserver reports the exception from its callback in the callback's global object": "FAIL"
+      }
+    },
+    "dom/nodes/MutationObserver-disconnect.html": {
+      "status": "Fail",
+      "subtests": {
+        "disconnect discarded some mutations": "FAIL",
+        "subtree mutations": "FAIL"
+      }
+    },
+    "dom/nodes/MutationObserver-document.html": {
+      "status": "Fail",
+      "subtests": {
+        "parser insertion mutations": "FAIL",
+        "parser script insertion mutation": "FAIL",
+        "removal of parent during parsing": "FAIL",
+        "setup test": "PASS"
+      }
+    },
+    "dom/nodes/MutationObserver-inner-outer.html": {
+      "status": "Fail",
+      "subtests": {
+        "innerHTML mutation": "FAIL",
+        "innerHTML with 2 children mutation": "TIMEOUT",
+        "outerHTML mutation": "TIMEOUT"
+      }
+    },
+    "dom/nodes/MutationObserver-overlapping-registrations.html": {
+      "status": "Fail",
+      "subtests": {
+        "An observer matching through multiple registrations receives one record with the requested old value": "FAIL",
+        "Distinct observers matching the same mutation receive records using their own options": "FAIL",
+        "Observers registered on separate targets do not share registrations": "PASS"
+      }
+    },
+    "dom/nodes/MutationObserver-sanity.html": {
+      "status": "Fail",
+      "subtests": {
+        "Should not throw if attributeFilter is present and attributes is omitted": "PASS",
+        "Should not throw if attributeFilter is present and attributes is true": "PASS",
+        "Should not throw if attributeOldValue and attributes are both true": "PASS",
+        "Should not throw if attributeOldValue is false and attributes is omitted": "PASS",
+        "Should not throw if attributeOldValue is true and attributes is omitted": "PASS",
+        "Should not throw if attributes is true": "PASS",
+        "Should not throw if characterData is true": "PASS",
+        "Should not throw if characterDataOldValue is false and characterData is omitted": "PASS",
+        "Should not throw if characterDataOldValue is true and characterData is omitted": "PASS",
+        "Should not throw if characterDataOldValue is true and characterData is true": "PASS",
+        "Should not throw if childList is true": "PASS",
+        "Should throw if attributeFilter is present and attributes is false": "FAIL",
+        "Should throw if attributeOldValue is true and attributes is false": "FAIL",
+        "Should throw if characterDataOldValue is true and characterData is false": "FAIL",
+        "Should throw if none of childList, attributes, characterData are true": "FAIL",
+        "attributeOldValue:false (present) auto-enables attribute observation": "TIMEOUT"
+      }
+    },
+    "dom/nodes/MutationObserver-takeRecords.html": {
+      "status": "Fail",
+      "subtests": {
+        "All records present": "FAIL",
+        "No more records present": "PASS",
+        "unreachabled test": "FAIL"
+      }
+    },
+    "dom/nodes/MutationObserver-textContent.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/MutationObserver-xml-parser.xhtml": {
+      "status": "Error"
+    },
+    "dom/nodes/NonDocumentTypeChildNode-sibling-element.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/append-on-Document.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/attach-shadow-realm-after-adoption.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/attributes-namednodemap.html": {
+      "status": "Fail",
+      "subtests": {
+        "an attribute set by setAttribute should be accessible as a field on the `attributes` field of an Element": "PASS",
+        "an attribute with a null namespace should be accessible as a field on the `attributes` field of an Element": "PASS",
+        "an attribute with a set namespace should be accessible as a field on the `attributes` field of an Element": "PASS",
+        "setNamedItem and removeNamedItem on `attributes` should add and remove fields from `attributes`": "FAIL",
+        "setNamedItem and removeNamedItem on `attributes` should not interfere with existing method names": "FAIL",
+        "setting an attribute should not overwrite the length property of an `NamedNodeMap` object": "FAIL",
+        "setting an attribute should not overwrite the methods defined by prototype ancestors of an `NamedNodeMap` object": "FAIL",
+        "setting an attribute should not overwrite the methods of an `NamedNodeMap` object": "PASS"
+      }
+    },
+    "dom/nodes/attributes.html": {
+      "status": "Fail",
+      "subtests": {
+        "A namespace is required to use a prefix.": "PASS",
+        "Attribute loses its owner when removed": "FAIL",
+        "Attribute values should not be parsed.": "PASS",
+        "Attribute with prefix in local name": "FAIL",
+        "Attributes should work in document fragments.": "PASS",
+        "Basic functionality of getAttributeNode/getAttributeNodeNS": "FAIL",
+        "Basic functionality of removeAttributeNode": "FAIL",
+        "Basic functionality of setAttributeNode": "FAIL",
+        "Basic functionality of setAttributeNodeNS": "FAIL",
+        "Basic functionality should be intact.": "PASS",
+        "Basic functionality should be intact. (toggleAttribute)": "PASS",
+        "Entities in attributes should have been expanded while parsing.": "PASS",
+        "First set attribute is returned by getAttribute": "FAIL",
+        "First set attribute is returned with mapped attribute set first": "FAIL",
+        "First set attribute is returned with mapped attribute set later": "FAIL",
+        "If attr\u2019s element is neither null nor element, throw an InUseAttributeError.": "PASS",
+        "Non-HTML element with upper-case attribute": "PASS",
+        "Only lowercase attributes are returned on HTML elements (mixed case attribute)": "FAIL",
+        "Only lowercase attributes are returned on HTML elements (upper case attribute)": "FAIL",
+        "Own property correctness with basic attributes": "FAIL",
+        "Own property correctness with namespaced attribute before same-name non-namespaced one": "FAIL",
+        "Own property correctness with non-namespaced attribute before same-name namespaced one": "FAIL",
+        "Own property correctness with two namespaced attributes with the same name-with-prefix": "FAIL",
+        "Own property names should include all qualified names for a non-HTML element in an HTML document": "FAIL",
+        "Own property names should include all qualified names for an HTML element in a non-HTML document": "FAIL",
+        "Own property names should only include all-lowercase qualified names for an HTML element in an HTML document": "FAIL",
+        "Replacing an attr by itself": "FAIL",
+        "Setting the same attribute with another prefix should not change the prefix": "FAIL",
+        "Specified attributes should be accessible.": "PASS",
+        "Style attributes are not normalized": "PASS",
+        "The XMLNS namespace should require xmlns as prefix or qualified name": "PASS",
+        "The xml prefix should not be allowed for arbitrary namespaces": "PASS",
+        "The xmlns prefix should not be allowed for arbitrary namespaces": "PASS",
+        "The xmlns qualified name should not be allowed for arbitrary namespaces": "PASS",
+        "Toggling element with inline style should make inline style disappear": "PASS",
+        "Unset attributes return null": "PASS",
+        "When qualifiedName does not match the Name production, an INVALID_CHARACTER_ERR exception is to be thrown. (setAttribute)": "FAIL",
+        "When qualifiedName does not match the Name production, an INVALID_CHARACTER_ERR exception is to be thrown. (setAttributeNS)": "PASS",
+        "When qualifiedName does not match the Name production, an INVALID_CHARACTER_ERR exception is to be thrown. (toggleAttribute)": "FAIL",
+        "When qualifiedName does not match the QName production, an INVALID_CHARACTER_ERR exception is to be thrown.": "PASS",
+        "XML-namespaced attributes don't need an xml prefix": "PASS",
+        "getAttributeNames tests": "FAIL",
+        "null and the empty string should result in a null namespace.": "PASS",
+        "setAttribute should lowercase its name argument (mixed case attribute)": "FAIL",
+        "setAttribute should lowercase its name argument (upper case attribute)": "FAIL",
+        "setAttribute should not change the order of previously set attributes.": "PASS",
+        "setAttribute should not throw even if a load is not allowed": "PASS",
+        "setAttribute should not throw even when qualifiedName starts with 'xmlns'": "PASS",
+        "setAttribute should set the attribute with the given qualified name": "PASS",
+        "setAttribute should set the first attribute with the given name": "FAIL",
+        "setAttributeNode called with an Attr that has the same name as an existing one should not change attribute order": "PASS",
+        "setAttributeNode doesn't have case-insensitivity even with an HTMLElement 1": "FAIL",
+        "setAttributeNode doesn't have case-insensitivity even with an HTMLElement 2": "FAIL",
+        "setAttributeNode doesn't have case-insensitivity even with an HTMLElement 3": "FAIL",
+        "setAttributeNode on bound attribute should throw InUseAttributeError": "PASS",
+        "setAttributeNode should distinguish attributes with same local name and different namespaces": "FAIL",
+        "setAttributeNode, if it fires mutation events, should fire one with the new node when resetting an existing attribute": "PASS",
+        "setAttributeNode, if it fires mutation events, should fire one with the new node when resetting an existing attribute (outer shell)": "PASS",
+        "toggleAttribute should lowercase its name argument (mixed case attribute)": "FAIL",
+        "toggleAttribute should lowercase its name argument (upper case attribute)": "FAIL",
+        "toggleAttribute should not change the order of previously set attributes.": "PASS",
+        "toggleAttribute should not throw even when qualifiedName starts with 'xmlns'": "PASS",
+        "toggleAttribute should set the attribute with the given qualified name": "PASS",
+        "toggleAttribute should set the first attribute with the given name": "FAIL",
+        "xmlns should be allowed as local name": "PASS",
+        "xmlns should be allowed as prefix in the XMLNS namespace": "PASS",
+        "xmlns should be allowed as qualified name in the XMLNS namespace": "PASS"
+      }
+    }
+  }
+}

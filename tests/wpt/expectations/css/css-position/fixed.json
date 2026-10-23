@@ -1,0 +1,8 @@
+{
+  "suite": "css/css-position/fixed",
+  "files": {
+    "css/css-position/position-fixed-at-bottom-right-on-viewport.html": {
+      "status": "Pass"
+    }
+  }
+}

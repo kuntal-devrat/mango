@@ -1,0 +1,70 @@
+{
+  "suite": "css/css-position/relative",
+  "files": {
+    "css/css-position/position-relative-015.html": {
+      "status": "Fail",
+      "subtests": {
+        "Auto height containing block, top: 50%": "PASS",
+        "Chain of resolvable percentages, top: 50%": "FAIL",
+        "Fixed height containing block, top: 50%": "FAIL",
+        "Grid item stretched, top: 50%": "FAIL",
+        "Grid item with 0px track, top: 50%": "PASS",
+        "Grid item with 50% track, top: 50%": "FAIL",
+        "Grid item with auto track (stretched to 200px), top: 50%": "FAIL",
+        "Grid item with fixed 100px track, top: 50%": "FAIL",
+        "Nested unresolvable percentage heights, top: 50%": "PASS",
+        "OOF with implicit height, top: 50%": "FAIL",
+        "Percentage height containing block, top: 50%": "FAIL",
+        "Unresolvable percentage height (100% of auto body), top: 50%": "PASS",
+        "Unresolvable percentage height with min-height, top: 50%": "PASS",
+        "calc() fixed height, top: 50%": "FAIL",
+        "calc() with resolvable percentage, top: 50%": "FAIL",
+        "calc() with unresolvable percentage, top: 50%": "PASS",
+        "fit-content height, top: 50%": "PASS",
+        "max-content height, top: 50%": "PASS",
+        "min-content height, top: 50%": "PASS",
+        "stretch height, top: 50%": "FAIL"
+      }
+    },
+    "css/css-position/position-relative-016.html": {
+      "status": "Fail",
+      "subtests": {
+        "Nested abspos containing blocks, child top: 50%": "FAIL",
+        "abspos containing block in auto-height ancestor, height: 100%, child top: 50%": "FAIL",
+        "abspos containing block in auto-height ancestor, height: 100%, display: inline, child top: 100%": "FAIL",
+        "abspos containing block in percentage chain, child top: 50%": "FAIL",
+        "abspos containing block inside abspos with fixed height, child top: 50%": "FAIL",
+        "abspos containing block with all-auto sizing, child top: 50%": "PASS",
+        "abspos containing block with min-height: 100% only (auto height), child top: 50%": "PASS",
+        "abspos containing block with top: 0 only (auto height), child top: 50%": "PASS",
+        "abspos containing block, height: 100%, child bottom: 50%": "FAIL",
+        "abspos containing block, height: 100%, child top: 50%": "FAIL",
+        "abspos containing block, height: 100%, display: inline, child top: 50%": "FAIL",
+        "abspos containing block, height: 100%, display: inline-block, child top: 50%": "FAIL",
+        "abspos containing block, height: 50%, child bottom: 50%": "FAIL",
+        "abspos containing block, height: 50%, child top: 50%": "FAIL",
+        "abspos containing block, height: calc(100% - 0px), child top: 50%": "FAIL",
+        "abspos containing block, height: calc(50% + 50px), child top: 50%": "FAIL",
+        "abspos containing block, height: stretch, child bottom: 50%": "FAIL",
+        "abspos containing block, height: stretch, child top: 50%": "FAIL"
+      }
+    },
+    "css/css-position/position-relative-aspect-ratio-001.html": {
+      "status": "Fail",
+      "subtests": {
+        "Auto width block + aspect-ratio 2/1, top: 50%": "FAIL",
+        "Explicit width + aspect-ratio 2/1, bottom: 25%": "FAIL",
+        "Explicit width + aspect-ratio 2/1, top: 50%": "FAIL",
+        "No aspect-ratio, auto height, top: 50% does not resolve": "PASS"
+      }
+    },
+    "css/css-position/position-relative-aspect-ratio-002.html": {
+      "status": "Fail",
+      "subtests": {
+        "Document is in quirks mode": "PASS",
+        "Quirks: auto width block + aspect-ratio 2/1, top: 50%": "FAIL",
+        "Quirks: explicit width + aspect-ratio 2/1, top: 50%": "FAIL"
+      }
+    }
+  }
+}

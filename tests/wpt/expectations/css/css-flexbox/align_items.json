@@ -1,0 +1,65 @@
+{
+  "suite": "css/css-flexbox/align_items",
+  "files": {
+    "css/css-flexbox/align-items-baseline-column-horz.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/align-items-baseline-column-vert-lr-flexbox-item.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/align-items-baseline-column-vert-lr-grid-item.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/align-items-baseline-column-vert-lr-items.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/align-items-baseline-column-vert-lr-table-item.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/align-items-baseline-column-vert-rl-flexbox-item.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/align-items-baseline-column-vert-rl-grid-item.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/align-items-baseline-column-vert-rl-items.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/align-items-baseline-column-vert-rl-table-item.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/align-items-baseline-column-vert.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/align-items-baseline-row-horz.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/align-items-baseline-row-vert.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/align-items-baseline-vert-lr-column-horz-flexbox-item.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/align-items-baseline-vert-lr-column-horz-grid-item.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/align-items-baseline-vert-lr-column-horz-items.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/align-items-baseline-vert-lr-column-horz-table-item.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/align-items-baseline-vert-rl-column-horz-flexbox-item.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/align-items-baseline-vert-rl-column-horz-grid-item.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/align-items-baseline-vert-rl-column-horz-items.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/align-items-baseline-vert-rl-column-horz-table-item.html": {
+      "status": "Error"
+    }
+  }
+}

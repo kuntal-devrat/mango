@@ -474,12 +474,12 @@ pub fn build_canvas_element(styled_node: &StyledNode) -> LayoutBox {
         height = h as u32;
     }
 
-    let node_idx = styled_node.node_id.map(|id| id.raw() as usize);
+    let canvas_key = styled_node.canvas_key;
 
     // If canvas is already instantiated in CANVAS_REGISTRY, retrieve its actual buffer & dimensions
     let mut pixels = None;
-    if let Some(nid) = node_idx
-        && let Some((cw, ch, c_pixels)) = mango_render::get_canvas_pixels(nid)
+    if let Some(key) = canvas_key
+        && let Some((cw, ch, c_pixels)) = mango_render::get_canvas_pixels(key)
     {
         width = cw;
         height = ch;
@@ -499,7 +499,7 @@ pub fn build_canvas_element(styled_node: &StyledNode) -> LayoutBox {
     }
 
     let box_type = BoxType::Canvas {
-        node_id: node_idx,
+        canvas_key,
         width,
         height,
         intrinsic_width,

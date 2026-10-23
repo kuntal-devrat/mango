@@ -1,0 +1,14 @@
+{
+  "suite": "dom/nodes/node_7",
+  "files": {
+    "dom/nodes/Node-removeChild.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Node-replaceChild.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Node-textContent.html": {
+      "status": "Pass"
+    }
+  }
+}

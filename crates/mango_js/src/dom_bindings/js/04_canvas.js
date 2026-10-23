@@ -155,7 +155,12 @@
     };
     globalThis.Path2D = Path2D;
 
-    var _nextOffscreenId = 9000000;
+    var _nextOffscreenId = 0x80000000;
+    var _offscreenFinalizer = (typeof FinalizationRegistry === 'function')
+        ? new FinalizationRegistry(function(id) {
+            try { _canvasRemove(id); } catch (e) {}
+        })
+        : null;
     function ImageBitmap(canvasOrWidth, height) {
         if (canvasOrWidth && canvasOrWidth.width !== undefined) {
             this.width = canvasOrWidth.width;
@@ -177,6 +182,7 @@
         this.height = Math.max(0, Math.floor(Number(height) || 150));
         this._nodeId = _nextOffscreenId++;
         this._context2d = null;
+        if (_offscreenFinalizer) _offscreenFinalizer.register(this, this._nodeId);
     }
     OffscreenCanvas.prototype = {
         getContext: function(type, options) {

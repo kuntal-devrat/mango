@@ -1,0 +1,32 @@
+{
+  "suite": "css/css-position/animations",
+  "files": {
+    "css/css-position/animations/bottom-composition.html": {
+      "status": "Error"
+    },
+    "css/css-position/animations/bottom-interpolation.html": {
+      "status": "Error"
+    },
+    "css/css-position/animations/left-composition.html": {
+      "status": "Error"
+    },
+    "css/css-position/animations/left-interpolation.html": {
+      "status": "Error"
+    },
+    "css/css-position/animations/position-interpolation.html": {
+      "status": "Error"
+    },
+    "css/css-position/animations/right-composition.html": {
+      "status": "Error"
+    },
+    "css/css-position/animations/right-interpolation.html": {
+      "status": "Error"
+    },
+    "css/css-position/animations/top-composition.html": {
+      "status": "Error"
+    },
+    "css/css-position/animations/top-interpolation.html": {
+      "status": "Error"
+    }
+  }
+}

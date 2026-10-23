@@ -30,9 +30,17 @@ pub fn runner_binary() -> Option<&'static str> {
 
 /// Number of child processes to run concurrently.
 fn parallelism() -> usize {
-    std::thread::available_parallelism()
-        .map(|n| n.get().clamp(1, 8))
-        .unwrap_or(4)
+    if let Ok(val) = std::env::var("WPT_PARALLELISM")
+        && let Ok(n) = val.parse::<usize>()
+    {
+        return n.max(1);
+    }
+    if let Ok(val) = std::env::var("RUST_TEST_THREADS")
+        && let Ok(n) = val.parse::<usize>()
+    {
+        return n.max(1);
+    }
+    1
 }
 
 static STREAM_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

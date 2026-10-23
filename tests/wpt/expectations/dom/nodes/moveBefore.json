@@ -1,0 +1,343 @@
+{
+  "suite": "dom/nodes/moveBefore",
+  "files": {
+    "dom/nodes/moveBefore/Node-moveBefore.html": {
+      "status": "Fail",
+      "subtests": {
+        "Calling moveBefore with a non-Node first argument must throw TypeError.": "PASS",
+        "Calling moveBefore with second argument missing, or other than Node, null, or undefined, must throw TypeError.": "PASS",
+        "If node is a DocumentFragment with an element and parent is a document with another element, then throw a HierarchyRequestError DOMException.": "PASS",
+        "If node is a DocumentFragment with multiple elements and parent is a document, then throw a HierarchyRequestError DOMException.": "PASS",
+        "If node is a Text node and parent is a document, then throw a HierarchyRequestError DOMException.": "PASS",
+        "If node is a doctype and parent is a document with an element, then throw a HierarchyRequestError DOMException.": "PASS",
+        "If node is a doctype and parent is a document with another doctype, then throw a HierarchyRequestError DOMException.": "PASS",
+        "If node is a doctype and parent is not a document, then throw a HierarchyRequestError DOMException.": "PASS",
+        "If node is a host-including inclusive ancestor of parent, then throw a HierarchyRequestError DOMException.": "PASS",
+        "If node is an Element and parent is a document with another element, then throw a HierarchyRequestError DOMException.": "PASS",
+        "If node is not a DocumentFragment, DocumentType, Element, Text, ProcessingInstruction, or Comment node, then throw a HierarchyRequestError DOMException.": "PASS",
+        "Invalid node hierarchy with null old parent does not crash": "PASS",
+        "Move disconnected iframe does not crash": "PASS",
+        "Moving a node before itself should not move the node": "PASS",
+        "Moving a node from a disconnected container to a disconnected new parent in the same tree succeeds": "PASS",
+        "Moving a node from a disconnected container to a disconnected new parent in the same tree succeeds,also across shadow-roots": "PASS",
+        "Moving a node from a disconnected container to a disconnected new parent without a shared ancestor throws a HIERARCHY_REQUEST_ERR": "FAIL",
+        "Moving a node from connected->disconnected throws a HIERARCHY_REQUEST_ERR": "FAIL",
+        "Moving a node from disconnected->connected throws a HIERARCHY_REQUEST_ERR": "FAIL",
+        "No custom element callbacks are run during disconnected moveBefore()": "PASS",
+        "moveBefore on a paragraph's Text node child": "PASS",
+        "moveBefore with an Element or CharacterData succeeds": "FAIL",
+        "moveBefore with reference child whose parent is NOT the destination parent (context node) throws a NotFoundError.": "PASS",
+        "moveBefore() CharacterData into a Document": "PASS",
+        "moveBefore() into a Document throws a HierarchyRequestError": "PASS",
+        "moveBefore() method does not exist on non-ParentNode Nodes": "FAIL",
+        "moveBefore() on a cross-document target node throws a HierarchyRequestError": "FAIL",
+        "moveBefore() on disconnected parent throws a HierarchyRequestError": "FAIL",
+        "moveBefore() returns undefined": "FAIL",
+        "moveBefore() with a non-{Element, CharacterData} throws a HierarchyRequestError": "FAIL",
+        "moveBefore() with disconnected target node throws a HierarchyRequestError": "FAIL",
+        "moveBefore() with node being an inclusive ancestor of parent throws a HierarchyRequestError": "PASS"
+      }
+    },
+    "dom/nodes/moveBefore/child-style-preserve.html": {
+      "status": "Fail",
+      "subtests": {
+        "": "FAIL"
+      }
+    },
+    "dom/nodes/moveBefore/continue-css-animation-left.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/moveBefore/continue-css-animation-transform.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/moveBefore/continue-css-transition-left-pseudo.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/moveBefore/continue-css-transition-left.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/moveBefore/continue-css-transition-transform-pseudo.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/moveBefore/continue-css-transition-transform.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/moveBefore/css-animation-commit-styles.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/moveBefore/css-transition-cross-document.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/moveBefore/css-transition-cross-shadow.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/moveBefore/css-transition-to-disconnected-document.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/moveBefore/css-transition-trigger.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/moveBefore/custom-element-move-reactions.html": {
+      "status": "Fail",
+      "subtests": {
+        "Reactions to atomic move are called in order of element, not in order of operation": "FAIL",
+        "When connectedCallback is not defined, no crash": "FAIL",
+        "When connectedMoveCallback is defined, it is called instead of disconnectedCallback/connectedCallback": "FAIL",
+        "When disconnectedCallback is not defined, no crash": "FAIL",
+        "connectedMove runs when custom element is nested within a shadow root": "FAIL",
+        "the disconnected/connected callbacks should be called when no other callback is defined": "PASS",
+        "the element should stay connected during the callbacks": "FAIL"
+      }
+    },
+    "dom/nodes/moveBefore/fieldset-child-blur-event.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/moveBefore/fieldset-child-date-input-blur-event.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/moveBefore/fire-focusin-focusout.html": {
+      "status": "Fail",
+      "subtests": {
+        "Don't fire focusin and then correct when moving to a tree that is made inert using style": "FAIL",
+        "Don't fire focusin and then correct when moving to an inert subtree": "FAIL",
+        "Don't fire focusin/out when moving to the same parent": "FAIL",
+        "Don't fire focusin/out when reparenting an element that has focus within": "FAIL",
+        "Don't fire focusin/out when reparenting focused element directly": "FAIL"
+      }
+    },
+    "dom/nodes/moveBefore/focus-preserve.html": {
+      "status": "Fail",
+      "subtests": {
+        "Focus is fixed up after moveBefore() moves an ancestor of the focused element into a hidden parent": "FAIL",
+        "Focus is fixed up after moveBefore() moves the focused element into a hidden parent": "FAIL",
+        "Focus is fixed up after moveBefore() moves the focused element into an inert subtree": "FAIL",
+        "moveBefore() preserves focus and a backward selection in a text input": "PASS",
+        "moveBefore() preserves focus when the focused element remains focusable": "PASS"
+      }
+    },
+    "dom/nodes/moveBefore/focus-within.html": {
+      "status": "Fail",
+      "subtests": {
+        ":focus-within should be eventually up to date when moving to a subtree that would become inert via style": "FAIL",
+        ":focus-within should be eventually up to date when moving to an inert subtree": "FAIL",
+        "focus-within should be updated when reparenting an element that has focus within": "FAIL",
+        "focus-within should be updated when reparenting focused element directly": "FAIL",
+        "focus-within should remain the same when moving to the same parent": "FAIL"
+      }
+    },
+    "dom/nodes/moveBefore/fullscreen-preserve.html": {
+      "status": "Fail",
+      "subtests": {
+        "Document#fullscreenElement": "FAIL"
+      }
+    },
+    "dom/nodes/moveBefore/hover-style-update.html": {
+      "status": "Fail",
+      "subtests": {
+        "Element loses hover when moved to different position": "FAIL",
+        "Hover works immediately after moved": "FAIL"
+      }
+    },
+    "dom/nodes/moveBefore/listed-form-element-reset.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/moveBefore/live-range-updates.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/moveBefore/modal-dialog.html": {
+      "status": "Fail",
+      "subtests": {
+        "when reparenting a modal dialog, the dialog should stay modal": "FAIL"
+      }
+    },
+    "dom/nodes/moveBefore/moveBefore-child-list-selector-invalidation.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/moveBefore/moveBefore-dir.html": {
+      "status": "Fail",
+      "subtests": {
+        "moveBefore() correctly updates the computed dir for moved nodes": "FAIL"
+      }
+    },
+    "dom/nodes/moveBefore/moveBefore-disconnected-id-map.html": {
+      "status": "Fail",
+      "subtests": {
+        "moveBefore() into a shadow tree inside a disconnected tree adds the element to the shadow root's id map": "PASS",
+        "moveBefore() of an element with a name in a disconnected tree leaves the document's name maps alone": "FAIL",
+        "moveBefore() of an element with an id in a disconnected tree leaves the document's id map alone": "PASS",
+        "moveBefore() out of a shadow tree inside a disconnected tree removes the element from the shadow root's id map": "PASS"
+      }
+    },
+    "dom/nodes/moveBefore/moveBefore-from-light-to-shadow.html": {
+      "status": "Fail",
+      "subtests": {
+        "": "FAIL"
+      }
+    },
+    "dom/nodes/moveBefore/moveBefore-id-map.html": {
+      "status": "Fail",
+      "subtests": {
+        "moveBefore() correctly updates id map when moving between shadow roots": "PASS",
+        "moveBefore() correctly updates id map when moving into shadow root": "PASS",
+        "moveBefore() correctly updates id map when swapping elements with duplicate ids": "PASS",
+        "moveBefore() correctly updates window map when moving id-mapped element into shadow root": "FAIL"
+      }
+    },
+    "dom/nodes/moveBefore/moveBefore-into-display-none.html": {
+      "status": "Fail",
+      "subtests": {
+        "moveBefore() into a display: none parent stops rendering the moved node": "FAIL"
+      }
+    },
+    "dom/nodes/moveBefore/moveBefore-lang.html": {
+      "status": "Fail",
+      "subtests": {
+        "moveBefore() correctly updates the computed lang for moved nodes": "FAIL"
+      }
+    },
+    "dom/nodes/moveBefore/moveBefore-name-map.html": {
+      "status": "Fail",
+      "subtests": {
+        "moveBefore() correctly updates name map ordering in document": "PASS",
+        "moveBefore() correctly updates name map when moving into shadow root": "PASS",
+        "moveBefore() correctly updates window map": "FAIL"
+      }
+    },
+    "dom/nodes/moveBefore/moveBefore-nodeiterator.html": {
+      "status": "Fail",
+      "subtests": {
+        "moveBefore() runs NodeIterator pre-remove steps": "FAIL"
+      }
+    },
+    "dom/nodes/moveBefore/moveBefore-optgroup.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/moveBefore/moveBefore-option-recalc-style.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/moveBefore/moveBefore-selector-matching.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/moveBefore/moveBefore-shadow-boundary-id-change.html": {
+      "status": "Fail",
+      "subtests": {
+        "Changing the id of an element moved into a shadow root only updates the shadow root's id map": "FAIL",
+        "Changing the id of an element moved out of a shadow root updates the document's id and name maps": "FAIL"
+      }
+    },
+    "dom/nodes/moveBefore/moveBefore-shadow-host-id-map.html": {
+      "status": "Fail",
+      "subtests": {
+        "moveBefore() of a <details> element leaves the document's id and name maps alone": "FAIL",
+        "moveBefore() of a <select> element leaves the document's id and name maps alone": "FAIL",
+        "moveBefore() of a shadow host leaves the id map of its shadow tree alone": "PASS",
+        "moveBefore() of an ancestor of a shadow host leaves the id map of its shadow tree alone": "PASS"
+      }
+    },
+    "dom/nodes/moveBefore/moveBefore-shadow-inside.html": {
+      "status": "Fail",
+      "subtests": {
+        "": "FAIL"
+      }
+    },
+    "dom/nodes/moveBefore/moveBefore-shadow-root.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/moveBefore/moveBefore-size-query.html": {
+      "status": "Fail",
+      "subtests": {
+        "moveBefore() between different size containers invalidates target": "FAIL"
+      }
+    },
+    "dom/nodes/moveBefore/mutation-observer.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/moveBefore/nonce.html": {
+      "status": "Fail",
+      "subtests": {
+        "Element nonce content attribute is not cleared after move": "FAIL"
+      }
+    },
+    "dom/nodes/moveBefore/object-crash-regression.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/moveBefore/pointer-events.html": {
+      "status": "Fail",
+      "subtests": {
+        "Pointer capture should not be released when moving": "FAIL"
+      }
+    },
+    "dom/nodes/moveBefore/popover-preserve.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/moveBefore/preserve-render-blocking-script.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/moveBefore/preserve-render-blocking-style.html": {
+      "status": "Fail",
+      "subtests": {
+        "A moved script should keep its render-blocking state": "FAIL"
+      }
+    },
+    "dom/nodes/moveBefore/relevant-mutations.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/moveBefore/role-updates-after-move.html": {
+      "status": "Fail",
+      "subtests": {
+        "header elements role should become sectionheader when moved into a section": "FAIL"
+      }
+    },
+    "dom/nodes/moveBefore/script-move-before.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/moveBefore/select-option-optgroup.html": {
+      "status": "Fail",
+      "subtests": {
+        "Option selectedness is updated on option and optgroup DOM moves": "FAIL",
+        "Selected index is updated when an option moves within the same select": "PASS"
+      }
+    },
+    "dom/nodes/moveBefore/selection-preserve.html": {
+      "status": "Fail",
+      "subtests": {
+        "moveBefore anchor node moved up to expand selection and absorb nodes": "FAIL",
+        "moveBefore focus node moved up to shrink selection and exclude nodes; focus node gets reset": "FAIL",
+        "moveBefore move intersecting nodes out of a selection": "FAIL",
+        "moveBefore resets selection that enters a subtree, when the whole selection is moved": "FAIL",
+        "moveBefore selection is not preserved, especially when underlying range gets inverted": "FAIL",
+        "moveBefore should not reset selection with preceding text": "FAIL"
+      }
+    },
+    "dom/nodes/moveBefore/slotchange-events.html": {
+      "status": "Fail",
+      "subtests": {
+        "Moving a slot runs the assign slottables algorithm": "FAIL",
+        "Moving a slottable into and out out of a custom element fires 'slotchange' event": "FAIL",
+        "Moving default content into a slot fires 'slotchange' event": "FAIL",
+        "Moving default content out of a slot fires 'slotchange' event": "FAIL"
+      }
+    },
+    "dom/nodes/moveBefore/style-applies.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/moveBefore/stylesheet-cascade-order.html": {
+      "status": "Fail",
+      "subtests": {
+        "Moving loaded link stylesheets updates their cascade order": "FAIL"
+      }
+    },
+    "dom/nodes/moveBefore/stylesheet-no-refetch.html": {
+      "status": "Fail",
+      "subtests": {
+        "Moving a loaded link stylesheet preserves its resource": "FAIL"
+      }
+    },
+    "dom/nodes/moveBefore/throws-exception.html": {
+      "status": "Fail",
+      "subtests": {
+        "moveBefore() on a cross-document target node": "FAIL"
+      }
+    }
+  }
+}

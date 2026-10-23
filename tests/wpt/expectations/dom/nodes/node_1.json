@@ -1,0 +1,38 @@
+{
+  "suite": "dom/nodes/node_1",
+  "files": {
+    "dom/nodes/Node-appendChild.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Node-baseURI.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Node-childNodes-cache-2.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Node-childNodes-cache.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Node-childNodes.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Node-cloneNode-XMLDocument.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Node-cloneNode-document-with-doctype.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Node-cloneNode-external-stylesheet-no-bc.sub.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Node-cloneNode-parser-created-names.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Node-cloneNode-svg.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Node-cloneNode.html": {
+      "status": "Pass"
+    }
+  }
+}

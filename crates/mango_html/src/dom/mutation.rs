@@ -1,9 +1,66 @@
 //! DOM tree mutation algorithms conforming to WHATWG DOM: insertion, removal, replacement, and recycling.
 
+use std::collections::HashSet;
+
 use super::document::Document;
 use super::node::{DomError, NodeData, NodeId};
 
+/// Hard ceiling on DOM tree depth.
+///
+/// Every downstream algorithm (style tree construction, box tree construction,
+/// serialization, cloning) currently recurses over the DOM. Bounding the tree
+/// at insertion time keeps all of those algorithms within the native stack
+/// budget and makes pathological nesting harmless instead of aborting the
+/// process. Real documents rarely exceed 30–50 levels.
+pub const MAX_DOM_DEPTH: usize = 128;
+
 impl Document {
+    /// Returns the number of ancestor edges between `node` and the document root.
+    pub fn depth_of(&self, node: NodeId) -> usize {
+        let mut depth = 0usize;
+        let mut current = self.arena.get(node).and_then(|n| n.parent);
+        while let Some(parent) = current {
+            depth += 1;
+            if depth > MAX_DOM_DEPTH {
+                return depth;
+            }
+            current = self.arena.get(parent).and_then(|n| n.parent);
+        }
+        depth
+    }
+
+    /// Returns the height of the subtree rooted at `node`, stopping early once
+    /// the measured height is large enough to prove the insertion must fail.
+    fn subtree_height(&self, node: NodeId, limit: usize) -> usize {
+        let mut max_height = 0usize;
+        let mut stack = vec![(node, 1usize)];
+        while let Some((current, height)) = stack.pop() {
+            if height > max_height {
+                max_height = height;
+            }
+            if max_height > limit {
+                return max_height;
+            }
+            let mut child = self.arena.get(current).and_then(|n| n.first_child);
+            while let Some(child_id) = child {
+                stack.push((child_id, height + 1));
+                child = self.arena.get(child_id).and_then(|n| n.next_sibling);
+            }
+        }
+        max_height
+    }
+
+    /// Returns true when attaching `child` under `parent` would keep the
+    /// document within [`MAX_DOM_DEPTH`].
+    fn can_attach_without_exceeding_depth(&self, parent: NodeId, child: NodeId) -> bool {
+        let parent_depth = self.depth_of(parent);
+        let remaining = MAX_DOM_DEPTH.saturating_sub(parent_depth);
+        if remaining == 0 {
+            return false;
+        }
+        self.subtree_height(child, remaining) <= remaining
+    }
+
     /// Returns `true` if `ancestor` is an ancestor of `descendant` (or if they are identical).
     pub fn is_ancestor(&self, ancestor: NodeId, descendant: NodeId) -> bool {
         if ancestor.matches(descendant) {
@@ -175,8 +232,13 @@ impl Document {
             return;
         }
 
+        if !self.can_attach_without_exceeding_depth(parent, child) {
+            return;
+        }
+
         // Disconnect child from any previous parent/siblings first
         self.detach(child);
+        self.detached_candidates.remove(&child);
 
         let prev_last = {
             let Some(p) = self.arena.get_mut(parent) else {
@@ -281,7 +343,12 @@ impl Document {
             return Err(DomError::NotFoundError);
         }
 
+        if !self.can_attach_without_exceeding_depth(parent, child) {
+            return Err(DomError::HierarchyRequestError);
+        }
+
         self.detach(child);
+        self.detached_candidates.remove(&child);
 
         let prev_sibling = self.arena.get(before).and_then(|b| b.prev_sibling);
 
@@ -453,36 +520,159 @@ impl Document {
             n.next_sibling = None;
         }
 
+        if parent.is_some() {
+            // The subtree is still a legal, re-attachable DOM fragment. It
+            // becomes eligible for reclamation only after the last JS wrapper
+            // is finalized.
+            self.detached_candidates.insert(node);
+        }
+
         if let Some(p) = parent {
             self.dirty_nodes.insert(p);
             self.version = self.version.wrapping_add(1);
         }
     }
 
-    /// Detaches a node from its parent and recycles the arena slots for this node
-    /// and all its descendants back into the arena free-list.
-    pub fn remove_child_and_recycle(&mut self, node: NodeId) {
-        self.detach(node);
-        self.recycle_subtree(node);
+    /// Records that JavaScript now holds another wrapper for `node`.
+    pub fn retain_js_wrapper(&mut self, node: NodeId) {
+        if self.arena.get(node).is_some() {
+            *self.js_wrapper_counts.entry(node).or_insert(0) += 1;
+        }
     }
 
-    /// Recursively frees a node and all of its descendants, recycling their arena slots.
-    pub fn recycle_subtree(&mut self, root: NodeId) {
-        let mut to_free = Vec::new();
+    /// Records that a JavaScript wrapper for `node` was garbage collected.
+    ///
+    /// Returns the nodes whose arena slots were reclaimed as a direct result.
+    /// A detached subtree is reclaimed only when every node in it (including
+    /// shadow and template trees) has no live JS wrapper.
+    pub fn release_js_wrapper(&mut self, node: NodeId) -> Vec<NodeId> {
+        let Some(count) = self.js_wrapper_counts.get_mut(&node) else {
+            return Vec::new();
+        };
+        *count = count.saturating_sub(1);
+        if *count == 0 {
+            self.js_wrapper_counts.remove(&node);
+        }
+        self.try_reclaim_detached_ancestor(node)
+    }
+
+    /// Walks up to the root of the detached fragment containing `node` and
+    /// reclaims it if no live JS wrappers remain anywhere in the fragment.
+    fn try_reclaim_detached_ancestor(&mut self, node: NodeId) -> Vec<NodeId> {
+        let mut root = node;
+        while let Some(parent) = self.arena.get(root).and_then(|n| n.parent) {
+            root = parent;
+        }
+        if !self.detached_candidates.contains(&root) {
+            return Vec::new();
+        }
+        if self.subtree_has_live_wrappers(root) {
+            return Vec::new();
+        }
+        self.recycle_detached_root(root)
+    }
+
+    fn subtree_has_live_wrappers(&self, root: NodeId) -> bool {
         let mut stack = vec![root];
-        while let Some(curr) = stack.pop() {
-            to_free.push(curr);
-            let mut next_child = self.arena.get(curr).and_then(|n| n.first_child);
-            while let Some(c) = next_child {
-                stack.push(c);
-                next_child = self.arena.get(c).and_then(|n| n.next_sibling);
+        let mut seen = HashSet::new();
+        while let Some(current) = stack.pop() {
+            if !seen.insert(current) {
+                continue;
+            }
+            if self.js_wrapper_counts.get(&current).is_some_and(|n| *n > 0) {
+                return true;
+            }
+            if let Some(node) = self.arena.get(current) {
+                let mut child = node.first_child;
+                while let Some(child_id) = child {
+                    stack.push(child_id);
+                    child = self.arena.get(child_id).and_then(|n| n.next_sibling);
+                }
+                if let NodeData::Element(el) = &node.data {
+                    if let Some(sr) = el.shadow_root {
+                        stack.push(sr);
+                    }
+                    if let Some(tc) = el.template_contents {
+                        stack.push(tc);
+                    }
+                }
             }
         }
-        for nid in to_free {
-            self.dirty_nodes.remove(&nid);
-            self.shadow_hosts.remove(&nid);
-            self.shadow_hosts.retain(|_, &mut host| host != nid);
-            self.arena.free_raw(nid.raw());
+        false
+    }
+
+    /// Reclaims a detached root whose entire fragment is JS-unreachable.
+    fn recycle_detached_root(&mut self, root: NodeId) -> Vec<NodeId> {
+        self.detached_candidates.remove(&root);
+        let freed = self.recycle_subtree(root);
+        // Reclaiming a shadow host also invalidates its shadow root; any
+        // detached candidates inside the fragment are gone now.
+        for id in &freed {
+            self.detached_candidates.remove(id);
         }
+        freed
+    }
+
+    /// Detaches a node and, if no JavaScript wrapper anywhere in its subtree is
+    /// still alive, immediately recycles it. Used by APIs such as
+    /// `textContent`/`innerHTML` that discard children without returning them.
+    pub fn detach_and_recycle_if_unreferenced(&mut self, node: NodeId) -> Vec<NodeId> {
+        self.detach(node);
+        if self.subtree_has_live_wrappers(node) {
+            Vec::new()
+        } else {
+            self.detached_candidates.remove(&node);
+            self.recycle_subtree(node)
+        }
+    }
+
+    /// Detaches a node from its parent and recycles the arena slots for this node
+    /// and all its descendants back into the arena free-list.
+    pub fn remove_child_and_recycle(&mut self, node: NodeId) -> Vec<NodeId> {
+        self.detach(node);
+        self.recycle_subtree(node)
+    }
+
+    /// Iteratively frees a node, its descendants, shadow trees, and template
+    /// contents, recycling their arena slots. Returns the freed node ids.
+    ///
+    /// Slots whose generation has reached the packed-handle limit are retired
+    /// rather than reused, so a stale JavaScript handle can never alias a new
+    /// node.
+    pub fn recycle_subtree(&mut self, root: NodeId) -> Vec<NodeId> {
+        let mut to_free = Vec::new();
+        let mut stack = vec![root];
+        let mut seen = HashSet::new();
+        while let Some(curr) = stack.pop() {
+            if !seen.insert(curr) {
+                continue;
+            }
+            to_free.push(curr);
+            if let Some(node) = self.arena.get(curr) {
+                let mut next_child = node.first_child;
+                while let Some(c) = next_child {
+                    stack.push(c);
+                    next_child = self.arena.get(c).and_then(|n| n.next_sibling);
+                }
+                if let NodeData::Element(el) = &node.data {
+                    if let Some(sr) = el.shadow_root {
+                        stack.push(sr);
+                    }
+                    if let Some(tc) = el.template_contents {
+                        stack.push(tc);
+                    }
+                }
+            }
+        }
+        for nid in &to_free {
+            self.dirty_nodes.remove(nid);
+            self.js_wrapper_counts.remove(nid);
+            self.detached_candidates.remove(nid);
+            self.shadow_hosts.remove(nid);
+            self.shadow_hosts.retain(|_, host| host != nid);
+            self.arena
+                .free_raw_below_generation(nid.raw(), super::js_id::JS_ID_MAX_GENERATION);
+        }
+        to_free
     }
 }

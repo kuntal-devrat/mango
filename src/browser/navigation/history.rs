@@ -125,7 +125,12 @@ impl BrowserChrome {
             }
         }
 
-        self.cached_document = None;
+        if let Some(old_doc) = self.cached_document.take() {
+            mango_render::remove_canvases_for_document(old_doc.id());
+        }
+        if let Some(rt) = &self.js_runtime {
+            mango_render::remove_canvases_for_document(rt.document_ref().id());
+        }
         self.root_box = None;
         self.page_display_list = DisplayList::new();
         self.display_list_cache.lock().unwrap().clear();
@@ -672,7 +677,7 @@ impl BrowserChrome {
             self.base_url = Some(parsed_url.clone());
             self.address_text = parsed_url.to_string();
             self.address_focused = false;
-            self.is_loading = false;
+            self.set_tab_loading(self.active_tab_idx, false);
             if let Some(ref frag) = parsed_url.fragment {
                 let frag_str = frag.clone();
                 if let Some(ref mut doc) = self.cached_document {
@@ -706,7 +711,7 @@ impl BrowserChrome {
         }
 
         self.status_text = format!("Loading {}...", parsed_url);
-        self.is_loading = true;
+        self.set_tab_loading(self.active_tab_idx, true);
         self.address_focused = false;
 
         // P0 UI-freeze fix: ALL network navigations dispatch via the background

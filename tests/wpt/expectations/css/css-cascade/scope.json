@@ -1,0 +1,239 @@
+{
+  "suite": "css/css-cascade/scope",
+  "files": {
+    "css/css-cascade/scope-container.html": {
+      "status": "Fail",
+      "subtests": {
+        "Style rules within @container are scoped": "FAIL"
+      }
+    },
+    "css/css-cascade/scope-cssom.html": {
+      "status": "Pass"
+    },
+    "css/css-cascade/scope-declarations.html": {
+      "status": "Pass"
+    },
+    "css/css-cascade/scope-deep.html": {
+      "status": "Pass"
+    },
+    "css/css-cascade/scope-evaluation.html": {
+      "status": "Pass"
+    },
+    "css/css-cascade/scope-focus.html": {
+      "status": "Fail",
+      "subtests": {
+        ":focus in intermediate limit, :scope in subject": "FAIL",
+        ":focus in limit, :scope in subject": "FAIL",
+        ":focus via :scope in non-subject": "FAIL",
+        ":focus via :scope in subject": "FAIL"
+      }
+    },
+    "css/css-cascade/scope-hover.html": {
+      "status": "Fail",
+      "subtests": {
+        ":hover in intermediate limit, :scope in subject": "FAIL",
+        ":hover in limit, :scope in subject": "FAIL",
+        ":hover via :scope in non-subject": "FAIL",
+        ":hover via :scope in subject": "FAIL"
+      }
+    },
+    "css/css-cascade/scope-implicit-constructed-document.html": {
+      "status": "Fail",
+      "subtests": {
+        "& with a descendant combinator in implicit @scope in a constructed stylesheet adopted by a document": "FAIL",
+        ":scope in implicit @scope in a constructed stylesheet adopted by a document does not match any element": "PASS",
+        "Child combinator in implicit @scope in a constructed stylesheet adopted by a document matches only the root element": "FAIL",
+        "Explicit :scope with a descendant combinator in implicit @scope in a constructed stylesheet adopted by a document": "FAIL",
+        "Implicit @scope in a constructed stylesheet adopted by a document does not match in shadow trees": "FAIL",
+        "Implicit @scope in a constructed stylesheet adopted by a document loses to a closer scoping root by proximity": "FAIL",
+        "Implicit @scope in a constructed stylesheet adopted by a document matches descendants": "FAIL",
+        "Implicit @scope in a constructed stylesheet adopted by a document matches the root element": "FAIL",
+        "Implicit @scope in a constructed stylesheet adopted by a document wins over unscoped rules by proximity": "FAIL",
+        "Implicit @scope in a constructed stylesheet adopted by both a document and a shadow root": "FAIL",
+        "Implicit @scope in a constructed stylesheet stops matching once the document no longer adopts it": "FAIL",
+        "Implicit @scope with a scope end in a constructed stylesheet adopted by a document": "FAIL",
+        "Nested @scope inside implicit @scope in a constructed stylesheet adopted by a document": "FAIL",
+        "Scoped declarations in implicit @scope in a constructed stylesheet adopted by a document do not match any element": "PASS"
+      }
+    },
+    "css/css-cascade/scope-implicit-external.html": {
+      "status": "Fail",
+      "subtests": {
+        "@scope with external stylesheet through @import": "FAIL",
+        "@scope with external stylesheet through link element": "FAIL"
+      }
+    },
+    "css/css-cascade/scope-implicit-remove-sheet.html": {
+      "status": "Pass"
+    },
+    "css/css-cascade/scope-implicit-sibling-mutations.html": {
+      "status": "Fail",
+      "subtests": {
+        "Sibling implicit scopes update independently when sheets move or disappear": "FAIL"
+      }
+    },
+    "css/css-cascade/scope-implicit.html": {
+      "status": "Fail",
+      "subtests": {
+        ":scope can style implicit root": "FAIL",
+        "@scope with effectively empty :is() must not match anything": "FAIL",
+        "@scope without prelude implicitly scopes to parent of owner node": "FAIL",
+        "@scope works with two identical stylesheets": "FAIL",
+        "Implicit @scope has implicitly added :scope descendant combinator": "FAIL",
+        "Implicit @scope sandwiched between non-implicit scopes": "PASS",
+        "Implicit @scope sandwiched right under an explicit scope": "FAIL",
+        "Implicit @scope with inner nesting selector": "FAIL",
+        "Implicit @scope with inner relative selector": "FAIL",
+        "Implicit @scope with limit": "FAIL",
+        "Proximity calculation of multiple implicit @scope": "FAIL"
+      }
+    },
+    "css/css-cascade/scope-import-implicit.html": {
+      "status": "Fail",
+      "subtests": {
+        "Scope-imported rule applies within implicit scope": "FAIL",
+        "Scope-imported rule does not apply outside of implicit scope": "PASS"
+      }
+    },
+    "css/css-cascade/scope-import-inner-scope.html": {
+      "status": "Fail",
+      "subtests": {
+        "@scope within scope-imported does not ignore import scope": "PASS",
+        "@scope within scope-imported stylesheet matches": "FAIL"
+      }
+    },
+    "css/css-cascade/scope-import-multiple.html": {
+      "status": "Fail",
+      "subtests": {
+        "A stylesheet may be imported multiple times, and scoped differently": "FAIL",
+        "Scope-imported rule does not apply outside of scope": "PASS"
+      }
+    },
+    "css/css-cascade/scope-import-parent-pseudo.html": {
+      "status": "Fail",
+      "subtests": {
+        "The & selector behaves like :scope": "FAIL",
+        "The & selector matches the scoping root": "FAIL"
+      }
+    },
+    "css/css-cascade/scope-import-scope-end.html": {
+      "status": "Fail",
+      "subtests": {
+        "Scope-imported rule applies within scope, above limit": "FAIL",
+        "Scope-imported rule does not apply below limit": "PASS"
+      }
+    },
+    "css/css-cascade/scope-import-scope-pseudo.html": {
+      "status": "Fail",
+      "subtests": {
+        "The :scope pseudo-class works in imported stylesheets": "FAIL"
+      }
+    },
+    "css/css-cascade/scope-import-scope-start.html": {
+      "status": "Fail",
+      "subtests": {
+        "Scope-imported rule applies within scope": "FAIL",
+        "Scope-imported rule does not apply outside of scope": "PASS"
+      }
+    },
+    "css/css-cascade/scope-invalidation.html": {
+      "status": "Pass"
+    },
+    "css/css-cascade/scope-layer.html": {
+      "status": "Pass"
+    },
+    "css/css-cascade/scope-media.html": {
+      "status": "Pass"
+    },
+    "css/css-cascade/scope-name-defining-rules.html": {
+      "status": "Fail",
+      "subtests": {
+        "@keyframes is unaffected by @scope": "FAIL",
+        "@keyframes is unaffected by non-matching @scope": "FAIL",
+        "@property is unaffected by @scope": "FAIL",
+        "@property is unaffected by non-matching @scope": "FAIL"
+      }
+    },
+    "css/css-cascade/scope-nesting.html": {
+      "status": "Pass"
+    },
+    "css/css-cascade/scope-overlapping-has.html": {
+      "status": "Pass"
+    },
+    "css/css-cascade/scope-proximity.html": {
+      "status": "Pass"
+    },
+    "css/css-cascade/scope-rule-attr-with-colons.html": {
+      "status": "Pass"
+    },
+    "css/css-cascade/scope-shadow.html": {
+      "status": "Fail",
+      "subtests": {
+        ":scope matches host via the scoping root": "PASS",
+        ":scope within :is() matches host via the scoping root": "FAIL",
+        "@scope can match :host": "FAIL",
+        "@scope can match :host(...)": "FAIL",
+        "Implicit @scope as direct child of shadow root": "FAIL",
+        "Implicit @scope in construted stylesheet": "FAIL",
+        "Matching :host via &, :scope (non-subject)": "FAIL",
+        "Matching :host via &, :scope (non-subject, >)": "FAIL",
+        "Matching :host via &, :scope (subject)": "PASS"
+      }
+    },
+    "css/css-cascade/scope-specificity.html": {
+      "status": "Pass"
+    },
+    "css/css-cascade/scope-starting-style.html": {
+      "status": "Fail",
+      "subtests": {
+        "Style rules within @starting-style are scoped": "FAIL"
+      }
+    },
+    "css/css-cascade/scope-style-sharing-001.html": {
+      "status": "Fail",
+      "subtests": {
+        "@scope with sibling style sharing, first sibling enters scope": "PASS",
+        "@scope with sibling style sharing, first sibling enters scope with :has": "PASS",
+        "@scope with sibling style sharing, first sibling enters scope with ID selector": "PASS",
+        "@scope with sibling style sharing, first sibling exits implicit scope": "PASS",
+        "@scope with sibling style sharing, first sibling has implicit scope": "FAIL",
+        "@scope with sibling style sharing, first sibling matches scope": "PASS",
+        "@scope with sibling style sharing, second sibling enters scope": "PASS",
+        "@scope with sibling style sharing, second sibling enters scope with :has": "PASS",
+        "@scope with sibling style sharing, second sibling enters scope with ID selector": "PASS",
+        "@scope with sibling style sharing, second sibling exits implicit scope": "PASS",
+        "@scope with sibling style sharing, second sibling exits scope": "PASS",
+        "@scope with sibling style sharing, second sibling has implicit scope": "FAIL",
+        "@scope with sibling style sharing, with child relative implicit scope selector": "PASS"
+      }
+    },
+    "css/css-cascade/scope-style-sharing-002.html": {
+      "status": "Fail",
+      "subtests": {
+        "@scope with cousin style sharing, first sibling does not have implicit scope": "FAIL",
+        "@scope with cousin style sharing, first sibling enters scope": "PASS",
+        "@scope with cousin style sharing, first sibling enters scope ID selector": "PASS",
+        "@scope with cousin style sharing, first sibling enters scope attribute selector": "PASS",
+        "@scope with cousin style sharing, first sibling enters scope trivial attribute selector": "PASS",
+        "@scope with cousin style sharing, first sibling enters scope with :has": "PASS",
+        "@scope with cousin style sharing, first sibling exits scope": "PASS",
+        "@scope with cousin style sharing, first sibling parent does not have implicit scope": "FAIL",
+        "@scope with cousin style sharing, second sibling does not have implicit scope": "FAIL",
+        "@scope with cousin style sharing, second sibling enters scope": "PASS",
+        "@scope with cousin style sharing, second sibling enters scope ID selector": "PASS",
+        "@scope with cousin style sharing, second sibling enters scope attribute selector": "PASS",
+        "@scope with cousin style sharing, second sibling enters scope trivial attribute selector": "PASS",
+        "@scope with cousin style sharing, second sibling enters scope with :has": "PASS",
+        "@scope with cousin style sharing, second sibling exits scope": "PASS",
+        "@scope with cousin style sharing, second sibling parent does not have implicit scope": "FAIL",
+        "@scope with cousin style sharing, with child relative implicit scope selector": "PASS"
+      }
+    },
+    "css/css-cascade/scope-supports.html": {
+      "status": "Pass"
+    },
+    "css/css-cascade/scope-visited-cssom.html": {
+      "status": "Pass"
+    }
+  }
+}

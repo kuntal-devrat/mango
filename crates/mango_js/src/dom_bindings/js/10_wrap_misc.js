@@ -779,6 +779,6 @@
                 }
             }
         }
-        _wrapperCache[nodeId] = el;
+        _storeWrapper(nodeId, el);
         return el;
     }

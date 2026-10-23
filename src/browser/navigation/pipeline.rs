@@ -154,11 +154,9 @@ fn prepare_document_pipeline_internal(
             let loader_clone = loader.clone();
             let base_clone = final_url.clone();
             let url_clone = item.url.clone();
-            let _ = std::thread::Builder::new()
-                .name("mango-preload-cache".to_string())
-                .spawn(move || {
-                    let _ = loader_clone.fetch_script(&base_clone, &url_clone);
-                });
+            crate::browser::types::spawn_fetch_task(move || {
+                let _ = loader_clone.fetch_script(&base_clone, &url_clone);
+            });
         }
     }
 
@@ -196,18 +194,13 @@ fn prepare_document_pipeline_internal(
                 let src = src.clone();
                 let nonce = nonce.clone();
                 let idx = *idx;
-                if let Err(e) = std::thread::Builder::new()
-                    .name("mango-script-fetch".to_string())
-                    .spawn(move || {
-                        let res = loader.fetch_script_with_nonce(&base, &src, nonce.as_deref());
-                        if let Err(ref err) = res {
-                            log::warn!("Background fetch_script error for {src}: {err}");
-                        }
-                        let _ = tx.send((idx, res));
-                    })
-                {
-                    log::warn!("Failed to spawn script fetch thread: {e}");
-                }
+                crate::browser::types::spawn_fetch_task(move || {
+                    let res = loader.fetch_script_with_nonce(&base, &src, nonce.as_deref());
+                    if let Err(ref err) = res {
+                        log::warn!("Background fetch_script error for {src}: {err}");
+                    }
+                    let _ = tx.send((idx, res));
+                });
             }
             drop(tx);
             for _ in 0..n {
@@ -512,15 +505,10 @@ fn load_stylesheets_parallel_cancellable(
             let base = base_url.clone();
             let href = (*href).clone();
             let idx = *idx;
-            if let Err(e) = std::thread::Builder::new()
-                .name("mango-css-fetch".to_string())
-                .spawn(move || {
-                    let res = loader.fetch_stylesheet(&base, &href);
-                    let _ = tx.send((idx, res));
-                })
-            {
-                log::warn!("Failed to spawn stylesheet fetch thread: {e}");
-            }
+            crate::browser::types::spawn_fetch_task(move || {
+                let res = loader.fetch_stylesheet(&base, &href);
+                let _ = tx.send((idx, res));
+            });
         }
         drop(tx);
         for _ in 0..n {
@@ -634,15 +622,10 @@ fn load_imported_stylesheets_parallel_cancellable(
                 let href = (*href).clone();
                 let resolved = (*resolved).clone();
                 let idx = *idx;
-                if let Err(e) = std::thread::Builder::new()
-                    .name("mango-css-import".to_string())
-                    .spawn(move || {
-                        let res = loader.fetch_stylesheet(&base, &href);
-                        let _ = tx.send((idx, resolved, res));
-                    })
-                {
-                    log::warn!("Failed to spawn @import fetch thread: {e}");
-                }
+                crate::browser::types::spawn_fetch_task(move || {
+                    let res = loader.fetch_stylesheet(&base, &href);
+                    let _ = tx.send((idx, resolved, res));
+                });
             }
             drop(tx);
             for _ in 0..n {
@@ -734,11 +717,9 @@ fn scan_and_precache_module_imports(
             if loader.cache().get(&target_str).is_none() {
                 let loader_clone = loader.clone();
                 let base_clone = script_base.clone();
-                let _ = std::thread::Builder::new()
-                    .name("mango-module-precache".to_string())
-                    .spawn(move || {
-                        let _ = loader_clone.fetch_script(&base_clone, &spec);
-                    });
+                crate::browser::types::spawn_fetch_task(move || {
+                    let _ = loader_clone.fetch_script(&base_clone, &spec);
+                });
             }
         }
     }

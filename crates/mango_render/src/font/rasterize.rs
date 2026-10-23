@@ -35,7 +35,7 @@ impl FontManager {
 
         let (mut metrics, bitmap) = font.rasterize(ch, px_size);
         let final_bitmap: std::sync::Arc<[u8]> = if weight == FontWeight::Bold
-            && std::ptr::eq(font, self.select_font(family, FontWeight::Regular))
+            && std::ptr::eq(font, self.select_font(family, FontWeight::Regular).as_ref())
             && metrics.width > 0
             && metrics.height > 0
             && !bitmap.is_empty()
@@ -225,7 +225,7 @@ impl FontManager {
             }
 
             let font = self.select_font_for_char(family, weight, ch);
-            let cached = self.get_or_rasterize_glyph(family, weight, font, ch, px_size);
+            let cached = self.get_or_rasterize_glyph(family, weight, &font, ch, px_size);
             let metrics = &cached.metrics;
             let bitmap = &cached.bitmap;
 
@@ -415,7 +415,7 @@ impl FontManager {
             }
 
             let font = self.select_font_for_char(family, weight, ch);
-            let cached = self.get_or_rasterize_glyph(family, weight, font, ch, px_size);
+            let cached = self.get_or_rasterize_glyph(family, weight, &font, ch, px_size);
             let metrics = &cached.metrics;
             let bitmap = &cached.bitmap;
 
@@ -538,7 +538,7 @@ impl FontManager {
             }
 
             let font = self.select_font_for_char(family, weight, ch);
-            let cached = self.get_or_rasterize_glyph(family, weight, font, ch, px_size);
+            let cached = self.get_or_rasterize_glyph(family, weight, &font, ch, px_size);
             let metrics = &cached.metrics;
             let bitmap = &cached.bitmap;
 

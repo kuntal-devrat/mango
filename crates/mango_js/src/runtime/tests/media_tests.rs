@@ -471,3 +471,94 @@ fn test_audio_context_and_offscreen_canvas() {
         .expect("eval audio and offscreen canvas test");
     assert_eq!(res, "ok");
 }
+
+#[test]
+fn test_canvas_backing_stores_are_document_and_offscreen_scoped() {
+    let doc1 =
+        parse_html("<html><body><canvas id='c' width='8' height='8'></canvas></body></html>");
+    let mut rt1 = JsRuntime::new(doc1, 800.0, 600.0);
+    rt1.execute_script(
+        r#"
+        var ctx = document.getElementById('c').getContext('2d');
+        ctx.fillStyle = '#ff0000';
+        ctx.fillRect(0, 0, 8, 8);
+        "#,
+    )
+    .unwrap();
+
+    // A second document must not alias the first document's canvas even though
+    // both canvases occupy the same arena index.
+    let doc2 =
+        parse_html("<html><body><canvas id='c' width='8' height='8'></canvas></body></html>");
+    let mut rt2 = JsRuntime::new(doc2, 800.0, 600.0);
+    rt2.execute_script(
+        r#"
+        var ctx = document.getElementById('c').getContext('2d');
+        ctx.fillStyle = '#0000ff';
+        ctx.fillRect(0, 0, 8, 8);
+        var px = ctx.getImageData(1, 1, 1, 1).data;
+        if (px[0] !== 0 || px[1] !== 0 || px[2] !== 255 || px[3] !== 255) {
+            throw new Error('second document canvas is not blue: ' + Array.from(px));
+        }
+        "#,
+    )
+    .unwrap();
+
+    rt1.execute_script(
+        r#"
+        var px = document.getElementById('c').getContext('2d').getImageData(1, 1, 1, 1).data;
+        if (px[0] !== 255 || px[1] !== 0 || px[2] !== 0 || px[3] !== 255) {
+            throw new Error('first document canvas was clobbered: ' + Array.from(px));
+        }
+        "#,
+    )
+    .unwrap();
+
+    // Standalone OffscreenCanvas instances in the same runtime are independent.
+    rt2.execute_script(
+        r#"
+        var a = new OffscreenCanvas(4, 4);
+        var b = new OffscreenCanvas(4, 4);
+        var actx = a.getContext('2d');
+        var bctx = b.getContext('2d');
+        actx.fillStyle = '#00ff00';
+        actx.fillRect(0, 0, 4, 4);
+        bctx.fillStyle = '#0000ff';
+        bctx.fillRect(0, 0, 4, 4);
+        var ap = actx.getImageData(1, 1, 1, 1).data;
+        var bp = bctx.getImageData(1, 1, 1, 1).data;
+        if (ap[1] !== 255 || ap[2] !== 0 || bp[2] !== 255 || bp[1] !== 0) {
+            throw new Error('offscreen canvases share a backing store: a=' + Array.from(ap) + ' b=' + Array.from(bp));
+        }
+        "#,
+    )
+    .unwrap();
+}
+
+#[test]
+fn test_offscreen_canvas_backing_store_is_reclaimed_on_gc() {
+    let doc = parse_html("<html><body></body></html>");
+    let mut rt = JsRuntime::new(doc, 800.0, 600.0);
+    let doc_id = rt.document_ref().id();
+    rt.execute_script(
+        r#"
+        (function() {
+            var off = new OffscreenCanvas(16, 16);
+            var ctx = off.getContext('2d');
+            ctx.fillStyle = '#ff00ff';
+            ctx.fillRect(0, 0, 16, 16);
+        })();
+        "#,
+    )
+    .unwrap();
+    let key = (doc_id << 32) | 0x8000_0000;
+    assert!(
+        mango_render::get_canvas_pixels(key).is_some(),
+        "offscreen canvas should have a backing store while alive"
+    );
+    rt.gc();
+    assert!(
+        mango_render::get_canvas_pixels(key).is_none(),
+        "offscreen canvas backing store must be reclaimed after the JS object is collected"
+    );
+}

@@ -147,8 +147,10 @@ fn test_web_font_registration_via_data_uri() {
 fn test_glyph_caching() {
     let fm = font_manager();
     let font = fm.select_font(FontFamily::SansSerif, FontWeight::Regular);
-    let g1 = fm.get_or_rasterize_glyph(FontFamily::SansSerif, FontWeight::Regular, font, 'M', 16.0);
-    let g2 = fm.get_or_rasterize_glyph(FontFamily::SansSerif, FontWeight::Regular, font, 'M', 16.0);
+    let g1 =
+        fm.get_or_rasterize_glyph(FontFamily::SansSerif, FontWeight::Regular, &font, 'M', 16.0);
+    let g2 =
+        fm.get_or_rasterize_glyph(FontFamily::SansSerif, FontWeight::Regular, &font, 'M', 16.0);
     assert_eq!(g1.metrics.width, g2.metrics.width);
     assert_eq!(g1.metrics.height, g2.metrics.height);
     assert_eq!(g1.bitmap.len(), g2.bitmap.len());
