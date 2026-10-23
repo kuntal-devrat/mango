@@ -40,9 +40,7 @@ fn parallelism() -> usize {
     {
         return n.max(1);
     }
-    std::thread::available_parallelism()
-        .map(|n| n.get().clamp(1, 8))
-        .unwrap_or(4)
+    1
 }
 
 static STREAM_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

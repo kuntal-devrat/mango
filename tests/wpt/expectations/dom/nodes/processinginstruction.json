@@ -1,0 +1,23 @@
+{
+  "suite": "dom/nodes/processinginstruction",
+  "files": {
+    "dom/nodes/ProcessingInstruction-escapes-1.xhtml": {
+      "status": "Error"
+    },
+    "dom/nodes/ProcessingInstruction-in-doctype.xhtml": {
+      "status": "Pass"
+    },
+    "dom/nodes/ProcessingInstruction-literal-1.xhtml": {
+      "status": "Fail",
+      "subtests": {
+        "": "FAIL"
+      }
+    },
+    "dom/nodes/ProcessingInstruction-literal-2.xhtml": {
+      "status": "Fail",
+      "subtests": {
+        "": "FAIL"
+      }
+    }
+  }
+}

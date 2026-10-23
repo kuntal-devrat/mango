@@ -1,0 +1,84 @@
+{
+  "suite": "css/css-cascade/revert",
+  "files": {
+    "css/css-cascade/revert-layer-008.html": {
+      "status": "Fail",
+      "subtests": {
+        "'revert-layer' should revert font-size to 20px and trigger a smooth transition": "FAIL"
+      }
+    },
+    "css/css-cascade/revert-rule-basic.html": {
+      "status": "Pass"
+    },
+    "css/css-cascade/revert-rule-custom-property.html": {
+      "status": "Pass"
+    },
+    "css/css-cascade/revert-rule-cycle.tentative.html": {
+      "status": "Pass"
+    },
+    "css/css-cascade/revert-rule-important.html": {
+      "status": "Pass"
+    },
+    "css/css-cascade/revert-rule-layer.html": {
+      "status": "Pass"
+    },
+    "css/css-cascade/revert-rule-revert-layer.html": {
+      "status": "Pass"
+    },
+    "css/css-cascade/revert-rule-shadow.html": {
+      "status": "Pass"
+    },
+    "css/css-cascade/revert-val-003.html": {
+      "status": "Fail",
+      "subtests": {
+        "revert works with transitions": "FAIL"
+      }
+    },
+    "css/css-cascade/revert-val-004.html": {
+      "status": "Fail",
+      "subtests": {
+        "The revert keyword works with the all property": "FAIL"
+      }
+    },
+    "css/css-cascade/revert-val-005.html": {
+      "status": "Fail",
+      "subtests": {
+        "The revert keyword works with logical properties": "PASS",
+        "The revert keyword works with physical properties": "FAIL"
+      }
+    },
+    "css/css-cascade/revert-val-006.html": {
+      "status": "Fail",
+      "subtests": {
+        "The revert keyword works with @keyframes": "FAIL"
+      }
+    },
+    "css/css-cascade/revert-val-007.html": {
+      "status": "Fail",
+      "subtests": {
+        "A @keyframe animation with revert works when applied to multiple identical elements": "FAIL"
+      }
+    },
+    "css/css-cascade/revert-val-008.html": {
+      "status": "Fail",
+      "subtests": {
+        "The revert keyword works in the final frame of a web animation": "FAIL"
+      }
+    },
+    "css/css-cascade/revert-val-009.html": {
+      "status": "Fail",
+      "subtests": {
+        "The revert keyword works in implicit keyframes": "FAIL"
+      }
+    },
+    "css/css-cascade/revert-val-010.html": {
+      "status": "Fail",
+      "subtests": {
+        "The revert works when appearing in setKeyframes": "FAIL"
+      }
+    },
+    "css/css-cascade/revert-val-011.html": {
+      "status": "Pass"
+    }
+  }
+}

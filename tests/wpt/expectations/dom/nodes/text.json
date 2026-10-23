@@ -1,0 +1,32 @@
+{
+  "suite": "dom/nodes/text",
+  "files": {
+    "dom/nodes/Text-constructor.html": {
+      "status": "Fail",
+      "subtests": {
+        "new Text() should get the correct ownerDocument across globals": "FAIL",
+        "new Text(): \"\"": "PASS",
+        "new Text(): \"&amp;\"": "PASS",
+        "new Text(): \"-\"": "PASS",
+        "new Text(): \"--\"": "PASS",
+        "new Text(): \"-->\"": "PASS",
+        "new Text(): \"<!--\"": "PASS",
+        "new Text(): \"\\0\"": "PASS",
+        "new Text(): \"\\0test\"": "PASS",
+        "new Text(): 42": "PASS",
+        "new Text(): instanceof": "PASS",
+        "new Text(): no arguments": "PASS",
+        "new Text(): null": "PASS",
+        "new Text(): prototype chain": "PASS",
+        "new Text(): two arguments": "PASS",
+        "new Text(): undefined": "PASS"
+      }
+    },
+    "dom/nodes/Text-splitText.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Text-wholeText.html": {
+      "status": "Pass"
+    }
+  }
+}

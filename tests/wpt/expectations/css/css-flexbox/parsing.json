@@ -1,0 +1,98 @@
+{
+  "suite": "css/css-flexbox/parsing",
+  "files": {
+    "css/css-flexbox/parsing/flex-basis-computed.html": {
+      "status": "Pass"
+    },
+    "css/css-flexbox/parsing/flex-basis-invalid.html": {
+      "status": "Pass"
+    },
+    "css/css-flexbox/parsing/flex-basis-valid.html": {
+      "status": "Pass"
+    },
+    "css/css-flexbox/parsing/flex-computed.html": {
+      "status": "Pass"
+    },
+    "css/css-flexbox/parsing/flex-direction-computed.html": {
+      "status": "Pass"
+    },
+    "css/css-flexbox/parsing/flex-direction-invalid.html": {
+      "status": "Pass"
+    },
+    "css/css-flexbox/parsing/flex-direction-valid.html": {
+      "status": "Pass"
+    },
+    "css/css-flexbox/parsing/flex-flow-computed.html": {
+      "status": "Pass"
+    },
+    "css/css-flexbox/parsing/flex-flow-invalid.html": {
+      "status": "Pass"
+    },
+    "css/css-flexbox/parsing/flex-flow-shorthand.html": {
+      "status": "Pass"
+    },
+    "css/css-flexbox/parsing/flex-flow-valid.html": {
+      "status": "Pass"
+    },
+    "css/css-flexbox/parsing/flex-grow-computed.html": {
+      "status": "Pass"
+    },
+    "css/css-flexbox/parsing/flex-grow-invalid.html": {
+      "status": "Pass"
+    },
+    "css/css-flexbox/parsing/flex-grow-valid.html": {
+      "status": "Fail",
+      "subtests": {
+        "e.style['flex-grow'] = \"+.678E9\" should set the property value": "FAIL",
+        "e.style['flex-grow'] = \".0\" should set the property value": "FAIL",
+        "e.style['flex-grow'] = \"1\" should set the property value": "PASS",
+        "e.style['flex-grow'] = \"23.4e5\" should set the property value": "FAIL"
+      }
+    },
+    "css/css-flexbox/parsing/flex-invalid.html": {
+      "status": "Pass"
+    },
+    "css/css-flexbox/parsing/flex-shorthand.html": {
+      "status": "Pass"
+    },
+    "css/css-flexbox/parsing/flex-shrink-computed.html": {
+      "status": "Pass"
+    },
+    "css/css-flexbox/parsing/flex-shrink-invalid.html": {
+      "status": "Pass"
+    },
+    "css/css-flexbox/parsing/flex-shrink-valid.html": {
+      "status": "Fail",
+      "subtests": {
+        "e.style['flex-shrink'] = \"+.678E9\" should set the property value": "FAIL",
+        "e.style['flex-shrink'] = \".0\" should set the property value": "FAIL",
+        "e.style['flex-shrink'] = \"1\" should set the property value": "PASS",
+        "e.style['flex-shrink'] = \"23.4e5\" should set the property value": "FAIL"
+      }
+    },
+    "css/css-flexbox/parsing/flex-valid.html": {
+      "status": "Pass"
+    },
+    "css/css-flexbox/parsing/flex-wrap-computed.html": {
+      "status": "Pass"
+    },
+    "css/css-flexbox/parsing/flex-wrap-invalid.html": {
+      "status": "Pass"
+    },
+    "css/css-flexbox/parsing/flex-wrap-valid.html": {
+      "status": "Pass"
+    },
+    "css/css-flexbox/parsing/order-computed.html": {
+      "status": "Pass"
+    },
+    "css/css-flexbox/parsing/order-invalid.html": {
+      "status": "Pass"
+    },
+    "css/css-flexbox/parsing/order-valid.html": {
+      "status": "Pass"
+    },
+    "css/css-flexbox/parsing/webkit-aliases.html": {
+      "status": "Pass"
+    }
+  }
+}

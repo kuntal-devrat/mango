@@ -1,0 +1,8 @@
+{
+  "suite": "dom/nodes/node_4",
+  "files": {
+    "dom/nodes/Node-contains.html": {
+      "status": "Pass"
+    }
+  }
+}

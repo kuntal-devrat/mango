@@ -1,0 +1,70 @@
+{
+  "suite": "dom/nodes/node_5",
+  "files": {
+    "dom/nodes/Node-insertBefore.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Node-isConnected-shadow-dom.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Node-isConnected.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Node-isEqualNode-xhtml.xhtml": {
+      "status": "Pass"
+    },
+    "dom/nodes/Node-isEqualNode.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Node-isSameNode.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Node-lookupNamespaceURI.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Node-lookupPrefix.xhtml": {
+      "status": "Fail",
+      "subtests": {
+        "": "PASS",
+        " 1": "PASS",
+        " 2": "FAIL",
+        " 3": "FAIL",
+        " 4": "FAIL",
+        " 5": "FAIL"
+      }
+    },
+    "dom/nodes/Node-mutation-adoptNode.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Node-nodeName-xhtml.xhtml": {
+      "status": "Pass"
+    },
+    "dom/nodes/Node-nodeName.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Node-nodeValue.html": {
+      "status": "Fail",
+      "subtests": {
+        "Comment.nodeValue": "PASS",
+        "Document.nodeValue": "PASS",
+        "DocumentFragment.nodeValue": "FAIL",
+        "DocumentType.nodeValue": "FAIL",
+        "Element.nodeValue": "FAIL",
+        "ProcessingInstruction.nodeValue": "FAIL",
+        "Text.nodeValue": "PASS"
+      }
+    },
+    "dom/nodes/Node-normalize-2.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Node-normalize.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Node-parentElement.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Node-parentNode.html": {
+      "status": "Pass"
+    }
+  }
+}

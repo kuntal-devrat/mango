@@ -40,20 +40,53 @@ pub struct ReftestSuiteStats {
     pub failed: usize,
 }
 
-/// Extracts the reference file path from `<link rel="match" href="...">` or returns the default `-ref.html`.
-fn find_reference_file(test_path: &Path, content: &str) -> Option<PathBuf> {
-    // 1. Search for <link rel="match" href="...">
-    let link_pattern = "rel=\"match\"";
-    if let Some(pos) = content.find(link_pattern) {
-        // Look around pos for href="..."
-        let window_start = pos.saturating_sub(60);
-        let window_end = (pos + 120).min(content.len());
-        let window = &content[window_start..window_end];
-        if let Some(href_pos) = window.find("href=\"") {
-            let start = window_start + href_pos + 6;
-            if let Some(end_offset) = content[start..].find('"') {
-                let href = &content[start..start + end_offset];
-                let ref_path = test_path.parent().unwrap().join(href);
+/// Upstream WPT root directory.
+pub fn upstream_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("wpt")
+        .join("upstream")
+}
+
+/// Extracts the reference file path from `<link rel="match" href="...">` or returns default conventions.
+fn find_reference_file(
+    test_path: &Path,
+    content: &str,
+    upstream_root: Option<&Path>,
+) -> Option<PathBuf> {
+    // 1. Search for <link ...> tags matching rel="match"
+    let mut search_from = 0;
+    while let Some(link_pos) = content[search_from..].find("<link") {
+        let tag_start = search_from + link_pos;
+        let tag_end = match content[tag_start..].find('>') {
+            Some(end) => tag_start + end,
+            None => break,
+        };
+        let tag = &content[tag_start..tag_end];
+        search_from = tag_end;
+
+        let has_rel_match = tag.contains("rel=\"match\"")
+            || tag.contains("rel='match'")
+            || tag.contains("rel=\"help match\"")
+            || tag.contains("rel='help match'");
+
+        if has_rel_match {
+            let href_opt = if let Some(h) = tag.find("href=\"") {
+                let start = h + 6;
+                tag[start..].find('"').map(|end| &tag[start..start + end])
+            } else if let Some(h) = tag.find("href='") {
+                let start = h + 6;
+                tag[start..].find('\'').map(|end| &tag[start..start + end])
+            } else {
+                None
+            };
+
+            if let Some(href) = href_opt {
+                let ref_path = if href.starts_with('/') {
+                    upstream_root.map(|r| r.join(href.trim_start_matches('/')))?
+                } else {
+                    test_path.parent()?.join(href)
+                };
                 if ref_path.exists() {
                     return Some(ref_path);
                 }
@@ -61,21 +94,20 @@ fn find_reference_file(test_path: &Path, content: &str) -> Option<PathBuf> {
         }
     }
 
-    // 2. Default: stem + "-ref.html" in the same directory
+    // 2. Default conventions: stem + "-ref.html" / "-ref.htm" / "-ref.xht"
     let stem = test_path.file_stem()?.to_str()?;
-    let ref_filename = format!("{}-ref.html", stem);
-    let default_ref = test_path.parent()?.join(ref_filename);
-    if default_ref.exists() {
-        return Some(default_ref);
-    }
-
-    // 3. Check reference/ subdirectory
-    let sub_ref = test_path
-        .parent()?
-        .join("reference")
-        .join(format!("{}-ref.html", stem));
-    if sub_ref.exists() {
-        return Some(sub_ref);
+    for ext in ["html", "htm", "xht"] {
+        let default_ref = test_path.parent()?.join(format!("{}-ref.{}", stem, ext));
+        if default_ref.exists() {
+            return Some(default_ref);
+        }
+        let sub_ref = test_path
+            .parent()?
+            .join("reference")
+            .join(format!("{}-ref.{}", stem, ext));
+        if sub_ref.exists() {
+            return Some(sub_ref);
+        }
     }
 
     None
@@ -172,7 +204,7 @@ pub fn run_all_wpt_reftests() -> Vec<ReftestResult> {
             }
         };
 
-        let ref_path = match find_reference_file(&test_path, &test_content) {
+        let ref_path = match find_reference_file(&test_path, &test_content, None) {
             Some(p) => p,
             None => {
                 eprintln!("No reference file found for {}", test_path.display());
@@ -249,7 +281,7 @@ fn collect_html_files(dir: &Path, files: &mut Vec<PathBuf>) {
                 collect_html_files(&path, files);
             } else if path
                 .extension()
-                .is_some_and(|ext| ext == "html" || ext == "htm")
+                .is_some_and(|ext| ext == "html" || ext == "htm" || ext == "xht")
             {
                 files.push(path);
             }
@@ -257,23 +289,106 @@ fn collect_html_files(dir: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
-#[test]
-fn test_official_w3c_css_reftests() {
-    let results = run_all_wpt_reftests();
-    assert!(
-        !results.is_empty(),
-        "At least one reftest must be discovered and executed"
-    );
+/// Runs upstream WPT CSS reftests in `tests/wpt/upstream/css/<subdir>` (or all if `None`).
+pub fn run_upstream_wpt_reftests(category: Option<&str>) -> Vec<ReftestResult> {
+    let root = upstream_root();
+    let dir = match category {
+        Some(cat) => root.join("css").join(cat),
+        None => root.join("css"),
+    };
+    let mut results = Vec::new();
+    if !dir.exists() {
+        return results;
+    }
+    let mut files = Vec::new();
+    collect_html_files(&dir, &mut files);
+    files.sort();
 
+    for test_path in files {
+        let filename = test_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if filename.contains("-ref.") || filename.contains("-notref.") {
+            continue;
+        }
+
+        let test_content = match fs::read_to_string(&test_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        let ref_path = match find_reference_file(&test_path, &test_content, Some(&root)) {
+            Some(p) => p,
+            None => continue,
+        };
+
+        let ref_content = match fs::read_to_string(&ref_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        let suite_name = test_path
+            .strip_prefix(&root)
+            .ok()
+            .and_then(|p| p.parent())
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| "css".to_string());
+
+        let test_name = test_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("test")
+            .to_string();
+
+        let test_pixels = render_html_to_buffer(&test_content);
+        let ref_pixels = render_html_to_buffer(&ref_content);
+
+        let (differing, max_delta, first_diff) = compare_pixels(&test_pixels, &ref_pixels);
+        let total = test_pixels.len();
+        let passed = differing == 0;
+        let message = if passed {
+            None
+        } else {
+            let diff_coord = if let Some((x, y, p1, p2)) = first_diff {
+                format!(
+                    ", first at ({},{}) test=#0x{:08x} ref=#0x{:08x}",
+                    x, y, p1, p2
+                )
+            } else {
+                String::new()
+            };
+            Some(format!(
+                "Diff: {} pixels ({:.3}%), max channel delta: {}{}",
+                differing,
+                (differing as f64 / total as f64) * 100.0,
+                max_delta,
+                diff_coord
+            ))
+        };
+
+        results.push(ReftestResult {
+            suite: suite_name,
+            name: test_name,
+            total_pixels: total,
+            differing_pixels: differing,
+            max_delta,
+            passed,
+            message,
+        });
+    }
+
+    results
+}
+
+/// Formats and reports reftest suite results.
+pub fn report_reftest_results(title: &str, results: &[ReftestResult]) -> (usize, usize) {
     let mut suite_map: BTreeMap<String, ReftestSuiteStats> = BTreeMap::new();
     let mut total_count = 0;
     let mut passed_count = 0;
 
     println!("\n================================================================================");
-    println!("             OFFICIAL W3C CSS REFTEST SUITE EXECUTION REPORT");
+    println!("             {}", title);
     println!("================================================================================");
 
-    for res in &results {
+    for res in results {
         let stats = suite_map
             .entry(res.suite.clone())
             .or_insert_with(|| ReftestSuiteStats {
@@ -288,7 +403,6 @@ fn test_official_w3c_css_reftests() {
         if res.passed {
             stats.passed += 1;
             passed_count += 1;
-            println!("  [PASS] [{}] {}", res.suite, res.name);
         } else {
             stats.failed += 1;
             println!(
@@ -302,7 +416,7 @@ fn test_official_w3c_css_reftests() {
 
     println!("\n--------------------------------------------------------------------------------");
     println!(
-        "{:<24} | {:>8} | {:>8} | {:>8} | {:>10}",
+        "{:<35} | {:>6} | {:>6} | {:>6} | {:>8}",
         "Suite Name", "Total", "Passed", "Failed", "Pass Rate"
     );
     println!("--------------------------------------------------------------------------------");
@@ -314,12 +428,16 @@ fn test_official_w3c_css_reftests() {
             0.0
         };
         println!(
-            "{:<24} | {:>8} | {:>8} | {:>8} | {:>9.2}%",
+            "{:<35} | {:>6} | {:>6} | {:>6} | {:>7.2}%",
             name, stats.total, stats.passed, stats.failed, rate
         );
     }
 
-    let overall_pass_rate = (passed_count as f64 / total_count as f64) * 100.0;
+    let overall_pass_rate = if total_count > 0 {
+        (passed_count as f64 / total_count as f64) * 100.0
+    } else {
+        0.0
+    };
     println!("================================================================================");
     println!(
         "TOTAL: {} tests | PASSED: {} | FAILED: {} | PASS RATE: {:.2}%",
@@ -330,9 +448,62 @@ fn test_official_w3c_css_reftests() {
     );
     println!("================================================================================\n");
 
+    (passed_count, total_count)
+}
+
+#[test]
+fn test_official_w3c_css_reftests() {
+    let results = run_all_wpt_reftests();
+    assert!(
+        !results.is_empty(),
+        "At least one reftest must be discovered and executed"
+    );
+
+    let (passed, total) =
+        report_reftest_results("OFFICIAL W3C CSS REFTEST SUITE EXECUTION REPORT", &results);
+    let overall_pass_rate = (passed as f64 / total as f64) * 100.0;
     assert!(
         overall_pass_rate >= 95.0,
         "W3C CSS Reftest suite pass rate must be at least 95.0% (got {:.2}%)",
         overall_pass_rate
     );
+}
+
+#[test]
+fn test_upstream_w3c_css_box_reftests() {
+    let results = run_upstream_wpt_reftests(Some("css-box"));
+    if results.is_empty() {
+        return;
+    }
+    let (_passed, _total) = report_reftest_results("UPSTREAM W3C CSS-BOX REFTEST REPORT", &results);
+}
+
+#[test]
+fn test_upstream_w3c_css_cascade_reftests() {
+    let results = run_upstream_wpt_reftests(Some("css-cascade"));
+    if results.is_empty() {
+        return;
+    }
+    let (_passed, _total) =
+        report_reftest_results("UPSTREAM W3C CSS-CASCADE REFTEST REPORT", &results);
+}
+
+#[test]
+fn test_upstream_w3c_css_position_reftests() {
+    let results = run_upstream_wpt_reftests(Some("css-position"));
+    if results.is_empty() {
+        return;
+    }
+    let (_passed, _total) =
+        report_reftest_results("UPSTREAM W3C CSS-POSITION REFTEST REPORT", &results);
+}
+
+#[test]
+fn test_upstream_w3c_css_flexbox_reftests() {
+    let results = run_upstream_wpt_reftests(Some("css-flexbox"));
+    if results.is_empty() {
+        return;
+    }
+    let (_passed, _total) =
+        report_reftest_results("UPSTREAM W3C CSS-FLEXBOX REFTEST REPORT", &results);
 }

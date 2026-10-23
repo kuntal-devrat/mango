@@ -1,0 +1,98 @@
+{
+  "suite": "css/css-flexbox/alignment",
+  "files": {
+    "css/css-flexbox/alignment/flex-align-baseline-001.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/alignment/flex-align-baseline-002.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/alignment/flex-align-baseline-003.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/alignment/flex-align-baseline-004.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/alignment/flex-align-baseline-005.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/alignment/flex-align-baseline-006.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/alignment/flex-align-baseline-007.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/alignment/flex-align-baseline-fieldset-001.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/alignment/flex-align-baseline-fieldset-002.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/alignment/flex-align-baseline-fieldset-003.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/alignment/flex-align-baseline-flex-001.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/alignment/flex-align-baseline-flex-002.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/alignment/flex-align-baseline-flex-003.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/alignment/flex-align-baseline-flex-004.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/alignment/flex-align-baseline-grid-001.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/alignment/flex-align-baseline-grid-002.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/alignment/flex-align-baseline-grid-003.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/alignment/flex-align-baseline-line-clamp-001.tentative.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/alignment/flex-align-baseline-line-clamp-002.tentative.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/alignment/flex-align-baseline-line-clamp-003.tentative.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/alignment/flex-align-baseline-multicol-001.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/alignment/flex-align-baseline-multicol-002.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/alignment/flex-align-baseline-multicol-003.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/alignment/flex-align-baseline-overflow-001.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/alignment/flex-align-baseline-overflow-002.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/alignment/flex-align-baseline-overflow-003.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/alignment/flex-align-baseline-table-001.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/alignment/flex-align-baseline-table-002.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/alignment/flex-align-baseline-table-003.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/alignment/flex-content-alignment-with-abspos-001.html": {
+      "status": "Error"
+    },
+    "css/css-flexbox/alignment/multiline-align-self.html": {
+      "status": "Error"
+    }
+  }
+}

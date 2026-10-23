@@ -1,0 +1,280 @@
+{
+  "suite": "dom/nodes/parentnode",
+  "files": {
+    "dom/nodes/ParentNode-append.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-children.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-prepend.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-properties.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelector-All-comma-selector.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelector-All-multiple-not.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelector-All-scope.html": {
+      "status": "Fail",
+      "subtests": {
+        "querySelector": "PASS",
+        "querySelector comma separated": "PASS",
+        "querySelector with :scope > child should not match descendants": "PASS",
+        "querySelectorAll": "PASS",
+        "querySelectorAll comma separated": "PASS",
+        "querySelectorAll with :scope > child should only match direct children": "PASS",
+        "querySelectorAll with :scope in document where element moved": "FAIL",
+        "querySelectorAll with :scope in unattached svg document": "FAIL"
+      }
+    },
+    "dom/nodes/ParentNode-querySelector-All-xht.xht": {
+      "status": "Error"
+    },
+    "dom/nodes/ParentNode-querySelector-All.html": {
+      "status": "Fail",
+      "subtests": {
+        "Selectors-API Test Suite: HTML": "FAIL"
+      }
+    },
+    "dom/nodes/ParentNode-querySelector-argument-stringification.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelector-attribute-change.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelector-basic-has.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelector-case-insensitive.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelector-class-change.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelector-dupe-id.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelector-empty-attribute-value.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelector-escapes.html": {
+      "status": "Fail",
+      "subtests": {
+        "\"&B\" should match with \"#\\\\26 B\"": "FAIL",
+        "\"--\" should match with \"#--\"": "PASS",
+        "\"---\" should match with \"#---\"": "PASS",
+        "\"--11\" should match with \"#--11\"": "PASS",
+        "\"--abc\" should match with \"#--abc\"": "PASS",
+        "\"-m\" should match with \"#-\\\\6d\"": "FAIL",
+        "\"-minus\" should match with \"#\\\\-minus\"": "FAIL",
+        "\"-text\" should match with \"#-text\"": "PASS",
+        "\".,:!\" should match with \"#\\\\.\\\\,\\\\:\\\\!\"": "FAIL",
+        "\".comma\" should match with \"#\\\\.comma\"": "FAIL",
+        "\"00continueEscapes\" should match with \"#\\\\30 \\\\30 continueEscapes\"": "FAIL",
+        "\"00continueEscapes\" should match with \"#\\\\30\\\\30 continueEscapes\"": "FAIL",
+        "\"0connectHexMoreThan6Hex\" should match with \"#\\\\000030connectHexMoreThan6Hex\"": "FAIL",
+        "\"0nextIsNotHexLetters\" should match with \"#\\\\30nextIsNotHexLetters\"": "FAIL",
+        "\"0nextIsWhiteSpace\" should match with \"#\\\\30 nextIsWhiteSpace\"": "FAIL",
+        "\"0spaceMoreThan6Hex\" should match with \"#\\\\000030 spaceMoreThan6Hex\"": "FAIL",
+        "\"\\ud83dsurrogateFirst\" should never match with \"#\\\\d83d surrogateFirst\"": "PASS",
+        "\"_underscore\" should match with \"#_underscore\"": "PASS",
+        "\"aBMPRegular\" should match with \"#\\\\61 BMPRegular\"": "FAIL",
+        "\"ab\ufffdc\" should match with \"#ab\\u0000c\"": "FAIL",
+        "\"continueEscapes00\" should match with \"#continueEscapes\\\\30 \\\\30 \"": "FAIL",
+        "\"continueEscapes00\" should match with \"#continueEscapes\\\\30 \\\\30\"": "FAIL",
+        "\"continueEscapes00\" should match with \"#continueEscapes\\\\30\\\\30 \"": "FAIL",
+        "\"continueEscapes00\" should match with \"#continueEscapes\\\\30\\\\30\"": "FAIL",
+        "\"eof\\\\\" should never match with \"#eof\\\\\"": "FAIL",
+        "\"eof\ufffd\" should match with \"#eof\\\\\"": "FAIL",
+        "\"g\" should match with \"#\\\\g\"": "FAIL",
+        "\"hello\" should match with \"#hel\\\\6C o\"": "FAIL",
+        "\"hello\" should match with \"#hel\\\\6Co\"": "FAIL",
+        "\"large\ufffd\" should match with \"#large\\\\110000\"": "FAIL",
+        "\"large\ufffd\" should match with \"#large\\\\23456a\"": "FAIL",
+        "\"nonescaped\" should match with \"#nonescaped\"": "PASS",
+        "\"null\ufffd\" should match with \"#null\\\\0\"": "FAIL",
+        "\"null\ufffd\" should match with \"#null\\\\0000\"": "FAIL",
+        "\"outOfRange0\" should never match with \"#outOfRange\\\\110030\"": "PASS",
+        "\"outOfRange\ufffd\" should match with \"#outOfRange\\\\110000\"": "FAIL",
+        "\"outOfRange\ufffd\" should match with \"#outOfRange\\\\110030\"": "FAIL",
+        "\"outOfRange\ufffd\" should match with \"#outOfRange\\\\555555\"": "FAIL",
+        "\"outOfRange\ufffd\" should match with \"#outOfRange\\\\ffffff\"": "FAIL",
+        "\"simple-ident\" should match with \"#simple-ident\"": "PASS",
+        "\"spaces in\\tident\" should match with \"#spaces\\\\ in\\\\\\tident\"": "FAIL",
+        "\"spaces\" should match with \"#sp\\\\61\\tc\\\\65\\fs\"": "FAIL",
+        "\"spaces\" should match with \"#spac\\\\65\\r\\ns\"": "FAIL",
+        "\"surrogatePair\ufffd\ufffd\" should match with \"#surrogatePair\\\\d83d\\\\dd11\"": "FAIL",
+        "\"surrogatePair\ud83d\udd11\" should never match with \"#surrogatePair\\\\d83d\\\\dd11\"": "PASS",
+        "\"surrogateSecond\\udd11\" should never match with \"#surrogateSecond\\\\dd11\"": "PASS",
+        "\"surrogateSecond\ufffd\" should match with \"#surrogateSecond\\\\dd11\"": "FAIL",
+        "\"surrogate\ufffd\" should match with \"#surrogate\\\\0DBAC\"": "FAIL",
+        "\"surrogate\ufffd\" should match with \"#surrogate\\\\D800\"": "FAIL",
+        "\"test\" should match with \"#te\\\\s\\\\t\"": "FAIL",
+        "\"testing123\" should match with \"#testing123\"": "PASS",
+        "\"test\ud799\" should match with \"#test\\\\D799\"": "FAIL",
+        "\"zero\\u0000\" should never match with \"#zero\\\\0\"": "PASS",
+        "\"zero\\u0000\" should never match with \"#zero\\\\000000\"": "PASS",
+        "\"zero\ufffd\" should match with \"#zero\\\\0\"": "FAIL",
+        "\"zero\ufffd\" should match with \"#zero\\\\000000\"": "FAIL",
+        "\"\u00a0\" should match with \"#\u00a0\"": "FAIL",
+        "\"\u1234\" should match with \"#\u1234\"": "PASS",
+        "\"\u2003\" should match with \"#\u2003\"": "FAIL",
+        "\"\ue000\" should match with \"#\\\\E000\"": "FAIL",
+        "\"\ufffd\" should match with \"#\\u0000\"": "FAIL",
+        "\"\ufffdsurrogate\" should match with \"#\\\\00DFFFsurrogate\"": "FAIL",
+        "\"\ufffdsurrogateFirst\" should match with \"#\\\\d83d surrogateFirst\"": "FAIL",
+        "\"\ud808\udf45\" should match with \"#\ud808\udf45\"": "PASS",
+        "\"\ud83d\udd11nonBMP\" should match with \"#\\\\1f511 nonBMP\"": "FAIL",
+        "\"\udbc0\udc0000\" should match with \"#\\\\10000000\"": "FAIL",
+        "\"\udbff\udfff\" should match with \"#\\\\10fFfF\"": "FAIL",
+        "\"\udbff\udfff0\" should match with \"#\\\\10fFfF0\"": "FAIL"
+      }
+    },
+    "dom/nodes/ParentNode-querySelector-host-pseudo-class.html": {
+      "status": "Fail",
+      "subtests": {
+        "Using :host pseudo-class selector in shadow DOM": "FAIL"
+      }
+    },
+    "dom/nodes/ParentNode-querySelector-hyphen-prefix.html": {
+      "status": "Fail",
+      "subtests": {
+        "Class selector with hyphen-prefix followed by letters": "PASS",
+        "Class selector with hyphen-prefix followed by numbers": "FAIL",
+        "ID selector with hyphen-prefix followed by letters": "PASS",
+        "ID selector with hyphen-prefix followed by numbers": "FAIL"
+      }
+    },
+    "dom/nodes/ParentNode-querySelector-innerHTML.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelector-invalid-comment-like.html": {
+      "status": "Fail",
+      "subtests": {
+        "matches throws SyntaxError for comment-like selector": "FAIL",
+        "querySelector throws SyntaxError for comment-like selector": "FAIL",
+        "querySelectorAll throws SyntaxError for comment-like selector": "FAIL"
+      }
+    },
+    "dom/nodes/ParentNode-querySelector-is-nested-pseudo-class.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelector-is-not.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelector-last-child-combinator.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelector-matches.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelector-multiple-attributes-xml.xhtml": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelector-namespace-tagname-attribute.html": {
+      "status": "Fail",
+      "subtests": {
+        "does not match attriubte selector without prefix": "PASS",
+        "does not throw on specified namespace attriubte selector if forgiven": "PASS",
+        "does not throw on specified namespace selector if forgiven": "PASS",
+        "match namespace attriubte selector with universal prefix": "PASS",
+        "match namespace selector with universal prefix": "FAIL",
+        "match selector without prefix": "PASS",
+        "throws on specified namespace attriubte selector": "FAIL",
+        "throws on specified namespace selector": "FAIL"
+      }
+    },
+    "dom/nodes/ParentNode-querySelector-nested-nth-child.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelector-nested.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelector-nth-of-type-complex.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelector-orphan-scope.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelector-parent-context.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelector-scope-in-not.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelector-scope-numeric-id.xhtml": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelector-scope.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelector-shadowroot-nth-child.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelector-svg-not-root.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelector-tag-case.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelector-underscore-local-name.xhtml": {
+      "status": "Fail",
+      "subtests": {
+        "": "FAIL"
+      }
+    },
+    "dom/nodes/ParentNode-querySelectorAll-case-insensitive-attribute-flag.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelectorAll-namespace.html": {
+      "status": "Fail",
+      "subtests": {
+        "querySelectorAll with namespaced XML elements": "FAIL"
+      }
+    },
+    "dom/nodes/ParentNode-querySelectorAll-nested-not-has.html": {
+      "status": "Fail",
+      "subtests": {
+        "querySelectorAll with :not(:has(..))": "FAIL"
+      }
+    },
+    "dom/nodes/ParentNode-querySelectorAll-not-descendant.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelectorAll-removed-elements.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelectorAll-scope-change.html": {
+      "status": "Fail",
+      "subtests": {
+        "Change the scope of querySelectorAll": "FAIL"
+      }
+    },
+    "dom/nodes/ParentNode-querySelectorAll-scope-colon-id-class.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelectorAll-svg-append.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelectorAll-svg-class.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelectors-exclusive.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelectors-namespaces.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-querySelectors-space-and-dash-attribute-value.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/ParentNode-replaceChildren.html": {
+      "status": "Pass"
+    }
+  }
+}

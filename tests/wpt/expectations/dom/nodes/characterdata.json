@@ -1,0 +1,32 @@
+{
+  "suite": "dom/nodes/characterdata",
+  "files": {
+    "dom/nodes/CharacterData-appendChild.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/CharacterData-appendData.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/CharacterData-data.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/CharacterData-deleteData.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/CharacterData-insertData.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/CharacterData-remove.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/CharacterData-replaceData.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/CharacterData-substringData.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/CharacterData-surrogates.html": {
+      "status": "Pass"
+    }
+  }
+}

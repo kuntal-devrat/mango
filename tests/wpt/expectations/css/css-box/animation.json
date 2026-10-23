@@ -1,0 +1,35 @@
+{
+  "suite": "css/css-box/animation",
+  "files": {
+    "css/css-box/animation/margin-bottom-composition.html": {
+      "status": "Error"
+    },
+    "css/css-box/animation/margin-interpolation.html": {
+      "status": "Error"
+    },
+    "css/css-box/animation/margin-left-composition.html": {
+      "status": "Error"
+    },
+    "css/css-box/animation/margin-right-composition.html": {
+      "status": "Error"
+    },
+    "css/css-box/animation/margin-top-composition.html": {
+      "status": "Error"
+    },
+    "css/css-box/animation/padding-bottom-composition.html": {
+      "status": "Error"
+    },
+    "css/css-box/animation/padding-interpolation.html": {
+      "status": "Error"
+    },
+    "css/css-box/animation/padding-left-composition.html": {
+      "status": "Error"
+    },
+    "css/css-box/animation/padding-right-composition.html": {
+      "status": "Error"
+    },
+    "css/css-box/animation/padding-top-composition.html": {
+      "status": "Error"
+    }
+  }
+}

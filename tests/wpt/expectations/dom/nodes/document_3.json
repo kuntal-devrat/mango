@@ -1,0 +1,8 @@
+{
+  "suite": "dom/nodes/document_3",
+  "files": {
+    "dom/nodes/Document-createElement.html": {
+      "status": "Pass"
+    }
+  }
+}

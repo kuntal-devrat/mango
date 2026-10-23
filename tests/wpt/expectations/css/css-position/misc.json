@@ -1,0 +1,38 @@
+{
+  "suite": "css/css-position/misc",
+  "files": {
+    "css/css-position/backdrop-inherit-computed.html": {
+      "status": "Fail",
+      "subtests": {
+        "Apply inherited custom property to background-color": "FAIL",
+        "Explicitly inherited left": "PASS",
+        "Implicitly inherited color-scheme": "FAIL",
+        "Inherit custom property": "PASS"
+      }
+    },
+    "css/css-position/backdrop-tree-abiding-slotted.html": {
+      "status": "Fail",
+      "subtests": {
+        "::backdrop is tree-abiding and should be allowed after ::slotted()": "FAIL"
+      }
+    },
+    "css/css-position/backdrop-ua-style.html": {
+      "status": "Fail",
+      "subtests": {
+        "UA styles for ::backdrop": "FAIL"
+      }
+    },
+    "css/css-position/box-insets-top-right-bottom-left.html": {
+      "status": "Pass"
+    },
+    "css/css-position/inheritance.html": {
+      "status": "Pass"
+    },
+    "css/css-position/sticky-dialog.html": {
+      "status": "Fail",
+      "subtests": {
+        "Once in the top-layer position:sticky computes to position:absolute": "FAIL"
+      }
+    }
+  }
+}

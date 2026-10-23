@@ -1,0 +1,248 @@
+{
+  "suite": "css/css-position/sticky",
+  "files": {
+    "css/css-position/position-sticky-dynamic-ancestor-001.html": {
+      "status": "Fail",
+      "subtests": {
+        "Dynamic sticky position change doesn't break inner sticky positioned items": "FAIL"
+      }
+    },
+    "css/css-position/sticky/position-sticky-block-in-sticky-inline.html": {
+      "status": "Fail",
+      "subtests": {
+        "a sticky block in an inline does not duplicate its sticky inline ancestor's offset": "FAIL"
+      }
+    },
+    "css/css-position/sticky/position-sticky-bottom.html": {
+      "status": "Fail",
+      "subtests": {
+        "after reaching the sticking point the sticky box should be offset": "FAIL",
+        "before reaching the sticking point the sticky box should not be offset": "FAIL",
+        "the sticky box should not be pushed outside its containing block": "PASS"
+      }
+    },
+    "css/css-position/sticky/position-sticky-get-bounding-client-rect.html": {
+      "status": "Fail",
+      "subtests": {
+        "getBoundingClientRect should be correct for sticky after script insertion": "FAIL",
+        "getBoundingClientRect should be correct for sticky after script-caused layout": "FAIL",
+        "sticky positioned element should be observable by getBoundingClientRect.": "FAIL"
+      }
+    },
+    "css/css-position/sticky/position-sticky-horizontal-rtl-overconstrained.html": {
+      "status": "Fail",
+      "subtests": {
+        "end of scroll container": "FAIL",
+        "right after the in-flow position the sticky box": "FAIL",
+        "right before the in-flow position of the sticky box": "FAIL",
+        "start of scroll container": "PASS"
+      }
+    },
+    "css/css-position/sticky/position-sticky-inflow-position.html": {
+      "status": "Fail",
+      "subtests": {
+        "sticky offset should not affect the position of other elements.": "FAIL"
+      }
+    },
+    "css/css-position/sticky/position-sticky-inline-block-in-sticky-inline.html": {
+      "status": "Fail",
+      "subtests": {
+        "a sticky inline-block accounts for its sticky inline ancestor's offset when separated by a static inline": "FAIL",
+        "a sticky inline-block accounts for its sticky inline parent's offset": "FAIL"
+      }
+    },
+    "css/css-position/sticky/position-sticky-input-box-gets-focused-after-scroll.html": {
+      "status": "Fail",
+      "subtests": {
+        "Focusing on visible sticky input box should reset the scroll to unshifted sticky position.": "FAIL"
+      }
+    },
+    "css/css-position/sticky/position-sticky-left-and-right-overconstrained.html": {
+      "status": "Fail",
+      "subtests": {
+        "end of scroll container": "FAIL",
+        "right after the in-flow position the sticky box": "FAIL",
+        "right before the in-flow position of the sticky box": "FAIL",
+        "start of scroll container": "FAIL"
+      }
+    },
+    "css/css-position/sticky/position-sticky-left.html": {
+      "status": "Fail",
+      "subtests": {
+        "after reaching the sticking point the sticky box should be offset": "FAIL",
+        "before reaching the sticking point the sticky box should not be offset": "FAIL",
+        "the sticky box should not be pushed outside its containing block": "FAIL"
+      }
+    },
+    "css/css-position/sticky/position-sticky-margins.html": {
+      "status": "Fail",
+      "subtests": {
+        "Before sticking, the margin should be obeyed.": "FAIL",
+        "The margin is taken into account when making sure the sticky element does not escape its container": "FAIL",
+        "Whilst stuck, the margin is irrelevant.": "FAIL"
+      }
+    },
+    "css/css-position/sticky/position-sticky-nested-bottom.html": {
+      "status": "Fail",
+      "subtests": {
+        "before reaching the sticking point, neither sticky box should be offset": "FAIL",
+        "both sticky boxes can be stuck at the same time": "FAIL",
+        "neither sticky can escape their containing block": "PASS",
+        "the inner sticky can stick before the outer one if necessary": "FAIL",
+        "the inner sticky cannot be pushed outside the outer sticky": "PASS"
+      }
+    },
+    "css/css-position/sticky/position-sticky-nested-left.html": {
+      "status": "Fail",
+      "subtests": {
+        "before reaching the sticking point, neither sticky box should be offset": "FAIL",
+        "both sticky boxes can be stuck at the same time": "FAIL",
+        "neither sticky can escape their containing block": "FAIL",
+        "the inner sticky can stick before the outer one if necessary": "FAIL",
+        "the inner sticky cannot be pushed outside the outer sticky": "FAIL"
+      }
+    },
+    "css/css-position/sticky/position-sticky-nested-right.html": {
+      "status": "Fail",
+      "subtests": {
+        "before reaching the sticking point, neither sticky box should be offset": "FAIL",
+        "both sticky boxes can be stuck at the same time": "FAIL",
+        "neither sticky can escape their containing block": "PASS",
+        "the inner sticky can stick before the outer one if necessary": "FAIL",
+        "the inner sticky cannot be pushed outside the outer sticky": "PASS"
+      }
+    },
+    "css/css-position/sticky/position-sticky-nested-top.html": {
+      "status": "Fail",
+      "subtests": {
+        "before reaching the sticking point, neither sticky box should be offset": "FAIL",
+        "both sticky boxes can be stuck at the same time": "FAIL",
+        "neither sticky can escape their containing block": "FAIL",
+        "the inner sticky can stick before the outer one if necessary": "FAIL",
+        "the inner sticky cannot be pushed outside the outer sticky": "FAIL"
+      }
+    },
+    "css/css-position/sticky/position-sticky-offset-overflow.html": {
+      "status": "Fail",
+      "subtests": {
+        "sticky position offset should be contained by scrolling box": "FAIL"
+      }
+    },
+    "css/css-position/sticky/position-sticky-offset-top-left.html": {
+      "status": "Fail",
+      "subtests": {
+        "offsetTop/offsetLeft should be correct for sticky after script insertion": "FAIL",
+        "offsetTop/offsetLeft should be correct for sticky after script-caused layout": "FAIL"
+      }
+    },
+    "css/css-position/sticky/position-sticky-overflow-hidden.html": {
+      "status": "Pass"
+    },
+    "css/css-position/sticky/position-sticky-overflow-padding.html": {
+      "status": "Fail",
+      "subtests": {
+        "A sticky element should be offset by ancestor padding even when stuck": "FAIL",
+        "A sticky element should not be affected by ancestor padding until it reaches it": "FAIL",
+        "Ancestor overflow padding does not allow a sticky element to escape its container": "FAIL"
+      }
+    },
+    "css/css-position/sticky/position-sticky-parsing.html": {
+      "status": "Pass"
+    },
+    "css/css-position/sticky/position-sticky-right.html": {
+      "status": "Fail",
+      "subtests": {
+        "after reaching the sticking point the sticky box should be offset": "FAIL",
+        "before reaching the sticking point the sticky box should not be offset": "FAIL",
+        "the sticky box should not be pushed outside its containing block": "PASS"
+      }
+    },
+    "css/css-position/sticky/position-sticky-root-scroller.html": {
+      "status": "Fail",
+      "subtests": {
+        "Sticky elements work with the root (document) scroller": "FAIL"
+      }
+    },
+    "css/css-position/sticky/position-sticky-scrollIntoView.html": {
+      "status": "Fail",
+      "subtests": {
+        "scrolling a sticky element into view should use its unshifted position": "FAIL"
+      }
+    },
+    "css/css-position/sticky/position-sticky-scrolled-remove-sibling.html": {
+      "status": "Fail",
+      "subtests": {
+        "Sticky position and its overflow contribution in the horizontal axis": "FAIL",
+        "Sticky position and its overflow contribution in the vertical axis": "FAIL"
+      }
+    },
+    "css/css-position/sticky/position-sticky-single-axis-basic.html": {
+      "status": "Fail",
+      "subtests": {
+        "Constraints apply independently across nested single-axis scrollers": "FAIL",
+        "Constraints correctly skip axes that are overflow: clip": "FAIL"
+      }
+    },
+    "css/css-position/sticky/position-sticky-single-axis-dynamic.html": {
+      "status": "Fail",
+      "subtests": {
+        "Sequential scrolling and dynamic constraint updates merge and remove correctly": "FAIL"
+      }
+    },
+    "css/css-position/sticky/position-sticky-single-axis-nested.html": {
+      "status": "Fail",
+      "subtests": {
+        "Nested sticky elements accumulate offsets correctly on independent axes": "FAIL"
+      }
+    },
+    "css/css-position/sticky/position-sticky-single-axis-used-values.html": {
+      "status": "Fail",
+      "subtests": {
+        "The used values from getComputedStyle() resolve against the correct scroller.": "FAIL"
+      }
+    },
+    "css/css-position/sticky/position-sticky-top-and-bottom-overconstrained.html": {
+      "status": "Fail",
+      "subtests": {
+        "end of scroll container": "FAIL",
+        "right after the in-flow position the sticky box": "FAIL",
+        "right before the in-flow position of the sticky box": "FAIL",
+        "start of scroll container": "FAIL"
+      }
+    },
+    "css/css-position/sticky/position-sticky-top-and-bottom.html": {
+      "status": "Fail",
+      "subtests": {
+        "initially the sticky box should be pushed to the top of the container": "PASS",
+        "when we scroll past the flow position the top constraint pushes it down": "FAIL"
+      }
+    },
+    "css/css-position/sticky/position-sticky-top.html": {
+      "status": "Fail",
+      "subtests": {
+        "after reaching the sticking point the sticky box should be offset": "FAIL",
+        "before reaching the sticking point the sticky box should not be offset": "FAIL",
+        "the sticky box should not be pushed outside its containing block": "FAIL"
+      }
+    },
+    "css/css-position/sticky/position-sticky-transforms-translate.html": {
+      "status": "Fail",
+      "subtests": {
+        "Stuck elements can still be moved via translations": "FAIL",
+        "The sticky element should stick before the container is offset by a translation": "FAIL",
+        "Translation transform can move sticky element past sticking point": "PASS"
+      }
+    },
+    "css/css-position/sticky/position-sticky-transforms.html": {
+      "status": "Fail",
+      "subtests": {
+        "Perspective transforms are carried out on the stuck element position": "FAIL",
+        "Rotate transforms are carried out on the stuck element position": "FAIL",
+        "Scale transforms are carried out on the stuck element position": "PASS"
+      }
+    },
+    "css/css-position/sticky/sticky-after-input.html": {
+      "status": "Pass"
+    }
+  }
+}

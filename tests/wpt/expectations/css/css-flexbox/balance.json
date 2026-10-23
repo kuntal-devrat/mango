@@ -1,0 +1,78 @@
+{
+  "suite": "css/css-flexbox/balance",
+  "files": {
+    "css/css-flexbox/balance/balance-negative-margin-002.html": {
+      "status": "Fail",
+      "subtests": {
+        "#flex > div 1": "PASS",
+        "#flex > div 2": "FAIL",
+        "#flex > div 3": "FAIL",
+        "#flex > div 4": "PASS"
+      }
+    },
+    "css/css-flexbox/balance/flex-flow-invalid.html": {
+      "status": "Pass"
+    },
+    "css/css-flexbox/balance/flex-flow-shorthand.html": {
+      "status": "Fail",
+      "subtests": {
+        "e.style['flex-flow'] = \"balance\" should not set unrelated longhands": "PASS",
+        "e.style['flex-flow'] = \"balance\" should set flex-direction": "PASS",
+        "e.style['flex-flow'] = \"balance\" should set flex-wrap": "PASS",
+        "e.style['flex-flow'] = \"column wrap balance\" should not set unrelated longhands": "PASS",
+        "e.style['flex-flow'] = \"column wrap balance\" should set flex-direction": "PASS",
+        "e.style['flex-flow'] = \"column wrap balance\" should set flex-wrap": "PASS",
+        "e.style['flex-flow'] = \"wrap-reverse balance row-reverse\" should not set unrelated longhands": "PASS",
+        "e.style['flex-flow'] = \"wrap-reverse balance row-reverse\" should set flex-direction": "PASS",
+        "e.style['flex-flow'] = \"wrap-reverse balance row-reverse\" should set flex-wrap": "FAIL"
+      }
+    },
+    "css/css-flexbox/balance/flex-flow-valid.html": {
+      "status": "Pass"
+    },
+    "css/css-flexbox/balance/flex-line-count-computed.html": {
+      "status": "Fail",
+      "subtests": {
+        "Property flex-line-count value '1'": "PASS",
+        "Property flex-line-count value '2'": "FAIL",
+        "Property flex-line-count value 'calc(NaN)'": "FAIL",
+        "Property flex-line-count value 'round(up, calc(7/2))'": "FAIL"
+      }
+    },
+    "css/css-flexbox/balance/flex-line-count-invalid.html": {
+      "status": "Pass"
+    },
+    "css/css-flexbox/balance/flex-line-count-valid.html": {
+      "status": "Pass"
+    },
+    "css/css-flexbox/balance/flex-wrap-computed.html": {
+      "status": "Fail",
+      "subtests": {
+        "Property flex-wrap value 'balance wrap'": "FAIL",
+        "Property flex-wrap value 'balance wrap-reverse'": "FAIL",
+        "Property flex-wrap value 'balance'": "FAIL",
+        "Property flex-wrap value 'nowrap'": "PASS",
+        "Property flex-wrap value 'wrap balance'": "FAIL",
+        "Property flex-wrap value 'wrap'": "PASS",
+        "Property flex-wrap value 'wrap-reverse balance'": "FAIL",
+        "Property flex-wrap value 'wrap-reverse'": "PASS"
+      }
+    },
+    "css/css-flexbox/balance/flex-wrap-invalid.html": {
+      "status": "Pass"
+    },
+    "css/css-flexbox/balance/flex-wrap-valid.html": {
+      "status": "Fail",
+      "subtests": {
+        "e.style['flex-wrap'] = \"balance wrap\" should set the property value": "FAIL",
+        "e.style['flex-wrap'] = \"balance wrap-reverse\" should set the property value": "FAIL",
+        "e.style['flex-wrap'] = \"balance\" should set the property value": "PASS",
+        "e.style['flex-wrap'] = \"nowrap\" should set the property value": "PASS",
+        "e.style['flex-wrap'] = \"wrap balance\" should set the property value": "FAIL",
+        "e.style['flex-wrap'] = \"wrap\" should set the property value": "PASS",
+        "e.style['flex-wrap'] = \"wrap-reverse balance\" should set the property value": "FAIL",
+        "e.style['flex-wrap'] = \"wrap-reverse\" should set the property value": "PASS"
+      }
+    }
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "suite": "dom/nodes/element_1",
+  "files": {
+    "dom/nodes/Element-childElement-null-xhtml.xhtml": {
+      "status": "Error"
+    },
+    "dom/nodes/Element-childElement-null.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Element-childElementCount-dynamic-add-xhtml.xhtml": {
+      "status": "Error"
+    },
+    "dom/nodes/Element-childElementCount-dynamic-add.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Element-childElementCount-dynamic-remove-xhtml.xhtml": {
+      "status": "Error"
+    },
+    "dom/nodes/Element-childElementCount-dynamic-remove.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Element-childElementCount-nochild-xhtml.xhtml": {
+      "status": "Error"
+    },
+    "dom/nodes/Element-childElementCount-nochild.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Element-childElementCount-xhtml.xhtml": {
+      "status": "Error"
+    },
+    "dom/nodes/Element-childElementCount.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/Element-children.html": {
+      "status": "Fail",
+      "subtests": {
+        "HTMLCollection edge cases": "FAIL",
+        "HTMLCollection edge cases 1": "FAIL"
+      }
+    }
+  }
+}

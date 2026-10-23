@@ -1,0 +1,131 @@
+{
+  "suite": "css/css-box/margin-trim",
+  "files": {
+    "css/css-box/margin-trim/block-container-block-end-last-child-with-border.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/block-container-block-end-nested-last-child-with-border.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/block-container-block-end-self-collapsing-children-nested-at-bottom.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/block-container-block-end-self-collapsing-children-nested-margin-trim.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/block-container-block-end-self-collapsing-children-offsets-nested-multiple-times.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/block-container-block-end-self-collapsing-children-offsets-nested-once.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/block-container-block-end-self-collapsing-children-offsets-vert-lr.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/block-container-block-end-self-collapsing-children-offsets.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/computed-margin-values/flexbox-column-block-end.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/computed-margin-values/flexbox-column-block-start.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/computed-margin-values/flexbox-column-inline-end.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/computed-margin-values/flexbox-column-inline-start.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/computed-margin-values/flexbox-column-multi-line-block-end.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/computed-margin-values/flexbox-column-multi-line-block-start.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/computed-margin-values/flexbox-column-multi-line-block.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/computed-margin-values/flexbox-column-multi-line-inline-end.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/computed-margin-values/flexbox-column-multi-line-inline-start.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/computed-margin-values/flexbox-column-style-change-triggers-layout-block-start.html": {
+      "status": "Fail",
+      "subtests": {
+        "flexbox > item 1": "FAIL",
+        "flexbox > item 2": "FAIL"
+      }
+    },
+    "css/css-box/margin-trim/computed-margin-values/flexbox-row-block-end.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/computed-margin-values/flexbox-row-block-start.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/computed-margin-values/flexbox-row-block.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/computed-margin-values/flexbox-row-inline-end.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/computed-margin-values/flexbox-row-inline-start.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/computed-margin-values/flexbox-row-multi-line-block-end.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/computed-margin-values/flexbox-row-multi-line-block-start.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/computed-margin-values/flexbox-row-multi-line-block.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/computed-margin-values/flexbox-row-multi-line-inline-end.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/computed-margin-values/flexbox-row-multi-line-inline-start.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/computed-margin-values/grid-block-end-column-auto-flow.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/computed-margin-values/grid-block-end-item-spans-multiple-rows.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/computed-margin-values/grid-block-end.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/computed-margin-values/grid-block-start.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/computed-margin-values/grid-inline-end-columns-added-to-end.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/computed-margin-values/grid-inline-end-items-in-last-column-trimmed.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/computed-margin-values/grid-inline-start-item-negative-span.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/computed-margin-values/grid-inline-start.html": {
+      "status": "Error"
+    },
+    "css/css-box/margin-trim/margin-trim-computed-value.html": {
+      "status": "Fail",
+      "subtests": {
+        "block-end margin of a trimmed last child is still the used value": "FAIL",
+        "block-end margin that collapses through to a trimmed edge is still the used value": "FAIL",
+        "block-start margin of a trimmed first child in vertical-lr is still the used value": "FAIL",
+        "block-start margin of a trimmed first child is still the used value": "FAIL",
+        "block-start margin that collapses through to a trimmed edge is still the used value": "FAIL",
+        "both margins of a trimmed self-collapsing last child are still the used values": "FAIL",
+        "collapsed block-start margin is still the used value": "PASS",
+        "percentage block-start margin of a trimmed first child resolves against the containing block": "FAIL",
+        "trimmed margins of a self-collapsing last child do not grow a container that cannot collapse with its children": "FAIL"
+      }
+    }
+  }
+}

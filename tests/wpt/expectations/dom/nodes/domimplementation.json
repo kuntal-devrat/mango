@@ -1,0 +1,23 @@
+{
+  "suite": "dom/nodes/domimplementation",
+  "files": {
+    "dom/nodes/DOMImplementation-createDocument-no-browsing-context.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/DOMImplementation-createDocument.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/DOMImplementation-createDocumentType.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/DOMImplementation-createHTMLDocument-with-saved-implementation.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/DOMImplementation-createHTMLDocument.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/DOMImplementation-hasFeature.html": {
+      "status": "Pass"
+    }
+  }
+}

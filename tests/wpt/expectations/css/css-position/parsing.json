@@ -1,0 +1,123 @@
+{
+  "suite": "css/css-position/parsing",
+  "files": {
+    "css/css-position/parsing/bottom-computed.html": {
+      "status": "Pass"
+    },
+    "css/css-position/parsing/bottom-invalid.html": {
+      "status": "Pass"
+    },
+    "css/css-position/parsing/bottom-valid.html": {
+      "status": "Pass"
+    },
+    "css/css-position/parsing/inset-computed.html": {
+      "status": "Pass"
+    },
+    "css/css-position/parsing/inset-invalid.html": {
+      "status": "Pass"
+    },
+    "css/css-position/parsing/inset-valid.html": {
+      "status": "Fail",
+      "subtests": {
+        "e.style['inset-block'] = \"-10px\" should set the property value": "PASS",
+        "e.style['inset-block'] = \"-20%\" should set the property value": "PASS",
+        "e.style['inset-block'] = \"0\" should set the property value": "PASS",
+        "e.style['inset-block'] = \"10% -5px\" should set the property value": "PASS",
+        "e.style['inset-block'] = \"10%\" should set the property value": "PASS",
+        "e.style['inset-block'] = \"100px 100px\" should set the property value": "PASS",
+        "e.style['inset-block'] = \"1rem calc(0px)\" should set the property value": "PASS",
+        "e.style['inset-block'] = \"1rem\" should set the property value": "PASS",
+        "e.style['inset-block'] = \"auto auto\" should set the property value": "PASS",
+        "e.style['inset-block'] = \"auto\" should set the property value": "PASS",
+        "e.style['inset-block'] = \"calc(2em + 3ex)\" should set the property value": "PASS",
+        "e.style['inset-block-end'] = \"-10px\" should set the property value": "PASS",
+        "e.style['inset-block-end'] = \"-20%\" should set the property value": "PASS",
+        "e.style['inset-block-end'] = \"0\" should set the property value": "FAIL",
+        "e.style['inset-block-end'] = \"10%\" should set the property value": "PASS",
+        "e.style['inset-block-end'] = \"1rem\" should set the property value": "PASS",
+        "e.style['inset-block-end'] = \"auto\" should set the property value": "PASS",
+        "e.style['inset-block-end'] = \"calc(2em + 3ex)\" should set the property value": "PASS",
+        "e.style['inset-block-start'] = \"-10px\" should set the property value": "PASS",
+        "e.style['inset-block-start'] = \"-20%\" should set the property value": "PASS",
+        "e.style['inset-block-start'] = \"0\" should set the property value": "FAIL",
+        "e.style['inset-block-start'] = \"10%\" should set the property value": "PASS",
+        "e.style['inset-block-start'] = \"1rem\" should set the property value": "PASS",
+        "e.style['inset-block-start'] = \"auto\" should set the property value": "PASS",
+        "e.style['inset-block-start'] = \"calc(2em + 3ex)\" should set the property value": "PASS",
+        "e.style['inset-inline'] = \"-10px\" should set the property value": "PASS",
+        "e.style['inset-inline'] = \"-20%\" should set the property value": "PASS",
+        "e.style['inset-inline'] = \"0\" should set the property value": "PASS",
+        "e.style['inset-inline'] = \"10% -5px\" should set the property value": "PASS",
+        "e.style['inset-inline'] = \"10%\" should set the property value": "PASS",
+        "e.style['inset-inline'] = \"100px 100px\" should set the property value": "PASS",
+        "e.style['inset-inline'] = \"1rem calc(0px)\" should set the property value": "PASS",
+        "e.style['inset-inline'] = \"1rem\" should set the property value": "PASS",
+        "e.style['inset-inline'] = \"auto auto\" should set the property value": "PASS",
+        "e.style['inset-inline'] = \"auto\" should set the property value": "PASS",
+        "e.style['inset-inline'] = \"calc(2em + 3ex)\" should set the property value": "PASS",
+        "e.style['inset-inline-end'] = \"-10px\" should set the property value": "PASS",
+        "e.style['inset-inline-end'] = \"-20%\" should set the property value": "PASS",
+        "e.style['inset-inline-end'] = \"0\" should set the property value": "FAIL",
+        "e.style['inset-inline-end'] = \"10%\" should set the property value": "PASS",
+        "e.style['inset-inline-end'] = \"1rem\" should set the property value": "PASS",
+        "e.style['inset-inline-end'] = \"auto\" should set the property value": "PASS",
+        "e.style['inset-inline-end'] = \"calc(2em + 3ex)\" should set the property value": "PASS",
+        "e.style['inset-inline-start'] = \"-10px\" should set the property value": "PASS",
+        "e.style['inset-inline-start'] = \"-20%\" should set the property value": "PASS",
+        "e.style['inset-inline-start'] = \"0\" should set the property value": "FAIL",
+        "e.style['inset-inline-start'] = \"10%\" should set the property value": "PASS",
+        "e.style['inset-inline-start'] = \"1rem\" should set the property value": "PASS",
+        "e.style['inset-inline-start'] = \"auto\" should set the property value": "PASS",
+        "e.style['inset-inline-start'] = \"calc(2em + 3ex)\" should set the property value": "PASS"
+      }
+    },
+    "css/css-position/parsing/left-computed.html": {
+      "status": "Pass"
+    },
+    "css/css-position/parsing/left-invalid.html": {
+      "status": "Pass"
+    },
+    "css/css-position/parsing/left-valid.html": {
+      "status": "Pass"
+    },
+    "css/css-position/parsing/position-computed.html": {
+      "status": "Pass"
+    },
+    "css/css-position/parsing/position-invalid.html": {
+      "status": "Pass"
+    },
+    "css/css-position/parsing/position-valid.html": {
+      "status": "Pass"
+    },
+    "css/css-position/parsing/right-computed.html": {
+      "status": "Pass"
+    },
+    "css/css-position/parsing/right-invalid.html": {
+      "status": "Pass"
+    },
+    "css/css-position/parsing/right-valid.html": {
+      "status": "Pass"
+    },
+    "css/css-position/parsing/top-computed.html": {
+      "status": "Pass"
+    },
+    "css/css-position/parsing/top-invalid.html": {
+      "status": "Pass"
+    },
+    "css/css-position/parsing/top-valid.html": {
+      "status": "Pass"
+    },
+    "css/css-position/parsing/z-index-computed.html": {
+      "status": "Pass"
+    },
+    "css/css-position/parsing/z-index-invalid.html": {
+      "status": "Pass"
+    },
+    "css/css-position/parsing/z-index-positioned-computed.html": {
+      "status": "Pass"
+    },
+    "css/css-position/parsing/z-index-valid.html": {
+      "status": "Pass"
+    }
+  }
+}

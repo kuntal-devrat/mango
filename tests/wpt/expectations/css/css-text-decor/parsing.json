@@ -1,0 +1,35 @@
+{
+  "suite": "css/css-text-decor/parsing",
+  "files": {
+    "css/css-text-decor/parsing/text-decoration-color-computed.html": {
+      "status": "Pass"
+    },
+    "css/css-text-decor/parsing/text-decoration-color-valid.html": {
+      "status": "Pass"
+    },
+    "css/css-text-decor/parsing/text-decoration-computed.html": {
+      "status": "Pass"
+    },
+    "css/css-text-decor/parsing/text-decoration-line-computed.html": {
+      "status": "Pass"
+    },
+    "css/css-text-decor/parsing/text-decoration-line-invalid.html": {
+      "status": "Pass"
+    },
+    "css/css-text-decor/parsing/text-decoration-line-valid.html": {
+      "status": "Pass"
+    },
+    "css/css-text-decor/parsing/text-decoration-shorthand.html": {
+      "status": "Pass"
+    },
+    "css/css-text-decor/parsing/text-decoration-style-computed.html": {
+      "status": "Pass"
+    },
+    "css/css-text-decor/parsing/text-decoration-style-valid.html": {
+      "status": "Pass"
+    },
+    "css/css-text-decor/parsing/text-decoration-valid.html": {
+      "status": "Pass"
+    }
+  }
+}

@@ -1,0 +1,264 @@
+{
+  "suite": "css/css-position/absolute",
+  "files": {
+    "css/css-position/position-absolute-abspos-table-dynamic.html": {
+      "status": "Fail",
+      "subtests": {
+        "#target height changed": "FAIL"
+      }
+    },
+    "css/css-position/position-absolute-chrome-bug-001.html": {
+      "status": "Pass"
+    },
+    "css/css-position/position-absolute-chrome-bug-002.html": {
+      "status": "Pass"
+    },
+    "css/css-position/position-absolute-container-dynamic-002.html": {
+      "status": "Fail",
+      "subtests": {
+        "#target static position responded to parent relayout": "FAIL"
+      }
+    },
+    "css/css-position/position-absolute-container-dynamic.html": {
+      "status": "Fail",
+      "subtests": {
+        "#target used container width when computing size": "FAIL"
+      }
+    },
+    "css/css-position/position-absolute-crash-chrome-001.html": {
+      "status": "Pass"
+    },
+    "css/css-position/position-absolute-crash-chrome-002.html": {
+      "status": "Pass"
+    },
+    "css/css-position/position-absolute-crash-chrome-003.html": {
+      "status": "Pass"
+    },
+    "css/css-position/position-absolute-crash-chrome-004.html": {
+      "status": "Pass"
+    },
+    "css/css-position/position-absolute-crash-chrome-005.html": {
+      "status": "Pass"
+    },
+    "css/css-position/position-absolute-crash-chrome-006.html": {
+      "status": "Pass"
+    },
+    "css/css-position/position-absolute-crash-chrome-007.html": {
+      "status": "Pass"
+    },
+    "css/css-position/position-absolute-crash-chrome-008.html": {
+      "status": "Pass"
+    },
+    "css/css-position/position-absolute-crash-chrome-009.html": {
+      "status": "Pass"
+    },
+    "css/css-position/position-absolute-crash-chrome-010.html": {
+      "status": "Pass"
+    },
+    "css/css-position/position-absolute-crash-chrome-011.html": {
+      "status": "Pass"
+    },
+    "css/css-position/position-absolute-crash-chrome-012.html": {
+      "status": "Pass"
+    },
+    "css/css-position/position-absolute-crash-chrome-013.html": {
+      "status": "Pass"
+    },
+    "css/css-position/position-absolute-dynamic-containing-block.html": {
+      "status": "Fail",
+      "subtests": {
+        "abs containing block moves from intermediate to outer": "PASS",
+        "abs containing block moves from outer to intermediate": "PASS",
+        "fixed containing block moves from intermediate to outer": "PASS",
+        "fixed containing block moves from outer to intermediate": "PASS",
+        "target becomes absolute": "FAIL",
+        "target becomes fixed": "FAIL",
+        "target is no longer absolute": "FAIL",
+        "target is no longer fixed": "FAIL"
+      }
+    },
+    "css/css-position/position-absolute-dynamic-formatting-context.html": {
+      "status": "Fail",
+      "subtests": {
+        "block-level canvas gets position set to absolute": "FAIL",
+        "block-level canvas gets position set to fixed": "FAIL",
+        "display: block gets position set to absolute": "FAIL",
+        "display: block gets position set to fixed": "FAIL",
+        "display: flex gets position set to absolute": "FAIL",
+        "display: flex gets position set to fixed": "FAIL",
+        "display: flow-root gets position set to absolute": "FAIL",
+        "display: flow-root gets position set to fixed": "FAIL",
+        "display: grid gets position set to absolute": "FAIL",
+        "display: grid gets position set to fixed": "FAIL",
+        "display: inline-flex gets position set to absolute": "FAIL",
+        "display: inline-flex gets position set to fixed": "FAIL"
+      }
+    },
+    "css/css-position/position-absolute-dynamic-margin-auto-001.html": {
+      "status": "Fail",
+      "subtests": {
+        "margin:0 auto on abspos resolves correctly after dynamic inset change": "FAIL",
+        "margin:auto on abspos resolves correctly after dynamic inset change": "FAIL"
+      }
+    },
+    "css/css-position/position-absolute-fit-content-auto-margin.html": {
+      "status": "Fail",
+      "subtests": {
+        "#tests .abspos 1": "FAIL",
+        "#tests .abspos 10": "FAIL",
+        "#tests .abspos 11": "FAIL",
+        "#tests .abspos 12": "FAIL",
+        "#tests .abspos 13": "PASS",
+        "#tests .abspos 14": "FAIL",
+        "#tests .abspos 15": "PASS",
+        "#tests .abspos 16": "FAIL",
+        "#tests .abspos 17": "FAIL",
+        "#tests .abspos 18": "FAIL",
+        "#tests .abspos 19": "FAIL",
+        "#tests .abspos 2": "FAIL",
+        "#tests .abspos 20": "FAIL",
+        "#tests .abspos 21": "FAIL",
+        "#tests .abspos 22": "PASS",
+        "#tests .abspos 23": "FAIL",
+        "#tests .abspos 24": "PASS",
+        "#tests .abspos 25": "FAIL",
+        "#tests .abspos 26": "FAIL",
+        "#tests .abspos 27": "FAIL",
+        "#tests .abspos 28": "TIMEOUT",
+        "#tests .abspos 3": "FAIL",
+        "#tests .abspos 4": "PASS",
+        "#tests .abspos 5": "FAIL",
+        "#tests .abspos 6": "PASS",
+        "#tests .abspos 7": "FAIL",
+        "#tests .abspos 8": "FAIL",
+        "#tests .abspos 9": "FAIL"
+      }
+    },
+    "css/css-position/position-absolute-in-inline-001.html": {
+      "status": "Pass"
+    },
+    "css/css-position/position-absolute-in-inline-002.html": {
+      "status": "Fail",
+      "subtests": {
+        "absolute inside inline container location should be correct.": "FAIL"
+      }
+    },
+    "css/css-position/position-absolute-in-inline-crash.html": {
+      "status": "Pass"
+    },
+    "css/css-position/position-absolute-margin-auto-001.html": {
+      "status": "Error"
+    },
+    "css/css-position/position-absolute-padding-percentage.html": {
+      "status": "Fail",
+      "subtests": {
+        "absolute positioned element should resolve padding left+right against container padding-box width": "PASS",
+        "absolute positioned element should resolve padding top+bottom against container padding-box width": "FAIL"
+      }
+    },
+    "css/css-position/position-absolute-percentage-height.html": {
+      "status": "Fail",
+      "subtests": {
+        "#target height matches containing block height, and target parent width matches #target width": "FAIL",
+        "#target height matches containing block height, and target parent width matches #target width after resize": "FAIL"
+      }
+    },
+    "css/css-position/position-absolute-replaced-minmax.html": {
+      "status": "Fail",
+      "subtests": {
+        "minmax replaced IFRAME 1": "FAIL",
+        "minmax replaced IFRAME 10": "FAIL",
+        "minmax replaced IFRAME 11": "FAIL",
+        "minmax replaced IFRAME 2": "FAIL",
+        "minmax replaced IFRAME 3": "FAIL",
+        "minmax replaced IFRAME 4": "FAIL",
+        "minmax replaced IFRAME 5": "FAIL",
+        "minmax replaced IFRAME 6": "FAIL",
+        "minmax replaced IFRAME 7": "FAIL",
+        "minmax replaced IFRAME 8": "FAIL",
+        "minmax replaced IFRAME 9": "FAIL",
+        "minmax replaced IMG 12": "NOTRUN",
+        "minmax replaced IMG 13": "NOTRUN",
+        "minmax replaced IMG 14": "NOTRUN",
+        "minmax replaced IMG 15": "NOTRUN",
+        "minmax replaced IMG 16": "NOTRUN",
+        "minmax replaced IMG 17": "NOTRUN",
+        "minmax replaced IMG 18": "NOTRUN",
+        "minmax replaced IMG 19": "NOTRUN",
+        "minmax replaced IMG 20": "NOTRUN",
+        "minmax replaced IMG 21": "NOTRUN",
+        "minmax replaced IMG 22": "NOTRUN",
+        "minmax replaced IMG 34": "NOTRUN",
+        "minmax replaced IMG 35": "NOTRUN",
+        "minmax replaced IMG 36": "NOTRUN",
+        "minmax replaced IMG 37": "NOTRUN",
+        "minmax replaced IMG 38": "NOTRUN",
+        "minmax replaced IMG 39": "NOTRUN",
+        "minmax replaced IMG 40": "NOTRUN",
+        "minmax replaced IMG 41": "NOTRUN",
+        "minmax replaced IMG 42": "NOTRUN",
+        "minmax replaced IMG 43": "NOTRUN",
+        "minmax replaced IMG svg 23": "NOTRUN",
+        "minmax replaced IMG svg 24": "NOTRUN",
+        "minmax replaced IMG svg 25": "NOTRUN",
+        "minmax replaced IMG svg 26": "NOTRUN",
+        "minmax replaced IMG svg 27": "NOTRUN",
+        "minmax replaced IMG svg 28": "NOTRUN",
+        "minmax replaced IMG svg 29": "NOTRUN",
+        "minmax replaced IMG svg 30": "NOTRUN",
+        "minmax replaced IMG svg 31": "NOTRUN",
+        "minmax replaced IMG svg 32": "NOTRUN",
+        "minmax replaced IMG svg 33": "NOTRUN"
+      }
+    },
+    "css/css-position/position-absolute-scrollable-overflow-001.html": {
+      "status": "Error"
+    },
+    "css/css-position/position-absolute-table-001.html": {
+      "status": "Fail",
+      "subtests": {
+        "table size border-box": "FAIL",
+        "table size border-box interpreted as minimum width": "FAIL",
+        "table size content-box": "FAIL",
+        "table size content-box interpreted as minimum width": "FAIL",
+        "table size is interpreted as border-box width by default": "FAIL",
+        "table size is interpreted as minimum width": "FAIL"
+      }
+    },
+    "css/css-position/position-absolute-with-negative-sized-imcb.html": {
+      "status": "Fail",
+      "subtests": {
+        ".abspos 1": "FAIL",
+        ".abspos 10": "FAIL",
+        ".abspos 11": "FAIL",
+        ".abspos 12": "FAIL",
+        ".abspos 13": "FAIL",
+        ".abspos 14": "FAIL",
+        ".abspos 15": "FAIL",
+        ".abspos 16": "FAIL",
+        ".abspos 17": "FAIL",
+        ".abspos 18": "FAIL",
+        ".abspos 19": "FAIL",
+        ".abspos 2": "FAIL",
+        ".abspos 20": "FAIL",
+        ".abspos 21": "FAIL",
+        ".abspos 22": "FAIL",
+        ".abspos 23": "FAIL",
+        ".abspos 24": "FAIL",
+        ".abspos 25": "FAIL",
+        ".abspos 26": "FAIL",
+        ".abspos 27": "FAIL",
+        ".abspos 28": "FAIL",
+        ".abspos 29": "FAIL",
+        ".abspos 3": "FAIL",
+        ".abspos 30": "FAIL",
+        ".abspos 4": "FAIL",
+        ".abspos 5": "FAIL",
+        ".abspos 6": "FAIL",
+        ".abspos 7": "FAIL",
+        ".abspos 8": "FAIL",
+        ".abspos 9": "FAIL"
+      }
+    }
+  }
+}

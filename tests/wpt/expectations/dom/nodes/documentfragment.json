@@ -1,0 +1,21 @@
+{
+  "suite": "dom/nodes/documentfragment",
+  "files": {
+    "dom/nodes/DocumentFragment-constructor.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/DocumentFragment-getElementById.html": {
+      "status": "Fail",
+      "subtests": {
+        "Empty string ID values": "FAIL",
+        "It must return null when there are no matches": "PASS",
+        "It must return the first element when there are matches": "PASS",
+        "It must return the first element when there are matches, using a template": "PASS",
+        "The method must exist": "PASS"
+      }
+    },
+    "dom/nodes/DocumentFragment-querySelectorAll-after-modification.html": {
+      "status": "Pass"
+    }
+  }
+}

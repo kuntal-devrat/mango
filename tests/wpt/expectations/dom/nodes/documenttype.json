@@ -1,0 +1,14 @@
+{
+  "suite": "dom/nodes/documenttype",
+  "files": {
+    "dom/nodes/DocumentType-literal-xhtml.xhtml": {
+      "status": "Pass"
+    },
+    "dom/nodes/DocumentType-literal.html": {
+      "status": "Pass"
+    },
+    "dom/nodes/DocumentType-remove.html": {
+      "status": "Pass"
+    }
+  }
+}

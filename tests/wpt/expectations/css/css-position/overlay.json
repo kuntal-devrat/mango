@@ -1,0 +1,36 @@
+{
+  "suite": "css/css-position/overlay",
+  "files": {
+    "css/css-position/overlay/animation/overlay-interpolation.html": {
+      "status": "Error"
+    },
+    "css/css-position/overlay/overlay-computed.html": {
+      "status": "Pass"
+    },
+    "css/css-position/overlay/overlay-invalid.html": {
+      "status": "Pass"
+    },
+    "css/css-position/overlay/overlay-transition-property.html": {
+      "status": "Fail",
+      "subtests": {
+        "Property transition value 'overlay 1s'": "FAIL",
+        "Property transition-property value 'overlay'": "FAIL",
+        "e.style['transition'] = \"overlay 2s\" should set the property value": "FAIL",
+        "e.style['transition-property'] = \"overlay\" should set the property value": "PASS"
+      }
+    },
+    "css/css-position/overlay/overlay-transition.html": {
+      "status": "Fail",
+      "subtests": {
+        "Open the popover to be closed and verify computed overlay for both popovers": "FAIL",
+        "Transition overlays": "FAIL"
+      }
+    },
+    "css/css-position/overlay/overlay-user-agent-rules.html": {
+      "status": "Pass"
+    },
+    "css/css-position/overlay/overlay-valid.html": {
+      "status": "Pass"
+    }
+  }
+}

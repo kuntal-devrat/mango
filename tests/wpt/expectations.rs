@@ -160,28 +160,136 @@ impl ExpectationStore {
 
     /// Derives the modular suite identifier from a test relative path.
     ///
-    /// For example:
-    /// `css/css-cascade/scope-proximity.html` -> `"css/css-cascade"`
-    /// `css/css-text-decor/parsing/text-decoration-line-valid.html` -> `"css/css-text-decor"`
-    /// `dom/nodes/CharacterData-appendData.html` -> `"dom/nodes"`
+    /// Keeps expectation JSON files non-monolithic and strictly within line limits
+    /// by subcategorizing large suites (e.g. `dom/nodes/element.json`, `css/css-flexbox/align_items.json`).
     pub fn suite_name_for_path(path: &str) -> String {
         let normalized = path.replace('\\', "/");
         let parts: Vec<&str> = normalized.split('/').collect();
-        if parts.len() >= 2 {
-            format!("{}/{}", parts[0], parts[1])
-        } else if let Some(first) = parts.first() {
-            first.to_string()
+        if parts.len() < 2 {
+            return parts.first().copied().unwrap_or("root").to_string();
+        }
+        let category = parts[0];
+        let subcat = parts[1];
+
+        // 1. If there is a sub-directory component (e.g. css/css-position/sticky/...)
+        if parts.len() >= 4 {
+            return format!("{category}/{subcat}/{}", parts[2]);
+        }
+        if parts.len() == 3 && !parts[2].contains('.') {
+            return format!("{category}/{subcat}/{}", parts[2]);
+        }
+
+        // 2. Granular modularization by file prefix
+        let filename = parts.last().unwrap_or(&"");
+        let prefix = if category == "dom" && subcat == "nodes" {
+            if filename.starts_with("CharacterData") {
+                Some("character_data")
+            } else if filename.starts_with("ChildNode") {
+                Some("child_node")
+            } else if filename.starts_with("Comment") {
+                Some("comment")
+            } else if filename.starts_with("DocumentFragment") {
+                Some("document_fragment")
+            } else if filename.starts_with("DocumentType") {
+                Some("document_type")
+            } else if filename.starts_with("Document") {
+                Some("document")
+            } else if filename.starts_with("DOMImplementation") {
+                Some("dom_implementation")
+            } else if filename.starts_with("Element") {
+                Some("element")
+            } else if filename.starts_with("NodeList") {
+                Some("nodelist")
+            } else if filename.starts_with("Node") {
+                Some("node")
+            } else if filename.starts_with("ParentNode") {
+                Some("parent_node")
+            } else if filename.starts_with("ProcessingInstruction") {
+                Some("processing_instruction")
+            } else if filename.starts_with("Text") {
+                Some("text")
+            } else {
+                Some("misc")
+            }
+        } else if category == "css" && subcat == "css-cascade" {
+            if filename.starts_with("scope") {
+                Some("scope")
+            } else if filename.starts_with("layer") {
+                Some("layer")
+            } else if filename.starts_with("revert") {
+                Some("revert")
+            } else if filename.starts_with("all-prop") {
+                Some("all_prop")
+            } else {
+                Some("misc")
+            }
+        } else if category == "css" && subcat == "css-flexbox" {
+            if filename.starts_with("align-content") {
+                Some("align_content")
+            } else if filename.starts_with("align-items") {
+                Some("align_items")
+            } else if filename.starts_with("align-self") {
+                Some("align_self")
+            } else if filename.starts_with("flex-basis")
+                || filename.starts_with("flex-grow")
+                || filename.starts_with("flex-shrink")
+            {
+                Some("flex_factors")
+            } else if filename.starts_with("flex-direction")
+                || filename.starts_with("flex-wrap")
+                || filename.starts_with("flex-flow")
+            {
+                Some("flex_lines")
+            } else if filename.starts_with("position-") {
+                Some("abspos")
+            } else if filename.starts_with("gap-")
+                || filename.starts_with("row-gap")
+                || filename.starts_with("column-gap")
+            {
+                Some("gaps")
+            } else {
+                Some("misc")
+            }
+        } else if category == "css" && subcat == "css-position" {
+            if filename.starts_with("position-sticky") {
+                Some("sticky")
+            } else if filename.starts_with("position-absolute") {
+                Some("absolute")
+            } else if filename.starts_with("position-relative") {
+                Some("relative")
+            } else if filename.starts_with("position-fixed") {
+                Some("fixed")
+            } else if filename.starts_with("hypothetical") {
+                Some("hypothetical")
+            } else {
+                Some("misc")
+            }
         } else {
-            "root".to_string()
+            None
+        };
+
+        if let Some(pfx) = prefix {
+            format!("{category}/{subcat}/{pfx}")
+        } else {
+            format!("{category}/{subcat}")
         }
     }
 
     /// Look up expected result for a single test path.
     pub fn get_file_expectation(&self, path: &str) -> Option<&FileExpectation> {
-        let suite_name = Self::suite_name_for_path(path);
-        let suite = self.suites.get(&suite_name)?;
         let normalized = path.replace('\\', "/");
-        suite.files.get(&normalized)
+        let suite_name = Self::suite_name_for_path(&normalized);
+        if let Some(suite) = self.suites.get(&suite_name)
+            && let Some(exp) = suite.files.get(&normalized)
+        {
+            return Some(exp);
+        }
+        for suite in self.suites.values() {
+            if let Some(exp) = suite.files.get(&normalized) {
+                return Some(exp);
+            }
+        }
+        None
     }
 
     /// Compares a live test file result against the stored expectations.
@@ -281,8 +389,12 @@ impl ExpectationStore {
         let normalized = result.path.replace('\\', "/");
 
         let mut subtests = BTreeMap::new();
-        for s in &result.subtests {
-            subtests.insert(s.name.clone(), s.status.clone());
+        // For files that pass completely, the file-level status "Pass" is sufficient and prevents
+        // monolithic baseline bloat. We record subtests for partial failures to detect subtest regressions.
+        if result.status != WptFileStatus::Pass {
+            for s in &result.subtests {
+                subtests.insert(s.name.clone(), s.status.clone());
+            }
         }
 
         let file_exp = FileExpectation {
