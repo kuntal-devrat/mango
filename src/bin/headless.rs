@@ -275,6 +275,18 @@ fn main() {
         browser.wait_for_navigation();
     }
     println!("Browser status: {}", browser.status_text());
+    let report = browser.resource_report();
+    println!(
+        "Resources: discovered={} completed={} failed={} cancelled={} rejected={} bytes={} script_cpu_ms={} peak_js_heap={}B",
+        report.discovered,
+        report.completed,
+        report.failed,
+        report.cancelled,
+        report.rejected,
+        report.bytes_fetched,
+        report.script_cpu.as_millis(),
+        report.peak_js_heap,
+    );
 
     // Virtual time budget / real-time wait: drive animations and JS timers
     let tick_interval_ms = 16.0;

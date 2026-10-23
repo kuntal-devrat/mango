@@ -25,6 +25,7 @@ pub mod input;
 pub mod navigation;
 pub mod profile;
 pub mod render;
+pub mod resource_scheduler;
 pub mod tabs;
 pub mod types;
 pub mod welcome;
@@ -177,10 +178,12 @@ pub struct BrowserChrome {
     pub(crate) image_rx: Option<std::sync::mpsc::Receiver<String>>,
     /// Epoch guarding background image workers.
     pub(crate) image_epoch: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// Resource policy and diagnostics for the active document.
+    pub(crate) resource_scheduler: resource_scheduler::DocumentResourceScheduler,
     /// Generation of web fonts loaded in `FontManager`; when this advances, layout/display-list must re-render.
     pub(crate) last_font_epoch: u64,
     /// Pending deferred/async scripts queued for non-blocking incremental execution.
-    pub(crate) pending_scripts: std::collections::VecDeque<crate::browser::types::ScriptToRun>,
+    pub(crate) pending_scripts: std::collections::VecDeque<crate::browser::types::ScheduledScript>,
     /// Compositor layer tree for GPU/tiled layer presentation.
     pub layer_tree: mango_render::LayerTree,
     /// Monotonic frame counter for tile cache lifecycle.
@@ -285,6 +288,7 @@ impl BrowserChrome {
             async_navigation: false,
             image_rx: None,
             image_epoch: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            resource_scheduler: resource_scheduler::DocumentResourceScheduler::default(),
             last_font_epoch: mango_render::web_font_epoch(),
             pending_scripts: std::collections::VecDeque::new(),
             layer_tree: mango_render::LayerTree::new(width, height),
@@ -306,6 +310,11 @@ impl BrowserChrome {
     /// Returns true if there are queued deferred or async scripts waiting to run.
     pub fn has_pending_scripts(&self) -> bool {
         !self.pending_scripts.is_empty()
+    }
+
+    /// Returns resource accounting for the active document.
+    pub fn resource_report(&self) -> &resource_scheduler::ResourceReport {
+        self.resource_scheduler.report()
     }
 
     #[allow(dead_code)]
@@ -369,6 +378,7 @@ impl BrowserChrome {
             tab.scroll_y = self.scroll_y;
             tab.scroll_y_f64 = self.scroll_y_f64;
         }
+        self.reprioritize_visible_images();
     }
 
     /// Adjusts the vertical scroll offset by delta.

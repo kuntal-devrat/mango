@@ -30,10 +30,16 @@ pub(crate) fn collect_inline_atoms(
     if style.float != mango_css::values::Float::None {
         return;
     }
-    if matches!(
-        style.position,
-        mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
-    ) {
+    // `position` is not inherited. Text nodes can carry a cloned computed
+    // style from an absolutely positioned ancestor, but the text still
+    // participates in that ancestor's inline formatting context. Only an
+    // actual element box is out-of-flow here.
+    if !matches!(box_node.box_type, BoxType::TextNode(_))
+        && matches!(
+            style.position,
+            mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
+        )
+    {
         return;
     }
     let font_size = style.font_size;

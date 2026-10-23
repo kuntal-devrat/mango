@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use mango_css::values::Display;
+use mango_css::values::{Display, Length, Position};
 
 use crate::box_model::BoxType;
 use crate::style_tree::StyledNode;
@@ -190,7 +190,23 @@ pub fn build_box_tree_with_maps(
         }
     };
 
-    let mut root_box = LayoutBox::new(box_type, Some(styled_node.style.clone()));
+    // Computed styles are cloned onto text nodes for inheritance, but box
+    // properties such as position and margin are not inherited. Keeping the
+    // ancestor's out-of-flow values on a text box creates stale descendants
+    // when an absolute/flex item is relaid out.
+    let box_style = if styled_node.text.is_some() {
+        let mut style = (*styled_node.style).clone();
+        style.display = Display::Inline;
+        style.position = Position::Static;
+        style.margin_top = Length::Px(0.0);
+        style.margin_right = Length::Px(0.0);
+        style.margin_bottom = Length::Px(0.0);
+        style.margin_left = Length::Px(0.0);
+        Some(std::sync::Arc::new(style))
+    } else {
+        Some(styled_node.style.clone())
+    };
+    let mut root_box = LayoutBox::new(box_type, box_style);
     root_box.node_id = styled_node.node_id;
     root_box.tag_name = styled_node.tag_name.clone();
     root_box.attributes = styled_node.attributes.clone();

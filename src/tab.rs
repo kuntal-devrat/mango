@@ -30,6 +30,7 @@ pub struct TabWebContents {
     pub page_display_list: mango_render::display_list::DisplayList,
     pub display_list_cache: mango_layout::display_list::DisplayListCache,
     pub image_rx: Option<std::sync::mpsc::Receiver<String>>,
+    pub resource_scheduler: crate::browser::resource_scheduler::DocumentResourceScheduler,
     pub has_active_animations: bool,
     pub canvas_bg: mango_core::Color,
     pub engine: Option<mango_engine::Engine>,

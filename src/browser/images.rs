@@ -9,10 +9,6 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// Maximum number of queued image fetches retained in memory to prevent
-/// unbounded backlog growth on malicious/image-heavy pages.
-pub const MAX_PENDING_IMAGE_FETCHES: usize = 256;
-
 /// Fixed number of OS threads used to fetch and decode images. A fixed pool
 /// prevents image-heavy pages from creating one thread per image (or one
 /// thread per frame while draining).
@@ -55,6 +51,50 @@ impl Drop for InFlightGuard {
 }
 
 impl BrowserChrome {
+    /// Reorders pending image work from post-layout geometry. Only resource
+    /// metadata and queue order change; image loads never trigger layout.
+    pub(crate) fn reprioritize_visible_images(&mut self) {
+        let visible = {
+            let Some(root) = self.root_box.as_ref() else {
+                return;
+            };
+            let document = self.document_view();
+            let mut image_nodes = Vec::new();
+            crate::browser::navigation::resources::collect_image_node_sources(
+                &document,
+                document.root(),
+                &mut image_nodes,
+            );
+            let mut rects = std::collections::HashMap::new();
+            mango_layout::collect_box_rects(root, &mut rects);
+            let viewport_top = self.scroll_y;
+            let viewport_bottom = viewport_top + self.content_height();
+            let mut visible = std::collections::HashSet::new();
+            for (node_id, src) in image_nodes {
+                if let Some([_, y, _, height]) = rects.get(&node_id.raw())
+                    && *y + *height >= viewport_top
+                    && *y <= viewport_bottom
+                {
+                    visible.insert(src);
+                }
+            }
+            visible
+        };
+        for src in &visible {
+            self.resource_scheduler.set_priority_url(
+                src,
+                crate::browser::resource_scheduler::ResourcePriority::Visible,
+            );
+        }
+        self.pending_image_fetches.sort_by_key(|src| {
+            if visible.contains(src) {
+                0usize
+            } else {
+                1usize
+            }
+        });
+    }
+
     /// Downloads and decodes one image into the shared render cache.
     ///
     /// Fast path only (memory cache + `data:` URIs). Remote fetches are never
@@ -94,16 +134,13 @@ impl BrowserChrome {
     /// Queues background image URLs with epoch guarding and dedup.
     pub(crate) fn queue_image_backlog(&mut self, sources: Vec<String>, base: Url) {
         self.close_stale_image_channel();
-        let epoch = self
+        let _epoch = self
             .image_epoch
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
             + 1;
         let mut seen = std::collections::HashSet::new();
-        let mut deduped = Vec::with_capacity(sources.len().min(MAX_PENDING_IMAGE_FETCHES));
+        let mut deduped = Vec::with_capacity(sources.len());
         for src in sources {
-            if deduped.len() >= MAX_PENDING_IMAGE_FETCHES {
-                break;
-            }
             if get_cached_image(&src).is_some() {
                 continue;
             }
@@ -113,58 +150,42 @@ impl BrowserChrome {
         }
         let mut remote = Vec::new();
         for src in deduped {
+            let id = self.resource_scheduler.discover(
+                crate::browser::resource_scheduler::ResourceKind::Image,
+                crate::browser::resource_scheduler::ResourcePriority::Speculative,
+                src.clone(),
+            );
+            self.resource_scheduler.transition(
+                id,
+                crate::browser::resource_scheduler::ResourceState::Queued,
+            );
             if src.trim_start().starts_with("data:") {
                 if let Some(decoded) = decode_data_uri(&src) {
                     cache_image(&src, decoded);
+                    self.resource_scheduler.finish_url(
+                        &src,
+                        crate::browser::resource_scheduler::ResourceState::Completed,
+                        None,
+                        0,
+                    );
+                } else {
+                    self.resource_scheduler.finish_url(
+                        &src,
+                        crate::browser::resource_scheduler::ResourceState::Failed,
+                        Some(crate::browser::resource_scheduler::RejectReason::DecodeFailure),
+                        0,
+                    );
                 }
             } else {
                 remote.push(src);
             }
         }
-        remote.truncate(MAX_PENDING_IMAGE_FETCHES);
-        let (tx, rx) = std::sync::mpsc::channel();
-        self.image_rx = Some(rx);
+        // Keep all request metadata, but fetch/decode only bounded batches in
+        // `drain_pending_images`. This removes compatibility truncation while
+        // keeping network and decoded-pixel work bounded.
+        self.image_rx = None;
         self.image_fetch_base = Some(base.clone());
         self.pending_image_fetches = remote.clone();
-        if remote.is_empty() {
-            return;
-        }
-        let loader = self.loader.clone();
-        let epoch_flag = self.image_epoch.clone();
-        for src in remote {
-            let tx = tx.clone();
-            let loader = loader.clone();
-            let base = base.clone();
-            let epoch_flag = epoch_flag.clone();
-            image_pool().spawn(move || {
-                if epoch_flag.load(Ordering::SeqCst) != epoch {
-                    return;
-                }
-                if get_cached_image(&src).is_none() {
-                    let bytes = match loader.fetch_image_bytes(&base, &src) {
-                        Ok(b) => b,
-                        Err(e) => {
-                            log::debug!("[mango-img] Image fetch failed for {src}: {e:?}");
-                            let _ = tx.send(src);
-                            mango_core::wake_event_loop();
-                            return;
-                        }
-                    };
-                    if epoch_flag.load(Ordering::SeqCst) != epoch {
-                        return;
-                    }
-                    if let Some(decoded) = decode_image_bytes(&bytes) {
-                        cache_image(&src, decoded.clone());
-                        if let Ok(resolved) = base.resolve(&src) {
-                            cache_image(&resolved.as_str(), decoded);
-                        }
-                    }
-                }
-                let _ = tx.send(src);
-                mango_core::wake_event_loop();
-            });
-        }
-        drop(tx);
     }
 
     /// True while background image prefetch work remains.
@@ -183,6 +204,23 @@ impl BrowserChrome {
                     Ok(src) => {
                         if get_cached_image(&src).is_some() {
                             loaded_any = true;
+                            self.resource_scheduler.finish_url(
+                                &src,
+                                crate::browser::resource_scheduler::ResourceState::Completed,
+                                None,
+                                0,
+                            );
+                        } else {
+                            self.devtools.log(
+                                crate::devtools::ConsoleLevel::Warn,
+                                format!("Resource failed: image unavailable or undecodable: {src}"),
+                            );
+                            self.resource_scheduler.finish_url(
+                                &src,
+                                crate::browser::resource_scheduler::ResourceState::Failed,
+                                Some(crate::browser::resource_scheduler::RejectReason::NetworkFailure),
+                                0,
+                            );
                         }
                         if let Some(pos) = self.pending_image_fetches.iter().position(|s| s == &src)
                         {
@@ -236,9 +274,12 @@ impl BrowserChrome {
                                 break;
                             }
                             if get_cached_image(&src).is_some() {
+                                let _ = tx.send(src);
                                 continue;
                             }
                             let Ok(bytes) = loader.fetch_image_bytes(&base, &src) else {
+                                log::debug!("[mango-img] Image fetch failed for {src}");
+                                let _ = tx.send(src);
                                 continue;
                             };
                             if epoch_flag.load(Ordering::SeqCst) != epoch {
@@ -249,9 +290,13 @@ impl BrowserChrome {
                                 if let Ok(resolved) = base.resolve(&src) {
                                     cache_image(&resolved.as_str(), decoded);
                                 }
-                                let _ = tx.send(src);
                                 mango_core::wake_event_loop();
                             }
+                            // Completion is reported for both successful
+                            // and failed fetch/decode attempts so the
+                            // backlog cannot remain permanently pending.
+                            let _ = tx.send(src);
+                            mango_core::wake_event_loop();
                         }
                     });
                 }

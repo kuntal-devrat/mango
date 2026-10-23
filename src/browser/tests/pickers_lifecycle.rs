@@ -575,18 +575,13 @@ fn test_find_in_page_and_shortcuts() {
 }
 
 #[test]
-fn test_queue_image_backlog_bounded_cap() {
-    use crate::browser::images::MAX_PENDING_IMAGE_FETCHES;
+fn test_queue_image_backlog_retains_all_request_metadata() {
     let mut browser = BrowserChrome::new(1024, 768);
     let urls: Vec<String> = (0..1000)
         .map(|i| format!("https://example.com/img{i}.png"))
         .collect();
     browser.queue_image_backlog(urls, Url::parse("https://example.com/").unwrap());
-    assert!(browser.pending_image_fetches.len() <= MAX_PENDING_IMAGE_FETCHES);
-    assert_eq!(
-        browser.pending_image_fetches.len(),
-        MAX_PENDING_IMAGE_FETCHES
-    );
+    assert_eq!(browser.pending_image_fetches.len(), 1000);
 }
 
 #[test]
