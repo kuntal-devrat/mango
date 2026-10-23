@@ -61,8 +61,8 @@ pub fn resolve_flexible_lengths(
     container_main_size: f32,
     container_height: f32,
     main_gap: f32,
-    style: &ComputedStyle,
-    is_percent_indefinite: bool,
+    _style: &ComputedStyle,
+    _is_percent_indefinite: bool,
 ) {
     for line in lines {
         let line_item_count = line.len();
@@ -128,9 +128,7 @@ pub fn resolve_flexible_lengths(
                     if !has_violation {
                         break;
                     }
-                } else if cur_free_space < 0.0
-                    && (is_row || (style.height != Length::Auto && !is_percent_indefinite))
-                {
+                } else if cur_free_space < 0.0 {
                     let sum_scaled_shrink: f32 = line
                         .iter()
                         .enumerate()

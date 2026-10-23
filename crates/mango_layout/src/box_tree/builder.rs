@@ -342,6 +342,20 @@ pub fn build_box_tree_with_maps(
         }
     }
 
+    for (k, v) in &styled_node.attributes {
+        if k == "_mango_scroll_top" {
+            if let Ok(st) = v.parse::<f32>() {
+                root_box.scroll_offset_y = st;
+            }
+        } else if k == "_mango_scroll_left" {
+            if let Ok(sl) = v.parse::<f32>() {
+                root_box.scroll_offset_x = sl;
+            }
+        }
+    }
+
+    super::margin_trim::apply_margin_trim(&mut root_box);
+
     root_box
 }
 

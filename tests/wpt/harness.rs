@@ -266,6 +266,71 @@ fn collect_iframes_in_order(
     }
 }
 
+/// Parses every `<link rel=stylesheet>` in a document, resolving relative and
+/// root-relative hrefs inside the vendored WPT tree.
+fn collect_external_stylesheets(
+    doc: &Document,
+    base_dir: Option<&Path>,
+) -> Vec<mango_css::parser::Stylesheet> {
+    let mut sheets = Vec::new();
+    let mut stack = vec![doc.root()];
+    while let Some(node_id) = stack.pop() {
+        if let Some(node) = doc.get(node_id) {
+            if let NodeData::Element(ref elem) = node.data
+                && elem.tag_name.eq_ignore_ascii_case("link")
+            {
+                let is_stylesheet = elem
+                    .get_attribute("rel")
+                    .map(|rel| {
+                        rel.split_whitespace()
+                            .any(|part| part.eq_ignore_ascii_case("stylesheet"))
+                    })
+                    .unwrap_or(false);
+                if is_stylesheet && let Some(href) = elem.get_attribute("href") {
+                    let href = href.split(['?', '#']).next().unwrap_or(&href);
+                    let path = if let Some(rest) = href.strip_prefix('/') {
+                        upstream_root().join(rest)
+                    } else if let Some(dir) = base_dir {
+                        dir.join(href)
+                    } else {
+                        continue;
+                    };
+                    if let Ok(css) = std::fs::read_to_string(path) {
+                        sheets.push(mango_css::parser::parse_stylesheet(&css));
+                    }
+                }
+            }
+            let mut kids: Vec<NodeId> = doc.children(node_id).map(|c| c.id).collect();
+            kids.reverse();
+            stack.extend(kids);
+        }
+    }
+    sheets
+}
+
+/// Publishes layout geometry to the JS runtime before a layout-dependent
+/// callback runs. Upstream suites such as `check-layout-th.js` measure real
+/// boxes through `getBoundingClientRect()`, which is meaningless without it.
+fn publish_layout_bounds(
+    rt: &JsRuntime,
+    viewport: (f32, f32),
+    styles: &[&mango_css::parser::Stylesheet],
+) {
+    let doc = rt.document_snapshot();
+    let (root, _) = mango_layout::layout_document_with_scroll_xy(
+        &doc,
+        styles,
+        mango_core::Size::new(viewport.0, viewport.1),
+        0.0,
+        0.0,
+    );
+    let mut rects = std::collections::HashMap::new();
+    mango_layout::display_list::stacking::collect_box_rects_with_scroll(
+        &root, 0.0, 0.0, &mut rects,
+    );
+    rt.set_layout_bounds(rects);
+}
+
 /// The shared upstream WPT root (the vendored, byte-exact snapshot).
 pub fn upstream_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -293,6 +358,8 @@ pub fn run_wpt_file(root: &Path, rel_path: &str, timeout: Duration) -> WptFileRe
     };
 
     let mut doc = parse_html(&content);
+    let external_sheets = collect_external_stylesheets(&doc, test_path.parent());
+    let external_refs: Vec<&mango_css::parser::Stylesheet> = external_sheets.iter().collect();
     if rel_path.ends_with(".xhtml") || rel_path.ends_with(".xht") {
         doc.content_type = "application/xhtml+xml".to_string();
     } else if rel_path.ends_with(".xml") {
@@ -425,20 +492,27 @@ pub fn run_wpt_file(root: &Path, rel_path: &str, timeout: Duration) -> WptFileRe
         );
     }
 
-    // ── 3. Dispatch `load`, then pump the event loop until the harness ends ─
-    let _ = rt.execute_script(
-        "if (typeof window !== 'undefined' && typeof Event !== 'undefined') { \
-            window.dispatchEvent(new Event('load')); \
-        } \
-        if (typeof done === 'function') { done(); }",
-    );
+    // Layout is available to `onload`/test callbacks in a browser. Publish it
+    // before dispatching load so geometry assertions see real boxes.
+    publish_layout_bounds(&rt, (800.0, 600.0), &external_refs);
+
+    // ── 3. Dispatch `DOMContentLoaded`/`load`, then pump the event loop until
+    // the harness ends. `dispatch_load` also invokes `<body onload=...>`, which
+    // is how `check-layout-th.js` suites start their assertions. Do not call
+    // `done()` here: those suites request `explicit_done` and call it from
+    // `checkLayout()`, so an early call would discard every assertion.
+    let _ = rt.dispatch_dom_content_loaded();
+    let _ = rt.dispatch_load();
 
     let mut console: Vec<String> = Vec::new();
     let mut saw_completion = false;
     let deadline = Instant::now() + timeout;
 
     loop {
-        rt.tick();
+        let mutated = rt.tick();
+        if mutated {
+            publish_layout_bounds(&rt, (800.0, 600.0), &external_refs);
+        }
 
         for m in rt.take_console_messages() {
             if m.text.starts_with(COMPLETE_PREFIX) {

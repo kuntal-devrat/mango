@@ -123,7 +123,7 @@ pub fn user_agent_stylesheet() -> &'static Stylesheet {
             }
             table {
                 display: table;
-                margin: 8px 0px;
+                border-collapse: separate;
                 text-align: left;
             }
             caption {

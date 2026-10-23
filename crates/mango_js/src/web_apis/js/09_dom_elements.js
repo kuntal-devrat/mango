@@ -486,6 +486,7 @@
                 if (this === document.body || this === document.documentElement) {
                     if (typeof window !== 'undefined') window.scrollY = this._scrollTop;
                 }
+                this.setAttribute('_mango_scroll_top', String(this._scrollTop));
             },
             configurable: true
         },
@@ -496,6 +497,7 @@
                 if (this === document.body || this === document.documentElement) {
                     if (typeof window !== 'undefined') window.scrollX = this._scrollLeft;
                 }
+                this.setAttribute('_mango_scroll_left', String(this._scrollLeft));
             },
             configurable: true
         },

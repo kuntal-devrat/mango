@@ -303,6 +303,9 @@ pub(crate) fn calculate_block_height(box_node: &mut LayoutBox, containing_block:
     let container_w = containing_block.content.width();
     let non_content_v =
         box_node.dimensions.padding.vertical() + box_node.dimensions.border.vertical();
+    let is_percent_indefinite = matches!(style.height, Length::Percent(_))
+        && containing_block.content.height() <= 0.0
+        && !matches!(style.position, Position::Absolute | Position::Fixed);
 
     // 1. Determine tentative content height
     if let crate::box_model::BoxType::ReplacedElement {
@@ -371,14 +374,16 @@ pub(crate) fn calculate_block_height(box_node: &mut LayoutBox, containing_block:
         } else {
             box_node.dimensions.content.size.height = *intrinsic_height;
         }
-    } else if !matches!(
-        style.height,
-        Length::Auto
-            | Length::MinContent
-            | Length::MaxContent
-            | Length::FitContent
-            | Length::Content
-    ) {
+    } else if !is_percent_indefinite
+        && !matches!(
+            style.height,
+            Length::Auto
+                | Length::MinContent
+                | Length::MaxContent
+                | Length::FitContent
+                | Length::Content
+        )
+    {
         let is_pos = matches!(style.position, Position::Absolute | Position::Fixed);
         let eff_container_h = if containing_block.content.height() > 0.0 {
             containing_block.content.height()
@@ -390,12 +395,10 @@ pub(crate) fn calculate_block_height(box_node: &mut LayoutBox, containing_block:
         let h = style
             .height
             .to_px_with_viewport(font_size, root_font_size, eff_container_h, 600.0);
-        if h > 0.0 || !matches!(style.height, Length::Percent(_)) {
-            if style.box_sizing == BoxSizing::BorderBox {
-                box_node.dimensions.content.size.height = (h - non_content_v).max(0.0);
-            } else {
-                box_node.dimensions.content.size.height = h.max(0.0);
-            }
+        if style.box_sizing == BoxSizing::BorderBox {
+            box_node.dimensions.content.size.height = (h - non_content_v).max(0.0);
+        } else {
+            box_node.dimensions.content.size.height = h.max(0.0);
         }
     } else if style.contain.contains_size()
         || style.content_visibility == mango_css::values::ContentVisibility::Hidden

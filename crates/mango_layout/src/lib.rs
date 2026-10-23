@@ -181,9 +181,22 @@ pub fn layout_document_with_env(
 
     layout_block(&mut root_box, &containing_block, &mut float_ctx);
 
+    clamp_scroll_offsets(&mut root_box);
+
     let display_list = build_display_list_with_scroll_xy(&root_box, scroll_x, scroll_y);
 
     (root_box, display_list)
+}
+
+fn clamp_scroll_offsets(box_node: &mut LayoutBox) {
+    if box_node.is_scroll_container() {
+        let (max_x, max_y) = box_node.max_scroll();
+        box_node.scroll_offset_x = box_node.scroll_offset_x.clamp(0.0, max_x);
+        box_node.scroll_offset_y = box_node.scroll_offset_y.clamp(0.0, max_y);
+    }
+    for child in &mut box_node.children {
+        clamp_scroll_offsets(child);
+    }
 }
 
 /// Fully lays out an HTML DOM [`Document`], applying author stylesheets and inline styles,

@@ -154,6 +154,19 @@ pub fn compute_style_with_shadow_index(
         }
     }
 
+    // CSS Overflow 3 §3.3:
+    // If one of overflow-x or overflow-y is visible and the other is not visible,
+    // then visible becomes auto.
+    if style.overflow_x == crate::values::Overflow::Visible
+        && style.overflow_y != crate::values::Overflow::Visible
+    {
+        style.overflow_x = crate::values::Overflow::Auto;
+    } else if style.overflow_y == crate::values::Overflow::Visible
+        && style.overflow_x != crate::values::Overflow::Visible
+    {
+        style.overflow_y = crate::values::Overflow::Auto;
+    }
+
     if parent_style.is_none() {
         style.root_font_size = style.font_size;
     }

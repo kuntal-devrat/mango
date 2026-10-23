@@ -8,6 +8,131 @@ use crate::box_tree::LayoutBox;
 use super::builder::render_layout_box;
 use super::types::apply_opacity;
 
+/// Computes the sticky-positioning displacement for `child` within `parent`.
+///
+/// Shared by the painter and by layout-geometry publication so that
+/// `getBoundingClientRect()` observes exactly the offset that is painted.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn sticky_shift(
+    parent: &LayoutBox,
+    child: &LayoutBox,
+    cs: &ComputedStyle,
+    pad_box: Rect,
+    active_viewport: Option<Rect>,
+    active_table: Option<Rect>,
+    child_offset_x: f32,
+    child_offset_y: f32,
+    scroll_x: f32,
+    scroll_y: f32,
+) -> (f32, f32) {
+    let (viewport_x, viewport_y, viewport_w, viewport_h) = match active_viewport {
+        Some(vp) => (vp.x(), vp.y(), vp.width(), vp.height()),
+        None => {
+            let (vw, vh) = mango_css::values::get_current_viewport();
+            (scroll_x, scroll_y, vw, vh)
+        }
+    };
+
+    let in_flow_x = child.dimensions.border_box().x() + child_offset_x;
+    let in_flow_y = child.dimensions.border_box().y() + child_offset_y;
+    let w = child.dimensions.border_box().width();
+    let h = child.dimensions.border_box().height();
+
+    // Containing block is the table for table parts, otherwise the parent's content box.
+    let is_table_part = matches!(
+        parent.tag_name.as_deref(),
+        Some("tr" | "tbody" | "thead" | "tfoot" | "table")
+    );
+    let (cb_top, cb_bottom, cb_left, cb_right) = if is_table_part && active_table.is_some() {
+        let tb = active_table.unwrap();
+        (tb.y(), tb.bottom(), tb.x(), tb.right())
+    } else {
+        (
+            pad_box.y() + parent.dimensions.padding.top,
+            pad_box.bottom() - parent.dimensions.padding.bottom,
+            pad_box.x() + parent.dimensions.padding.left,
+            pad_box.right() - parent.dimensions.padding.right,
+        )
+    };
+
+    // Vertical sticky (top / bottom per CSS Position 3 §6.2)
+    let has_top = cs.top != mango_css::values::Length::Auto;
+    let has_bottom = cs.bottom != mango_css::values::Length::Auto;
+    let top_inset = if has_top {
+        cs.top.to_px(cs.font_size, 16.0, viewport_h)
+    } else {
+        0.0
+    };
+    let bottom_inset = if has_bottom {
+        cs.bottom.to_px(cs.font_size, 16.0, viewport_h)
+    } else {
+        0.0
+    };
+    // If the inset plus the box cannot fit in the scrollport, the view
+    // rectangle collapses; the box then simply follows its inset instead of
+    // being clamped back inside its containing block (CSS Position 3 §6.2).
+    let clamp_to_cb_y = top_inset + h <= viewport_h && bottom_inset + h <= viewport_h;
+    let max_sticky_y = if clamp_to_cb_y {
+        (cb_bottom - h).max(in_flow_y)
+    } else {
+        f32::INFINITY
+    };
+    let min_sticky_y = if clamp_to_cb_y {
+        cb_top.min(in_flow_y)
+    } else {
+        f32::NEG_INFINITY
+    };
+    let top_thresh = viewport_y + top_inset + child.dimensions.margin.top;
+    let bottom_thresh = viewport_y + viewport_h - bottom_inset - h - child.dimensions.margin.bottom;
+
+    let mut target_y = in_flow_y;
+    let ignore_bottom = has_top && has_bottom && (h + top_inset + bottom_inset > viewport_h);
+    if has_bottom && !ignore_bottom && in_flow_y > bottom_thresh {
+        target_y = bottom_thresh.clamp(min_sticky_y, in_flow_y);
+    }
+    if has_top && in_flow_y < top_thresh {
+        target_y = top_thresh.clamp(in_flow_y, max_sticky_y);
+    }
+
+    // Horizontal sticky (left / right per CSS Position 3 §6.2)
+    let has_left = cs.left != mango_css::values::Length::Auto;
+    let has_right = cs.right != mango_css::values::Length::Auto;
+    let left_inset = if has_left {
+        cs.left.to_px(cs.font_size, 16.0, viewport_w)
+    } else {
+        0.0
+    };
+    let right_inset = if has_right {
+        cs.right.to_px(cs.font_size, 16.0, viewport_w)
+    } else {
+        0.0
+    };
+    let clamp_to_cb_x = left_inset + w <= viewport_w && right_inset + w <= viewport_w;
+    let max_sticky_x = if clamp_to_cb_x {
+        (cb_right - w).max(in_flow_x)
+    } else {
+        f32::INFINITY
+    };
+    let min_sticky_x = if clamp_to_cb_x {
+        cb_left.min(in_flow_x)
+    } else {
+        f32::NEG_INFINITY
+    };
+    let left_thresh = viewport_x + left_inset + child.dimensions.margin.left;
+    let right_thresh = viewport_x + viewport_w - right_inset - w - child.dimensions.margin.right;
+
+    let mut target_x = in_flow_x;
+    let ignore_right = has_left && has_right && (w + left_inset + right_inset > viewport_w);
+    if has_right && !ignore_right && in_flow_x > right_thresh {
+        target_x = right_thresh.clamp(min_sticky_x, in_flow_x);
+    }
+    if has_left && in_flow_x < left_thresh {
+        target_x = left_thresh.clamp(in_flow_x, max_sticky_x);
+    }
+
+    (target_x - in_flow_x, target_y - in_flow_y)
+}
+
 pub(crate) fn paint_children_and_scrollbars(
     box_node: &LayoutBox,
     style: Option<&ComputedStyle>,
@@ -18,9 +143,19 @@ pub(crate) fn paint_children_and_scrollbars(
     scroll_y: f32,
     opacity: f32,
     list: &mut DisplayList,
+    scroll_viewport: Option<Rect>,
+    table_rect: Option<Rect>,
 ) {
-    // 4. Paint Children ordered by stacking context / z-index (CSS 2.1 Appendix E)
-    let current_cb = Some(pad_box);
+    let active_viewport = if box_node.is_scroll_container() {
+        Some(pad_box)
+    } else {
+        scroll_viewport
+    };
+    let active_table = if box_node.tag_name.as_deref() == Some("table") {
+        Some(pad_box)
+    } else {
+        table_rect
+    };
     let mut sorted_children: Vec<&LayoutBox> = box_node.children.iter().collect();
     sorted_children.sort_by_key(|c| paint_layer_of(c));
 
@@ -136,72 +271,20 @@ pub(crate) fn paint_children_and_scrollbars(
                 child_offset_x += scroll_x;
                 child_offset_y += scroll_y;
             } else if cs.position == mango_css::values::Position::Sticky {
-                let is_container = box_node.is_scroll_container();
-                let (viewport_x, viewport_y, viewport_w, viewport_h) = if is_container {
-                    (pad_box.x(), pad_box.y(), pad_box.width(), pad_box.height())
-                } else {
-                    let w = current_cb.map(|r| r.width()).unwrap_or(800.0);
-                    let h = current_cb.map(|r| r.height()).unwrap_or(600.0);
-                    (scroll_x, scroll_y, w, h)
-                };
-
-                let in_flow_x = child.dimensions.border_box().x() + child_offset_x;
-                let in_flow_y = child.dimensions.border_box().y() + child_offset_y;
-                let w = child.dimensions.border_box().width();
-                let h = child.dimensions.border_box().height();
-
-                let cb_top = current_cb.map(|r| r.y()).unwrap_or(0.0);
-                let cb_bottom = current_cb.map(|r| r.bottom()).unwrap_or(f32::INFINITY);
-                let cb_left = current_cb.map(|r| r.x()).unwrap_or(0.0);
-                let cb_right = current_cb.map(|r| r.right()).unwrap_or(f32::INFINITY);
-
-                // Vertical sticky (top / bottom)
-                let max_sticky_y = (cb_bottom - h).max(in_flow_y);
-                let min_sticky_y = cb_top.min(in_flow_y);
-                let target_y = if cs.top != mango_css::values::Length::Auto {
-                    let top_inset = cs.top.to_px(cs.font_size, 16.0, viewport_h);
-                    let sticky_thresh = viewport_y + top_inset;
-                    if in_flow_y < sticky_thresh {
-                        sticky_thresh.clamp(in_flow_y, max_sticky_y)
-                    } else {
-                        in_flow_y
-                    }
-                } else if cs.bottom != mango_css::values::Length::Auto {
-                    let bottom_inset = cs.bottom.to_px(cs.font_size, 16.0, viewport_h);
-                    let sticky_thresh = viewport_y + viewport_h - bottom_inset - h;
-                    if in_flow_y > sticky_thresh {
-                        sticky_thresh.clamp(min_sticky_y, in_flow_y)
-                    } else {
-                        in_flow_y
-                    }
-                } else {
-                    in_flow_y
-                };
-                child_offset_y += target_y - in_flow_y;
-
-                // Horizontal sticky (left / right)
-                let max_sticky_x = (cb_right - w).max(in_flow_x);
-                let min_sticky_x = cb_left.min(in_flow_x);
-                let target_x = if cs.left != mango_css::values::Length::Auto {
-                    let left_inset = cs.left.to_px(cs.font_size, 16.0, viewport_w);
-                    let sticky_thresh = viewport_x + left_inset;
-                    if in_flow_x < sticky_thresh {
-                        sticky_thresh.clamp(in_flow_x, max_sticky_x)
-                    } else {
-                        in_flow_x
-                    }
-                } else if cs.right != mango_css::values::Length::Auto {
-                    let right_inset = cs.right.to_px(cs.font_size, 16.0, viewport_w);
-                    let sticky_thresh = viewport_x + viewport_w - right_inset - w;
-                    if in_flow_x > sticky_thresh {
-                        sticky_thresh.clamp(min_sticky_x, in_flow_x)
-                    } else {
-                        in_flow_x
-                    }
-                } else {
-                    in_flow_x
-                };
-                child_offset_x += target_x - in_flow_x;
+                let (dx, dy) = sticky_shift(
+                    box_node,
+                    child,
+                    cs,
+                    pad_box,
+                    active_viewport,
+                    active_table,
+                    child_offset_x,
+                    child_offset_y,
+                    scroll_x,
+                    scroll_y,
+                );
+                child_offset_x += dx;
+                child_offset_y += dy;
             }
         }
 
@@ -234,7 +317,8 @@ pub(crate) fn paint_children_and_scrollbars(
             child_offset_y,
             scroll_x,
             scroll_y,
-            current_cb,
+            active_viewport,
+            active_table,
         );
 
         if is_fixed_escaped {
@@ -350,6 +434,109 @@ pub(crate) fn paint_children_and_scrollbars(
     }
 }
 
+/// Collects border-box geometry with sticky offsets applied.
+///
+/// `getBoundingClientRect()` and `offsetTop`/`offsetLeft` observe the sticky
+/// offset, so geometry publication must use the same displacement the painter
+/// uses. Keys are raw DOM node ids.
+pub fn collect_box_rects_with_scroll(
+    root: &LayoutBox,
+    scroll_x: f32,
+    scroll_y: f32,
+    out: &mut std::collections::HashMap<u32, [f32; 4]>,
+) {
+    fn walk(
+        node: &LayoutBox,
+        offset_x: f32,
+        offset_y: f32,
+        scroll_viewport: Option<Rect>,
+        table_rect: Option<Rect>,
+        scroll_x: f32,
+        scroll_y: f32,
+        out: &mut std::collections::HashMap<u32, [f32; 4]>,
+    ) {
+        if let Some(node_id) = node.node_id {
+            let border = node.dimensions.border_box();
+            out.insert(
+                node_id.raw(),
+                [
+                    border.x() + offset_x,
+                    border.y() + offset_y,
+                    border.width(),
+                    border.height(),
+                ],
+            );
+        }
+
+        let orig_pad_box = node.dimensions.padding_box();
+        let pad_box = Rect::new(
+            orig_pad_box.x() + offset_x,
+            orig_pad_box.y() + offset_y,
+            orig_pad_box.width(),
+            orig_pad_box.height(),
+        );
+        let active_viewport = if node.is_scroll_container() {
+            Some(pad_box)
+        } else {
+            scroll_viewport
+        };
+        let active_table = if node.tag_name.as_deref() == Some("table") {
+            Some(pad_box)
+        } else {
+            table_rect
+        };
+
+        for child in &node.children {
+            let mut child_offset_x = offset_x;
+            let mut child_offset_y = offset_y;
+            if node.is_scroll_container() {
+                child_offset_x -= node.scroll_offset_x;
+                child_offset_y -= node.scroll_offset_y;
+            }
+
+            if let Some(cs) = &child.style {
+                if cs.position == mango_css::values::Position::Fixed {
+                    if node.is_scroll_container() {
+                        child_offset_x += node.scroll_offset_x;
+                        child_offset_y += node.scroll_offset_y;
+                    }
+                    child_offset_x += scroll_x;
+                    child_offset_y += scroll_y;
+                } else if cs.position == mango_css::values::Position::Sticky {
+                    let (dx, dy) = sticky_shift(
+                        node,
+                        child,
+                        cs,
+                        pad_box,
+                        active_viewport,
+                        active_table,
+                        child_offset_x,
+                        child_offset_y,
+                        scroll_x,
+                        scroll_y,
+                    );
+                    child_offset_x += dx;
+                    child_offset_y += dy;
+                }
+            }
+
+            walk(
+                child,
+                child_offset_x,
+                child_offset_y,
+                active_viewport,
+                active_table,
+                scroll_x,
+                scroll_y,
+                out,
+            );
+        }
+    }
+
+    out.clear();
+    walk(root, 0.0, 0.0, None, None, scroll_x, scroll_y, out);
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum PaintLayer {
     /// Positioned children with negative z-index (CSS 2.1 App E layer 2)
@@ -402,12 +589,22 @@ pub(crate) fn paint_layer_of(box_node: &LayoutBox) -> PaintLayer {
             PaintLayer::Float
         } else if box_node.is_inline() {
             PaintLayer::Inline
+        } else if has_positioned_descendant(box_node) {
+            PaintLayer::ZeroOrAutoZ
         } else {
             PaintLayer::BlockBackgrounds
         }
     } else if box_node.is_inline() {
         PaintLayer::Inline
+    } else if has_positioned_descendant(box_node) {
+        PaintLayer::ZeroOrAutoZ
     } else {
         PaintLayer::BlockBackgrounds
     }
+}
+
+fn has_positioned_descendant(b: &LayoutBox) -> bool {
+    // Memoized per box: assigning paint layers previously rescanned each
+    // child's subtree, which is quadratic on deep documents.
+    b.has_positioned_descendant()
 }

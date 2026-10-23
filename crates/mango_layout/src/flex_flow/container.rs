@@ -178,7 +178,9 @@ pub fn layout_flex(
         (0.0, 0.0)
     };
 
-    let is_pre_resolved_width = container.dimensions.content.size.width > 0.0
+    let is_pre_resolved_width = !is_inline_flex
+        && is_width_auto
+        && container.dimensions.content.size.width > 0.0
         && ((containing_block.content.width()
             - total_non_content_h
             - container.dimensions.content.size.width)
@@ -296,6 +298,8 @@ pub fn layout_flex(
         let underflow =
             container_width - (content_width + total_non_content_h + margin_left + margin_right);
 
+        let is_floating = style.float != mango_css::values::Float::None;
+        let is_pos = matches!(style.position, Position::Absolute | Position::Fixed);
         if is_margin_left_auto && is_margin_right_auto {
             margin_left = (underflow / 2.0).max(0.0);
             margin_right = (underflow / 2.0).max(0.0);
@@ -303,7 +307,7 @@ pub fn layout_flex(
             margin_left = underflow.max(0.0);
         } else if is_margin_right_auto {
             margin_right = underflow.max(0.0);
-        } else if !is_width_auto {
+        } else if !is_inline_flex && !is_width_auto && !is_floating && !is_pos {
             margin_right += underflow;
         }
 
@@ -435,17 +439,53 @@ pub fn layout_flex(
         0.0
     };
 
+    let max_main_size = if is_row {
+        if style.max_width != Length::Auto {
+            let raw_max = style.max_width.to_px_with_viewport(
+                font_size,
+                root_font_size,
+                container_width,
+                container_height,
+            );
+            if style.box_sizing == BoxSizing::BorderBox {
+                (raw_max - total_non_content_h).max(0.0)
+            } else {
+                raw_max
+            }
+        } else {
+            f32::INFINITY
+        }
+    } else if style.max_height != Length::Auto {
+        let raw_max = style.max_height.to_px_with_viewport(
+            font_size,
+            root_font_size,
+            container_height,
+            container_height,
+        );
+        if style.box_sizing == BoxSizing::BorderBox {
+            (raw_max - total_non_content_v).max(0.0)
+        } else {
+            raw_max
+        }
+    } else {
+        f32::INFINITY
+    };
+
+    let sum_hypothetical: f32 = item_metrics.iter().map(|m| m.base_main).sum();
     let is_container_main_definite = if is_row {
         true
     } else {
         content_height > 0.0
             || (style.height != Length::Auto && !is_percent_indefinite)
-            || min_main_size > 0.0
+            || (min_main_size > 0.0 && sum_hypothetical < min_main_size)
+            || (max_main_size.is_finite() && sum_hypothetical > max_main_size)
     };
     let container_main_size = if is_row {
-        content_width.max(min_main_size)
+        content_width.max(min_main_size).min(max_main_size)
     } else if content_height > 0.0 {
-        content_height
+        content_height.max(min_main_size).min(max_main_size)
+    } else if max_main_size.is_finite() && sum_hypothetical > max_main_size {
+        max_main_size
     } else {
         min_main_size
     };
@@ -522,6 +562,7 @@ pub fn layout_flex(
             style: &style,
             is_row,
             is_reverse,
+            is_container_main_definite,
             container_x,
             container_y,
             container_main_size,

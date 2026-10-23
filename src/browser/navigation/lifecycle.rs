@@ -43,6 +43,9 @@ impl BrowserChrome {
         if received_any {
             self.persist_cookies();
         }
+        if applied_any {
+            crate::trim_memory();
+        }
         applied_any
     }
 

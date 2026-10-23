@@ -272,12 +272,48 @@ pub(crate) fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut Fl
         let mut container_dims = box_node.dimensions;
         if container_dims.content.size.height == 0.0
             && let Some(style) = &box_node.style
-            && let Some(ratio) = style.aspect_ratio
-            && ratio > 0.0
-            && container_dims.content.size.width > 0.0
         {
-            container_dims.content.size.height =
-                (container_dims.content.size.width / ratio).max(0.0);
+            let fs = style.font_size;
+            let rfs = style.root_font_size;
+            let non_v =
+                box_node.dimensions.padding.vertical() + box_node.dimensions.border.vertical();
+            match style.height {
+                Length::Px(px) if px >= 0.0 => {
+                    container_dims.content.size.height = if style.box_sizing == BoxSizing::BorderBox
+                    {
+                        (px - non_v).max(0.0)
+                    } else {
+                        px
+                    };
+                }
+                Length::Rem(rem) if rem >= 0.0 => {
+                    let h = rem * rfs;
+                    container_dims.content.size.height = if style.box_sizing == BoxSizing::BorderBox
+                    {
+                        (h - non_v).max(0.0)
+                    } else {
+                        h
+                    };
+                }
+                Length::Em(em) if em >= 0.0 => {
+                    let h = em * fs;
+                    container_dims.content.size.height = if style.box_sizing == BoxSizing::BorderBox
+                    {
+                        (h - non_v).max(0.0)
+                    } else {
+                        h
+                    };
+                }
+                _ => {
+                    if let Some(ratio) = style.aspect_ratio
+                        && ratio > 0.0
+                        && container_dims.content.size.width > 0.0
+                    {
+                        container_dims.content.size.height =
+                            (container_dims.content.size.width / ratio).max(0.0);
+                    }
+                }
+            }
         }
         let box_establishes_bfc = establishes_bfc(box_node);
 
@@ -371,6 +407,37 @@ pub(crate) fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut Fl
             let child_y = cursor_y + child.dimensions.border.top + child.dimensions.padding.top;
             child.dimensions.content.origin = Point::new(child_x, child_y);
 
+            // Pre-calculate definite/tentative height for child so descendants resolving
+            // percentage heights have a definite containing block height.
+            if let Some(child_style) = &child.style
+                && child_style.height != Length::Auto
+            {
+                let font_size = child_style.font_size;
+                let root_font_size = child_style.root_font_size;
+                let cb_h = container_dims.content.height();
+                let is_pct_indefinite = matches!(child_style.height, Length::Percent(_))
+                    && cb_h <= 0.0
+                    && !matches!(child_style.position, Position::Absolute | Position::Fixed);
+                if !is_pct_indefinite {
+                    let (_, vp_h) = mango_css::get_current_viewport();
+                    let eff_cb_h = if cb_h > 0.0 { cb_h } else { 600.0 };
+                    let tentative_h = child_style.height.to_px_with_viewport(
+                        font_size,
+                        root_font_size,
+                        eff_cb_h,
+                        vp_h,
+                    );
+                    let non_content_v =
+                        child.dimensions.padding.vertical() + child.dimensions.border.vertical();
+                    let content_h = if child_style.box_sizing == BoxSizing::BorderBox {
+                        (tentative_h - non_content_v).max(0.0)
+                    } else {
+                        tentative_h.max(0.0)
+                    };
+                    child.dimensions.content.size.height = content_h;
+                }
+            }
+
             // Lay out child recursively
             let child_disp = child.style.as_ref().map(|s| s.display);
             if child_disp == Some(Display::Table) || child.tag_name.as_deref() == Some("table") {
@@ -398,6 +465,9 @@ pub(crate) fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut Fl
                 layout_positioned_children(child, float_ctx);
             }
 
+            // In-flow border box bottom before relative offset (CSS 2.1 §9.4.3: relative offset does not affect following boxes)
+            let in_flow_bottom = child.dimensions.border_box().bottom();
+
             // Relative positioning offset (CSS 2.1 §9.4.3)
             if child_pos == Position::Relative {
                 apply_relative_offset(child, &container_dims);
@@ -410,9 +480,9 @@ pub(crate) fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut Fl
                 child.dimensions.margin.top = collapsed;
                 child.dimensions.margin.bottom = 0.0;
                 prev_margin_bottom = collapsed;
-                cursor_y = child.dimensions.border_box().bottom();
+                cursor_y = in_flow_bottom;
             } else {
-                cursor_y = child.dimensions.border_box().bottom();
+                cursor_y = in_flow_bottom;
                 prev_margin_bottom = child.dimensions.margin.bottom;
             }
         }

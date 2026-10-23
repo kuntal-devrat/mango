@@ -144,6 +144,28 @@ impl EventLoop {
         }
     }
 
+    /// Returns the number of live (non-cancelled) timers.
+    pub fn pending_count(&self) -> usize {
+        self.timers.values().filter(|t| !t.cancelled).count()
+    }
+
+    /// Makes every outstanding timer due immediately.
+    ///
+    /// Used by deterministic test harnesses that advance virtual time instead
+    /// of sleeping for real wall-clock delays. Returns the number of live
+    /// timers that were expedited.
+    pub fn expedite_timers(&mut self) -> usize {
+        let now = Instant::now();
+        let mut count = 0;
+        for timer in self.timers.values_mut() {
+            if !timer.cancelled {
+                timer.fire_at = now;
+                count += 1;
+            }
+        }
+        count
+    }
+
     /// Collects and reschedules/removes all due tasks and timer scripts.
     pub fn drain_due(&mut self) -> Vec<String> {
         let mut scripts = Vec::new();

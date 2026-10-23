@@ -383,6 +383,36 @@ impl JsRuntime {
         dirty || timer_fired
     }
 
+    /// Whether any timer, animation frame, or queued task is still waiting.
+    pub fn has_pending_event_loop_work(&self) -> bool {
+        self.event_loop.borrow().pending_count() > 0
+    }
+
+    /// Runs exactly one animation-frame turn with pending timers expedited.
+    pub fn run_animation_frame(&mut self) {
+        self.event_loop.borrow_mut().expedite_timers();
+        let _ = self.tick();
+        self.run_jobs();
+    }
+
+    /// Runs up to `max_frames` event-loop turns, treating every pending timer
+    /// (including `requestAnimationFrame` callbacks) as already due.
+    ///
+    /// This is the deterministic equivalent of waiting through animation frames:
+    /// it exercises the same callback code without depending on wall-clock time,
+    /// which keeps reftest runs fast and repeatable.
+    pub fn pump_event_loop(&mut self, max_frames: usize) {
+        for _ in 0..max_frames {
+            let pending = self.event_loop.borrow_mut().expedite_timers();
+            if pending == 0 {
+                self.run_jobs();
+                break;
+            }
+            let _ = self.tick();
+            self.run_jobs();
+        }
+    }
+
     /// Drains any queued Promise microtasks, MutationObserver callbacks, or deferred jobs.
     pub fn run_jobs(&mut self) {
         {

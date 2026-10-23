@@ -294,7 +294,7 @@ pub fn resolve_item_base_and_limits(
         } else {
             explicit_main.max(0.0)
         }
-    } else if explicit_main > 0.0 && is_row {
+    } else if explicit_main > 0.0 {
         explicit_main
     } else {
         match &child.box_type {

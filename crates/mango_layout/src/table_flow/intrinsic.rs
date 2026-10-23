@@ -15,15 +15,15 @@ pub fn get_node_horizontal_spacing(node: &LayoutBox, _font_size: f32) -> f32 {
         let b_l = s.border_left_width;
         let b_r = s.border_right_width;
         let m_l = match s.margin_left {
-            Length::Px(px) if px > 0.0 => px,
-            Length::Rem(rem) if rem > 0.0 => rem * root_fs,
-            Length::Em(em) if em > 0.0 => em * fs,
+            Length::Px(px) => px,
+            Length::Rem(rem) => rem * root_fs,
+            Length::Em(em) => em * fs,
             _ => 0.0,
         };
         let m_r = match s.margin_right {
-            Length::Px(px) if px > 0.0 => px,
-            Length::Rem(rem) if rem > 0.0 => rem * root_fs,
-            Length::Em(em) if em > 0.0 => em * fs,
+            Length::Px(px) => px,
+            Length::Rem(rem) => rem * root_fs,
+            Length::Em(em) => em * fs,
             _ => 0.0,
         };
         p_l + p_r + b_l + b_r + m_l + m_r
@@ -369,15 +369,15 @@ pub fn measure_box_intrinsic_widths(
                     let fs = s.font_size;
                     let rfs = s.root_font_size;
                     let ml = match s.margin_left {
-                        Length::Px(px) if px > 0.0 => px,
-                        Length::Rem(rem) if rem > 0.0 => rem * rfs,
-                        Length::Em(em) if em > 0.0 => em * fs,
+                        Length::Px(px) => px,
+                        Length::Rem(rem) => rem * rfs,
+                        Length::Em(em) => em * fs,
                         _ => 0.0,
                     };
                     let mr = match s.margin_right {
-                        Length::Px(px) if px > 0.0 => px,
-                        Length::Rem(rem) if rem > 0.0 => rem * rfs,
-                        Length::Em(em) if em > 0.0 => em * fs,
+                        Length::Px(px) => px,
+                        Length::Rem(rem) => rem * rfs,
+                        Length::Em(em) => em * fs,
                         _ => 0.0,
                     };
                     ml + mr
@@ -427,7 +427,10 @@ pub fn measure_box_intrinsic_widths(
             min_w = min_w.max(max_w);
         }
         let non_content_h = get_node_horizontal_spacing(node, font_size);
-        let res = (min_w + non_content_h, max_w + non_content_h);
+        let res = (
+            min_w.max(0.0) + non_content_h,
+            max_w.max(0.0) + non_content_h,
+        );
         memo.insert(key, res);
         return res;
     }

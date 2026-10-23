@@ -39,6 +39,13 @@ pub struct LayoutBox {
     pub scroll_offset_y: f32,
     /// Whether this box establishes an independent formatting context (e.g. flex or grid item).
     pub is_independent_formatting_context: bool,
+    /// Cached result of "does this subtree contain a positioned box?".
+    ///
+    /// Paint-layer assignment asks this for every child; recomputing it
+    /// recursively per child is quadratic on deep documents. The cache is
+    /// filled lazily and is valid for one display-list build (the box tree is
+    /// rebuilt or explicitly dirtied whenever structure changes).
+    pub positioned_descendant_cache: std::sync::OnceLock<bool>,
 }
 
 /// Supported geometric shapes for `<area>` elements in HTML image maps.

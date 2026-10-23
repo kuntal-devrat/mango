@@ -16,6 +16,7 @@ pub struct LinePlacementParams<'a> {
     pub style: &'a ComputedStyle,
     pub is_row: bool,
     pub is_reverse: bool,
+    pub is_container_main_definite: bool,
     pub container_x: f32,
     pub container_y: f32,
     pub container_main_size: f32,
@@ -36,6 +37,7 @@ pub fn position_flex_items_on_line(params: LinePlacementParams) {
         style,
         is_row,
         is_reverse,
+        is_container_main_definite: _,
         container_x,
         container_y,
         container_main_size,
@@ -288,6 +290,32 @@ pub fn position_flex_items_on_line(params: LinePlacementParams) {
             let mut item_cb_dims = child.dimensions;
             item_cb_dims.content.origin.x = 0.0;
             item_cb_dims.content.origin.y = 0.0;
+            let is_item_basis_definite = child
+                .style
+                .as_ref()
+                .map(|s| {
+                    (s.height != Length::Auto && !matches!(s.height, Length::Percent(_)))
+                        || (!s.flex_basis.is_auto()
+                            && !s.flex_basis.is_content()
+                            && !matches!(
+                                s.flex_basis,
+                                Length::Percent(_)
+                                    | Length::MinContent
+                                    | Length::MaxContent
+                                    | Length::FitContent
+                            ))
+                })
+                .unwrap_or(false);
+            let is_container_strictly_definite = if is_row {
+                true
+            } else {
+                style.height != Length::Auto && !matches!(style.height, Length::Percent(_))
+                    || (matches!(style.height, Length::Percent(_)) && container_height > 0.0)
+            };
+            if !is_row && !is_container_strictly_definite && !is_item_basis_definite {
+                item_cb_dims.content.size.height = 0.0;
+                child.dimensions.content.size.height = 0.0;
+            }
             let item_containing_block = if is_child_positioned {
                 Dimensions::new(child.dimensions.border_box())
             } else {

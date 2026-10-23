@@ -370,8 +370,31 @@ fn layout_table_contents(
     };
 
     let actual_table_w = col_widths.iter().sum::<f32>() + total_spacing;
-    if actual_table_w > table_w {
-        table_w = actual_table_w;
+    let is_auto_table_width =
+        style.width == Length::Auto && table_box.get_attribute("width").is_none();
+    let new_table_w = if is_auto_table_width {
+        // Shrink-to-fit, but never below the table's own min-width or above
+        // its max-width (CSS 2.1 §17.5.2).
+        let fs = style.font_size;
+        let rfs = style.root_font_size;
+        let min_w = if style.min_width != Length::Auto {
+            style.min_width.to_px_with_viewport(fs, rfs, table_w, 600.0)
+        } else {
+            0.0
+        };
+        let max_w = if style.max_width != Length::Auto {
+            style.max_width.to_px_with_viewport(fs, rfs, table_w, 600.0)
+        } else {
+            f32::INFINITY
+        };
+        actual_table_w.max(min_w).min(max_w)
+    } else {
+        // A specified width may still be widened by columns whose min-content
+        // widths cannot be satisfied (CSS 2.1 §17.5.2).
+        table_w.max(actual_table_w)
+    };
+    if (new_table_w - table_w).abs() > 0.01 {
+        table_w = new_table_w;
         table_box.dimensions.content.size.width = table_w;
 
         // Re-layout top captions with updated table width
