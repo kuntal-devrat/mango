@@ -219,22 +219,6 @@ fn layout_styled_document(
 fn clamp_scroll_offsets(box_node: &mut LayoutBox) {
     if box_node.is_scroll_container() {
         let (max_x, max_y) = box_node.max_scroll();
-        // For RTL scroll containers, the initial scroll position is at the
-        // right edge (showing the start of RTL content). Only apply when no
-        // explicit scroll was set via _mango_scroll_left.
-        if max_x > 0.0
-            && box_node.scroll_offset_x == 0.0
-            && box_node
-                .style
-                .as_ref()
-                .is_some_and(|s| s.direction == mango_css::values::Direction::Rtl)
-            && !box_node
-                .attributes
-                .iter()
-                .any(|(k, _)| k == "_mango_scroll_left")
-        {
-            box_node.scroll_offset_x = max_x;
-        }
         box_node.scroll_offset_x = box_node.scroll_offset_x.clamp(0.0, max_x);
         box_node.scroll_offset_y = box_node.scroll_offset_y.clamp(0.0, max_y);
     }

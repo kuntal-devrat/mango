@@ -1,5 +1,5 @@
 use mango_core::{EdgeSizes, Point};
-use mango_css::values::{BoxSizing, Display, FlexDirection, FlexWrap, Length, Position};
+use mango_css::values::{BoxSizing, Direction, Display, FlexDirection, FlexWrap, Length, Position};
 
 use crate::block_flow::layout_positioned_children;
 use crate::box_tree::LayoutBox;
@@ -358,10 +358,13 @@ pub fn layout_flex(
     }
 
     // 2. Identify flex direction and axes
+    // In a horizontal-tb RTL flex container, the main-start edge is the
+    // physical right edge.  This is equivalent to reversing the row's
+    // placement direction, while preserving the DOM order of the items.
     let is_reverse = matches!(
         style.flex_direction,
         FlexDirection::RowReverse | FlexDirection::ColumnReverse
-    );
+    ) ^ (is_row && style.direction == Direction::Rtl);
     let is_wrap = style.flex_wrap != FlexWrap::NoWrap;
     let is_wrap_reverse = style.flex_wrap == FlexWrap::WrapReverse;
 
