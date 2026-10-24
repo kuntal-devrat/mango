@@ -49,6 +49,8 @@ pub fn build_display_list_with_scroll_xy(
         scroll_y,
         None,
         None,
+        0.0,
+        0.0,
     );
     list
 }
@@ -65,6 +67,8 @@ pub(crate) fn render_layout_box(
     scroll_y: f32,
     scroll_viewport: Option<Rect>,
     table_rect: Option<Rect>,
+    escaped_scroll_x: f32,
+    escaped_scroll_y: f32,
 ) {
     let s_ref = box_node.style.as_ref();
 
@@ -149,6 +153,8 @@ pub(crate) fn render_layout_box(
         scroll_y,
         scroll_viewport,
         table_rect,
+        escaped_scroll_x,
+        escaped_scroll_y,
     );
 
     if push_backdrop {
@@ -178,6 +184,8 @@ fn render_layout_box_inner(
     scroll_y: f32,
     scroll_viewport: Option<Rect>,
     table_rect: Option<Rect>,
+    escaped_scroll_x: f32,
+    escaped_scroll_y: f32,
 ) {
     let style = box_node.style.as_deref();
     let is_visible = style.is_none_or(|s| s.is_visible());
@@ -275,5 +283,7 @@ fn render_layout_box_inner(
         list,
         scroll_viewport,
         table_rect,
+        escaped_scroll_x,
+        escaped_scroll_y,
     );
 }

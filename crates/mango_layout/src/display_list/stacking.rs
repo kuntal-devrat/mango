@@ -12,6 +12,15 @@ use super::types::apply_opacity;
 ///
 /// Shared by the painter and by layout-geometry publication so that
 /// `getBoundingClientRect()` observes exactly the offset that is painted.
+///
+/// `escaped_scroll_x/y` carries the scroll-container scroll offset that was
+/// canceled by a fixed or absolutely-positioned ancestor.  When non-zero the
+/// in-flow position has had the scroll added back (so the element does not
+/// visually scroll), but sticky math must still see the scrolled position.
+/// We subtract the escaped amount to recover the effective scrollport
+/// coordinate (CSS Position 3 §6.2 — the scroll container is determined by
+/// the nearest scroll-container ancestor, regardless of intervening
+/// fixed/absolute elements).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn sticky_shift(
     parent: &LayoutBox,
@@ -24,6 +33,8 @@ pub(crate) fn sticky_shift(
     child_offset_y: f32,
     scroll_x: f32,
     scroll_y: f32,
+    escaped_scroll_x: f32,
+    escaped_scroll_y: f32,
 ) -> (f32, f32) {
     let (viewport_x, viewport_y, viewport_w, viewport_h) = match active_viewport {
         Some(vp) => (vp.x(), vp.y(), vp.width(), vp.height()),
@@ -33,8 +44,10 @@ pub(crate) fn sticky_shift(
         }
     };
 
-    let in_flow_x = child.dimensions.border_box().x() + child_offset_x;
-    let in_flow_y = child.dimensions.border_box().y() + child_offset_y;
+    // Recover the effective scrollport coordinate: subtract the scroll
+    // offset that a fixed/absolute ancestor canceled.
+    let in_flow_x = child.dimensions.border_box().x() + child_offset_x - escaped_scroll_x;
+    let in_flow_y = child.dimensions.border_box().y() + child_offset_y - escaped_scroll_y;
     let w = child.dimensions.border_box().width();
     let h = child.dimensions.border_box().height();
 
@@ -71,26 +84,32 @@ pub(crate) fn sticky_shift(
     // rectangle collapses; the box then simply follows its inset instead of
     // being clamped back inside its containing block (CSS Position 3 §6.2).
     let clamp_to_cb_y = top_inset + h <= viewport_h && bottom_inset + h <= viewport_h;
-    let max_sticky_y = if clamp_to_cb_y {
-        (cb_bottom - h).max(in_flow_y)
-    } else {
-        f32::INFINITY
-    };
-    let min_sticky_y = if clamp_to_cb_y {
-        cb_top.min(in_flow_y)
-    } else {
-        f32::NEG_INFINITY
-    };
     let top_thresh = viewport_y + top_inset + child.dimensions.margin.top;
     let bottom_thresh = viewport_y + viewport_h - bottom_inset - h - child.dimensions.margin.bottom;
 
     let mut target_y = in_flow_y;
     let ignore_bottom = has_top && has_bottom && (h + top_inset + bottom_inset > viewport_h);
     if has_bottom && !ignore_bottom && in_flow_y > bottom_thresh {
-        target_y = bottom_thresh.clamp(min_sticky_y, in_flow_y);
+        // A sticky item may move upward only while its border box remains
+        // inside its containing block.  Do not pass an inverted clamp range
+        // to `f32::clamp`: that case occurs when the item is larger than its
+        // containing block and the correct result is to leave it in-flow.
+        if clamp_to_cb_y {
+            let min_y = cb_top;
+            if min_y <= in_flow_y {
+                target_y = bottom_thresh.max(min_y).min(in_flow_y);
+            }
+        }
     }
     if has_top && in_flow_y < top_thresh {
-        target_y = top_thresh.clamp(in_flow_y, max_sticky_y);
+        if clamp_to_cb_y {
+            let max_y = cb_bottom - h;
+            if max_y >= in_flow_y {
+                target_y = top_thresh.min(max_y).max(in_flow_y);
+            }
+        } else {
+            target_y = top_thresh;
+        }
     }
 
     // Horizontal sticky (left / right per CSS Position 3 §6.2)
@@ -107,26 +126,28 @@ pub(crate) fn sticky_shift(
         0.0
     };
     let clamp_to_cb_x = left_inset + w <= viewport_w && right_inset + w <= viewport_w;
-    let max_sticky_x = if clamp_to_cb_x {
-        (cb_right - w).max(in_flow_x)
-    } else {
-        f32::INFINITY
-    };
-    let min_sticky_x = if clamp_to_cb_x {
-        cb_left.min(in_flow_x)
-    } else {
-        f32::NEG_INFINITY
-    };
     let left_thresh = viewport_x + left_inset + child.dimensions.margin.left;
     let right_thresh = viewport_x + viewport_w - right_inset - w - child.dimensions.margin.right;
 
     let mut target_x = in_flow_x;
     let ignore_right = has_left && has_right && (w + left_inset + right_inset > viewport_w);
     if has_right && !ignore_right && in_flow_x > right_thresh {
-        target_x = right_thresh.clamp(min_sticky_x, in_flow_x);
+        if clamp_to_cb_x {
+            let min_x = cb_left;
+            if min_x <= in_flow_x {
+                target_x = right_thresh.max(min_x).min(in_flow_x);
+            }
+        }
     }
     if has_left && in_flow_x < left_thresh {
-        target_x = left_thresh.clamp(in_flow_x, max_sticky_x);
+        if clamp_to_cb_x {
+            let max_x = cb_right - w;
+            if max_x >= in_flow_x {
+                target_x = left_thresh.min(max_x).max(in_flow_x);
+            }
+        } else {
+            target_x = left_thresh;
+        }
     }
 
     (target_x - in_flow_x, target_y - in_flow_y)
@@ -144,6 +165,8 @@ pub(crate) fn paint_children_and_scrollbars(
     list: &mut DisplayList,
     scroll_viewport: Option<Rect>,
     table_rect: Option<Rect>,
+    escaped_scroll_x: f32,
+    escaped_scroll_y: f32,
 ) {
     let active_viewport = if box_node.is_scroll_container() {
         Some(pad_box)
@@ -255,6 +278,10 @@ pub(crate) fn paint_children_and_scrollbars(
     for child in sorted_children {
         let mut child_offset_x = offset_x;
         let mut child_offset_y = offset_y;
+        // Tracks scroll-container scroll that was canceled by a fixed
+        // ancestor, so sticky descendants can recover the scrolled position.
+        let mut child_escaped_sx = escaped_scroll_x;
+        let mut child_escaped_sy = escaped_scroll_y;
 
         if box_node.is_scroll_container() {
             child_offset_x -= box_node.scroll_offset_x;
@@ -266,6 +293,12 @@ pub(crate) fn paint_children_and_scrollbars(
                 if box_node.is_scroll_container() {
                     child_offset_x += box_node.scroll_offset_x;
                     child_offset_y += box_node.scroll_offset_y;
+                    // The scroll offset was added back (canceled). Track it so
+                    // sticky descendants can subtract it to recover the
+                    // effective scrolled position.  Accumulate in case an
+                    // outer scroll container was also escaped.
+                    child_escaped_sx += box_node.scroll_offset_x;
+                    child_escaped_sy += box_node.scroll_offset_y;
                 }
                 child_offset_x += scroll_x;
                 child_offset_y += scroll_y;
@@ -281,9 +314,15 @@ pub(crate) fn paint_children_and_scrollbars(
                     child_offset_y,
                     scroll_x,
                     scroll_y,
+                    child_escaped_sx,
+                    child_escaped_sy,
                 );
-                child_offset_x += dx;
-                child_offset_y += dy;
+                // sticky_shift subtracts escaped_scroll internally to compute
+                // the effective scrollport position, but the painted position
+                // (border_box + offset) still includes the escaped scroll.
+                // Subtract it here so the element paints at the target.
+                child_offset_x += dx - child_escaped_sx;
+                child_offset_y += dy - child_escaped_sy;
             }
         }
 
@@ -318,6 +357,8 @@ pub(crate) fn paint_children_and_scrollbars(
             scroll_y,
             active_viewport,
             active_table,
+            child_escaped_sx,
+            child_escaped_sy,
         );
 
         if is_fixed_escaped {
@@ -452,6 +493,8 @@ pub fn collect_box_rects_with_scroll(
         table_rect: Option<Rect>,
         scroll_x: f32,
         scroll_y: f32,
+        escaped_scroll_x: f32,
+        escaped_scroll_y: f32,
         out: &mut std::collections::HashMap<u32, [f32; 4]>,
     ) {
         if let Some(node_id) = node.node_id {
@@ -488,6 +531,9 @@ pub fn collect_box_rects_with_scroll(
         for child in &node.children {
             let mut child_offset_x = offset_x;
             let mut child_offset_y = offset_y;
+            let mut child_escaped_sx = escaped_scroll_x;
+            let mut child_escaped_sy = escaped_scroll_y;
+
             if node.is_scroll_container() {
                 child_offset_x -= node.scroll_offset_x;
                 child_offset_y -= node.scroll_offset_y;
@@ -498,6 +544,8 @@ pub fn collect_box_rects_with_scroll(
                     if node.is_scroll_container() {
                         child_offset_x += node.scroll_offset_x;
                         child_offset_y += node.scroll_offset_y;
+                        child_escaped_sx += node.scroll_offset_x;
+                        child_escaped_sy += node.scroll_offset_y;
                     }
                     child_offset_x += scroll_x;
                     child_offset_y += scroll_y;
@@ -513,9 +561,11 @@ pub fn collect_box_rects_with_scroll(
                         child_offset_y,
                         scroll_x,
                         scroll_y,
+                        child_escaped_sx,
+                        child_escaped_sy,
                     );
-                    child_offset_x += dx;
-                    child_offset_y += dy;
+                    child_offset_x += dx - child_escaped_sx;
+                    child_offset_y += dy - child_escaped_sy;
                 }
             }
 
@@ -527,13 +577,17 @@ pub fn collect_box_rects_with_scroll(
                 active_table,
                 scroll_x,
                 scroll_y,
+                child_escaped_sx,
+                child_escaped_sy,
                 out,
             );
         }
     }
 
     out.clear();
-    walk(root, 0.0, 0.0, None, None, scroll_x, scroll_y, out);
+    walk(
+        root, 0.0, 0.0, None, None, scroll_x, scroll_y, 0.0, 0.0, out,
+    );
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
