@@ -8,6 +8,84 @@ use crate::box_tree::LayoutBox;
 use super::builder::render_layout_box;
 use super::types::apply_opacity;
 
+fn sticky_axis_target(
+    in_flow: f32,
+    size: f32,
+    viewport_start: f32,
+    viewport_size: f32,
+    start: mango_css::values::Length,
+    end: mango_css::values::Length,
+    font_size: f32,
+    containing_start: f32,
+    containing_end: f32,
+    margin_start: f32,
+    margin_end: f32,
+) -> f32 {
+    let has_start = start != mango_css::values::Length::Auto;
+    let has_end = end != mango_css::values::Length::Auto;
+    if !has_start && !has_end {
+        return in_flow;
+    }
+
+    let start_px = if has_start {
+        start.to_px(font_size, 16.0, viewport_size)
+    } else {
+        0.0
+    };
+    let mut end_px = if has_end {
+        end.to_px(font_size, 16.0, viewport_size)
+    } else {
+        0.0
+    };
+
+    // CSS Position 3 expands the view rectangle's auto side when the sticky
+    // border box is larger than the inset-constrained rectangle. This keeps
+    // large-top/large-bottom sticky boxes reachable instead of disabling
+    // sticky positioning entirely.
+    let oversized_view = viewport_size - start_px - end_px < size;
+    if oversized_view {
+        if has_start {
+            end_px = viewport_size - start_px - size;
+        }
+    }
+
+    let start_edge = viewport_start + start_px + margin_start;
+    let end_edge = viewport_start + viewport_size - end_px - size - margin_end;
+    let mut target = in_flow;
+
+    if oversized_view && has_start && start_px > 0.0 {
+        // With an oversized sticky box, the start inset is a displacement
+        // from its scrolled in-flow position; anchoring it to the scrollport
+        // edge would incorrectly erase the scroll offset.
+        target = in_flow + start_px;
+    } else if has_start && in_flow < start_edge {
+        target = start_edge;
+    }
+    if has_end && target > end_edge {
+        target = end_edge;
+    }
+
+    // A sticky translation cannot move the border box outside its containing
+    // block. If the requested movement would require an inverted range (for
+    // example, an item larger than the containing block), leave it in-flow.
+    if target > in_flow {
+        let max_target = containing_end - size;
+        if max_target >= in_flow {
+            target = target.min(max_target);
+        } else {
+            target = in_flow;
+        }
+    } else if target < in_flow {
+        if containing_start <= in_flow {
+            target = target.max(containing_start);
+        } else {
+            target = in_flow;
+        }
+    }
+
+    target
+}
+
 /// Computes the sticky-positioning displacement for `child` within `parent`.
 ///
 /// Shared by the painter and by layout-geometry publication so that
@@ -67,88 +145,32 @@ pub(crate) fn sticky_shift(
         )
     };
 
-    // Vertical sticky (top / bottom per CSS Position 3 §6.2)
-    let has_top = cs.top != mango_css::values::Length::Auto;
-    let has_bottom = cs.bottom != mango_css::values::Length::Auto;
-    let top_inset = if has_top {
-        cs.top.to_px(cs.font_size, 16.0, viewport_h)
-    } else {
-        0.0
-    };
-    let bottom_inset = if has_bottom {
-        cs.bottom.to_px(cs.font_size, 16.0, viewport_h)
-    } else {
-        0.0
-    };
-    // If the inset plus the box cannot fit in the scrollport, the view
-    // rectangle collapses; the box then simply follows its inset instead of
-    // being clamped back inside its containing block (CSS Position 3 §6.2).
-    let clamp_to_cb_y = top_inset + h <= viewport_h && bottom_inset + h <= viewport_h;
-    let top_thresh = viewport_y + top_inset + child.dimensions.margin.top;
-    let bottom_thresh = viewport_y + viewport_h - bottom_inset - h - child.dimensions.margin.bottom;
-
-    let mut target_y = in_flow_y;
-    let ignore_bottom = has_top && has_bottom && (h + top_inset + bottom_inset > viewport_h);
-    if has_bottom && !ignore_bottom && in_flow_y > bottom_thresh {
-        // A sticky item may move upward only while its border box remains
-        // inside its containing block.  Do not pass an inverted clamp range
-        // to `f32::clamp`: that case occurs when the item is larger than its
-        // containing block and the correct result is to leave it in-flow.
-        if clamp_to_cb_y {
-            let min_y = cb_top;
-            if min_y <= in_flow_y {
-                target_y = bottom_thresh.max(min_y).min(in_flow_y);
-            }
-        }
-    }
-    if has_top && in_flow_y < top_thresh {
-        if clamp_to_cb_y {
-            let max_y = cb_bottom - h;
-            if max_y >= in_flow_y {
-                target_y = top_thresh.min(max_y).max(in_flow_y);
-            }
-        } else {
-            target_y = top_thresh;
-        }
-    }
-
-    // Horizontal sticky (left / right per CSS Position 3 §6.2)
-    let has_left = cs.left != mango_css::values::Length::Auto;
-    let has_right = cs.right != mango_css::values::Length::Auto;
-    let left_inset = if has_left {
-        cs.left.to_px(cs.font_size, 16.0, viewport_w)
-    } else {
-        0.0
-    };
-    let right_inset = if has_right {
-        cs.right.to_px(cs.font_size, 16.0, viewport_w)
-    } else {
-        0.0
-    };
-    let clamp_to_cb_x = left_inset + w <= viewport_w && right_inset + w <= viewport_w;
-    let left_thresh = viewport_x + left_inset + child.dimensions.margin.left;
-    let right_thresh = viewport_x + viewport_w - right_inset - w - child.dimensions.margin.right;
-
-    let mut target_x = in_flow_x;
-    let ignore_right = has_left && has_right && (w + left_inset + right_inset > viewport_w);
-    if has_right && !ignore_right && in_flow_x > right_thresh {
-        if clamp_to_cb_x {
-            let min_x = cb_left;
-            if min_x <= in_flow_x {
-                target_x = right_thresh.max(min_x).min(in_flow_x);
-            }
-        }
-    }
-    if has_left && in_flow_x < left_thresh {
-        if clamp_to_cb_x {
-            let max_x = cb_right - w;
-            if max_x >= in_flow_x {
-                target_x = left_thresh.min(max_x).max(in_flow_x);
-            }
-        } else {
-            target_x = left_thresh;
-        }
-    }
+    let target_y = sticky_axis_target(
+        in_flow_y,
+        h,
+        viewport_y,
+        viewport_h,
+        cs.top,
+        cs.bottom,
+        cs.font_size,
+        cb_top,
+        cb_bottom,
+        child.dimensions.margin.top,
+        child.dimensions.margin.bottom,
+    );
+    let target_x = sticky_axis_target(
+        in_flow_x,
+        w,
+        viewport_x,
+        viewport_w,
+        cs.left,
+        cs.right,
+        cs.font_size,
+        cb_left,
+        cb_right,
+        child.dimensions.margin.left,
+        child.dimensions.margin.right,
+    );
 
     (target_x - in_flow_x, target_y - in_flow_y)
 }
