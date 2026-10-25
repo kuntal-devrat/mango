@@ -8,7 +8,6 @@
 #![allow(
     clippy::too_many_arguments,
     clippy::collapsible_if,
-    clippy::chunks_exact_to_as_chunks,
     clippy::needless_range_loop,
     clippy::needless_borrow,
     clippy::op_ref,

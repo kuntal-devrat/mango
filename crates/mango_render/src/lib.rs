@@ -10,7 +10,6 @@
 #![allow(
     clippy::type_complexity,
     clippy::too_many_arguments,
-    clippy::manual_checked_ops,
     clippy::manual_clamp,
     clippy::needless_range_loop,
     clippy::field_reassign_with_default,

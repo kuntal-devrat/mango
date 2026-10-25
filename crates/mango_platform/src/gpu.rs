@@ -107,7 +107,7 @@ impl GpuTexture {
         let mut bytes = vec![0u8; expected_len * 4];
         if is_opaque {
             // For page tiles: every pixel is 100% opaque.
-            for (chunk, &px) in bytes.chunks_exact_mut(4).zip(pixels.iter()) {
+            for (chunk, &px) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(pixels.iter()) {
                 if is_bgra {
                     chunk[0] = (px & 0xFF) as u8;
                     chunk[1] = ((px >> 8) & 0xFF) as u8;
@@ -122,7 +122,7 @@ impl GpuTexture {
             }
         } else {
             // For chrome UI, overlay, and promoted layers:
-            for (chunk, &px) in bytes.chunks_exact_mut(4).zip(pixels.iter()) {
+            for (chunk, &px) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(pixels.iter()) {
                 let a = ((px >> 24) & 0xFF) as u8;
                 let alpha = if a != 0 {
                     a

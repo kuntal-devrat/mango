@@ -457,7 +457,7 @@ pub(crate) fn apply_filter_to_rect(
                                     count -= 1;
                                 }
                             }
-                            temp[y * w + x] = if count > 0 { (sum / count) as u8 } else { 0 };
+                            temp[y * w + x] = sum.checked_div(count).unwrap_or(0) as u8;
                         }
                     }
                     for x in 0..w {
@@ -479,8 +479,7 @@ pub(crate) fn apply_filter_to_rect(
                                     count -= 1;
                                 }
                             }
-                            shadow_alphas[y * w + x] =
-                                if count > 0 { (sum / count) as u8 } else { 0 };
+                            shadow_alphas[y * w + x] = sum.checked_div(count).unwrap_or(0) as u8;
                         }
                     }
                 }
@@ -568,11 +567,13 @@ pub(crate) fn box_blur_rect(
                 }
             }
 
-            if count > 0 {
-                temp[row * w + col] = ((sum_a / count) << 24)
-                    | ((sum_r / count) << 16)
-                    | ((sum_g / count) << 8)
-                    | (sum_b / count);
+            if let (Some(a), Some(r), Some(g), Some(b)) = (
+                sum_a.checked_div(count),
+                sum_r.checked_div(count),
+                sum_g.checked_div(count),
+                sum_b.checked_div(count),
+            ) {
+                temp[row * w + col] = (a << 24) | (r << 16) | (g << 8) | b;
             }
         }
     }
@@ -615,12 +616,14 @@ pub(crate) fn box_blur_rect(
                 }
             }
 
-            if count > 0 {
+            if let (Some(a), Some(r), Some(g), Some(b)) = (
+                sum_a.checked_div(count),
+                sum_r.checked_div(count),
+                sum_g.checked_div(count),
+                sum_b.checked_div(count),
+            ) {
                 let y = min_y + row as u32;
-                buffer[(y * buf_width + x) as usize] = ((sum_a / count) << 24)
-                    | ((sum_r / count) << 16)
-                    | ((sum_g / count) << 8)
-                    | (sum_b / count);
+                buffer[(y * buf_width + x) as usize] = (a << 24) | (r << 16) | (g << 8) | b;
             }
         }
     }

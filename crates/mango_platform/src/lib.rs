@@ -3,7 +3,7 @@
 //! Window management, input handling, and platform abstractions.
 //! This crate owns the `winit` event loop and `softbuffer` surface.
 
-#![allow(clippy::chunks_exact_to_as_chunks, clippy::too_many_arguments)]
+#![allow(clippy::too_many_arguments)]
 
 pub mod clipboard;
 pub mod gpu;
