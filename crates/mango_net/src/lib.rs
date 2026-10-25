@@ -39,7 +39,8 @@ pub use hpack::{HeaderField, HpackDecoder, HpackEncoder};
 pub use http::{HttpClient, HttpMethod, HttpRequest, HttpResponse, NetworkError};
 pub use http2::{
     AltSvcCache, AltSvcRecord, FrameHeader, FrameType, Http2ConnectionPool, Http2Frame,
-    Http2Session, Http2Stream, Http3Frame, HttpVersion, decode_quic_varint, encode_quic_varint,
+    Http2Session, Http2Stream, Http3Frame, HttpVersion, StreamPriority, StreamState,
+    SubresourcePriority, decode_quic_varint, encode_quic_varint,
 };
 pub use pipeline::{
     DecodedResource, ResourcePipeline, TlsConnectionInfo, cache_stage, decode_stage,
