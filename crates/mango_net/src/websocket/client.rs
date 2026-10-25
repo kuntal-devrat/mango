@@ -5,7 +5,6 @@ use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
-use std::thread;
 use std::time::Duration;
 
 use super::crypto::{base64_encode, compute_accept_key, random_bytes_16, random_mask};
@@ -173,7 +172,7 @@ pub(crate) fn run_websocket_client<F>(
     };
 
     let _ = tcp_stream.set_nodelay(true);
-    let _ = tcp_stream.set_read_timeout(Some(Duration::from_millis(100)));
+    let _ = tcp_stream.set_read_timeout(Some(Duration::from_millis(10)));
 
     // For wss:// wrap the TCP stream in a rustls TLS session.
     // We use a Box<dyn ReadWrite> to unify the plain and TLS paths.
@@ -244,13 +243,11 @@ pub(crate) fn run_websocket_client<F>(
                     break;
                 }
             }
-            Ok(_) => thread::sleep(Duration::from_millis(10)),
+            Ok(0) => break, // EOF
+            Ok(_) => {}
             Err(ref e)
                 if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.kind() == std::io::ErrorKind::TimedOut =>
-            {
-                thread::sleep(Duration::from_millis(10));
-            }
+                    || e.kind() == std::io::ErrorKind::TimedOut => {}
             Err(_) => break,
         }
     }
@@ -523,10 +520,7 @@ pub(crate) fn run_websocket_client<F>(
             Ok((Opcode::Pong, _, _)) => {}
             Err(ref e)
                 if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.kind() == std::io::ErrorKind::TimedOut =>
-            {
-                thread::sleep(Duration::from_millis(5));
-            }
+                    || e.kind() == std::io::ErrorKind::TimedOut => {}
             Err(e) => {
                 cb(WebSocketEvent::Error {
                     message: format!("Socket read error: {e}"),
