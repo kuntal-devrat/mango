@@ -466,6 +466,7 @@
             characterSet: 'UTF-8', _characterSet: 'UTF-8', charset: 'UTF-8', inputEncoding: 'UTF-8', location: null,
             _childNodes: [doctype, html], _doctype: doctype, doctype: doctype,
             _documentElement: html, documentElement: html, body: body, head: head, defaultView: null, _defaultView: null,
+            get scrollingElement() { return this.documentElement || this.body || null; },
             implementation: Object.create(DOMImplementation.prototype),
             nodeType: 9, nodeName: '#document',
             createElement: function(t) { var el = _wrapElement(_origCE(t)); if (el) { el._ownerDocument = doc; el.ownerDocument = doc; } return el; },

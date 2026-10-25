@@ -21,8 +21,10 @@ pub use builder::{
 pub use cache::PageStyleIndex;
 pub use counters::CounterContext;
 pub use extract::{
-    collect_image_maps, extract_shadow_stylesheets, extract_style_elements, scan_all_shadow_roots,
+    collect_image_maps, current_document_base_dir, extract_shadow_stylesheets,
+    extract_style_elements, resolve_sheet_imports, scan_all_shadow_roots,
     scan_and_register_global_svg_symbols, scan_and_register_image_maps,
+    set_current_document_base_dir,
 };
 pub use invalidation::StyleInvalidator;
 pub use node::StyledNode;

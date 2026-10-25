@@ -1,6 +1,6 @@
 #![allow(clippy::field_reassign_with_default)]
 
-use mango_core::{EdgeSizes, Rect};
+use mango_core::Rect;
 use mango_css::computed::ComputedStyle;
 use mango_css::values::{BreakInside, ColumnSpan, Length, Overflow, Position, WritingMode};
 use mango_layout::box_model::BoxType;
@@ -218,12 +218,7 @@ fn test_column_span_all_partitioning() {
     container.children.push(item3);
 
     let mut float_ctx = FloatContext::new();
-    let cb = Dimensions {
-        content: Rect::new(0.0, 0.0, 400.0, 600.0),
-        padding: EdgeSizes::ZERO,
-        border: EdgeSizes::ZERO,
-        margin: EdgeSizes::ZERO,
-    };
+    let cb = Dimensions::new(Rect::new(0.0, 0.0, 400.0, 600.0));
     mango_layout::block_flow::layout_block(&mut container, &cb, &mut float_ctx);
 
     // Verify children count and layout
@@ -266,12 +261,7 @@ fn test_block_fragmentation_with_break_avoid() {
     container.children.push(item2);
 
     let mut float_ctx = FloatContext::new();
-    let cb = Dimensions {
-        content: Rect::new(0.0, 0.0, 400.0, 600.0),
-        padding: EdgeSizes::ZERO,
-        border: EdgeSizes::ZERO,
-        margin: EdgeSizes::ZERO,
-    };
+    let cb = Dimensions::new(Rect::new(0.0, 0.0, 400.0, 600.0));
     mango_layout::block_flow::layout_block(&mut container, &cb, &mut float_ctx);
 
     assert_eq!(container.children.len(), 2);

@@ -65,12 +65,52 @@
     };
     globalThis.Element.prototype.scrollIntoView = function(options) {
         var rect = this.getBoundingClientRect();
-        var alignToTop = (options === undefined || options === true || (typeof options === 'object' && options.block !== 'end'));
-        var top = (globalThis.scrollY || 0) + (alignToTop ? rect.top : (rect.bottom - ((typeof window !== 'undefined' && window.innerHeight) || 600)));
-        var left = (globalThis.scrollX || 0) + rect.left;
-        var behavior = (typeof options === 'object' && options.behavior) || 'auto';
-        if (typeof globalThis.scrollTo === 'function') {
-            globalThis.scrollTo({ top: top, left: left, behavior: behavior });
+        var block = 'start';
+        var inline = 'nearest';
+        var behavior = 'auto';
+
+        if (options === false) {
+            block = 'end';
+            inline = 'nearest';
+        } else if (typeof options === 'object' && options !== null) {
+            if (options.block !== undefined) block = String(options.block);
+            if (options.inline !== undefined) inline = String(options.inline);
+            if (options.behavior !== undefined) behavior = String(options.behavior);
+        }
+
+        function _computeOffset(cur, rStart, rEnd, vpSize, align) {
+            var elemSize = rEnd - rStart;
+            var start = cur + rStart;
+            var end = cur + rEnd;
+            if (align === 'start') return start;
+            if (align === 'end') return end - vpSize;
+            if (align === 'center') return start - (vpSize - elemSize) / 2;
+            // 'nearest'
+            if (rStart >= 0 && rEnd <= vpSize) return cur;
+            if (rStart < 0 && rEnd > vpSize) return cur;
+            if (rStart < 0) return start;
+            if (rEnd > vpSize) return end - vpSize;
+            return cur;
+        }
+
+        var win = (typeof window !== 'undefined') ? window : globalThis;
+        var curX = win.scrollX || 0;
+        var curY = win.scrollY || 0;
+        var vpW = win.innerWidth || 800;
+        var vpH = win.innerHeight || 600;
+
+        var targetX = _computeOffset(curX, rect.left, rect.right, vpW, inline);
+        var targetY = _computeOffset(curY, rect.top, rect.bottom, vpH, block);
+
+        var docEl = (typeof document !== 'undefined') ? (document.documentElement || document.body) : null;
+        var maxX = (docEl && docEl.scrollWidth > vpW) ? (docEl.scrollWidth - vpW) : targetX;
+        var maxY = (docEl && docEl.scrollHeight > vpH) ? (docEl.scrollHeight - vpH) : targetY;
+
+        targetX = Math.max(0, Math.min(targetX, maxX));
+        targetY = Math.max(0, Math.min(targetY, maxY));
+
+        if (typeof win.scrollTo === 'function') {
+            win.scrollTo({ top: targetY, left: targetX, behavior: behavior });
         }
     };
     function _animateElemScroll(el, targetLeft, targetTop) {
@@ -414,7 +454,11 @@
         offsetLeft: {
             get: function() {
                 var p = this.offsetParent;
-                if (p) return Math.round(this.getBoundingClientRect().left - p.getBoundingClientRect().left);
+                if (p) {
+                    var diff = this.getBoundingClientRect().left - p.getBoundingClientRect().left;
+                    if (diff === 0) return 0;
+                    return Math.round(diff - (p.clientLeft || 0));
+                }
                 return Math.round(this.getBoundingClientRect().left);
             },
             configurable: true
@@ -422,7 +466,11 @@
         offsetTop: {
             get: function() {
                 var p = this.offsetParent;
-                if (p) return Math.round(this.getBoundingClientRect().top - p.getBoundingClientRect().top);
+                if (p) {
+                    var diff = this.getBoundingClientRect().top - p.getBoundingClientRect().top;
+                    if (diff === 0) return 0;
+                    return Math.round(diff - (p.clientTop || 0));
+                }
                 return Math.round(this.getBoundingClientRect().top);
             },
             configurable: true
@@ -493,7 +541,7 @@
         scrollLeft: {
             get: function() { return this._scrollLeft || 0; },
             set: function(v) {
-                this._scrollLeft = Math.max(0, Number(v) || 0);
+                this._scrollLeft = Number(v) || 0;
                 if (this === document.body || this === document.documentElement) {
                     if (typeof window !== 'undefined') window.scrollX = this._scrollLeft;
                 }

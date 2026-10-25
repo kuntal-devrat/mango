@@ -11,6 +11,7 @@ pub fn op_mango_console(state: &mut OpState, level: u32, #[string] text: String)
         _ => ConsoleLevel::Log,
     };
 
+    eprintln!("[JS console] {text}");
     match msg_level {
         ConsoleLevel::Log | ConsoleLevel::Info => log::info!("[JS console] {}", text),
         ConsoleLevel::Warn => log::warn!("[JS console] {}", text),

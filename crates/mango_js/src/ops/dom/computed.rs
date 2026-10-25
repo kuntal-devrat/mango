@@ -12,6 +12,7 @@ pub fn op_mango_get_computed_style(
     state: &mut OpState,
     node_id: u32,
 ) -> std::collections::HashMap<String, String> {
+    crate::ops::dom::query::ensure_layout_up_to_date(state);
     use std::collections::HashMap;
 
     let doc = match state.try_borrow::<SharedDocument>() {
@@ -38,7 +39,21 @@ pub fn op_mango_get_computed_style(
                 if el.tag_name.eq_ignore_ascii_case("style") {
                     let css_text = d.text_content(child.id);
                     if !css_text.trim().is_empty() {
-                        out.push(mango_css::parser::parse_stylesheet(&css_text));
+                        let mut sheet = mango_css::parser::parse_stylesheet(&css_text);
+                        let mut parent_id = d.get(child.id).and_then(|n| n.parent);
+                        if let Some(pid) = parent_id {
+                            if let Some(host) = d.get_host_for_shadow_root(pid) {
+                                parent_id = Some(host);
+                            } else if let Some(pnode) = d.get(pid) {
+                                if let NodeData::Element(pel) = &pnode.data {
+                                    if pel.tag_name.eq_ignore_ascii_case("head") {
+                                        parent_id = d.get(pid).and_then(|n| n.parent);
+                                    }
+                                }
+                            }
+                        }
+                        sheet.scoping_element = parent_id;
+                        out.push(sheet);
                     }
                 }
             }
@@ -267,10 +282,10 @@ pub fn op_mango_get_computed_style(
         mango_css::values::Position::Sticky => "sticky",
     };
     map.insert("position".to_string(), pos_str.to_string());
-    let top_str = format_css_length(&style.top, style.font_size, style.root_font_size, cb_w);
-    let right_str = format_css_length(&style.right, style.font_size, style.root_font_size, cb_w);
-    let bottom_str = format_css_length(&style.bottom, style.font_size, style.root_font_size, cb_w);
-    let left_str = format_css_length(&style.left, style.font_size, style.root_font_size, cb_w);
+    let top_str = format_css_length(&style.top, style.font_size, style.root_font_size, None);
+    let right_str = format_css_length(&style.right, style.font_size, style.root_font_size, None);
+    let bottom_str = format_css_length(&style.bottom, style.font_size, style.root_font_size, None);
+    let left_str = format_css_length(&style.left, style.font_size, style.root_font_size, None);
     map.insert("top".to_string(), top_str.clone());
     map.insert("right".to_string(), right_str.clone());
     map.insert("bottom".to_string(), bottom_str.clone());
@@ -651,6 +666,11 @@ pub fn op_mango_get_computed_style(
         mango_css::values::AlignItems::FlexEnd => "flex-end",
         mango_css::values::AlignItems::Center => "center",
         mango_css::values::AlignItems::Baseline => "baseline",
+        mango_css::values::AlignItems::SafeCenter => "safe center",
+        mango_css::values::AlignItems::SafeFlexStart => "safe flex-start",
+        mango_css::values::AlignItems::SafeFlexEnd => "safe flex-end",
+        mango_css::values::AlignItems::SafeStart => "safe start",
+        mango_css::values::AlignItems::SafeEnd => "safe end",
     };
     map.insert("align-items".to_string(), ai_str.to_string());
 
@@ -661,6 +681,11 @@ pub fn op_mango_get_computed_style(
         mango_css::values::AlignSelf::FlexEnd => "flex-end",
         mango_css::values::AlignSelf::Center => "center",
         mango_css::values::AlignSelf::Baseline => "baseline",
+        mango_css::values::AlignSelf::SafeCenter => "safe center",
+        mango_css::values::AlignSelf::SafeFlexStart => "safe flex-start",
+        mango_css::values::AlignSelf::SafeFlexEnd => "safe flex-end",
+        mango_css::values::AlignSelf::SafeStart => "safe start",
+        mango_css::values::AlignSelf::SafeEnd => "safe end",
     };
     map.insert("align-self".to_string(), as_str.to_string());
 

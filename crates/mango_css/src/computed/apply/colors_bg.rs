@@ -352,6 +352,32 @@ pub(crate) fn apply_colors_bg_property(
                 style.background_color = style.color;
             }
         }
+        "fill" => {
+            if let Value::Color(c) = val {
+                style.fill = Some(*c);
+            } else if let Value::Keyword(s) | Value::String(s) = val {
+                if s.eq_ignore_ascii_case("none") {
+                    style.fill = None;
+                } else if let Some(c) = Value::parse_color(s) {
+                    style.fill = Some(c);
+                }
+            } else if is_current_color(val) {
+                style.fill = Some(style.color);
+            }
+        }
+        "stroke" => {
+            if let Value::Color(c) = val {
+                style.stroke = Some(*c);
+            } else if let Value::Keyword(s) | Value::String(s) = val {
+                if s.eq_ignore_ascii_case("none") {
+                    style.stroke = None;
+                } else if let Some(c) = Value::parse_color(s) {
+                    style.stroke = Some(c);
+                }
+            } else if is_current_color(val) {
+                style.stroke = Some(style.color);
+            }
+        }
         "background-image" => {}
         "background-gradient" => match val {
             Value::Gradient(g) => {

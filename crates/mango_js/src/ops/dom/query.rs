@@ -2,8 +2,9 @@ use deno_core::{OpState, op2};
 use mango_html::dom::{NodeData, node_id_from_js, node_id_to_js};
 
 use crate::dom_bindings::{
-    LayoutBounds, SharedDocument, collect_elements_by_kind, collect_matching_elements,
-    find_element_by_id_recursive, find_first_matching_element, query_selector_simple,
+    DomDirtyFlag, LayoutBounds, LayoutCallback, SharedDocument, collect_elements_by_kind,
+    collect_matching_elements, find_element_by_id_recursive, find_first_matching_element,
+    query_selector_simple,
 };
 
 // ── DOM Query Ops ────────────────────────────────────────────────────────────
@@ -134,9 +135,39 @@ pub fn op_mango_element_closest(
 
 // ── Layout Measurement Ops ───────────────────────────────────────────────────
 
+/// Ensures layout geometry is up-to-date if DOM mutations marked the tree dirty.
+pub fn ensure_layout_up_to_date(state: &OpState) {
+    let is_dirty = state
+        .try_borrow::<DomDirtyFlag>()
+        .map(|d| *d.borrow())
+        .unwrap_or(false);
+    if !is_dirty {
+        return;
+    }
+    let Some(cb_cell) = state.try_borrow::<LayoutCallback>() else {
+        return;
+    };
+    let cb_borrow = cb_cell.borrow();
+    let Some(ref cb) = *cb_borrow else {
+        return;
+    };
+    let Some(doc) = state.try_borrow::<SharedDocument>() else {
+        return;
+    };
+    let new_bounds = cb(&doc.borrow());
+    drop(cb_borrow);
+    if let Some(bounds) = state.try_borrow::<LayoutBounds>() {
+        *bounds.borrow_mut() = new_bounds;
+    }
+    if let Some(dirty) = state.try_borrow::<DomDirtyFlag>() {
+        *dirty.borrow_mut() = false;
+    }
+}
+
 #[op2]
 #[serde]
 pub fn op_mango_get_element_rect(state: &mut OpState, node_id: u32) -> Vec<f32> {
+    ensure_layout_up_to_date(state);
     let raw = node_id_from_js(node_id).raw();
     if let Some(bounds) = state.try_borrow::<LayoutBounds>()
         && let Some(&rect) = bounds.borrow().get(&raw)
@@ -148,6 +179,7 @@ pub fn op_mango_get_element_rect(state: &mut OpState, node_id: u32) -> Vec<f32> 
 
 #[op2(fast)]
 pub fn op_mango_element_from_point(state: &mut OpState, x: f32, y: f32) -> u32 {
+    ensure_layout_up_to_date(state);
     let Some(doc) = state.try_borrow::<SharedDocument>() else {
         return 0;
     };
@@ -175,6 +207,7 @@ pub fn op_mango_element_from_point(state: &mut OpState, x: f32, y: f32) -> u32 {
 #[op2]
 #[serde]
 pub fn op_mango_elements_from_point(state: &mut OpState, x: f32, y: f32) -> Vec<u32> {
+    ensure_layout_up_to_date(state);
     let Some(doc) = state.try_borrow::<SharedDocument>() else {
         return Vec::new();
     };

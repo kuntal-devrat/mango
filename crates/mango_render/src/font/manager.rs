@@ -9,8 +9,8 @@ use fontdue::{Font, FontSettings};
 
 use super::emoji::is_emoji_char;
 use super::loader::{
-    FONT_MONO, FONT_SANS, FONT_SANS_BOLD, FONT_SERIF, FONT_SERIF_BOLD, decode_font_bytes,
-    load_system_font, script_candidates_for_char,
+    FONT_AHEM, FONT_MONO, FONT_SANS, FONT_SANS_BOLD, FONT_SERIF, FONT_SERIF_BOLD,
+    decode_font_bytes, load_system_font, script_candidates_for_char,
 };
 use super::types::{
     FONT_ACCESS_TICK, FontFamily, FontWeight, MAX_WEB_FONT_FAMILIES, WebFontEntry,
@@ -149,7 +149,7 @@ impl FontManager {
             "Symbola.ttf",
         ];
 
-        Self {
+        let mgr = Self {
             sans_regular,
             sans_bold,
             serif_regular,
@@ -161,7 +161,10 @@ impl FontManager {
             web_fonts: RwLock::new(HashMap::new()),
             family_to_id: RwLock::new(HashMap::new()),
             next_font_id: AtomicU32::new(1),
-        }
+        };
+        let _ = mgr.register_web_font("Ahem", FontWeight::Regular, FONT_AHEM);
+        let _ = mgr.register_web_font("Ahem", FontWeight::Bold, FONT_AHEM);
+        mgr
     }
 
     /// Selects the appropriate font face based on family and weight.

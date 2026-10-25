@@ -222,12 +222,36 @@ pub(crate) fn apply_layout_property(style: &mut ComputedStyle, prop: &str, val: 
             Value::Keyword(kw) => match kw.to_ascii_lowercase().as_str() {
                 "normal" => style.align_items = AlignItems::Normal,
                 "center" => style.align_items = AlignItems::Center,
-                "flex-start" => style.align_items = AlignItems::FlexStart,
-                "flex-end" => style.align_items = AlignItems::FlexEnd,
+                "flex-start" | "start" => style.align_items = AlignItems::FlexStart,
+                "flex-end" | "end" => style.align_items = AlignItems::FlexEnd,
                 "stretch" => style.align_items = AlignItems::Stretch,
                 "baseline" => style.align_items = AlignItems::Baseline,
+                "safe center" => style.align_items = AlignItems::SafeCenter,
+                "safe flex-start" => style.align_items = AlignItems::SafeFlexStart,
+                "safe flex-end" => style.align_items = AlignItems::SafeFlexEnd,
+                "safe start" => style.align_items = AlignItems::SafeStart,
+                "safe end" => style.align_items = AlignItems::SafeEnd,
                 _ => {}
             },
+            Value::List(list) => {
+                let s = list
+                    .iter()
+                    .filter_map(|v| match v {
+                        Value::Keyword(k) => Some(k.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .to_ascii_lowercase();
+                match s.as_str() {
+                    "safe center" => style.align_items = AlignItems::SafeCenter,
+                    "safe flex-start" => style.align_items = AlignItems::SafeFlexStart,
+                    "safe flex-end" => style.align_items = AlignItems::SafeFlexEnd,
+                    "safe start" => style.align_items = AlignItems::SafeStart,
+                    "safe end" => style.align_items = AlignItems::SafeEnd,
+                    _ => {}
+                }
+            }
             _ => {}
         },
         "align-self" => match val {
@@ -239,6 +263,11 @@ pub(crate) fn apply_layout_property(style: &mut ComputedStyle, prop: &str, val: 
                     AlignItems::FlexEnd => AlignSelf::FlexEnd,
                     AlignItems::Center => AlignSelf::Center,
                     AlignItems::Baseline => AlignSelf::Baseline,
+                    AlignItems::SafeCenter => AlignSelf::SafeCenter,
+                    AlignItems::SafeFlexStart => AlignSelf::SafeFlexStart,
+                    AlignItems::SafeFlexEnd => AlignSelf::SafeFlexEnd,
+                    AlignItems::SafeStart => AlignSelf::SafeStart,
+                    AlignItems::SafeEnd => AlignSelf::SafeEnd,
                 };
             }
             Value::TextAlign(TextAlign::Center) => style.align_self = AlignSelf::Center,
@@ -249,12 +278,36 @@ pub(crate) fn apply_layout_property(style: &mut ComputedStyle, prop: &str, val: 
             Value::Keyword(kw) => match kw.to_ascii_lowercase().as_str() {
                 "auto" => style.align_self = AlignSelf::Auto,
                 "center" => style.align_self = AlignSelf::Center,
-                "flex-start" => style.align_self = AlignSelf::FlexStart,
-                "flex-end" => style.align_self = AlignSelf::FlexEnd,
+                "flex-start" | "start" => style.align_self = AlignSelf::FlexStart,
+                "flex-end" | "end" => style.align_self = AlignSelf::FlexEnd,
                 "stretch" => style.align_self = AlignSelf::Stretch,
                 "baseline" => style.align_self = AlignSelf::Baseline,
+                "safe center" => style.align_self = AlignSelf::SafeCenter,
+                "safe flex-start" => style.align_self = AlignSelf::SafeFlexStart,
+                "safe flex-end" => style.align_self = AlignSelf::SafeFlexEnd,
+                "safe start" => style.align_self = AlignSelf::SafeStart,
+                "safe end" => style.align_self = AlignSelf::SafeEnd,
                 _ => {}
             },
+            Value::List(list) => {
+                let s = list
+                    .iter()
+                    .filter_map(|v| match v {
+                        Value::Keyword(k) => Some(k.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .to_ascii_lowercase();
+                match s.as_str() {
+                    "safe center" => style.align_self = AlignSelf::SafeCenter,
+                    "safe flex-start" => style.align_self = AlignSelf::SafeFlexStart,
+                    "safe flex-end" => style.align_self = AlignSelf::SafeFlexEnd,
+                    "safe start" => style.align_self = AlignSelf::SafeStart,
+                    "safe end" => style.align_self = AlignSelf::SafeEnd,
+                    _ => {}
+                }
+            }
             _ => {}
         },
         "align-content" => match val {
@@ -631,6 +684,8 @@ pub(crate) fn apply_layout_property(style: &mut ComputedStyle, prop: &str, val: 
                 style.writing_mode = match k.to_ascii_lowercase().as_str() {
                     "vertical-rl" => crate::values::WritingMode::VerticalRl,
                     "vertical-lr" => crate::values::WritingMode::VerticalLr,
+                    "sideways-rl" => crate::values::WritingMode::SidewaysRl,
+                    "sideways-lr" => crate::values::WritingMode::SidewaysLr,
                     _ => crate::values::WritingMode::HorizontalTb,
                 };
             }

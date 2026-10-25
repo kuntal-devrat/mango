@@ -8,12 +8,13 @@ use crate::properties::Declaration;
 use crate::specificity::Specificity;
 
 /// Style origin for cascade ordering.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Origin {
     UserAgent = 0,
     PresentationalHint = 1,
-    Author = 2,
-    Inline = 3,
+    Shadow = 2,
+    Author = 3,
+    Inline = 4,
 }
 
 /// Compares two hierarchical layer paths according to CSS Cascade Level 5 § 6.4.
@@ -55,11 +56,13 @@ impl MatchedDeclaration {
     #[inline]
     pub fn precedence(&self) -> u8 {
         match (self.origin, self.declaration.important) {
-            (Origin::UserAgent, true) => 7,
-            (Origin::Inline, true) => 6,
-            (Origin::Author, true) => 5,
-            (Origin::Inline, false) => 4,
-            (Origin::Author, false) => 3,
+            (Origin::UserAgent, true) => 9,
+            (Origin::Inline, true) => 8,
+            (Origin::Shadow, true) => 7,
+            (Origin::Author, true) => 6,
+            (Origin::Inline, false) => 5,
+            (Origin::Author, false) => 4,
+            (Origin::Shadow, false) => 3,
             (Origin::PresentationalHint, true) => 3,
             (Origin::PresentationalHint, false) => 2,
             (Origin::UserAgent, false) => 1,
@@ -78,7 +81,9 @@ impl MatchedDeclaration {
             return prec;
         }
 
-        if self.origin == Origin::Author && other.origin == Origin::Author {
+        if (self.origin == Origin::Author || self.origin == Origin::Shadow)
+            && self.origin == other.origin
+        {
             let layer_cmp = if self.declaration.important {
                 compare_layer_paths(&other.layer_path, &self.layer_path)
             } else {
@@ -113,7 +118,7 @@ impl MatchedDeclaration {
     /// Computes a legacy sort key according to CSS Cascade Level 5 precedence.
     pub fn cascade_weight(&self) -> (u8, u32, Specificity, usize) {
         let precedence = self.precedence();
-        let layer_rank = if self.origin == Origin::Author {
+        let layer_rank = if self.origin == Origin::Author || self.origin == Origin::Shadow {
             if self.layer_path.is_empty() {
                 if self.declaration.important {
                     0
@@ -140,6 +145,7 @@ impl MatchedDeclaration {
 pub struct ScopeDef<'a> {
     pub root: Option<&'a crate::selectors::SelectorList>,
     pub limit: Option<&'a crate::selectors::SelectorList>,
+    pub scoping_element: Option<mango_html::dom::NodeId>,
 }
 
 /// An indexed style rule for accelerated lookup.

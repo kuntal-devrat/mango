@@ -237,6 +237,18 @@
     globalThis.HTMLDialogElement.prototype.close = function(retVal) {
         if (this.hasAttribute && !this.hasAttribute('open')) return;
         if (retVal !== undefined) this.returnValue = String(retVal);
+        var trans = (typeof _getTransitionSpec === 'function') ? (_getTransitionSpec(this, 'overlay') || _getTransitionSpec(this, 'display')) : null;
+        if (trans && trans.allowDiscrete && trans.durationMs > 0) {
+            var self = this;
+            setTimeout(function() {
+                if (self.removeAttribute) {
+                    self.removeAttribute('open');
+                    self.removeAttribute('data-mango-modal');
+                }
+                if (self.dispatchEvent) self.dispatchEvent({ type: 'close', target: self });
+            }, trans.durationMs);
+            return;
+        }
         if (this.removeAttribute) {
             this.removeAttribute('open');
             this.removeAttribute('data-mango-modal');
@@ -690,6 +702,16 @@
             enumerable: true
         });
     }
+    Object.defineProperty(globalThis.Document.prototype, 'scrollingElement', {
+        get: function() {
+            if (this.compatMode === 'BackCompat') {
+                return this.body || null;
+            }
+            return this.documentElement || this.body || null;
+        },
+        configurable: true,
+        enumerable: true
+    });
     globalThis.Document.prototype.__shady_getRootNode = function(opts) { return this; };
     globalThis.Document.prototype.getRootNode = function(opts) { return this; };
     if (typeof document !== 'undefined') {

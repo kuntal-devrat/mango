@@ -1,7 +1,7 @@
 use mango_core::{EdgeSizes, Point};
-use mango_css::values::{BoxSizing, Display, FlexDirection, FlexWrap, Length, Position};
+use mango_css::values::{BoxSizing, Direction, Display, FlexDirection, FlexWrap, Length, Position};
 
-use crate::block_flow::layout_positioned_children;
+use crate::block_flow::layout_positioned_children_with_cb;
 use crate::box_tree::LayoutBox;
 use crate::dimensions::Dimensions;
 use crate::float::FloatContext;
@@ -12,8 +12,8 @@ use super::alignment::{
 use super::lines::{build_flex_lines, resolve_flexible_lengths};
 use super::metrics::measure_item_metrics;
 use super::placement::{
-    ContainerFinalizeParams, LinePlacementParams, apply_wrap_reverse, finalize_container_height,
-    position_flex_items_on_line,
+    ContainerFinalizeParams, LinePlacementParams, apply_wrap_reverse,
+    calculate_abspos_static_positions, finalize_container_height, position_flex_items_on_line,
 };
 
 /// Executes Flexbox layout on a flex container box according to CSS Flexible Box Layout Module Level 1.
@@ -122,16 +122,22 @@ pub fn layout_flex(
         FlexDirection::Row | FlexDirection::RowReverse
     );
 
-    let is_pre_resolved_height = container.dimensions.content.size.height > 0.0
-        && containing_block.content.height() > 0.0
-        && ((containing_block.content.height()
-            - total_non_content_v
-            - container.dimensions.content.size.height)
-            .abs()
-            < 1.0
-            || (containing_block.content.height() - container.dimensions.content.size.height)
+    let is_pos = matches!(style.position, Position::Absolute | Position::Fixed);
+    let is_pos_stretched_h = is_pos
+        && style.top != Length::Auto
+        && style.bottom != Length::Auto
+        && container.dimensions.content.size.height > 0.0;
+    let is_pre_resolved_height = is_pos_stretched_h
+        || (container.dimensions.content.size.height > 0.0
+            && containing_block.content.height() > 0.0
+            && ((containing_block.content.height()
+                - total_non_content_v
+                - container.dimensions.content.size.height)
                 .abs()
-                < 1.0);
+                < 1.0
+                || (containing_block.content.height() - container.dimensions.content.size.height)
+                    .abs()
+                    < 1.0));
 
     let content_height = if !is_height_content && !is_percent_indefinite {
         let raw_h = style.height.to_px_with_viewport(
@@ -178,16 +184,22 @@ pub fn layout_flex(
         (0.0, 0.0)
     };
 
-    let is_pre_resolved_width = !is_inline_flex
-        && is_width_auto
-        && container.dimensions.content.size.width > 0.0
-        && ((containing_block.content.width()
-            - total_non_content_h
-            - container.dimensions.content.size.width)
-            .abs()
-            < 1.0
-            || (containing_block.content.width() - container.dimensions.content.size.width).abs()
-                < 1.0);
+    let is_pos_stretched_w = is_pos
+        && style.left != Length::Auto
+        && style.right != Length::Auto
+        && container.dimensions.content.size.width > 0.0;
+    let is_pre_resolved_width = is_pos_stretched_w
+        || (!is_inline_flex
+            && is_width_auto
+            && container.dimensions.content.size.width > 0.0
+            && ((containing_block.content.width()
+                - total_non_content_h
+                - container.dimensions.content.size.width)
+                .abs()
+                < 1.0
+                || (containing_block.content.width() - container.dimensions.content.size.width)
+                    .abs()
+                    < 1.0));
 
     let mut content_width = if is_pre_resolved_width {
         container.dimensions.content.size.width
@@ -353,15 +365,51 @@ pub fn layout_flex(
     container.dimensions.content.origin = Point::new(container_x, container_y);
 
     if container.children.is_empty() {
-        container.dimensions.content.size.height = 0.0;
+        let mut final_h = if is_height_content {
+            0.0
+        } else {
+            content_height
+        };
+        if style.min_height != Length::Auto {
+            let min_h = style.min_height.to_px_with_viewport(
+                font_size,
+                root_font_size,
+                container_height,
+                container_height,
+            );
+            let min_content_h = if style.box_sizing == BoxSizing::BorderBox {
+                (min_h - pad_top - pad_bottom - border_top - border_bottom).max(0.0)
+            } else {
+                min_h
+            };
+            final_h = final_h.max(min_content_h);
+        }
+        if style.max_height != Length::Auto {
+            let max_h = style.max_height.to_px_with_viewport(
+                font_size,
+                root_font_size,
+                container_height,
+                container_height,
+            );
+            let max_content_h = if style.box_sizing == BoxSizing::BorderBox {
+                (max_h - pad_top - pad_bottom - border_top - border_bottom).max(0.0)
+            } else {
+                max_h
+            };
+            final_h = final_h.min(max_content_h);
+        }
+        container.dimensions.content.size.height = final_h;
         return;
     }
 
     // 2. Identify flex direction and axes
+    // In a horizontal-tb RTL flex container, the main-start edge is the
+    // physical right edge.  This is equivalent to reversing the row's
+    // placement direction, while preserving the DOM order of the items.
     let is_reverse = matches!(
         style.flex_direction,
         FlexDirection::RowReverse | FlexDirection::ColumnReverse
-    );
+    ) ^ (is_row && style.direction == Direction::Rtl);
     let is_wrap = style.flex_wrap != FlexWrap::NoWrap;
     let is_wrap_reverse = style.flex_wrap == FlexWrap::WrapReverse;
 
@@ -601,6 +649,18 @@ pub fn layout_flex(
         apply_wrap_reverse(container, is_row, container_x, container_y);
     }
 
-    // 8. Lay out out-of-flow positioned children (CSS Flexbox §4.1)
-    layout_positioned_children(container, float_ctx);
+    // 8. Calculate static positions for out-of-flow positioned children (CSS Flexbox §4.1)
+    calculate_abspos_static_positions(
+        container,
+        &style,
+        is_row,
+        is_reverse,
+        container_x,
+        container_y,
+        content_width,
+        container.dimensions.content.size.height,
+    );
+
+    // 9. Lay out out-of-flow positioned children
+    layout_positioned_children_with_cb(container, containing_block, float_ctx);
 }

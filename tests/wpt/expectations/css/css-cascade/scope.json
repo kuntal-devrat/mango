@@ -75,17 +75,17 @@
     "css/css-cascade/scope-implicit.html": {
       "status": "Fail",
       "subtests": {
-        ":scope can style implicit root": "FAIL",
+        ":scope can style implicit root": "PASS",
         "@scope with effectively empty :is() must not match anything": "FAIL",
-        "@scope without prelude implicitly scopes to parent of owner node": "FAIL",
-        "@scope works with two identical stylesheets": "FAIL",
-        "Implicit @scope has implicitly added :scope descendant combinator": "FAIL",
+        "@scope without prelude implicitly scopes to parent of owner node": "PASS",
+        "@scope works with two identical stylesheets": "PASS",
+        "Implicit @scope has implicitly added :scope descendant combinator": "PASS",
         "Implicit @scope sandwiched between non-implicit scopes": "PASS",
         "Implicit @scope sandwiched right under an explicit scope": "FAIL",
-        "Implicit @scope with inner nesting selector": "FAIL",
-        "Implicit @scope with inner relative selector": "FAIL",
-        "Implicit @scope with limit": "FAIL",
-        "Proximity calculation of multiple implicit @scope": "FAIL"
+        "Implicit @scope with inner nesting selector": "PASS",
+        "Implicit @scope with inner relative selector": "PASS",
+        "Implicit @scope with limit": "PASS",
+        "Proximity calculation of multiple implicit @scope": "PASS"
       }
     },
     "css/css-cascade/scope-import-implicit.html": {
@@ -170,9 +170,9 @@
       "status": "Fail",
       "subtests": {
         ":scope matches host via the scoping root": "PASS",
-        ":scope within :is() matches host via the scoping root": "FAIL",
-        "@scope can match :host": "FAIL",
-        "@scope can match :host(...)": "FAIL",
+        ":scope within :is() matches host via the scoping root": "PASS",
+        "@scope can match :host": "PASS",
+        "@scope can match :host(...)": "PASS",
         "Implicit @scope as direct child of shadow root": "FAIL",
         "Implicit @scope in construted stylesheet": "FAIL",
         "Matching :host via &, :scope (non-subject)": "FAIL",
@@ -190,44 +190,10 @@
       }
     },
     "css/css-cascade/scope-style-sharing-001.html": {
-      "status": "Fail",
-      "subtests": {
-        "@scope with sibling style sharing, first sibling enters scope": "PASS",
-        "@scope with sibling style sharing, first sibling enters scope with :has": "PASS",
-        "@scope with sibling style sharing, first sibling enters scope with ID selector": "PASS",
-        "@scope with sibling style sharing, first sibling exits implicit scope": "PASS",
-        "@scope with sibling style sharing, first sibling has implicit scope": "FAIL",
-        "@scope with sibling style sharing, first sibling matches scope": "PASS",
-        "@scope with sibling style sharing, second sibling enters scope": "PASS",
-        "@scope with sibling style sharing, second sibling enters scope with :has": "PASS",
-        "@scope with sibling style sharing, second sibling enters scope with ID selector": "PASS",
-        "@scope with sibling style sharing, second sibling exits implicit scope": "PASS",
-        "@scope with sibling style sharing, second sibling exits scope": "PASS",
-        "@scope with sibling style sharing, second sibling has implicit scope": "FAIL",
-        "@scope with sibling style sharing, with child relative implicit scope selector": "PASS"
-      }
+      "status": "Pass"
     },
     "css/css-cascade/scope-style-sharing-002.html": {
-      "status": "Fail",
-      "subtests": {
-        "@scope with cousin style sharing, first sibling does not have implicit scope": "FAIL",
-        "@scope with cousin style sharing, first sibling enters scope": "PASS",
-        "@scope with cousin style sharing, first sibling enters scope ID selector": "PASS",
-        "@scope with cousin style sharing, first sibling enters scope attribute selector": "PASS",
-        "@scope with cousin style sharing, first sibling enters scope trivial attribute selector": "PASS",
-        "@scope with cousin style sharing, first sibling enters scope with :has": "PASS",
-        "@scope with cousin style sharing, first sibling exits scope": "PASS",
-        "@scope with cousin style sharing, first sibling parent does not have implicit scope": "FAIL",
-        "@scope with cousin style sharing, second sibling does not have implicit scope": "FAIL",
-        "@scope with cousin style sharing, second sibling enters scope": "PASS",
-        "@scope with cousin style sharing, second sibling enters scope ID selector": "PASS",
-        "@scope with cousin style sharing, second sibling enters scope attribute selector": "PASS",
-        "@scope with cousin style sharing, second sibling enters scope trivial attribute selector": "PASS",
-        "@scope with cousin style sharing, second sibling enters scope with :has": "PASS",
-        "@scope with cousin style sharing, second sibling exits scope": "PASS",
-        "@scope with cousin style sharing, second sibling parent does not have implicit scope": "FAIL",
-        "@scope with cousin style sharing, with child relative implicit scope selector": "PASS"
-      }
+      "status": "Pass"
     },
     "css/css-cascade/scope-supports.html": {
       "status": "Pass"

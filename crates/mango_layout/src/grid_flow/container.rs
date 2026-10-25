@@ -97,7 +97,24 @@ pub fn layout_grid_internal(
 
     let total_non_content_h = pad_left + pad_right + border_left + border_right;
 
-    let content_width = if is_width_auto {
+    let is_pos = matches!(style.position, Position::Absolute | Position::Fixed);
+    let is_pos_stretched_w = is_pos
+        && style.left != Length::Auto
+        && style.right != Length::Auto
+        && container.dimensions.content.size.width > 0.0;
+    let is_pos_stretched_h = is_pos
+        && style.top != Length::Auto
+        && style.bottom != Length::Auto
+        && container.dimensions.content.size.height > 0.0;
+    let pre_resolved_h = if is_pos_stretched_h {
+        Some(container.dimensions.content.size.height)
+    } else {
+        None
+    };
+
+    let content_width = if is_pos_stretched_w {
+        container.dimensions.content.size.width
+    } else if is_width_auto {
         if is_margin_left_auto {
             margin_left = 0.0;
         }
@@ -424,6 +441,8 @@ pub fn layout_grid_internal(
         } else {
             container.dimensions.content.size.height = raw_h;
         }
+    } else if let Some(h) = pre_resolved_h {
+        container.dimensions.content.size.height = h;
     } else {
         let total_grid_h =
             row_heights.iter().sum::<f32>() + (num_rows.saturating_sub(1) as f32) * row_gap;

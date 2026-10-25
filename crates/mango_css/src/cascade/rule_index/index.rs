@@ -226,7 +226,14 @@ impl<'a> RuleIndex<'a> {
                     self.add_property_rule(prop_rule, Arc::from([]), *order);
                 }
                 Rule::Scope(scope_rule) => {
-                    self.add_scope_rules(scope_rule, origin, order, Arc::from([]), &[]);
+                    self.add_scope_rules(
+                        scope_rule,
+                        origin,
+                        order,
+                        Arc::from([]),
+                        &[],
+                        sheet.scoping_element,
+                    );
                 }
                 Rule::Keyframes(kf) => {
                     *order += 1;
@@ -407,12 +414,14 @@ impl<'a> RuleIndex<'a> {
                 }
                 Rule::Scope(scope_rule) => {
                     let parent_scopes: Vec<ScopeDef<'a>> = scope_chain.iter().cloned().collect();
+                    let parent_scoping = parent_scopes.last().and_then(|s| s.scoping_element);
                     self.add_scope_rules(
                         scope_rule,
                         origin,
                         order,
                         layer_path.clone(),
                         &parent_scopes,
+                        parent_scoping,
                     );
                 }
                 Rule::Keyframes(kf) => {
@@ -448,11 +457,13 @@ impl<'a> RuleIndex<'a> {
         order: &mut usize,
         layer_path: Arc<[u32]>,
         parent_scopes: &[ScopeDef<'a>],
+        scoping_element: Option<mango_html::dom::NodeId>,
     ) {
         let mut current_scopes = parent_scopes.to_vec();
         current_scopes.push(ScopeDef {
             root: scope_rule.root.as_ref(),
             limit: scope_rule.limit.as_ref(),
+            scoping_element,
         });
         let scope_chain: Arc<[ScopeDef<'a>]> = Arc::from(current_scopes.as_slice());
 
@@ -504,6 +515,7 @@ impl<'a> RuleIndex<'a> {
                         order,
                         layer_path.clone(),
                         &current_scopes,
+                        scoping_element,
                     );
                 }
                 _ => {}
@@ -772,6 +784,17 @@ impl<'a> RuleIndex<'a> {
         out: &mut Vec<MatchedDeclaration>,
     ) {
         super::matching::collect_matches_for_node(self, node_id, doc, elem, source_order, out);
+    }
+
+    /// Collects candidate ::part() rules from an outer document stylesheet that match the target node.
+    pub fn collect_part_matches_for_node(
+        &self,
+        node_id: NodeId,
+        doc: &Document,
+        source_order: &mut usize,
+        out: &mut Vec<MatchedDeclaration>,
+    ) {
+        super::matching::collect_part_matches_for_node(self, node_id, doc, source_order, out);
     }
 
     /// Collects candidate rules for a pseudo-element on the target node using indexed buckets.

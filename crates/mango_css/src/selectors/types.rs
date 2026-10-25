@@ -214,6 +214,89 @@ pub struct CompoundSelector {
     pub simple_selectors: Vec<SimpleSelector>,
 }
 
+/// Finds the shadow host that matches the given host-filtering predicate for an element's part.
+/// Supports `exportparts` forwarding across nested shadow roots per CSS Shadow Parts § 3.
+pub fn find_matching_part_host<F>(
+    node_id: NodeId,
+    part_name: &str,
+    doc: &Document,
+    matches_host: F,
+) -> Option<NodeId>
+where
+    F: Fn(NodeId) -> bool,
+{
+    let node = doc.get(node_id)?;
+    let NodeData::Element(elem) = &node.data else {
+        return None;
+    };
+    let part_attr = elem.get_attribute("part")?;
+    let mut current_parts: Vec<String> = part_attr
+        .split_whitespace()
+        .map(|s| s.to_string())
+        .collect();
+    if current_parts.is_empty() {
+        return None;
+    }
+
+    let cur_sr = doc.get_enclosing_shadow_root(node_id)?;
+    let mut cur_host = doc.get_host_for_shadow_root(cur_sr)?;
+
+    loop {
+        if current_parts
+            .iter()
+            .any(|p| p.eq_ignore_ascii_case(part_name))
+        {
+            if matches_host(cur_host) {
+                return Some(cur_host);
+            }
+        }
+
+        // Check if cur_host is inside an enclosing shadow root and exports parts
+        let next_sr = match doc.get_enclosing_shadow_root(cur_host) {
+            Some(sr) => sr,
+            None => break,
+        };
+        let next_host = match doc.get_host_for_shadow_root(next_sr) {
+            Some(h) => h,
+            None => break,
+        };
+        let host_node = match doc.get(cur_host) {
+            Some(n) => n,
+            None => break,
+        };
+        let NodeData::Element(host_elem) = &host_node.data else {
+            break;
+        };
+        let exportparts_attr = match host_elem.get_attribute("exportparts") {
+            Some(a) => a,
+            None => break,
+        };
+
+        let mut next_parts = Vec::new();
+        for item in exportparts_attr.split(',') {
+            let item = item.trim();
+            if let Some((inner, outer)) = item.split_once(':') {
+                let inner = inner.trim();
+                let outer = outer.trim();
+                if current_parts.iter().any(|p| p.eq_ignore_ascii_case(inner)) {
+                    next_parts.push(outer.to_string());
+                }
+            } else if current_parts.iter().any(|p| p.eq_ignore_ascii_case(item)) {
+                next_parts.push(item.to_string());
+            }
+        }
+
+        if next_parts.is_empty() {
+            break;
+        }
+
+        current_parts = next_parts;
+        cur_host = next_host;
+    }
+
+    None
+}
+
 impl CompoundSelector {
     pub fn new(simple_selectors: Vec<SimpleSelector>) -> Self {
         Self { simple_selectors }
@@ -231,7 +314,26 @@ impl CompoundSelector {
 
     /// Tests if all simple selectors in this compound selector match the node.
     pub fn matches(&self, node_id: NodeId, doc: &Document) -> bool {
+        self.matches_internal(node_id, doc, true)
+    }
+
+    /// Tests if this compound selector matches in a non-subject position.
+    /// Per CSS Selectors 4 § 4.1, :visited cannot match on non-subject elements.
+    pub fn matches_non_subject(&self, node_id: NodeId, doc: &Document) -> bool {
+        self.matches_internal(node_id, doc, false)
+    }
+
+    fn matches_internal(&self, node_id: NodeId, doc: &Document, is_subject: bool) -> bool {
         if self.simple_selectors.is_empty() {
+            return false;
+        }
+
+        if !is_subject
+            && self.simple_selectors.iter().any(|s| match s {
+                SimpleSelector::PseudoClass(p) => p.eq_ignore_ascii_case("visited"),
+                _ => false,
+            })
+        {
             return false;
         }
 
@@ -246,39 +348,21 @@ impl CompoundSelector {
                 SimpleSelector::PseudoElement(p) => p[5..p.len() - 1].trim(),
                 _ => unreachable!(),
             };
-            let Some(node) = doc.get(node_id) else {
-                return false;
-            };
-            let NodeData::Element(elem) = &node.data else {
-                return false;
-            };
-            let Some(part_attr) = elem.get_attribute("part") else {
-                return false;
-            };
-            if !part_attr
-                .split_whitespace()
-                .any(|tok| tok.eq_ignore_ascii_case(part_name))
-            {
-                return false;
-            }
-            let Some(sr_id) = doc.get_enclosing_shadow_root(node_id) else {
-                return false;
-            };
-            let Some(host_id) = doc.get_host_for_shadow_root(sr_id) else {
-                return false;
+
+            let prefix_matches = |host_id: NodeId| {
+                self.simple_selectors
+                    .iter()
+                    .filter(|s| match s {
+                        SimpleSelector::PseudoElement(p) => {
+                            let lower = p.to_ascii_lowercase();
+                            !(lower.starts_with("part(") && lower.ends_with(')'))
+                        }
+                        _ => true,
+                    })
+                    .all(|s| s.matches(host_id, doc))
             };
 
-            return self
-                .simple_selectors
-                .iter()
-                .filter(|s| match s {
-                    SimpleSelector::PseudoElement(p) => {
-                        let lower = p.to_ascii_lowercase();
-                        !(lower.starts_with("part(") && lower.ends_with(')'))
-                    }
-                    _ => true,
-                })
-                .all(|s| s.matches(host_id, doc));
+            return find_matching_part_host(node_id, part_name, doc, prefix_matches).is_some();
         }
 
         self.simple_selectors
@@ -358,14 +442,37 @@ impl ComplexSelector {
             return false;
         }
 
-        let start_node = if last_compound.has_part_pseudo() {
-            let Some(sr_id) = doc.get_enclosing_shadow_root(node_id) else {
-                return false;
+        let start_node = if let Some(part_sel) =
+            last_compound.simple_selectors.iter().find(|s| match s {
+                SimpleSelector::PseudoElement(p) => {
+                    let lower = p.to_ascii_lowercase();
+                    lower.starts_with("part(") && lower.ends_with(')')
+                }
+                _ => false,
+            }) {
+            let part_name = match part_sel {
+                SimpleSelector::PseudoElement(p) => p[5..p.len() - 1].trim(),
+                _ => unreachable!(),
             };
-            let Some(host_id) = doc.get_host_for_shadow_root(sr_id) else {
-                return false;
+            let prefix_matches = |host_id: NodeId| {
+                last_compound
+                    .simple_selectors
+                    .iter()
+                    .filter(|s| match s {
+                        SimpleSelector::PseudoElement(p) => {
+                            let lower = p.to_ascii_lowercase();
+                            !(lower.starts_with("part(") && lower.ends_with(')'))
+                        }
+                        _ => true,
+                    })
+                    .all(|s| s.matches(host_id, doc))
             };
-            host_id
+            if let Some(host_id) = find_matching_part_host(node_id, part_name, doc, prefix_matches)
+            {
+                host_id
+            } else {
+                return false;
+            }
         } else {
             node_id
         };
@@ -462,12 +569,12 @@ impl ComplexSelector {
                     }
                     let is_anchor = prev_compound.simple_selectors == [SimpleSelector::Universal]
                         || prev_compound.simple_selectors == [SimpleSelector::Nesting];
-                    if !is_anchor && !prev_compound.matches(parent, doc) {
+                    if !is_anchor && !prev_compound.matches_non_subject(parent, doc) {
                         return false;
                     }
                     return true;
                 }
-                if !prev_compound.matches(parent, doc) {
+                if !prev_compound.matches_non_subject(parent, doc) {
                     return false;
                 }
                 if tail_idx == 0 {
@@ -486,11 +593,11 @@ impl ComplexSelector {
                             == [SimpleSelector::Universal]
                             || prev_compound.simple_selectors == [SimpleSelector::Nesting];
                         if Some(parent) == expected_origin
-                            && (is_anchor || prev_compound.matches(parent, doc))
+                            && (is_anchor || prev_compound.matches_non_subject(parent, doc))
                         {
                             return true;
                         }
-                    } else if prev_compound.matches(parent, doc) {
+                    } else if prev_compound.matches_non_subject(parent, doc) {
                         if tail_idx == 0 {
                             return true;
                         }
@@ -514,12 +621,12 @@ impl ComplexSelector {
                     }
                     let is_anchor = prev_compound.simple_selectors == [SimpleSelector::Universal]
                         || prev_compound.simple_selectors == [SimpleSelector::Nesting];
-                    if !is_anchor && !prev_compound.matches(sibling, doc) {
+                    if !is_anchor && !prev_compound.matches_non_subject(sibling, doc) {
                         return false;
                     }
                     return true;
                 }
-                if !prev_compound.matches(sibling, doc) {
+                if !prev_compound.matches_non_subject(sibling, doc) {
                     return false;
                 }
                 if tail_idx == 0 {
@@ -538,11 +645,11 @@ impl ComplexSelector {
                             == [SimpleSelector::Universal]
                             || prev_compound.simple_selectors == [SimpleSelector::Nesting];
                         if Some(sibling) == expected_origin
-                            && (is_anchor || prev_compound.matches(sibling, doc))
+                            && (is_anchor || prev_compound.matches_non_subject(sibling, doc))
                         {
                             return true;
                         }
-                    } else if prev_compound.matches(sibling, doc) {
+                    } else if prev_compound.matches_non_subject(sibling, doc) {
                         if tail_idx == 0 {
                             return true;
                         }

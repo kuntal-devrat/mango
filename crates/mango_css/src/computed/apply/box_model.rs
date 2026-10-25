@@ -148,6 +148,132 @@ pub(crate) fn apply_box_model_property(style: &mut ComputedStyle, prop: &str, va
             },
             _ => {}
         },
+        "inline-size" => {
+            let parsed_len = match val {
+                Value::Length(l) => Some(*l),
+                Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
+                    "auto" => Some(Length::Auto),
+                    "content" => Some(Length::Content),
+                    "min-content" => Some(Length::MinContent),
+                    "max-content" => Some(Length::MaxContent),
+                    "fit-content" => Some(Length::FitContent),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(l) = parsed_len {
+                if style.writing_mode.is_vertical() {
+                    style.height = l;
+                } else {
+                    style.width = l;
+                }
+            }
+        }
+        "block-size" => {
+            let parsed_len = match val {
+                Value::Length(l) => Some(*l),
+                Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
+                    "auto" => Some(Length::Auto),
+                    "content" => Some(Length::Content),
+                    "min-content" => Some(Length::MinContent),
+                    "max-content" => Some(Length::MaxContent),
+                    "fit-content" => Some(Length::FitContent),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(l) = parsed_len {
+                if style.writing_mode.is_vertical() {
+                    style.width = l;
+                } else {
+                    style.height = l;
+                }
+            }
+        }
+        "min-inline-size" => {
+            let parsed_len = match val {
+                Value::Length(l) => Some(*l),
+                Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
+                    "auto" => Some(Length::Auto),
+                    "content" => Some(Length::Content),
+                    "min-content" => Some(Length::MinContent),
+                    "max-content" => Some(Length::MaxContent),
+                    "fit-content" => Some(Length::FitContent),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(l) = parsed_len {
+                if style.writing_mode.is_vertical() {
+                    style.min_height = l;
+                } else {
+                    style.min_width = l;
+                }
+            }
+        }
+        "max-inline-size" => {
+            let parsed_len = match val {
+                Value::Length(l) => Some(*l),
+                Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
+                    "auto" => Some(Length::Auto),
+                    "content" => Some(Length::Content),
+                    "min-content" => Some(Length::MinContent),
+                    "max-content" => Some(Length::MaxContent),
+                    "fit-content" => Some(Length::FitContent),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(l) = parsed_len {
+                if style.writing_mode.is_vertical() {
+                    style.max_height = l;
+                } else {
+                    style.max_width = l;
+                }
+            }
+        }
+        "min-block-size" => {
+            let parsed_len = match val {
+                Value::Length(l) => Some(*l),
+                Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
+                    "auto" => Some(Length::Auto),
+                    "content" => Some(Length::Content),
+                    "min-content" => Some(Length::MinContent),
+                    "max-content" => Some(Length::MaxContent),
+                    "fit-content" => Some(Length::FitContent),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(l) = parsed_len {
+                if style.writing_mode.is_vertical() {
+                    style.min_width = l;
+                } else {
+                    style.min_height = l;
+                }
+            }
+        }
+        "max-block-size" => {
+            let parsed_len = match val {
+                Value::Length(l) => Some(*l),
+                Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
+                    "auto" => Some(Length::Auto),
+                    "content" => Some(Length::Content),
+                    "min-content" => Some(Length::MinContent),
+                    "max-content" => Some(Length::MaxContent),
+                    "fit-content" => Some(Length::FitContent),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(l) = parsed_len {
+                if style.writing_mode.is_vertical() {
+                    style.max_width = l;
+                } else {
+                    style.max_height = l;
+                }
+            }
+        }
         "aspect-ratio" => match val {
             Value::Number(n) if *n > 0.0 => style.aspect_ratio = Some(*n),
             Value::Keyword(k) if k.eq_ignore_ascii_case("auto") => style.aspect_ratio = None,
@@ -175,6 +301,62 @@ pub(crate) fn apply_box_model_property(style: &mut ComputedStyle, prop: &str, va
                 style.margin_left = *l;
             }
         }
+        "margin-block-start" => {
+            if let Value::Length(l) = val {
+                match style.writing_mode {
+                    crate::values::WritingMode::HorizontalTb => style.margin_top = *l,
+                    crate::values::WritingMode::VerticalRl
+                    | crate::values::WritingMode::SidewaysRl => style.margin_right = *l,
+                    crate::values::WritingMode::VerticalLr
+                    | crate::values::WritingMode::SidewaysLr => style.margin_left = *l,
+                }
+            }
+        }
+        "margin-block-end" => {
+            if let Value::Length(l) = val {
+                match style.writing_mode {
+                    crate::values::WritingMode::HorizontalTb => style.margin_bottom = *l,
+                    crate::values::WritingMode::VerticalRl
+                    | crate::values::WritingMode::SidewaysRl => style.margin_left = *l,
+                    crate::values::WritingMode::VerticalLr
+                    | crate::values::WritingMode::SidewaysLr => style.margin_right = *l,
+                }
+            }
+        }
+        "margin-inline-start" => {
+            if let Value::Length(l) = val {
+                if style.writing_mode.is_vertical() {
+                    if style.direction == crate::values::Direction::Rtl {
+                        style.margin_bottom = *l;
+                    } else {
+                        style.margin_top = *l;
+                    }
+                } else {
+                    if style.direction == crate::values::Direction::Rtl {
+                        style.margin_right = *l;
+                    } else {
+                        style.margin_left = *l;
+                    }
+                }
+            }
+        }
+        "margin-inline-end" => {
+            if let Value::Length(l) = val {
+                if style.writing_mode.is_vertical() {
+                    if style.direction == crate::values::Direction::Rtl {
+                        style.margin_top = *l;
+                    } else {
+                        style.margin_bottom = *l;
+                    }
+                } else {
+                    if style.direction == crate::values::Direction::Rtl {
+                        style.margin_left = *l;
+                    } else {
+                        style.margin_right = *l;
+                    }
+                }
+            }
+        }
 
         // Padding
         "padding-top" => {
@@ -195,6 +377,62 @@ pub(crate) fn apply_box_model_property(style: &mut ComputedStyle, prop: &str, va
         "padding-left" => {
             if let Value::Length(l) = val {
                 style.padding_left = *l;
+            }
+        }
+        "padding-block-start" => {
+            if let Value::Length(l) = val {
+                match style.writing_mode {
+                    crate::values::WritingMode::HorizontalTb => style.padding_top = *l,
+                    crate::values::WritingMode::VerticalRl
+                    | crate::values::WritingMode::SidewaysRl => style.padding_right = *l,
+                    crate::values::WritingMode::VerticalLr
+                    | crate::values::WritingMode::SidewaysLr => style.padding_left = *l,
+                }
+            }
+        }
+        "padding-block-end" => {
+            if let Value::Length(l) = val {
+                match style.writing_mode {
+                    crate::values::WritingMode::HorizontalTb => style.padding_bottom = *l,
+                    crate::values::WritingMode::VerticalRl
+                    | crate::values::WritingMode::SidewaysRl => style.padding_left = *l,
+                    crate::values::WritingMode::VerticalLr
+                    | crate::values::WritingMode::SidewaysLr => style.padding_right = *l,
+                }
+            }
+        }
+        "padding-inline-start" => {
+            if let Value::Length(l) = val {
+                if style.writing_mode.is_vertical() {
+                    if style.direction == crate::values::Direction::Rtl {
+                        style.padding_bottom = *l;
+                    } else {
+                        style.padding_top = *l;
+                    }
+                } else {
+                    if style.direction == crate::values::Direction::Rtl {
+                        style.padding_right = *l;
+                    } else {
+                        style.padding_left = *l;
+                    }
+                }
+            }
+        }
+        "padding-inline-end" => {
+            if let Value::Length(l) = val {
+                if style.writing_mode.is_vertical() {
+                    if style.direction == crate::values::Direction::Rtl {
+                        style.padding_top = *l;
+                    } else {
+                        style.padding_bottom = *l;
+                    }
+                } else {
+                    if style.direction == crate::values::Direction::Rtl {
+                        style.padding_left = *l;
+                    } else {
+                        style.padding_right = *l;
+                    }
+                }
             }
         }
 
@@ -321,24 +559,80 @@ pub(crate) fn apply_box_model_property(style: &mut ComputedStyle, prop: &str, va
         },
 
         // Positioning offsets
-        "top" | "inset-block-start" => {
+        "top" => {
             if let Value::Length(l) = val {
                 style.top = *l;
             }
         }
-        "right" | "inset-inline-end" => {
+        "right" => {
             if let Value::Length(l) = val {
                 style.right = *l;
             }
         }
-        "bottom" | "inset-block-end" => {
+        "bottom" => {
             if let Value::Length(l) = val {
                 style.bottom = *l;
             }
         }
-        "left" | "inset-inline-start" => {
+        "left" => {
             if let Value::Length(l) = val {
                 style.left = *l;
+            }
+        }
+        "inset-block-start" => {
+            if let Value::Length(l) = val {
+                match style.writing_mode {
+                    crate::values::WritingMode::HorizontalTb => style.top = *l,
+                    crate::values::WritingMode::VerticalRl
+                    | crate::values::WritingMode::SidewaysRl => style.right = *l,
+                    crate::values::WritingMode::VerticalLr
+                    | crate::values::WritingMode::SidewaysLr => style.left = *l,
+                }
+            }
+        }
+        "inset-block-end" => {
+            if let Value::Length(l) = val {
+                match style.writing_mode {
+                    crate::values::WritingMode::HorizontalTb => style.bottom = *l,
+                    crate::values::WritingMode::VerticalRl
+                    | crate::values::WritingMode::SidewaysRl => style.left = *l,
+                    crate::values::WritingMode::VerticalLr
+                    | crate::values::WritingMode::SidewaysLr => style.right = *l,
+                }
+            }
+        }
+        "inset-inline-start" => {
+            if let Value::Length(l) = val {
+                if style.writing_mode.is_vertical() {
+                    if style.direction == crate::values::Direction::Rtl {
+                        style.bottom = *l;
+                    } else {
+                        style.top = *l;
+                    }
+                } else {
+                    if style.direction == crate::values::Direction::Rtl {
+                        style.right = *l;
+                    } else {
+                        style.left = *l;
+                    }
+                }
+            }
+        }
+        "inset-inline-end" => {
+            if let Value::Length(l) = val {
+                if style.writing_mode.is_vertical() {
+                    if style.direction == crate::values::Direction::Rtl {
+                        style.top = *l;
+                    } else {
+                        style.bottom = *l;
+                    }
+                } else {
+                    if style.direction == crate::values::Direction::Rtl {
+                        style.left = *l;
+                    } else {
+                        style.right = *l;
+                    }
+                }
             }
         }
 

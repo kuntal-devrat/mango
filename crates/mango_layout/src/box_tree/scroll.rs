@@ -73,11 +73,22 @@ impl LayoutBox {
                 continue;
             }
 
+            let is_rtl_x = self.style.as_ref().is_some_and(|s| {
+                s.writing_mode == mango_css::values::WritingMode::VerticalRl
+                    || s.direction == mango_css::values::Direction::Rtl
+            });
+
             let bb = child.dimensions.border_box();
             let mb = child.dimensions.margin_box();
-            max_x = max_x
-                .max(bb.right() - pad_origin_x)
-                .max(mb.right() - pad_origin_x);
+            if is_rtl_x {
+                max_x = max_x
+                    .max(pad_box.right() - bb.left())
+                    .max(pad_box.right() - mb.left());
+            } else {
+                max_x = max_x
+                    .max(bb.right() - pad_origin_x)
+                    .max(mb.right() - pad_origin_x);
+            }
             max_y = max_y
                 .max(bb.bottom() - pad_origin_y)
                 .max(mb.bottom() - pad_origin_y);
@@ -114,7 +125,15 @@ impl LayoutBox {
         let old_x = self.scroll_offset_x;
         let old_y = self.scroll_offset_y;
 
-        self.scroll_offset_x = (self.scroll_offset_x + delta_x).clamp(0.0, max_x);
+        let is_rtl_x = self.style.as_ref().is_some_and(|s| {
+            s.writing_mode == mango_css::values::WritingMode::VerticalRl
+                || s.direction == mango_css::values::Direction::Rtl
+        });
+        if is_rtl_x {
+            self.scroll_offset_x = (self.scroll_offset_x + delta_x).clamp(-max_x, 0.0);
+        } else {
+            self.scroll_offset_x = (self.scroll_offset_x + delta_x).clamp(0.0, max_x);
+        }
         self.scroll_offset_y = (self.scroll_offset_y + delta_y).clamp(0.0, max_y);
 
         (self.scroll_offset_x - old_x, self.scroll_offset_y - old_y)

@@ -552,7 +552,8 @@
             var strVal = (val === null || val === undefined) ? "" : String(val);
             var oldVal = _defaultGetTextContent(node);
             node.data = strVal; node._data = strVal; node._nodeValue = strVal;
-            if (node._nodeId !== undefined && typeof _setNodeValue === 'function') _setNodeValue(node._nodeId, strVal);
+            var setNodeValFn = (typeof _setNodeValue === 'function') ? _setNodeValue : (typeof globalThis !== 'undefined' ? globalThis._setNodeValue : null);
+            if (node._nodeId !== undefined && typeof setNodeValFn === 'function') setNodeValFn(node._nodeId, strVal);
             if (typeof globalThis !== 'undefined' && globalThis._reportDOMMutation) {
                 globalThis._reportDOMMutation({ type: 'characterData', target: node, oldValue: oldVal });
             }
@@ -573,7 +574,8 @@
                 }
             }
             if (node._childNodes) node._childNodes = [];
-            if (node._nodeId !== undefined && typeof _setTextContent === 'function') _setTextContent(node._nodeId, strVal);
+            var setTextFn = (typeof _setTextContent === 'function') ? _setTextContent : (typeof globalThis !== 'undefined' ? globalThis._setTextContent : null);
+            if (node._nodeId !== undefined && typeof setTextFn === 'function') setTextFn(node._nodeId, strVal);
             if (strVal !== "" && node._nodeId === undefined) {
                 var textNode = (typeof document !== 'undefined' && document.createTextNode)
                     ? document.createTextNode(strVal)

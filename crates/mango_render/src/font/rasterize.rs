@@ -34,7 +34,44 @@ impl FontManager {
             return entry.glyph.clone();
         }
 
+        let is_ahem = match family {
+            FontFamily::Custom(id) => {
+                if let Ok(web_fonts) = self.web_fonts.read() {
+                    web_fonts
+                        .get(&id)
+                        .map(|e| e.family_name.eq_ignore_ascii_case("Ahem"))
+                        .unwrap_or(false)
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        };
+
         let (mut metrics, bitmap) = font.rasterize(ch, px_size);
+        if is_ahem && metrics.width > 0 && metrics.height > 0 && !bitmap.is_empty() {
+            let target_w = metrics.bounds.width.round().max(1.0) as usize;
+            let target_h = metrics.bounds.height.round().max(1.0) as usize;
+            let solid = vec![255u8; target_w * target_h];
+            metrics.width = target_w;
+            metrics.height = target_h;
+            metrics.xmin = metrics.bounds.xmin.round() as i32;
+            metrics.ymin = metrics.bounds.ymin.round() as i32;
+            let cached = CachedGlyph {
+                metrics,
+                bitmap: solid.into(),
+            };
+            if let Ok(mut cache) = glyph_cache().write() {
+                cache.insert(
+                    key,
+                    GlyphCacheEntry {
+                        glyph: cached.clone(),
+                        last_access: AtomicU64::new(ACCESS_COUNTER.fetch_add(1, Ordering::Relaxed)),
+                    },
+                );
+            }
+            return cached;
+        }
         let final_bitmap: std::sync::Arc<[u8]> = if weight == FontWeight::Bold
             && std::ptr::eq(font, self.select_font(family, FontWeight::Regular).as_ref())
             && metrics.width > 0
@@ -247,7 +284,8 @@ impl FontManager {
 
             if !bitmap.is_empty() && metrics.width > 0 && metrics.height > 0 {
                 let glyph_x = cursor_x + metrics.xmin as f32;
-                let glyph_y = y as f32 + ascent - metrics.height as f32 - metrics.ymin as f32;
+                let glyph_y =
+                    y as f32 + (ascent - metrics.height as f32 - metrics.ymin as f32).round();
 
                 for gy in 0..metrics.height {
                     let slant = if is_italic {
@@ -437,7 +475,8 @@ impl FontManager {
 
             if !bitmap.is_empty() && metrics.width > 0 && metrics.height > 0 {
                 let glyph_x = cursor_x + metrics.xmin as f32;
-                let glyph_y = y as f32 + ascent - metrics.height as f32 - metrics.ymin as f32;
+                let glyph_y =
+                    y as f32 + (ascent - metrics.height as f32 - metrics.ymin as f32).round();
                 let w = metrics.width;
 
                 for gy in 0..metrics.height {
@@ -560,7 +599,8 @@ impl FontManager {
 
             if !bitmap.is_empty() && metrics.width > 0 && metrics.height > 0 {
                 let glyph_x = cursor_x + metrics.xmin as f32;
-                let glyph_y = y as f32 + ascent - metrics.height as f32 - metrics.ymin as f32;
+                let glyph_y =
+                    y as f32 + (ascent - metrics.height as f32 - metrics.ymin as f32).round();
 
                 for gy in 0..metrics.height {
                     let slant = if is_italic {

@@ -252,8 +252,8 @@ impl BrowserChrome {
                 let mut pending_imports = Vec::new();
                 for sheet in &embedded_sheets {
                     for rule in &sheet.rules {
-                        if let mango_css::parser::Rule::Import(import_path) = rule {
-                            pending_imports.push((base.clone(), import_path.clone()));
+                        if let mango_css::parser::Rule::Import(import) = rule {
+                            pending_imports.push((base.clone(), import.url.clone()));
                         }
                     }
                 }

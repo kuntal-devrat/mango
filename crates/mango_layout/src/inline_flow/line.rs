@@ -65,26 +65,61 @@ pub(crate) fn finalize_line(
     text_align: TextAlign,
     out: &mut Vec<LayoutBox>,
     is_last_line: bool,
+    block_start_x: f32,
 ) -> f32 {
     if line_atoms.is_empty() {
         return 16.0;
     }
 
-    // Strip trailing space from the line measurement and display (unless break-spaces)
-    let effective_atoms = if line_atoms
-        .last()
-        .map(|a| a.is_space() && a.style.white_space != mango_css::values::WhiteSpace::BreakSpaces)
-        .unwrap_or(false)
-    {
-        &line_atoms[..line_atoms.len() - 1]
-    } else {
-        line_atoms
-    };
+    // Strip leading and trailing collapsible spaces from the line (CSS Text Level 3 § 4.1.1)
+    let mut trailing_space_indices = std::collections::HashSet::new();
+    let mut i = line_atoms.len();
+    while i > 0 {
+        let idx = i - 1;
+        let atom = &line_atoms[idx];
+        if matches!(atom.kind, InlineAtomKind::OutOfFlow(_)) {
+            i -= 1;
+            continue;
+        }
+        if atom.is_space() && atom.style.white_space != mango_css::values::WhiteSpace::BreakSpaces {
+            trailing_space_indices.insert(idx);
+            i -= 1;
+            continue;
+        }
+        break;
+    }
 
-    let atoms_for_metrics = if effective_atoms.is_empty() {
-        line_atoms
+    let mut leading_space_indices = std::collections::HashSet::new();
+    for (idx, atom) in line_atoms.iter().enumerate() {
+        if matches!(atom.kind, InlineAtomKind::OutOfFlow(_)) {
+            continue;
+        }
+        if atom.is_space()
+            && matches!(
+                atom.style.white_space,
+                mango_css::values::WhiteSpace::Normal
+                    | mango_css::values::WhiteSpace::Nowrap
+                    | mango_css::values::WhiteSpace::PreLine
+            )
+        {
+            leading_space_indices.insert(idx);
+        }
+        break;
+    }
+
+    let effective_atoms: Vec<&InlineAtom> = line_atoms
+        .iter()
+        .enumerate()
+        .filter(|(idx, _)| {
+            !leading_space_indices.contains(idx) && !trailing_space_indices.contains(idx)
+        })
+        .map(|(_, a)| a)
+        .collect();
+
+    let atoms_for_metrics: Vec<&InlineAtom> = if effective_atoms.is_empty() {
+        line_atoms.iter().collect()
     } else {
-        effective_atoms
+        effective_atoms.clone()
     };
 
     let line_content_width: f32 = effective_atoms.iter().map(|a| a.width).sum();
@@ -97,7 +132,7 @@ pub(crate) fn finalize_line(
     let mut max_above = 0.0f32;
     let mut max_below = 0.0f32;
 
-    for atom in atoms_for_metrics {
+    for &atom in &atoms_for_metrics {
         match &atom.kind {
             InlineAtomKind::Text { .. } => {
                 let family = font_family_for(&atom.style);
@@ -200,6 +235,7 @@ pub(crate) fn finalize_line(
         width: f32,
         link_target: Option<String>,
         link_frame: Option<String>,
+        owner_inline_id: Option<mango_html::dom::NodeId>,
         /// Font ascent, in pixels, at this run's font size.
         ascent: f32,
         /// Font descent (positive), in pixels, at this run's font size.
@@ -207,7 +243,11 @@ pub(crate) fn finalize_line(
     }
 
     let mut runs: Vec<MergedRun> = Vec::new();
-    let mut cursor_x = start_x + offset_x;
+    let mut cursor_x = if is_rtl {
+        start_x + offset_x + line_content_width
+    } else {
+        start_x + offset_x
+    };
 
     let flush_text_runs = |runs: &mut Vec<MergedRun>, out: &mut Vec<LayoutBox>| {
         for mut run in runs.drain(..) {
@@ -219,7 +259,7 @@ pub(crate) fn finalize_line(
             );
             if is_override && is_rtl_dir {
                 run.text = run.text.chars().rev().collect();
-            } else if run.text.chars().any(is_rtl_char) || is_rtl_dir {
+            } else if run.text.chars().any(is_rtl_char) {
                 run.text = shape_and_bidi_text_with_dir(&run.text, is_rtl_dir);
             }
             let ascent = run.ascent;
@@ -246,165 +286,357 @@ pub(crate) fn finalize_line(
             };
 
             let mut box_node = LayoutBox::new(BoxType::TextNode(run.text), Some(run.style));
+            let sticky_margin_top = if run.owner_inline_id.is_some()
+                && box_node.style.as_ref().map(|s| s.position)
+                    == Some(mango_css::values::Position::Sticky)
+            {
+                (run_y - line_y).max(0.0)
+            } else {
+                0.0
+            };
             box_node.dimensions = Dimensions {
                 content: Rect::new(run.start_x, run_y, run.width, natural_h),
                 padding: EdgeSizes::ZERO,
                 border: EdgeSizes::ZERO,
-                margin: EdgeSizes::ZERO,
+                margin: EdgeSizes {
+                    top: sticky_margin_top,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                },
+                ..Default::default()
             };
             box_node.link_target = run.link_target;
             box_node.link_frame = run.link_frame;
+            box_node.node_id = run.owner_inline_id;
+
+            // Relative positioning offset (CSS 2.1 §9.4.3)
+            if box_node.style.as_ref().map(|s| s.position)
+                == Some(mango_css::values::Position::Relative)
+            {
+                let cb_dims = crate::dimensions::Dimensions::new(mango_core::Rect::new(
+                    0.0,
+                    0.0,
+                    available_width,
+                    0.0,
+                ));
+                crate::block_flow::positioned::apply_relative_offset(&mut box_node, &cb_dims);
+            }
+
             out.push(box_node);
         }
     };
 
-    for atom in effective_atoms {
-        let atom_w = if atom.is_space() {
-            atom.width + space_expansion
-        } else {
-            atom.width
-        };
-
-        match &atom.kind {
-            InlineAtomKind::Text { text, .. } => {
-                let can_merge = if let Some(last_run) = runs.last_mut() {
-                    last_run.link_target == atom.link_target
-                        && last_run.link_frame == atom.link_frame
-                        && last_run.style.color == atom.style.color
-                        && last_run.style.font_size == atom.style.font_size
-                        && last_run.style.font_weight == atom.style.font_weight
-                        && last_run.style.font_family == atom.style.font_family
-                        && last_run.style.font_style == atom.style.font_style
-                        && last_run.style.text_decoration == atom.style.text_decoration
-                        && last_run.style.letter_spacing == atom.style.letter_spacing
-                        && last_run.style.vertical_align == atom.style.vertical_align
-                        && (last_run.style.word_spacing == mango_css::values::Length::Px(0.0)
-                            && atom.style.word_spacing == mango_css::values::Length::Px(0.0))
-                } else {
-                    false
-                };
-
-                if can_merge {
-                    let last_run = runs.last_mut().unwrap();
-                    last_run.text.push_str(text);
-                    last_run.width += atom_w;
-                } else {
-                    let family = font_family_for(&atom.style);
-                    let weight = font_weight_for(&atom.style);
-                    let (ascent, descent, _) = mango_render::font::font_manager().font_metrics(
-                        family,
-                        weight,
-                        atom.style.font_size,
-                    );
-                    runs.push(MergedRun {
-                        text: text.clone(),
-                        start_x: cursor_x,
-                        width: atom_w,
-                        link_target: atom.link_target.clone(),
-                        link_frame: atom.link_frame.clone(),
-                        ascent,
-                        descent,
-                        style: atom.style.clone(),
-                    });
+    let atom_dirs: Vec<bool> = {
+        let raw_dirs: Vec<Option<bool>> = effective_atoms
+            .iter()
+            .map(|atom| {
+                let is_override = matches!(
+                    atom.style.unicode_bidi,
+                    mango_css::values::UnicodeBidi::BidiOverride
+                        | mango_css::values::UnicodeBidi::IsolateOverride
+                );
+                if is_override {
+                    return Some(atom.style.direction == mango_css::values::Direction::Rtl);
                 }
-                cursor_x += atom_w;
-            }
-            InlineAtomKind::AtomicBox(atomic_box) => {
-                flush_text_runs(&mut runs, out);
-
-                let mut placed = (**atomic_box).clone();
-                let box_outer_x = cursor_x;
-                let box_outer_y = if atomic_box.tag_name.as_deref() == Some("ruby") {
-                    let rt_h = atomic_box
-                        .children
-                        .first()
-                        .map(|c| c.dimensions.content.height())
-                        .unwrap_or(0.0);
-                    let base_h = atomic_box
-                        .children
-                        .get(1)
-                        .map(|c| c.dimensions.content.height())
-                        .unwrap_or(atom.height - rt_h);
-                    let base_ascent = base_h * 0.8;
-                    line_y + baseline_from_line_top - (rt_h + base_ascent)
-                } else {
-                    match atom.style.vertical_align {
-                        mango_css::values::VerticalAlign::Baseline => {
-                            if let Some(baseline_dist) =
-                                find_inline_block_last_baseline_from_top(atomic_box)
-                            {
-                                line_y + baseline_from_line_top - baseline_dist
-                            } else {
-                                line_y + baseline_from_line_top - atom.height
-                            }
-                        }
-                        mango_css::values::VerticalAlign::Top => line_y,
-                        mango_css::values::VerticalAlign::Bottom => {
-                            line_y + (actual_line_height - atom.height).max(0.0)
-                        }
-                        mango_css::values::VerticalAlign::Middle => {
-                            let x_mid = atom.style.font_size * 0.25;
-                            line_y + baseline_from_line_top - x_mid - (atom.height * 0.5)
-                        }
-                        mango_css::values::VerticalAlign::Super => {
-                            line_y + baseline_from_line_top - atom.height - 4.0
-                        }
-                        mango_css::values::VerticalAlign::Sub => {
-                            line_y + baseline_from_line_top - atom.height + 4.0
-                        }
-                        mango_css::values::VerticalAlign::TextTop => line_y,
-                        mango_css::values::VerticalAlign::TextBottom => {
-                            line_y + (actual_line_height - atom.height).max(0.0)
+                match &atom.kind {
+                    InlineAtomKind::Text { text, is_space } => {
+                        if *is_space {
+                            None
+                        } else if text.chars().any(is_rtl_char) {
+                            Some(true)
+                        } else if text
+                            .chars()
+                            .any(|c| crate::bidi::bidi_class(c) == crate::bidi::BidiClass::L)
+                        {
+                            Some(false)
+                        } else {
+                            None
                         }
                     }
+                    InlineAtomKind::AtomicBox(b) => Some(
+                        b.style
+                            .as_ref()
+                            .map(|s| s.direction == mango_css::values::Direction::Rtl)
+                            .unwrap_or(is_rtl),
+                    ),
+                    _ => None,
+                }
+            })
+            .collect();
+
+        let n = raw_dirs.len();
+        let mut resolved = vec![is_rtl; n];
+        let mut i = 0;
+        while i < n {
+            if let Some(d) = raw_dirs[i] {
+                resolved[i] = d;
+                i += 1;
+            } else {
+                let start = i;
+                while i < n && raw_dirs[i].is_none() {
+                    i += 1;
+                }
+                let end = i;
+                let prev_dir = if start > 0 {
+                    Some(resolved[start - 1])
+                } else {
+                    None
                 };
-
-                let new_content_x = box_outer_x
-                    + placed.dimensions.margin.left
-                    + placed.dimensions.border.left
-                    + placed.dimensions.padding.left;
-                let new_content_y = box_outer_y
-                    + placed.dimensions.margin.top
-                    + placed.dimensions.border.top
-                    + placed.dimensions.padding.top;
-
-                let dx = new_content_x - placed.dimensions.content.x();
-                let dy = new_content_y - placed.dimensions.content.y();
-                placed.dimensions.content.origin = Point::new(new_content_x, new_content_y);
-                crate::block_flow::shift_descendants(&mut placed, dx, dy);
-
-                if placed.link_target.is_none() && atom.link_target.is_some() {
-                    placed.link_target = atom.link_target.clone();
+                let next_dir = if end < n { raw_dirs[end] } else { None };
+                let neutral_dir = match (prev_dir, next_dir) {
+                    (Some(p), Some(nxt)) if p == nxt => p,
+                    (Some(p), None) => p,
+                    (None, Some(nxt)) => nxt,
+                    _ => is_rtl,
+                };
+                for k in start..end {
+                    resolved[k] = neutral_dir;
                 }
-                if placed.link_frame.is_none() && atom.link_frame.is_some() {
-                    placed.link_frame = atom.link_frame.clone();
-                }
-
-                // Relative positioning offset (CSS 2.1 §9.4.3)
-                if placed.style.as_ref().map(|s| s.position)
-                    == Some(mango_css::values::Position::Relative)
-                {
-                    let cb_dims = crate::dimensions::Dimensions::new(mango_core::Rect::new(
-                        0.0,
-                        0.0,
-                        available_width,
-                        0.0,
-                    ));
-                    crate::block_flow::positioned::apply_relative_offset(&mut placed, &cb_dims);
-                }
-
-                out.push(placed);
-                cursor_x += atom.width;
             }
-            InlineAtomKind::Spacing => {
-                flush_text_runs(&mut runs, out);
-                cursor_x += atom.width;
-            }
-            InlineAtomKind::LineBreak => {
-                flush_text_runs(&mut runs, out);
-            }
-            InlineAtomKind::WordBreakOpportunity | InlineAtomKind::SoftHyphen => {}
         }
+        resolved
+    };
+
+    let mut seg_start = 0;
+    while seg_start < effective_atoms.len() {
+        let seg_rtl = atom_dirs[seg_start];
+        let mut seg_end = seg_start;
+        let mut seg_w = 0.0f32;
+        while seg_end < effective_atoms.len() && atom_dirs[seg_end] == seg_rtl {
+            let w = if effective_atoms[seg_end].is_space() {
+                effective_atoms[seg_end].width + space_expansion
+            } else {
+                effective_atoms[seg_end].width
+            };
+            seg_w += w;
+            seg_end += 1;
+        }
+
+        let mut seg_cursor_x = if is_rtl {
+            if seg_rtl { cursor_x } else { cursor_x - seg_w }
+        } else {
+            if seg_rtl { cursor_x + seg_w } else { cursor_x }
+        };
+
+        for &atom in &effective_atoms[seg_start..seg_end] {
+            let atom_w = if atom.is_space() {
+                atom.width + space_expansion
+            } else {
+                atom.width
+            };
+
+            let atom_start_x = if is_rtl {
+                if seg_rtl {
+                    seg_cursor_x -= atom_w;
+                    seg_cursor_x
+                } else {
+                    let sx = seg_cursor_x;
+                    seg_cursor_x += atom_w;
+                    sx
+                }
+            } else {
+                if seg_rtl {
+                    seg_cursor_x -= atom_w;
+                    seg_cursor_x
+                } else {
+                    let sx = seg_cursor_x;
+                    seg_cursor_x += atom_w;
+                    sx
+                }
+            };
+
+            match &atom.kind {
+                InlineAtomKind::Text { text, .. } => {
+                    let can_merge = if let Some(last_run) = runs.last_mut() {
+                        last_run.owner_inline_id == atom.owner_inline_id
+                            && last_run.link_target == atom.link_target
+                            && last_run.link_frame == atom.link_frame
+                            && last_run.style.color == atom.style.color
+                            && last_run.style.font_size == atom.style.font_size
+                            && last_run.style.font_weight == atom.style.font_weight
+                            && last_run.style.font_family == atom.style.font_family
+                            && last_run.style.font_style == atom.style.font_style
+                            && last_run.style.text_decoration == atom.style.text_decoration
+                            && last_run.style.letter_spacing == atom.style.letter_spacing
+                            && last_run.style.vertical_align == atom.style.vertical_align
+                            && last_run.style.direction == atom.style.direction
+                            && last_run.style.unicode_bidi == atom.style.unicode_bidi
+                            && (last_run.style.word_spacing == mango_css::values::Length::Px(0.0)
+                                && atom.style.word_spacing == mango_css::values::Length::Px(0.0))
+                    } else {
+                        false
+                    };
+
+                    if can_merge {
+                        let last_run = runs.last_mut().unwrap();
+                        last_run.text.push_str(text);
+                        if is_rtl && seg_rtl {
+                            last_run.start_x = atom_start_x;
+                        }
+                        last_run.width += atom_w;
+                    } else {
+                        let family = font_family_for(&atom.style);
+                        let weight = font_weight_for(&atom.style);
+                        let (ascent, descent, _) = mango_render::font::font_manager().font_metrics(
+                            family,
+                            weight,
+                            atom.style.font_size,
+                        );
+                        runs.push(MergedRun {
+                            text: text.clone(),
+                            start_x: atom_start_x,
+                            width: atom_w,
+                            link_target: atom.link_target.clone(),
+                            link_frame: atom.link_frame.clone(),
+                            ascent,
+                            descent,
+                            style: atom.style.clone(),
+                            owner_inline_id: atom.owner_inline_id,
+                        });
+                    }
+                }
+                InlineAtomKind::AtomicBox(atomic_box) => {
+                    flush_text_runs(&mut runs, out);
+
+                    let mut placed = (**atomic_box).clone();
+                    let box_outer_x = atom_start_x;
+                    let box_outer_y = if atomic_box.tag_name.as_deref() == Some("ruby") {
+                        let rt_h = atomic_box
+                            .children
+                            .first()
+                            .map(|c| c.dimensions.content.height())
+                            .unwrap_or(0.0);
+                        let base_h = atomic_box
+                            .children
+                            .get(1)
+                            .map(|c| c.dimensions.content.height())
+                            .unwrap_or(atom.height - rt_h);
+                        let base_ascent = base_h * 0.8;
+                        line_y + baseline_from_line_top - (rt_h + base_ascent)
+                    } else {
+                        match atom.style.vertical_align {
+                            mango_css::values::VerticalAlign::Baseline => {
+                                if let Some(baseline_dist) =
+                                    find_inline_block_last_baseline_from_top(atomic_box)
+                                {
+                                    line_y + baseline_from_line_top - baseline_dist
+                                } else {
+                                    line_y + baseline_from_line_top - atom.height
+                                }
+                            }
+                            mango_css::values::VerticalAlign::Top => line_y,
+                            mango_css::values::VerticalAlign::Bottom => {
+                                line_y + (actual_line_height - atom.height).max(0.0)
+                            }
+                            mango_css::values::VerticalAlign::Middle => {
+                                let x_mid = atom.style.font_size * 0.25;
+                                line_y + baseline_from_line_top - x_mid - (atom.height * 0.5)
+                            }
+                            mango_css::values::VerticalAlign::Super => {
+                                line_y + baseline_from_line_top - atom.height - 4.0
+                            }
+                            mango_css::values::VerticalAlign::Sub => {
+                                line_y + baseline_from_line_top - atom.height + 4.0
+                            }
+                            mango_css::values::VerticalAlign::TextTop => line_y,
+                            mango_css::values::VerticalAlign::TextBottom => {
+                                line_y + (actual_line_height - atom.height).max(0.0)
+                            }
+                        }
+                    };
+
+                    let new_content_x = box_outer_x
+                        + placed.dimensions.margin.left
+                        + placed.dimensions.border.left
+                        + placed.dimensions.padding.left;
+                    let new_content_y = box_outer_y
+                        + placed.dimensions.margin.top
+                        + placed.dimensions.border.top
+                        + placed.dimensions.padding.top;
+
+                    let dx = new_content_x - placed.dimensions.content.x();
+                    let dy = new_content_y - placed.dimensions.content.y();
+                    placed.dimensions.content.origin = Point::new(new_content_x, new_content_y);
+                    crate::block_flow::shift_descendants(&mut placed, dx, dy);
+
+                    if placed.link_target.is_none() && atom.link_target.is_some() {
+                        placed.link_target = atom.link_target.clone();
+                    }
+                    if placed.link_frame.is_none() && atom.link_frame.is_some() {
+                        placed.link_frame = atom.link_frame.clone();
+                    }
+                    if placed.node_id.is_none() && atom.owner_inline_id.is_some() {
+                        placed.node_id = atom.owner_inline_id;
+                    }
+
+                    // Relative positioning offset (CSS 2.1 §9.4.3)
+                    if placed.style.as_ref().map(|s| s.position)
+                        == Some(mango_css::values::Position::Relative)
+                    {
+                        let cb_dims = crate::dimensions::Dimensions::new(mango_core::Rect::new(
+                            0.0,
+                            0.0,
+                            available_width,
+                            0.0,
+                        ));
+                        crate::block_flow::positioned::apply_relative_offset(&mut placed, &cb_dims);
+                    }
+
+                    out.push(placed);
+                }
+                InlineAtomKind::Spacing => {
+                    flush_text_runs(&mut runs, out);
+                }
+                InlineAtomKind::LineBreak => {
+                    flush_text_runs(&mut runs, out);
+                }
+                InlineAtomKind::OutOfFlow(oof) => {
+                    flush_text_runs(&mut runs, out);
+                    let mut placed = (**oof).clone();
+                    let is_block_level = placed
+                        .style
+                        .as_ref()
+                        .map(|s| {
+                            matches!(
+                                s.original_display,
+                                Display::Block
+                                    | Display::Flex
+                                    | Display::Grid
+                                    | Display::Table
+                                    | Display::ListItem
+                                    | Display::FlowRoot
+                            )
+                        })
+                        .unwrap_or(false);
+                    let hyp_w =
+                        crate::block_flow::calculate_shrink_to_fit_width(&placed, available_width);
+                    let (oof_x, oof_y) = if is_block_level {
+                        let bx = if is_rtl {
+                            block_start_x - hyp_w
+                        } else {
+                            block_start_x
+                        };
+                        (bx, line_y + actual_line_height)
+                    } else if seg_rtl {
+                        (atom_start_x - hyp_w, line_y)
+                    } else {
+                        (atom_start_x, line_y)
+                    };
+                    placed.dimensions.content.origin = Point::new(oof_x, oof_y);
+                    placed.containing_inline_id = atom.owner_inline_id;
+                    out.push(placed);
+                }
+                InlineAtomKind::WordBreakOpportunity | InlineAtomKind::SoftHyphen => {}
+            }
+        }
+
+        if is_rtl {
+            cursor_x -= seg_w;
+        } else {
+            cursor_x += seg_w;
+        }
+        seg_start = seg_end;
     }
 
     // Handle text-overflow: ellipsis
@@ -459,6 +691,7 @@ pub(crate) fn split_overflow_text(
     link_target: Option<&str>,
     link_frame: Option<&str>,
     container_width: f32,
+    owner_inline_id: Option<mango_html::dom::NodeId>,
 ) -> Vec<InlineAtom> {
     let font_size = style.font_size;
     let weight = font_weight_for(style);
@@ -489,6 +722,7 @@ pub(crate) fn split_overflow_text(
                 height,
                 link_target: link_target.map(|s| s.to_string()),
                 link_frame: link_frame.map(|s| s.to_string()),
+                owner_inline_id,
             });
             cur_w = 0.0;
         }
@@ -507,6 +741,7 @@ pub(crate) fn split_overflow_text(
             height,
             link_target: link_target.map(|s| s.to_string()),
             link_frame: link_frame.map(|s| s.to_string()),
+            owner_inline_id,
         });
     }
 

@@ -17,6 +17,8 @@ struct Timer {
     fire_at: Instant,
     /// For intervals: the repeat period; None for timeouts.
     interval: Option<Duration>,
+    /// Original delay requested for this timer.
+    delay: Duration,
     /// Whether this timer has been cancelled.
     cancelled: bool,
 }
@@ -89,6 +91,7 @@ impl EventLoop {
                 callback_source,
                 fire_at: Instant::now() + Duration::from_millis(delay_ms),
                 interval: None,
+                delay: Duration::from_millis(delay_ms),
                 cancelled: false,
             },
         );
@@ -130,6 +133,7 @@ impl EventLoop {
                 callback_source,
                 fire_at: Instant::now() + period,
                 interval: Some(period),
+                delay: period,
                 cancelled: false,
             },
         );
@@ -149,12 +153,44 @@ impl EventLoop {
         self.timers.values().filter(|t| !t.cancelled).count()
     }
 
-    /// Makes every outstanding timer due immediately.
+    /// Returns true if there are pending background tasks or live timers
+    /// whose scheduled delay is <= `max_delay` or already expired.
+    pub fn has_expeditable_work(&self, max_delay: Duration) -> bool {
+        if let Ok(tasks) = self.tasks.lock() {
+            if !tasks.is_empty() {
+                return true;
+            }
+        }
+        let now = Instant::now();
+        self.timers
+            .values()
+            .any(|t| !t.cancelled && (t.delay <= max_delay || t.fire_at <= now))
+    }
+
+    /// Expedites live timers whose scheduled delay is short (<= 250ms),
+    /// such as animation frame ticks, requestIdleCallback, or microtask/timer steps.
     ///
-    /// Used by deterministic test harnesses that advance virtual time instead
-    /// of sleeping for real wall-clock delays. Returns the number of live
-    /// timers that were expedited.
+    /// Long timers (e.g. CSS transitions of 2s, 60s) represent asynchronous processes
+    /// that are designed to stay in-flight during the test snapshot.
     pub fn expedite_timers(&mut self) -> usize {
+        self.expedite_timers_up_to(Duration::from_millis(250))
+    }
+
+    /// Expedites live timers whose scheduled delay is <= `max_delay`.
+    pub fn expedite_timers_up_to(&mut self, max_delay: Duration) -> usize {
+        let now = Instant::now();
+        let mut count = 0;
+        for timer in self.timers.values_mut() {
+            if !timer.cancelled && timer.delay <= max_delay {
+                timer.fire_at = now;
+                count += 1;
+            }
+        }
+        count
+    }
+
+    /// Makes every outstanding timer due immediately, regardless of duration.
+    pub fn expedite_all_timers(&mut self) -> usize {
         let now = Instant::now();
         let mut count = 0;
         for timer in self.timers.values_mut() {

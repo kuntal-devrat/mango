@@ -41,11 +41,7 @@
       }
     },
     "css/css-cascade/revert-val-005.html": {
-      "status": "Fail",
-      "subtests": {
-        "The revert keyword works with logical properties": "PASS",
-        "The revert keyword works with physical properties": "FAIL"
-      }
+      "status": "Pass"
     },
     "css/css-cascade/revert-val-006.html": {
       "status": "Fail",

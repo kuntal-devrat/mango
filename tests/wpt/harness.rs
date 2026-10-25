@@ -496,6 +496,23 @@ pub fn run_wpt_file(root: &Path, rel_path: &str, timeout: Duration) -> WptFileRe
     // before dispatching load so geometry assertions see real boxes.
     publish_layout_bounds(&rt, (800.0, 600.0), &external_refs);
 
+    let sheets_for_cb = external_sheets.clone();
+    rt.set_layout_callback(move |doc| {
+        let refs: Vec<&mango_css::parser::Stylesheet> = sheets_for_cb.iter().collect();
+        let (root, _) = mango_layout::layout_document_with_scroll_xy(
+            doc,
+            &refs,
+            mango_core::Size::new(800.0, 600.0),
+            0.0,
+            0.0,
+        );
+        let mut rects = std::collections::HashMap::new();
+        mango_layout::display_list::stacking::collect_box_rects_with_scroll(
+            &root, 0.0, 0.0, &mut rects,
+        );
+        rects
+    });
+
     // ── 3. Dispatch `DOMContentLoaded`/`load`, then pump the event loop until
     // the harness ends. `dispatch_load` also invokes `<body onload=...>`, which
     // is how `check-layout-th.js` suites start their assertions. Do not call

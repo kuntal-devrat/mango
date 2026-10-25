@@ -1,8 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use mango_css::computed::{
-    ComputedStyle, compute_pseudo_style_with_index, compute_pseudo_style_with_shadow_index,
-    compute_style_with_index, compute_style_with_shadow_index,
+    ComputedStyle, compute_pseudo_style_with_shadow_index, compute_style_with_index,
 };
 use mango_css::parser::Stylesheet;
 use mango_css::values::Display;
@@ -99,7 +98,7 @@ fn build_style_tree_with_author_index(
         let refs: Vec<&Stylesheet> = sheets.iter().collect();
         let mut sr_order = 1000;
         let idx =
-            RuleIndex::from_stylesheets_with_env(&refs, Origin::Author, &mut sr_order, env.clone());
+            RuleIndex::from_stylesheets_with_env(&refs, Origin::Shadow, &mut sr_order, env.clone());
         shadow_indexes.insert(sr_id, idx);
     }
 
@@ -249,11 +248,34 @@ pub fn build_styled_node<'a>(
                     })
                 });
 
-            let style = compute_style_with_shadow_index(
+            let mut part_indexes: Vec<&RuleIndex> = Vec::new();
+            if shadow_ctx.is_some() {
+                let mut curr_node = Some(node_id);
+                while let Some(curr) = curr_node {
+                    if let Some(sr_id) = doc.get_enclosing_shadow_root(curr) {
+                        if let Some(host) = doc.get_host_for_shadow_root(sr_id) {
+                            if let Some(sr_parent) = doc.get_enclosing_shadow_root(host) {
+                                if let Some(idx) = shadow_indexes.get(&sr_parent) {
+                                    part_indexes.push(idx);
+                                }
+                            }
+                            curr_node = Some(host);
+                        } else {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                part_indexes.push(author_index);
+            }
+
+            let style = mango_css::compute_style_with_shadow_and_part_indexes(
                 node_id,
                 doc,
                 effective_index,
                 host_shadow_index,
+                &part_indexes,
                 parent_style,
             );
             if style.custom_properties.len() > 1000 {
@@ -313,7 +335,7 @@ pub fn build_styled_node<'a>(
             // Layout effective children according to Shadow DOM V1 tree projection
             let active_ctx = if let Some(sr_id) = el.shadow_root {
                 let slot_assignments = compute_slot_assignments(doc, node_id, sr_id);
-                let sr_rule_index = host_shadow_index.unwrap_or(author_index);
+                let sr_rule_index = shadow_indexes.get(&sr_id).unwrap_or(author_index);
                 Some(ShadowContext {
                     shadow_root: sr_id,
                     host_id: node_id,
@@ -438,10 +460,11 @@ pub fn build_styled_node<'a>(
                 // Capture ::placeholder styling for form inputs
                 if (el.tag_name.eq_ignore_ascii_case("input")
                     || el.tag_name.eq_ignore_ascii_case("textarea"))
-                    && let Some(ph_style) = compute_pseudo_style_with_index(
+                    && let Some(ph_style) = compute_pseudo_style_with_shadow_index(
                         node_id,
                         doc,
                         effective_index,
+                        host_shadow_index,
                         &styled_node.style,
                         "placeholder",
                     )
@@ -465,10 +488,11 @@ pub fn build_styled_node<'a>(
                 // Capture ::marker styling for list items
                 if (el.tag_name.eq_ignore_ascii_case("li")
                     || styled_node.style.display == Display::ListItem)
-                    && let Some(m_style) = compute_pseudo_style_with_index(
+                    && let Some(m_style) = compute_pseudo_style_with_shadow_index(
                         node_id,
                         doc,
                         effective_index,
+                        host_shadow_index,
                         &styled_node.style,
                         "marker",
                     )
@@ -485,6 +509,34 @@ pub fn build_styled_node<'a>(
                             .attributes
                             .push(("_mango_marker_content".to_string(), c.clone()));
                     }
+                }
+
+                // Capture ::backdrop styling for dialog and popover elements
+                if (el.tag_name.eq_ignore_ascii_case("dialog")
+                    || el.get_attribute("popover").is_some())
+                    && let Some(bd_style) = compute_pseudo_style_with_shadow_index(
+                        node_id,
+                        doc,
+                        effective_index,
+                        host_shadow_index,
+                        &styled_node.style,
+                        "backdrop",
+                    )
+                {
+                    styled_node.attributes.push((
+                        "_mango_backdrop_bg".to_string(),
+                        format!(
+                            "rgba({},{},{},{})",
+                            bd_style.background_color.r,
+                            bd_style.background_color.g,
+                            bd_style.background_color.b,
+                            bd_style.background_color.a
+                        ),
+                    ));
+                    styled_node.attributes.push((
+                        "_mango_backdrop_visibility".to_string(),
+                        format!("{:?}", bd_style.visibility),
+                    ));
                 }
 
                 // Capture details disclosure state for summary elements

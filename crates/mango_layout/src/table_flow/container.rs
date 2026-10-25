@@ -214,16 +214,39 @@ fn layout_table_contents(
     }
 
     if row_refs.is_empty() {
-        // Lay out bottom captions if any
-        for &cap_idx in &bottom_caption_indices {
-            let caption = &mut table_box.children[cap_idx];
-            let mut caption_cb = Dimensions::new(Rect::new(table_x, current_y, table_w, 10000.0));
-            caption_cb.content.size.width = table_w;
-            let mut cap_float_ctx = FloatContext::new();
-            crate::block_flow::layout_block(caption, &caption_cb, &mut cap_float_ctx);
-            current_y += caption.dimensions.margin_box().height();
+        let mut max_child_w: f32 = 0.0;
+        for (idx, child) in table_box.children.iter_mut().enumerate() {
+            if top_caption_indices.contains(&idx) {
+                continue;
+            }
+            if bottom_caption_indices.contains(&idx) {
+                let mut caption_cb =
+                    Dimensions::new(Rect::new(table_x, current_y, table_w, 10000.0));
+                caption_cb.content.size.width = table_w;
+                let mut cap_float_ctx = FloatContext::new();
+                crate::block_flow::layout_block(child, &caption_cb, &mut cap_float_ctx);
+                current_y += child.dimensions.margin_box().height();
+                max_child_w = max_child_w.max(child.dimensions.margin_box().width());
+            } else {
+                let mut child_cb = Dimensions::new(Rect::new(table_x, current_y, table_w, 10000.0));
+                child_cb.content.size.width = table_w;
+                let mut child_float_ctx = FloatContext::new();
+                crate::block_flow::layout_block(child, &child_cb, &mut child_float_ctx);
+                current_y += child.dimensions.margin_box().height();
+                let cw = child.dimensions.border_box().width();
+                max_child_w = max_child_w.max(cw);
+            }
         }
-        let raw_h = (current_y - table_box.dimensions.content.y()).max(10.0);
+        let is_auto_table_width =
+            style.width == Length::Auto && table_box.get_attribute("width").is_none();
+        if is_auto_table_width && max_child_w > 0.0 {
+            table_box.dimensions.content.size.width = max_child_w;
+        }
+        let raw_h = (current_y - table_box.dimensions.content.y()).max(if max_child_w > 0.0 {
+            0.0
+        } else {
+            10.0
+        });
         let font_size = style.font_size;
         let (_, vp_h) = mango_css::get_current_viewport();
         let min_h = style
@@ -237,6 +260,7 @@ fn layout_table_contents(
             final_h = final_h.min(max_h);
         }
         table_box.dimensions.content.size.height = final_h;
+        apply_table_relative_offsets(table_box);
         return;
     }
 
@@ -484,4 +508,50 @@ fn layout_table_contents(
         final_h = final_h.min(max_h);
     }
     table_box.dimensions.content.size.height = final_h;
+
+    // 10. Apply relative positioning offsets to table children (CSS Position 3 § 5.1)
+    apply_table_relative_offsets(table_box);
+}
+
+fn apply_table_relative_offsets(table_box: &mut LayoutBox) {
+    let table_dims = table_box.dimensions;
+    for child in &mut table_box.children {
+        if is_table_caption(child) {
+            if child.style.as_ref().map(|s| s.position) == Some(Position::Relative) {
+                crate::block_flow::apply_relative_offset(child, &table_dims);
+            }
+        } else if is_table_row_group(child) {
+            if child.style.as_ref().map(|s| s.position) == Some(Position::Relative) {
+                crate::block_flow::apply_relative_offset(child, &table_dims);
+            }
+            let group_dims = child.dimensions;
+            for row in &mut child.children {
+                if is_table_row(row) {
+                    if row.style.as_ref().map(|s| s.position) == Some(Position::Relative) {
+                        crate::block_flow::apply_relative_offset(row, &group_dims);
+                    }
+                    let row_dims = row.dimensions;
+                    for cell in &mut row.children {
+                        if is_table_cell(cell) {
+                            if cell.style.as_ref().map(|s| s.position) == Some(Position::Relative) {
+                                crate::block_flow::apply_relative_offset(cell, &row_dims);
+                            }
+                        }
+                    }
+                }
+            }
+        } else if is_table_row(child) {
+            if child.style.as_ref().map(|s| s.position) == Some(Position::Relative) {
+                crate::block_flow::apply_relative_offset(child, &table_dims);
+            }
+            let row_dims = child.dimensions;
+            for cell in &mut child.children {
+                if is_table_cell(cell) {
+                    if cell.style.as_ref().map(|s| s.position) == Some(Position::Relative) {
+                        crate::block_flow::apply_relative_offset(cell, &row_dims);
+                    }
+                }
+            }
+        }
+    }
 }

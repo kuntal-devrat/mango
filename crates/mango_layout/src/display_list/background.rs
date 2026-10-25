@@ -53,20 +53,31 @@ pub(crate) fn paint_background(
     let is_modal_dialog = box_node.tag_name.as_deref() == Some("dialog")
         && box_node.get_attribute("open").is_some()
         && box_node.get_attribute("data-mango-modal") == Some("true");
-    let is_auto_popover = (box_node.get_attribute("data-mango-popover-open") == Some("true")
-        || box_node.get_attribute(":popover-open") == Some("true"))
-        && box_node.get_attribute("popover") != Some("manual");
+    let is_auto_popover = box_node.get_attribute("data-mango-popover-open") == Some("true")
+        || box_node.get_attribute(":popover-open") == Some("true");
 
     if is_modal_dialog || is_auto_popover {
-        let backdrop_rect = Rect::new(0.0, 0.0, 100_000.0, 100_000.0);
-        list.push(DisplayCommand::FillRect {
-            rect: backdrop_rect,
-            color: if is_modal_dialog {
+        let is_backdrop_hidden = box_node
+            .get_attribute("_mango_backdrop_visibility")
+            .is_some_and(|v| v.eq_ignore_ascii_case("Hidden"));
+        if !is_backdrop_hidden {
+            let custom_backdrop = box_node
+                .get_attribute("_mango_backdrop_bg")
+                .and_then(mango_css::values::Value::parse_color);
+            let backdrop_rect = Rect::new(0.0, 0.0, 100_000.0, 100_000.0);
+            let default_color = if is_modal_dialog {
                 Color::rgba(0, 0, 0, 102) // 0.4 dimming backdrop
             } else {
-                Color::rgba(0, 0, 0, 25) // subtle backdrop for popover
-            },
-        });
+                Color::TRANSPARENT // Popovers have transparent backdrop by default (WHATWG HTML § 15.3.3)
+            };
+            let backdrop_color = custom_backdrop.unwrap_or(default_color);
+            if backdrop_color != Color::TRANSPARENT && backdrop_color.a > 0 {
+                list.push(DisplayCommand::FillRect {
+                    rect: backdrop_rect,
+                    color: backdrop_color,
+                });
+            }
+        }
     }
 
     let resolve_clip_rect = |clip: mango_css::values::BackgroundClip| -> Rect {
@@ -80,6 +91,7 @@ pub(crate) fn paint_background(
 
     // 1. Paint Background (respecting background-clip)
     if let Some(s) = style
+        && s.is_visible()
         && s.background_clip != mango_css::values::BackgroundClip::Text
     {
         let bg_color = apply_opacity(s.background_color, opacity);
@@ -108,7 +120,7 @@ pub(crate) fn paint_background(
         }
 
         // Multi-layered or single background (bottom-to-top)
-        if !s.background_layers.is_empty() {
+        if s.is_visible() && !s.background_layers.is_empty() {
             for layer in s.background_layers.iter().rev() {
                 if layer.clip == mango_css::values::BackgroundClip::Text {
                     continue;

@@ -32,6 +32,11 @@ impl Keyframes {
         for kf in &rule.keyframes {
             let mut declarations: HashMap<String, Value> = HashMap::new();
             for decl in &kf.declarations {
+                // CSS Animations 1 § 3.2: Declarations in keyframe rules cannot be
+                // marked !important. A declaration marked !important is ignored.
+                if decl.important {
+                    continue;
+                }
                 for expanded in
                     Declaration::new(decl.name.clone(), decl.value.clone(), decl.important)
                         .expand_shorthand()
@@ -60,6 +65,29 @@ impl Keyframes {
     /// Samples this rule at `progress` (0.0..=1.0), returning interpolated
     /// declared values keyed by property name.
     pub fn sample(&self, progress: f32) -> HashMap<String, Value> {
+        self.sample_with_underlying(progress, None)
+    }
+
+    /// Samples this rule at `progress` (0.0..=1.0) with underlying styles for
+    /// resolving CSS-wide keywords like `revert-layer` and `revert`.
+    pub fn sample_with_underlying(
+        &self,
+        progress: f32,
+        underlying: Option<&HashMap<String, Value>>,
+    ) -> HashMap<String, Value> {
+        let resolve_revert = |prop: &str, val: &Value| -> Value {
+            if let Value::Keyword(k) = val {
+                if k.eq_ignore_ascii_case("revert-layer") || k.eq_ignore_ascii_case("revert") {
+                    if let Some(und) = underlying {
+                        if let Some(v) = und.get(prop) {
+                            return v.clone();
+                        }
+                    }
+                }
+            }
+            val.clone()
+        };
+
         let progress = progress.clamp(0.0, 1.0);
         if self.frames.is_empty() {
             return HashMap::new();
@@ -77,31 +105,37 @@ impl Keyframes {
             .unwrap_or_else(|| self.frames.last().unwrap());
 
         if (after.offset - before.offset).abs() < f32::EPSILON {
-            return before.declarations.clone();
+            let mut out = HashMap::new();
+            for (prop, val) in &before.declarations {
+                out.insert(prop.clone(), resolve_revert(prop, val));
+            }
+            return out;
         }
         let span = after.offset - before.offset;
         let t = ((progress - before.offset) / span).clamp(0.0, 1.0);
 
         let mut out: HashMap<String, Value> = HashMap::new();
-        for (prop, a) in &before.declarations {
+        for (prop, raw_a) in &before.declarations {
+            let a = resolve_revert(prop, raw_a);
             match after.declarations.get(prop) {
-                Some(b) => {
-                    if let Some(v) = interpolate_value(a, b, t) {
+                Some(raw_b) => {
+                    let b = resolve_revert(prop, raw_b);
+                    if let Some(v) = interpolate_value(&a, &b, t) {
                         out.insert(prop.clone(), v);
                     } else if t < 0.5 {
-                        out.insert(prop.clone(), a.clone());
+                        out.insert(prop.clone(), a);
                     } else {
-                        out.insert(prop.clone(), b.clone());
+                        out.insert(prop.clone(), b);
                     }
                 }
                 None => {
-                    out.insert(prop.clone(), a.clone());
+                    out.insert(prop.clone(), a);
                 }
             }
         }
-        for (prop, b) in &after.declarations {
+        for (prop, raw_b) in &after.declarations {
             if !out.contains_key(prop) {
-                out.insert(prop.clone(), b.clone());
+                out.insert(prop.clone(), resolve_revert(prop, raw_b));
             }
         }
         out

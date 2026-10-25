@@ -407,349 +407,359 @@ impl CssParser {
                 }
             }
 
-            let parsed_val = match prop_lower.as_str() {
-                "aspect-ratio" => try_parse_aspect_ratio(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "transform" | "-webkit-transform" | "-moz-transform" | "-ms-transform"
-                | "-o-transform" => try_parse_transform_list(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "text-shadow" => try_parse_text_shadow(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "word-break" => try_parse_word_break(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "overflow-wrap" | "word-wrap" => try_parse_overflow_wrap(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "hyphens" => try_parse_hyphens(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "line-clamp" | "-webkit-line-clamp" => try_parse_line_clamp(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "font-variation-settings" => try_parse_font_variation_settings(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "font-feature-settings" => try_parse_font_feature_settings(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "text-emphasis-style" => try_parse_text_emphasis_style(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "text-decoration-line" => try_parse_text_decoration_line(&value_tokens),
-                "text-decoration-style" => try_parse_text_decoration_style(&value_tokens),
-                "text-decoration-color" => try_parse_text_decoration_color(&value_tokens),
-                "text-decoration-thickness" => try_parse_text_decoration_thickness(&value_tokens),
-                "text-underline-offset" => try_parse_text_underline_offset(&value_tokens),
-                "text-decoration" => try_parse_text_decoration(&value_tokens),
-                "filter" | "-webkit-filter" | "backdrop-filter" | "-webkit-backdrop-filter" => {
-                    try_parse_filter_list(&value_tokens)
-                        .or_else(|| parse_value_from_tokens(&value_tokens))
-                }
-                "clip-path" | "-webkit-clip-path" => try_parse_clip_path(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "mix-blend-mode" => try_parse_blend_mode(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "background-blend-mode" => try_parse_background_blend_mode(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "background-attachment" => try_parse_background_attachment(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "background-clip" | "-webkit-background-clip" => {
-                    try_parse_background_clip(&value_tokens)
-                        .or_else(|| parse_value_from_tokens(&value_tokens))
-                }
-                "border-image" | "border-image-source" => try_parse_border_image(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "mask-composite" | "-webkit-mask-composite" => {
-                    try_parse_mask_composite(&value_tokens)
-                        .or_else(|| parse_value_from_tokens(&value_tokens))
-                }
-                "isolation" => try_parse_isolation(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "background-image" => try_parse_layered_background_images(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "mask-mode" | "-webkit-mask-mode" => try_parse_mask_mode(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "will-change" => try_parse_will_change(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "white-space" => try_parse_white_space(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "box-shadow" => self
-                    .parse_box_shadow(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "grid-template-columns" | "grid-template-rows" => self
-                    .parse_grid_track_list(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "grid-template" => self
-                    .parse_grid_template_shorthand(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "grid-template-areas" => self
-                    .parse_grid_template_areas(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "grid-column" | "grid-row" | "grid-area" | "grid-column-start"
-                | "grid-column-end" | "grid-row-start" | "grid-row-end" => self
-                    .parse_grid_placement_or_shorthand(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "grid-auto-flow" => self
-                    .parse_grid_auto_flow(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "content" => try_parse_content(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "counter-reset" => try_parse_counter_actions(&value_tokens, 0)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "counter-increment" => try_parse_counter_actions(&value_tokens, 1)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "quotes" => try_parse_quotes(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "container-type" => try_parse_container_type(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "container-name" => try_parse_container_name(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "container" => try_parse_container_shorthand(&value_tokens)
-                    .or_else(|| parse_value_from_tokens(&value_tokens)),
-                "table-layout" => {
-                    let first_ident = value_tokens.iter().find_map(|t| match t {
-                        Token::Ident(s) => Some(s.to_ascii_lowercase()),
-                        _ => None,
-                    });
-                    match first_ident.as_deref() {
-                        Some("fixed") => Some(Value::TableLayout(TableLayout::Fixed)),
-                        Some("auto") => Some(Value::TableLayout(TableLayout::Auto)),
-                        _ => parse_value_from_tokens(&value_tokens),
+            let non_ws_val: Vec<&Token> = value_tokens
+                .iter()
+                .filter(|t| !matches!(t, Token::Whitespace | Token::Comment(_)))
+                .collect();
+            let parsed_val = if non_ws_val.len() == 1
+                && let Token::Ident(ident) = non_ws_val[0]
+                && matches!(
+                    ident.to_ascii_lowercase().as_str(),
+                    "initial" | "inherit" | "unset" | "revert" | "revert-layer" | "revert-rule"
+                ) {
+                Some(Value::Keyword(ident.to_ascii_lowercase()))
+            } else {
+                match prop_lower.as_str() {
+                    "aspect-ratio" => try_parse_aspect_ratio(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "transform" | "-webkit-transform" | "-moz-transform" | "-ms-transform"
+                    | "-o-transform" => try_parse_transform_list(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "text-shadow" => try_parse_text_shadow(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "word-break" => try_parse_word_break(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "overflow-wrap" | "word-wrap" => try_parse_overflow_wrap(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "hyphens" => try_parse_hyphens(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "line-clamp" | "-webkit-line-clamp" => try_parse_line_clamp(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "font-variation-settings" => try_parse_font_variation_settings(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "font-feature-settings" => try_parse_font_feature_settings(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "text-emphasis-style" => try_parse_text_emphasis_style(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "text-decoration-line" => try_parse_text_decoration_line(&value_tokens),
+                    "text-decoration-style" => try_parse_text_decoration_style(&value_tokens),
+                    "text-decoration-color" => try_parse_text_decoration_color(&value_tokens),
+                    "text-decoration-thickness" => {
+                        try_parse_text_decoration_thickness(&value_tokens)
                     }
-                }
-                "caption-side" => {
-                    let first_ident = value_tokens.iter().find_map(|t| match t {
-                        Token::Ident(s) => Some(s.to_ascii_lowercase()),
-                        _ => None,
-                    });
-                    match first_ident.as_deref() {
-                        Some("top") => Some(Value::CaptionSide(CaptionSide::Top)),
-                        Some("bottom") => Some(Value::CaptionSide(CaptionSide::Bottom)),
-                        _ => parse_value_from_tokens(&value_tokens),
-                    }
-                }
-                "display" => {
-                    // `display` has a closed set of keywords. Parse it into a typed
-                    // `Value::Display` so that validation and the cascade agree on
-                    // the representation. Note that `none` is *not* handled by the
-                    // generic keyword path in `parse_value_from_tokens`.
-                    let non_ws: Vec<&Token> = value_tokens
-                        .iter()
-                        .filter(|t| !matches!(t, Token::Whitespace | Token::Comment(_)))
-                        .collect();
-                    if non_ws.len() == 1 {
-                        if let Token::Ident(s) = non_ws[0] {
-                            let lower = s.to_ascii_lowercase();
-                            let disp = match lower.as_str() {
-                                "none" => Some(Display::None),
-                                "block" => Some(Display::Block),
-                                "inline" => Some(Display::Inline),
-                                "inline-block" => Some(Display::InlineBlock),
-                                "flex" => Some(Display::Flex),
-                                "inline-flex" => Some(Display::InlineFlex),
-                                "grid" => Some(Display::Grid),
-                                "inline-grid" => Some(Display::InlineGrid),
-                                "flow-root" => Some(Display::FlowRoot),
-                                "contents" => Some(Display::Contents),
-                                "table" => Some(Display::Table),
-                                "table-row" => Some(Display::TableRow),
-                                "table-cell" => Some(Display::TableCell),
-                                "table-caption" => Some(Display::TableCaption),
-                                "table-row-group" => Some(Display::TableRowGroup),
-                                "table-header-group" => Some(Display::TableHeaderGroup),
-                                "table-footer-group" => Some(Display::TableFooterGroup),
-                                "table-column" => Some(Display::TableColumn),
-                                "table-column-group" => Some(Display::TableColumnGroup),
-                                "list-item" => Some(Display::ListItem),
-                                "ruby" => Some(Display::Ruby),
-                                "ruby-base" => Some(Display::RubyBase),
-                                "ruby-text" => Some(Display::RubyText),
-                                _ => None,
-                            };
-                            disp.map(Value::Display)
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                }
-                "clear" => {
-                    let non_ws: Vec<&Token> = value_tokens
-                        .iter()
-                        .filter(|t| !matches!(t, Token::Whitespace | Token::Comment(_)))
-                        .collect();
-                    if non_ws.len() == 1 {
-                        if let Token::Ident(s) = non_ws[0] {
-                            match s.to_ascii_lowercase().as_str() {
-                                "none" => Some(Value::Clear(Clear::None)),
-                                "left" => Some(Value::Clear(Clear::Left)),
-                                "right" => Some(Value::Clear(Clear::Right)),
-                                "both" => Some(Value::Clear(Clear::Both)),
-                                "inline-start" => Some(Value::Clear(Clear::InlineStart)),
-                                "inline-end" => Some(Value::Clear(Clear::InlineEnd)),
-                                _ => parse_value_from_tokens(&value_tokens),
-                            }
-                        } else {
-                            parse_value_from_tokens(&value_tokens)
-                        }
-                    } else {
-                        None
-                    }
-                }
-                "float" => {
-                    let non_ws: Vec<&Token> = value_tokens
-                        .iter()
-                        .filter(|t| !matches!(t, Token::Whitespace | Token::Comment(_)))
-                        .collect();
-                    if non_ws.len() == 1 {
-                        if let Token::Ident(s) = non_ws[0] {
-                            match s.to_ascii_lowercase().as_str() {
-                                "none" => Some(Value::Float(Float::None)),
-                                "left" => Some(Value::Float(Float::Left)),
-                                "right" => Some(Value::Float(Float::Right)),
-                                "inline-start" => Some(Value::Float(Float::InlineStart)),
-                                "inline-end" => Some(Value::Float(Float::InlineEnd)),
-                                _ => parse_value_from_tokens(&value_tokens),
-                            }
-                        } else {
-                            parse_value_from_tokens(&value_tokens)
-                        }
-                    } else {
-                        None
-                    }
-                }
-                "visibility" => {
-                    let non_ws: Vec<&Token> = value_tokens
-                        .iter()
-                        .filter(|t| !matches!(t, Token::Whitespace | Token::Comment(_)))
-                        .collect();
-                    if non_ws.len() == 1 {
-                        if let Token::Ident(s) = non_ws[0] {
-                            match s.to_ascii_lowercase().as_str() {
-                                "visible" => Some(Value::Visibility(Visibility::Visible)),
-                                "hidden" => Some(Value::Visibility(Visibility::Hidden)),
-                                "collapse" => Some(Value::Visibility(Visibility::Collapse)),
-                                _ => parse_value_from_tokens(&value_tokens),
-                            }
-                        } else {
-                            parse_value_from_tokens(&value_tokens)
-                        }
-                    } else {
-                        None
-                    }
-                }
-                "overflow" | "overflow-x" | "overflow-y" => {
-                    let non_ws: Vec<&Token> = value_tokens
-                        .iter()
-                        .filter(|t| !matches!(t, Token::Whitespace | Token::Comment(_)))
-                        .collect();
-                    let to_ov = |tok: &Token| match tok {
-                        Token::Ident(s) => match s.to_ascii_lowercase().as_str() {
-                            "visible" => Some(Overflow::Visible),
-                            "hidden" => Some(Overflow::Hidden),
-                            "scroll" => Some(Overflow::Scroll),
-                            "auto" => Some(Overflow::Auto),
-                            _ => None,
-                        },
-                        _ => None,
-                    };
-                    if non_ws.len() == 1 {
-                        to_ov(non_ws[0])
-                            .map(Value::Overflow)
+                    "text-underline-offset" => try_parse_text_underline_offset(&value_tokens),
+                    "text-decoration" => try_parse_text_decoration(&value_tokens),
+                    "filter" | "-webkit-filter" | "backdrop-filter" | "-webkit-backdrop-filter" => {
+                        try_parse_filter_list(&value_tokens)
                             .or_else(|| parse_value_from_tokens(&value_tokens))
-                    } else if non_ws.len() == 2 && prop_lower == "overflow" {
-                        let ox = to_ov(non_ws[0]);
-                        let oy = to_ov(non_ws[1]);
-                        if let (Some(x), Some(y)) = (ox, oy) {
-                            Some(Value::List(vec![Value::Overflow(x), Value::Overflow(y)]))
-                        } else {
-                            parse_value_from_tokens(&value_tokens)
-                        }
-                    } else {
-                        None
                     }
-                }
-                "margin-trim" => {
-                    // CSS Box 4 grammar:
-                    //   none | block | block-start | block-end | inline |
-                    //   inline-start | inline-end | [block-start || block-end]
-                    let mut idents: Vec<String> = Vec::new();
-                    let mut only_idents = true;
-                    for token in value_tokens {
-                        match token {
-                            Token::Whitespace | Token::Comment(_) => {}
-                            Token::Ident(s) => idents.push(s.to_ascii_lowercase()),
-                            _ => only_idents = false,
+                    "clip-path" | "-webkit-clip-path" => try_parse_clip_path(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "mix-blend-mode" => try_parse_blend_mode(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "background-blend-mode" => try_parse_background_blend_mode(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "background-attachment" => try_parse_background_attachment(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "background-clip" | "-webkit-background-clip" => {
+                        try_parse_background_clip(&value_tokens)
+                            .or_else(|| parse_value_from_tokens(&value_tokens))
+                    }
+                    "border-image" | "border-image-source" => try_parse_border_image(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "mask-composite" | "-webkit-mask-composite" => {
+                        try_parse_mask_composite(&value_tokens)
+                            .or_else(|| parse_value_from_tokens(&value_tokens))
+                    }
+                    "isolation" => try_parse_isolation(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "background-image" => try_parse_layered_background_images(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "mask-mode" | "-webkit-mask-mode" => try_parse_mask_mode(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "will-change" => try_parse_will_change(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "white-space" => try_parse_white_space(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "box-shadow" => self
+                        .parse_box_shadow(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "grid-template-columns" | "grid-template-rows" => self
+                        .parse_grid_track_list(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "grid-template" => self
+                        .parse_grid_template_shorthand(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "grid-template-areas" => self
+                        .parse_grid_template_areas(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "grid-column" | "grid-row" | "grid-area" | "grid-column-start"
+                    | "grid-column-end" | "grid-row-start" | "grid-row-end" => self
+                        .parse_grid_placement_or_shorthand(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "grid-auto-flow" => self
+                        .parse_grid_auto_flow(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "content" => try_parse_content(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "counter-reset" => try_parse_counter_actions(&value_tokens, 0)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "counter-increment" => try_parse_counter_actions(&value_tokens, 1)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "quotes" => try_parse_quotes(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "container-type" => try_parse_container_type(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "container-name" => try_parse_container_name(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "container" => try_parse_container_shorthand(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "table-layout" => {
+                        let first_ident = value_tokens.iter().find_map(|t| match t {
+                            Token::Ident(s) => Some(s.to_ascii_lowercase()),
+                            _ => None,
+                        });
+                        match first_ident.as_deref() {
+                            Some("fixed") => Some(Value::TableLayout(TableLayout::Fixed)),
+                            Some("auto") => Some(Value::TableLayout(TableLayout::Auto)),
+                            _ => parse_value_from_tokens(&value_tokens),
                         }
                     }
-                    if !only_idents {
-                        None
-                    } else {
-                        if idents.len() == 1 && idents[0] == "none" {
-                            Some(Value::Keyword("none".to_string()))
-                        } else if !idents.is_empty()
-                            && idents.len() <= 4
-                            && idents.iter().all(|ident| {
-                                matches!(
-                                    ident.as_str(),
-                                    "block"
-                                        | "block-start"
-                                        | "block-end"
-                                        | "inline"
-                                        | "inline-start"
-                                        | "inline-end"
-                                )
-                            })
-                            && idents.windows(2).all(|pair| pair[0] != pair[1])
-                        {
-                            Some(Value::Keyword(idents.join(" ")))
-                        } else {
-                            None
+                    "caption-side" => {
+                        let first_ident = value_tokens.iter().find_map(|t| match t {
+                            Token::Ident(s) => Some(s.to_ascii_lowercase()),
+                            _ => None,
+                        });
+                        match first_ident.as_deref() {
+                            Some("top") => Some(Value::CaptionSide(CaptionSide::Top)),
+                            Some("bottom") => Some(Value::CaptionSide(CaptionSide::Bottom)),
+                            _ => parse_value_from_tokens(&value_tokens),
                         }
                     }
-                }
-                _ => {
-                    if prop_name.starts_with("--") {
+                    "display" => {
+                        // `display` has a closed set of keywords. Parse it into a typed
+                        // `Value::Display` so that validation and the cascade agree on
+                        // the representation. Note that `none` is *not* handled by the
+                        // generic keyword path in `parse_value_from_tokens`.
                         let non_ws: Vec<&Token> = value_tokens
                             .iter()
                             .filter(|t| !matches!(t, Token::Whitespace | Token::Comment(_)))
                             .collect();
-                        if non_ws.len() == 1
-                            && let Token::Ident(s) = non_ws[0]
-                            && matches!(
-                                s.to_ascii_lowercase().as_str(),
-                                "initial"
-                                    | "inherit"
-                                    | "unset"
-                                    | "revert"
-                                    | "revert-layer"
-                                    | "revert-rule"
-                            )
-                        {
-                            Some(Value::Keyword(s.to_ascii_lowercase()))
-                        } else if let Some((var_val, consumed)) =
-                            crate::parser::declarations::functions::parse_var_call(&value_tokens)
-                            && value_tokens[consumed..]
-                                .iter()
-                                .all(|t| matches!(t, Token::Whitespace | Token::Comment(_)))
-                        {
-                            Some(var_val)
-                        } else {
-                            let mut raw = String::new();
-                            for tok in &value_tokens {
-                                raw.push_str(&self.token_to_string(tok));
-                            }
-                            let trimmed = raw.trim().to_string();
-                            if !trimmed.is_empty() {
-                                if let Some(v_parsed) = parse_value_from_tokens(&value_tokens) {
-                                    match v_parsed {
-                                        Value::Color(_) => Some(Value::String(trimmed)),
-                                        other => Some(other),
-                                    }
-                                } else {
-                                    Some(Value::String(trimmed))
-                                }
+                        if non_ws.len() == 1 {
+                            if let Token::Ident(s) = non_ws[0] {
+                                let lower = s.to_ascii_lowercase();
+                                let disp = match lower.as_str() {
+                                    "none" => Some(Display::None),
+                                    "block" => Some(Display::Block),
+                                    "inline" => Some(Display::Inline),
+                                    "inline-block" => Some(Display::InlineBlock),
+                                    "flex" => Some(Display::Flex),
+                                    "inline-flex" => Some(Display::InlineFlex),
+                                    "grid" => Some(Display::Grid),
+                                    "inline-grid" => Some(Display::InlineGrid),
+                                    "flow-root" => Some(Display::FlowRoot),
+                                    "contents" => Some(Display::Contents),
+                                    "table" => Some(Display::Table),
+                                    "table-row" => Some(Display::TableRow),
+                                    "table-cell" => Some(Display::TableCell),
+                                    "table-caption" => Some(Display::TableCaption),
+                                    "table-row-group" => Some(Display::TableRowGroup),
+                                    "table-header-group" => Some(Display::TableHeaderGroup),
+                                    "table-footer-group" => Some(Display::TableFooterGroup),
+                                    "table-column" => Some(Display::TableColumn),
+                                    "table-column-group" => Some(Display::TableColumnGroup),
+                                    "list-item" => Some(Display::ListItem),
+                                    "ruby" => Some(Display::Ruby),
+                                    "ruby-base" => Some(Display::RubyBase),
+                                    "ruby-text" => Some(Display::RubyText),
+                                    _ => None,
+                                };
+                                disp.map(Value::Display)
                             } else {
                                 None
                             }
+                        } else {
+                            None
                         }
-                    } else {
-                        parse_value_from_tokens(&value_tokens)
+                    }
+                    "clear" => {
+                        let non_ws: Vec<&Token> = value_tokens
+                            .iter()
+                            .filter(|t| !matches!(t, Token::Whitespace | Token::Comment(_)))
+                            .collect();
+                        if non_ws.len() == 1 {
+                            if let Token::Ident(s) = non_ws[0] {
+                                match s.to_ascii_lowercase().as_str() {
+                                    "none" => Some(Value::Clear(Clear::None)),
+                                    "left" => Some(Value::Clear(Clear::Left)),
+                                    "right" => Some(Value::Clear(Clear::Right)),
+                                    "both" => Some(Value::Clear(Clear::Both)),
+                                    "inline-start" => Some(Value::Clear(Clear::InlineStart)),
+                                    "inline-end" => Some(Value::Clear(Clear::InlineEnd)),
+                                    _ => parse_value_from_tokens(&value_tokens),
+                                }
+                            } else {
+                                parse_value_from_tokens(&value_tokens)
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                    "float" => {
+                        let non_ws: Vec<&Token> = value_tokens
+                            .iter()
+                            .filter(|t| !matches!(t, Token::Whitespace | Token::Comment(_)))
+                            .collect();
+                        if non_ws.len() == 1 {
+                            if let Token::Ident(s) = non_ws[0] {
+                                match s.to_ascii_lowercase().as_str() {
+                                    "none" => Some(Value::Float(Float::None)),
+                                    "left" => Some(Value::Float(Float::Left)),
+                                    "right" => Some(Value::Float(Float::Right)),
+                                    "inline-start" => Some(Value::Float(Float::InlineStart)),
+                                    "inline-end" => Some(Value::Float(Float::InlineEnd)),
+                                    _ => parse_value_from_tokens(&value_tokens),
+                                }
+                            } else {
+                                parse_value_from_tokens(&value_tokens)
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                    "visibility" => {
+                        let non_ws: Vec<&Token> = value_tokens
+                            .iter()
+                            .filter(|t| !matches!(t, Token::Whitespace | Token::Comment(_)))
+                            .collect();
+                        if non_ws.len() == 1 {
+                            if let Token::Ident(s) = non_ws[0] {
+                                match s.to_ascii_lowercase().as_str() {
+                                    "visible" => Some(Value::Visibility(Visibility::Visible)),
+                                    "hidden" => Some(Value::Visibility(Visibility::Hidden)),
+                                    "collapse" => Some(Value::Visibility(Visibility::Collapse)),
+                                    _ => parse_value_from_tokens(&value_tokens),
+                                }
+                            } else {
+                                parse_value_from_tokens(&value_tokens)
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                    "overflow" | "overflow-x" | "overflow-y" => {
+                        let non_ws: Vec<&Token> = value_tokens
+                            .iter()
+                            .filter(|t| !matches!(t, Token::Whitespace | Token::Comment(_)))
+                            .collect();
+                        let to_ov = |tok: &Token| match tok {
+                            Token::Ident(s) => match s.to_ascii_lowercase().as_str() {
+                                "visible" => Some(Overflow::Visible),
+                                "hidden" => Some(Overflow::Hidden),
+                                "scroll" => Some(Overflow::Scroll),
+                                "auto" => Some(Overflow::Auto),
+                                _ => None,
+                            },
+                            _ => None,
+                        };
+                        if non_ws.len() == 1 {
+                            to_ov(non_ws[0])
+                                .map(Value::Overflow)
+                                .or_else(|| parse_value_from_tokens(&value_tokens))
+                        } else if non_ws.len() == 2 && prop_lower == "overflow" {
+                            let ox = to_ov(non_ws[0]);
+                            let oy = to_ov(non_ws[1]);
+                            if let (Some(x), Some(y)) = (ox, oy) {
+                                Some(Value::List(vec![Value::Overflow(x), Value::Overflow(y)]))
+                            } else {
+                                parse_value_from_tokens(&value_tokens)
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                    "margin-trim" => {
+                        let mut idents: Vec<String> = Vec::new();
+                        let mut only_idents = true;
+                        for token in value_tokens {
+                            match token {
+                                Token::Whitespace | Token::Comment(_) => {}
+                                Token::Ident(s) => idents.push(s.to_ascii_lowercase()),
+                                _ => only_idents = false,
+                            }
+                        }
+                        if !only_idents {
+                            None
+                        } else if idents.len() == 1 {
+                            match idents[0].as_str() {
+                                "none" => Some(Value::Keyword("none".to_string())),
+                                "block" => Some(Value::Keyword("block".to_string())),
+                                "block-start" => Some(Value::Keyword("block-start".to_string())),
+                                "block-end" => Some(Value::Keyword("block-end".to_string())),
+                                _ => None,
+                            }
+                        } else if idents.len() == 2 {
+                            if (idents[0] == "block-start" && idents[1] == "block-end")
+                                || (idents[0] == "block-end" && idents[1] == "block-start")
+                            {
+                                Some(Value::Keyword("block".to_string()))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                    _ => {
+                        if prop_name.starts_with("--") {
+                            let non_ws: Vec<&Token> = value_tokens
+                                .iter()
+                                .filter(|t| !matches!(t, Token::Whitespace | Token::Comment(_)))
+                                .collect();
+                            if non_ws.len() == 1
+                                && let Token::Ident(s) = non_ws[0]
+                                && matches!(
+                                    s.to_ascii_lowercase().as_str(),
+                                    "initial"
+                                        | "inherit"
+                                        | "unset"
+                                        | "revert"
+                                        | "revert-layer"
+                                        | "revert-rule"
+                                )
+                            {
+                                Some(Value::Keyword(s.to_ascii_lowercase()))
+                            } else if let Some((var_val, consumed)) =
+                                crate::parser::declarations::functions::parse_var_call(
+                                    &value_tokens,
+                                )
+                                && value_tokens[consumed..]
+                                    .iter()
+                                    .all(|t| matches!(t, Token::Whitespace | Token::Comment(_)))
+                            {
+                                Some(var_val)
+                            } else {
+                                let mut raw = String::new();
+                                for tok in &value_tokens {
+                                    raw.push_str(&self.token_to_string(tok));
+                                }
+                                let trimmed = raw.trim().to_string();
+                                if !trimmed.is_empty() {
+                                    if let Some(v_parsed) = parse_value_from_tokens(&value_tokens) {
+                                        match v_parsed {
+                                            Value::Color(_) => Some(Value::String(trimmed)),
+                                            other => Some(other),
+                                        }
+                                    } else {
+                                        Some(Value::String(trimmed))
+                                    }
+                                } else {
+                                    None
+                                }
+                            }
+                        } else {
+                            parse_value_from_tokens(&value_tokens)
+                        }
                     }
                 }
             };

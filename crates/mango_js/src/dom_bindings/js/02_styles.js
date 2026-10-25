@@ -673,3 +673,72 @@
             }
         });
     }
+
+    function _getTransitionSpec(el, propName) {
+        if (!el) return null;
+        var t = (el.style && el.style.transition) || '';
+        if (t === 'none') t = '';
+        if (!t && typeof window !== 'undefined' && window.getComputedStyle) {
+            try {
+                var cs = window.getComputedStyle(el);
+                var cand = (cs && (cs.transition || cs.transitionProperty)) || '';
+                if (cand && cand !== 'none') t = cand;
+            } catch(e) {}
+        }
+        if (!t || t === 'none') {
+            t = '';
+            var styles = (typeof document !== 'undefined' && document.querySelectorAll) ? document.querySelectorAll('style') : [];
+            if (styles && styles.length > 0) {
+                for (var i = 0; i < styles.length; i++) {
+                    var text = (styles[i].innerHTML !== undefined && styles[i].innerHTML !== '')
+                        ? styles[i].innerHTML
+                        : (styles[i].textContent || styles[i].innerText || '');
+                    if (text.indexOf(propName) !== -1) {
+                        var parts = text.split('}');
+                        for (var j = 0; j < parts.length; j++) {
+                            var rule = parts[j];
+                            if (rule.indexOf(propName) !== -1) {
+                                var brace = rule.indexOf('{');
+                                if (brace !== -1) {
+                                    var sel = rule.substring(0, brace).trim();
+                                    var matched = false;
+                                    var tested = false;
+                                    try {
+                                        if (typeof el.matches === 'function') {
+                                            matched = el.matches(sel);
+                                            tested = true;
+                                        }
+                                    } catch(e) {}
+                                    if (!tested) {
+                                        if (el.id && sel === ('#' + el.id)) matched = true;
+                                        else if (sel === '[popover]' && (el.hasAttribute('popover') || el.popover !== null)) matched = true;
+                                        else if (el.className && el.className.split(/\s+/).some(function(c) { return c && sel === ('.' + c); })) matched = true;
+                                    }
+                                    if (matched) {
+                                        t += ' ' + rule.substring(brace + 1);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (t.indexOf(propName) !== -1) {
+            var isAllowDiscrete = t.indexOf('allow-discrete') !== -1;
+            var isStepEnd = t.indexOf('step-end') !== -1;
+            var matchDur = /(\d+(?:\.\d+)?)\s*(s|ms)/.exec(t);
+            var durationMs = 0;
+            if (matchDur) {
+                durationMs = parseFloat(matchDur[1]) * (matchDur[2] === 's' ? 1000 : 1);
+            }
+            return {
+                hasTransition: true,
+                allowDiscrete: isAllowDiscrete || isStepEnd,
+                stepEnd: isStepEnd,
+                durationMs: durationMs
+            };
+        }
+        return null;
+    }
+    try { globalThis._getTransitionSpec = _getTransitionSpec; } catch(e) {}

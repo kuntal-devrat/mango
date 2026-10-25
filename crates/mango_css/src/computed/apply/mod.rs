@@ -37,6 +37,14 @@ pub fn apply_cascaded_properties(
     // ── 2c. Pre-apply background base defaults & background-image deterministically ──
     colors_bg::pre_apply_background_defaults(style, resolved_cascaded);
 
+    // ── 2d. Pre-apply writing-mode & direction so logical properties resolve accurately ──
+    if let Some(wm_val) = resolved_cascaded.get("writing-mode") {
+        layout::apply_layout_property(style, "writing-mode", wm_val);
+    }
+    if let Some(dir_val) = resolved_cascaded.get("direction") {
+        typography::apply_typography_property(style, "direction", dir_val);
+    }
+
     // ── 3. Apply all remaining cascaded properties ──
     for (prop, val) in resolved_cascaded {
         if prop == "all" {
@@ -63,6 +71,7 @@ pub fn apply_cascaded_properties(
     }
 
     // CSS 2.1 § 9.7: If position is absolute/fixed, or float is not none, display is blockified.
+    style.original_display = style.display;
     let is_out_of_flow = matches!(style.position, Position::Absolute | Position::Fixed);
     let is_floating = style.float != Float::None;
     if is_out_of_flow || is_floating {

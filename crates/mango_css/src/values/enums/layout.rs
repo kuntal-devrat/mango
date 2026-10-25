@@ -163,6 +163,11 @@ pub enum AlignItems {
     FlexEnd,
     Center,
     Baseline,
+    SafeCenter,
+    SafeFlexStart,
+    SafeFlexEnd,
+    SafeStart,
+    SafeEnd,
 }
 
 /// CSS `align-self` property values.
@@ -175,6 +180,11 @@ pub enum AlignSelf {
     FlexEnd,
     Center,
     Baseline,
+    SafeCenter,
+    SafeFlexStart,
+    SafeFlexEnd,
+    SafeStart,
+    SafeEnd,
 }
 
 /// CSS `align-content` property values.

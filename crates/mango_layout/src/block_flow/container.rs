@@ -1,5 +1,7 @@
 use mango_core::Point;
-use mango_css::values::{BoxSizing, Clear, Display, Float, Length, Position};
+use mango_css::values::{
+    BoxSizing, Clear, Direction, Display, Float, Length, Position, WritingMode,
+};
 
 use crate::box_tree::LayoutBox;
 use crate::dimensions::Dimensions;
@@ -14,8 +16,8 @@ use super::margins::{
 };
 use super::multicol::layout_multicol_children;
 use super::positioned::{
-    apply_relative_offset, center_button_children, layout_positioned_children,
-    layout_positioned_children_with_cb, shift_descendants,
+    apply_relative_offset, center_button_children, layout_positioned_children_with_cb,
+    shift_descendants,
 };
 use super::sizing::{calculate_block_height, calculate_block_width};
 
@@ -118,9 +120,9 @@ pub fn layout_block(
     if !skip_children {
         if establishes_bfc(box_node) {
             let mut bfc_float_ctx = FloatContext::new();
-            layout_block_children(box_node, &mut bfc_float_ctx);
+            layout_block_children(box_node, containing_block, &mut bfc_float_ctx);
         } else {
-            layout_block_children(box_node, float_ctx);
+            layout_block_children(box_node, containing_block, float_ctx);
         }
     }
 
@@ -155,10 +157,39 @@ pub fn layout_block(
     }
 }
 
-pub(crate) fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut FloatContext) {
+pub(crate) fn layout_block_children(
+    box_node: &mut LayoutBox,
+    containing_block: &Dimensions,
+    float_ctx: &mut FloatContext,
+) {
     if box_node.children.is_empty() {
         return;
     }
+
+    let is_positioned_ancestor = box_node
+        .style
+        .as_ref()
+        .map(|s| {
+            !matches!(s.position, Position::Static)
+                || !s.transform.is_identity()
+                || !s.filter.is_empty()
+                || !s.backdrop_filter.is_empty()
+                || matches!(
+                    s.contain,
+                    mango_css::values::Contain::Paint
+                        | mango_css::values::Contain::Strict
+                        | mango_css::values::Contain::Layout
+                        | mango_css::values::Contain::Content
+                )
+                || s.will_change
+        })
+        .unwrap_or(false);
+    let is_root = box_node.tag_name.as_deref().is_some_and(|t| t == "html");
+    let mut child_cb = if is_positioned_ancestor || is_root {
+        box_node.dimensions
+    } else {
+        *containing_block
+    };
 
     let has_inlines = box_node.children.iter().any(|c| c.is_inline());
 
@@ -203,20 +234,29 @@ pub(crate) fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut Fl
             .as_ref()
             .and_then(|s| s.column_width.as_ref());
         if col_count_opt.is_some() || col_width_opt.is_some() {
-            let available_w = box_node.dimensions.content.width();
+            let is_vert = box_node
+                .style
+                .as_ref()
+                .map(|s| s.writing_mode.is_vertical())
+                .unwrap_or(false);
+            let available_inline = if is_vert {
+                box_node.dimensions.content.height()
+            } else {
+                box_node.dimensions.content.width()
+            };
             let font_size = box_node.style.as_ref().map(|s| s.font_size).unwrap_or(16.0);
             let gap = box_node
                 .style
                 .as_ref()
-                .map(|s| s.column_gap.to_px(font_size, 16.0, available_w))
+                .map(|s| s.column_gap.to_px(font_size, 16.0, available_inline))
                 .unwrap_or(16.0);
 
             let resolved_cols = match (col_count_opt, col_width_opt) {
                 (Some(c), Some(w_len)) => {
-                    let w_px = w_len.to_px(font_size, 16.0, available_w);
+                    let w_px = w_len.to_px(font_size, 16.0, available_inline);
                     if w_px > 0.0 {
                         let max_cols =
-                            ((available_w + gap) / (w_px + gap)).floor().max(1.0) as usize;
+                            ((available_inline + gap) / (w_px + gap)).floor().max(1.0) as usize;
                         c.min(max_cols).max(1)
                     } else {
                         c.max(1)
@@ -224,9 +264,9 @@ pub(crate) fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut Fl
                 }
                 (Some(c), None) => c.max(1),
                 (None, Some(w_len)) => {
-                    let w_px = w_len.to_px(font_size, 16.0, available_w);
+                    let w_px = w_len.to_px(font_size, 16.0, available_inline);
                     if w_px > 0.0 {
-                        ((available_w + gap) / (w_px + gap)).floor().max(1.0) as usize
+                        ((available_inline + gap) / (w_px + gap)).floor().max(1.0) as usize
                     } else {
                         1
                     }
@@ -235,19 +275,8 @@ pub(crate) fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut Fl
             };
 
             if resolved_cols > 1 {
-                if box_node.children.len() == 1 {
-                    if let Some(child_style_arc) = box_node.children[0].style.as_mut()
-                        && child_style_arc.column_count.is_none()
-                        && child_style_arc.column_width.is_none()
-                    {
-                        let child_style = std::sync::Arc::make_mut(child_style_arc);
-                        child_style.column_count = Some(resolved_cols);
-                        child_style.column_gap = mango_css::values::Length::Px(gap);
-                    }
-                } else {
-                    layout_multicol_children(box_node, resolved_cols, gap, float_ctx);
-                    return;
-                }
+                layout_multicol_children(box_node, resolved_cols, gap, float_ctx);
+                return;
             }
         }
 
@@ -311,13 +340,45 @@ pub(crate) fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut Fl
                     {
                         container_dims.content.size.height =
                             (container_dims.content.size.width / ratio).max(0.0);
+                    } else if style.writing_mode != WritingMode::HorizontalTb {
+                        // In vertical writing modes, the inline axis is vertical (height)
+                        // An in-flow block box with height: auto expands to fill containing block height
+                        let eff_h = if containing_block.content.height() > 0.0 {
+                            containing_block.content.height()
+                        } else {
+                            let (_, vp_h) = mango_css::get_current_viewport();
+                            vp_h
+                        };
+                        container_dims.content.size.height = (eff_h - non_v).max(0.0);
                     }
                 }
             }
         }
         let box_establishes_bfc = establishes_bfc(box_node);
+        let box_traps_fixed = box_node
+            .style
+            .as_ref()
+            .map(|s| {
+                !s.transform.is_identity()
+                    || !s.filter.is_empty()
+                    || !s.backdrop_filter.is_empty()
+                    || matches!(
+                        s.contain,
+                        mango_css::values::Contain::Paint
+                            | mango_css::values::Contain::Strict
+                            | mango_css::values::Contain::Layout
+                            | mango_css::values::Contain::Content
+                    )
+                    || s.will_change
+            })
+            .unwrap_or(false);
 
         for child in box_node.children.iter_mut() {
+            if box_traps_fixed {
+                child.fixed_containing_block = Some(box_node.dimensions);
+            } else if box_node.fixed_containing_block.is_some() {
+                child.fixed_containing_block = box_node.fixed_containing_block;
+            }
             let child_pos = child
                 .style
                 .as_ref()
@@ -369,6 +430,10 @@ pub(crate) fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut Fl
                 if diff > 0.0 {
                     box_node.dimensions.margin.top = collapsed;
                     box_node.dimensions.content.origin.y += diff;
+                    container_dims.content.origin.y = box_node.dimensions.content.origin.y;
+                    if is_positioned_ancestor || is_root {
+                        child_cb = box_node.dimensions;
+                    }
                 }
                 cursor_y = box_node.dimensions.content.origin.y;
             }
@@ -376,10 +441,25 @@ pub(crate) fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut Fl
 
             // Position child
             let child_establishes_bfc = establishes_bfc(child);
-            let mut child_x = container_dims.content.x()
-                + child.dimensions.margin.left
-                + child.dimensions.border.left
-                + child.dimensions.padding.left;
+            let is_right_aligned = matches!(
+                box_node.style.as_ref().map(|s| s.writing_mode),
+                Some(WritingMode::VerticalRl | WritingMode::SidewaysRl)
+            ) || (box_node.style.as_ref().map(|s| s.writing_mode)
+                == Some(WritingMode::HorizontalTb)
+                && box_node.style.as_ref().map(|s| s.direction) == Some(Direction::Rtl));
+
+            let mut child_x = if is_right_aligned {
+                container_dims.content.right()
+                    - child.dimensions.border_box().width()
+                    - child.dimensions.margin.right
+                    + child.dimensions.border.left
+                    + child.dimensions.padding.left
+            } else {
+                container_dims.content.x()
+                    + child.dimensions.margin.left
+                    + child.dimensions.border.left
+                    + child.dimensions.padding.left
+            };
 
             if child_establishes_bfc {
                 let (min_x, max_x) = float_ctx.available_span(
@@ -404,8 +484,29 @@ pub(crate) fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut Fl
                 }
             }
 
-            let child_y = cursor_y + child.dimensions.border.top + child.dimensions.padding.top;
-            child.dimensions.content.origin = Point::new(child_x, child_y);
+            let is_bottom_aligned = match box_node.style.as_ref().map(|s| s.writing_mode) {
+                Some(WritingMode::VerticalLr | WritingMode::VerticalRl) => {
+                    box_node.style.as_ref().map(|s| s.direction) == Some(Direction::Rtl)
+                }
+                Some(WritingMode::SidewaysLr) => {
+                    box_node.style.as_ref().map(|s| s.direction) == Some(Direction::Ltr)
+                }
+                Some(WritingMode::SidewaysRl) => {
+                    box_node.style.as_ref().map(|s| s.direction) == Some(Direction::Rtl)
+                }
+                _ => false,
+            };
+
+            let child_y = if is_bottom_aligned && container_dims.content.height() > 0.0 {
+                container_dims.content.bottom()
+                    - child.dimensions.border_box().height()
+                    - child.dimensions.margin.bottom
+                    + child.dimensions.border.top
+                    + child.dimensions.padding.top
+            } else {
+                cursor_y + child.dimensions.border.top + child.dimensions.padding.top
+            };
+            child.dimensions.content.origin = Point::new(child_x.round(), child_y.round());
 
             // Pre-calculate definite/tentative height for child so descendants resolving
             // percentage heights have a definite containing block height.
@@ -415,12 +516,18 @@ pub(crate) fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut Fl
                 let font_size = child_style.font_size;
                 let root_font_size = child_style.root_font_size;
                 let cb_h = container_dims.content.height();
-                let is_pct_indefinite = matches!(child_style.height, Length::Percent(_))
+                let is_pct_indefinite = child_style.height.has_percent()
                     && cb_h <= 0.0
                     && !matches!(child_style.position, Position::Absolute | Position::Fixed);
                 if !is_pct_indefinite {
                     let (_, vp_h) = mango_css::get_current_viewport();
-                    let eff_cb_h = if cb_h > 0.0 { cb_h } else { 600.0 };
+                    let eff_cb_h = if cb_h > 0.0 {
+                        cb_h
+                    } else if matches!(child_style.position, Position::Absolute | Position::Fixed) {
+                        vp_h
+                    } else {
+                        0.0
+                    };
                     let tentative_h = child_style.height.to_px_with_viewport(
                         font_size,
                         root_font_size,
@@ -441,11 +548,11 @@ pub(crate) fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut Fl
             // Lay out child recursively
             let child_disp = child.style.as_ref().map(|s| s.display);
             if child_disp == Some(Display::Table) || child.tag_name.as_deref() == Some("table") {
-                let mut child_cb = container_dims;
-                child_cb.content.origin.y = cursor_y - child.dimensions.margin.top;
+                let mut table_cb = container_dims;
+                table_cb.content.origin.y = cursor_y - child.dimensions.margin.top;
                 let mut table_float_ctx = FloatContext::new();
-                crate::table_flow::layout_table(child, &child_cb, &mut table_float_ctx);
-                layout_positioned_children(child, &mut table_float_ctx);
+                crate::table_flow::layout_table(child, &table_cb, &mut table_float_ctx);
+                layout_positioned_children_with_cb(child, &child_cb, &mut table_float_ctx);
             } else if matches!(child_disp, Some(Display::Flex) | Some(Display::InlineFlex)) {
                 let mut flex_float_ctx = FloatContext::new();
                 crate::flex_flow::layout_flex(child, &container_dims, &mut flex_float_ctx);
@@ -454,15 +561,15 @@ pub(crate) fn layout_block_children(box_node: &mut LayoutBox, float_ctx: &mut Fl
                 crate::grid_flow::layout_grid(child, &container_dims, &mut grid_float_ctx);
             } else if child_establishes_bfc {
                 let mut inner_float_ctx = FloatContext::new();
-                layout_block_children(child, &mut inner_float_ctx);
+                layout_block_children(child, &child_cb, &mut inner_float_ctx);
                 calculate_block_height(child, &container_dims);
                 center_button_children(child);
-                layout_positioned_children(child, &mut inner_float_ctx);
+                layout_positioned_children_with_cb(child, &child_cb, &mut inner_float_ctx);
             } else {
-                layout_block_children(child, float_ctx);
+                layout_block_children(child, &child_cb, float_ctx);
                 calculate_block_height(child, &container_dims);
                 center_button_children(child);
-                layout_positioned_children(child, float_ctx);
+                layout_positioned_children_with_cb(child, &child_cb, float_ctx);
             }
 
             // In-flow border box bottom before relative offset (CSS 2.1 §9.4.3: relative offset does not affect following boxes)
@@ -502,7 +609,7 @@ pub fn layout_block_contents(
     containing_block: &Dimensions,
     float_ctx: &mut FloatContext,
 ) {
-    layout_block_children(box_node, float_ctx);
+    layout_block_children(box_node, containing_block, float_ctx);
     calculate_block_height(box_node, containing_block);
     center_button_children(box_node);
     layout_positioned_children_with_cb(box_node, containing_block, float_ctx);

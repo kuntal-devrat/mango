@@ -1,7 +1,7 @@
 use crate::box_tree::LayoutBox;
 use crate::dimensions::Dimensions;
 use mango_core::EdgeSizes;
-use mango_css::values::{BoxSizing, Direction, Float, Length, Position};
+use mango_css::values::{BoxSizing, Direction, Float, Length, Position, WritingMode};
 
 use super::bfc::establishes_bfc;
 use super::intrinsic::calculate_shrink_to_fit_width;
@@ -47,6 +47,8 @@ pub(crate) fn calculate_block_width(box_node: &mut LayoutBox, containing_block: 
     box_node.dimensions.padding = EdgeSizes::new(pad_top, pad_right, pad_bottom, pad_left);
     box_node.dimensions.border =
         EdgeSizes::new(border_top, border_right, border_bottom, border_left);
+    box_node.dimensions.writing_mode = style.writing_mode;
+    box_node.dimensions.direction = style.direction;
 
     // 2. Margins and Width
     let margin_top = style.margin_top.to_px_with_viewport(
@@ -155,7 +157,13 @@ pub(crate) fn calculate_block_width(box_node: &mut LayoutBox, containing_block: 
             } else {
                 *intrinsic_width
             }
-        } else if is_inline_level || is_floating || is_positioned {
+        } else if is_inline_level
+            || is_floating
+            || is_positioned
+            || (style.writing_mode != WritingMode::HorizontalTb
+                && box_node.tag_name.as_deref() != Some("html")
+                && box_node.tag_name.as_deref() != Some("body"))
+        {
             if let Some(ratio) = style.aspect_ratio
                 && ratio > 0.0
                 && style.height != Length::Auto
@@ -253,12 +261,20 @@ pub(crate) fn calculate_block_width(box_node: &mut LayoutBox, containing_block: 
             margin_right = underflow.max(0.0);
         } else if is_width_auto && clamped_w == tentative_width {
             // Normal in-flow block with auto width expands to fill container, margin-right absorbs 0
-        } else if style.direction == Direction::Rtl {
-            // Over-constrained in RTL: margin-left absorbs underflow (CSS 2.1 §10.3.3)
-            margin_left += underflow;
         } else {
-            // Over-constrained in LTR: margin-right absorbs underflow (CSS 2.1 §10.3.3)
-            margin_right += underflow;
+            let cb_wm = containing_block.writing_mode;
+            let cb_dir = containing_block.direction;
+            let is_rtl = style.direction == Direction::Rtl || cb_dir == Direction::Rtl;
+            let is_left_end = matches!(cb_wm, WritingMode::VerticalRl | WritingMode::SidewaysRl)
+                || (cb_wm == WritingMode::HorizontalTb && is_rtl);
+
+            if is_left_end {
+                // Over-constrained where start is right and end is left: margin-left absorbs underflow (CSS 2.1 §10.3.3 & CSS Writing Modes 3 §7.1)
+                margin_left = (margin_left + underflow).max(0.0);
+            } else {
+                // Over-constrained where start is left and end is right: margin-right absorbs underflow (CSS 2.1 §10.3.3 & CSS Writing Modes 3 §7.1)
+                margin_right = (margin_right + underflow).max(0.0);
+            }
         }
     }
 
@@ -303,7 +319,7 @@ pub(crate) fn calculate_block_height(box_node: &mut LayoutBox, containing_block:
     let container_w = containing_block.content.width();
     let non_content_v =
         box_node.dimensions.padding.vertical() + box_node.dimensions.border.vertical();
-    let is_percent_indefinite = matches!(style.height, Length::Percent(_))
+    let is_percent_indefinite = style.height.has_percent()
         && containing_block.content.height() <= 0.0
         && !matches!(style.position, Position::Absolute | Position::Fixed);
 
@@ -338,8 +354,8 @@ pub(crate) fn calculate_block_height(box_node: &mut LayoutBox, containing_block:
             box_node.dimensions.content.size.width = *intrinsic_width;
         }
         if style.height != Length::Auto {
-            let is_percent_indefinite = matches!(style.height, Length::Percent(_))
-                && containing_block.content.height() <= 0.0;
+            let is_percent_indefinite =
+                style.height.has_percent() && containing_block.content.height() <= 0.0;
             if !is_percent_indefinite {
                 let h = style.height.to_px_with_viewport(
                     font_size,

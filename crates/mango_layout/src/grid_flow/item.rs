@@ -246,6 +246,11 @@ pub fn position_grid_items_in_cells(
                 AlignSelf::FlexEnd => AlignItems::FlexEnd,
                 AlignSelf::Center => AlignItems::Center,
                 AlignSelf::Baseline => AlignItems::Baseline,
+                AlignSelf::SafeCenter => AlignItems::SafeCenter,
+                AlignSelf::SafeFlexStart => AlignItems::SafeFlexStart,
+                AlignSelf::SafeFlexEnd => AlignItems::SafeFlexEnd,
+                AlignSelf::SafeStart => AlignItems::SafeStart,
+                AlignSelf::SafeEnd => AlignItems::SafeEnd,
             };
 
             match item_align {

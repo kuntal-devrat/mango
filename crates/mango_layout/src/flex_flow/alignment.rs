@@ -34,6 +34,11 @@ pub fn compute_line_cross_sizes(
                 AlignSelf::FlexEnd => AlignItems::FlexEnd,
                 AlignSelf::Center => AlignItems::Center,
                 AlignSelf::Baseline => AlignItems::Baseline,
+                AlignSelf::SafeCenter => AlignItems::SafeCenter,
+                AlignSelf::SafeFlexStart => AlignItems::SafeFlexStart,
+                AlignSelf::SafeFlexEnd => AlignItems::SafeFlexEnd,
+                AlignSelf::SafeStart => AlignItems::SafeStart,
+                AlignSelf::SafeEnd => AlignItems::SafeEnd,
             };
 
             let outer_cross = m.cross + m.pad_cross + m.border_cross + m.margin_cross;

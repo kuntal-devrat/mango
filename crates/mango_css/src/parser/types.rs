@@ -6,11 +6,15 @@ use crate::values::{FontDisplay, FontStyle, FontWeight, Value};
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Stylesheet {
     pub rules: Vec<Rule>,
+    pub scoping_element: Option<mango_html::dom::NodeId>,
 }
 
 impl Stylesheet {
     pub fn new(rules: Vec<Rule>) -> Self {
-        Self { rules }
+        Self {
+            rules,
+            scoping_element: None,
+        }
     }
 }
 
@@ -22,7 +26,7 @@ pub enum Rule {
     Container(ContainerRule),
     Layer(LayerRule),
     Scope(ScopeRule),
-    Import(String),
+    Import(ImportRule),
     FontFace(FontFaceRule),
     /// `@keyframes name { ... }` animation rule.
     Keyframes(KeyframesRule),
@@ -118,4 +122,26 @@ pub struct PropertyRule {
     pub syntax: Option<String>,
     pub inherits: bool,
     pub initial_value: Option<Value>,
+}
+
+/// An `@import` at-rule with optional layer, supports, and media conditions.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImportRule {
+    pub url: String,
+    pub layer: Option<String>,
+    pub supports: Option<String>,
+    pub media: Option<String>,
+    pub supports_matches: bool,
+}
+
+impl ImportRule {
+    pub fn new(url: impl Into<String>) -> Self {
+        Self {
+            url: url.into(),
+            layer: None,
+            supports: None,
+            media: None,
+            supports_matches: true,
+        }
+    }
 }

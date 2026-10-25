@@ -583,3 +583,6 @@
         window.CSSImportRule = CSSImportRule;
         window.CSSStyleSheet = CSSStyleSheet;
     }
+    if (typeof _upgradeAllCachedWrappers === 'function') {
+        _upgradeAllCachedWrappers();
+    }

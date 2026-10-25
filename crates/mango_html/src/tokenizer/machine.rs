@@ -441,6 +441,14 @@ impl<'a> Tokenizer<'a> {
                         continue;
                     }
 
+                    if lookahead.starts_with("[CDATA[") {
+                        for _ in 0..7 {
+                            self.advance();
+                        }
+                        self.state = State::Cdata;
+                        continue;
+                    }
+
                     self.current_comment.clear();
                     self.state = State::BogusComment;
                 }
@@ -741,6 +749,26 @@ impl<'a> Tokenizer<'a> {
                         }
                     }
 
+                    match self.advance() {
+                        Some(ch) => return Token::Character(ch),
+                        None => {
+                            self.state = State::Data;
+                            return Token::EndOfFile;
+                        }
+                    }
+                }
+
+                State::Cdata => {
+                    if self.peek() == Some(']') {
+                        let mut it = self.chars.clone();
+                        if it.next() == Some(']') && it.next() == Some('>') {
+                            self.advance(); // consume ']'
+                            self.advance(); // consume ']'
+                            self.advance(); // consume '>'
+                            self.state = State::Data;
+                            continue;
+                        }
+                    }
                     match self.advance() {
                         Some(ch) => return Token::Character(ch),
                         None => {

@@ -8,6 +8,7 @@ pub mod borders;
 pub mod builder;
 pub mod forms;
 pub mod media;
+pub mod paint_layer;
 pub mod progress;
 pub mod stacking;
 pub mod text;

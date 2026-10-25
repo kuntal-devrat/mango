@@ -263,24 +263,18 @@ fn test_expand_logical_box_model_shorthands() {
     );
     let exp_pi = pad_inline.expand_shorthand();
     assert_eq!(exp_pi.len(), 2);
-    assert_eq!(exp_pi[0].name, "padding-left");
+    assert_eq!(exp_pi[0].name, "padding-inline-start");
     assert_eq!(exp_pi[0].value, Value::Length(Length::Px(12.0)));
-    assert_eq!(exp_pi[1].name, "padding-right");
+    assert_eq!(exp_pi[1].name, "padding-inline-end");
     assert_eq!(exp_pi[1].value, Value::Length(Length::Px(16.0)));
 
     let pad_block = Declaration::new("padding-block", Value::Length(Length::Px(8.0)), false);
     let exp_pb = pad_block.expand_shorthand();
     assert_eq!(exp_pb.len(), 2);
-    assert_eq!(exp_pb[0].name, "padding-top");
+    assert_eq!(exp_pb[0].name, "padding-block-start");
     assert_eq!(exp_pb[0].value, Value::Length(Length::Px(8.0)));
-    assert_eq!(exp_pb[1].name, "padding-bottom");
+    assert_eq!(exp_pb[1].name, "padding-block-end");
     assert_eq!(exp_pb[1].value, Value::Length(Length::Px(8.0)));
-
-    let inline_size = Declaration::new("inline-size", Value::Length(Length::Px(100.0)), false);
-    let exp_is = inline_size.expand_shorthand();
-    assert_eq!(exp_is.len(), 1);
-    assert_eq!(exp_is[0].name, "width");
-    assert_eq!(exp_is[0].value, Value::Length(Length::Px(100.0)));
 }
 
 #[test]

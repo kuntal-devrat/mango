@@ -402,12 +402,20 @@
             },
             get offsetLeft() {
                 var p = this.offsetParent;
-                if (p) return Math.round(this.getBoundingClientRect().left - p.getBoundingClientRect().left);
+                if (p) {
+                    var diff = this.getBoundingClientRect().left - p.getBoundingClientRect().left;
+                    if (diff === 0) return 0;
+                    return Math.round(diff - (p.clientLeft || 0));
+                }
                 return Math.round(this.getBoundingClientRect().left);
             },
             get offsetTop() {
                 var p = this.offsetParent;
-                if (p) return Math.round(this.getBoundingClientRect().top - p.getBoundingClientRect().top);
+                if (p) {
+                    var diff = this.getBoundingClientRect().top - p.getBoundingClientRect().top;
+                    if (diff === 0) return 0;
+                    return Math.round(diff - (p.clientTop || 0));
+                }
                 return Math.round(this.getBoundingClientRect().top);
             },
             get clientWidth() {
@@ -454,7 +462,7 @@
             },
             get scrollLeft() { return this._scrollLeft || 0; },
             set scrollLeft(v) {
-                this._scrollLeft = Math.max(0, Number(v) || 0);
+                this._scrollLeft = Number(v) || 0;
                 if (this === document.body || this === document.documentElement) {
                     if (typeof window !== 'undefined') window.scrollX = this._scrollLeft;
                 }
@@ -483,12 +491,52 @@
             },
             scrollIntoView: function(options) {
                 var rect = this.getBoundingClientRect();
-                var alignToTop = (options === undefined || options === true || (typeof options === 'object' && options.block !== 'end'));
-                var top = (window.scrollY || 0) + (alignToTop ? rect.top : (rect.bottom - ((typeof window !== 'undefined' && window.innerHeight) || 600)));
-                var left = (window.scrollX || 0) + rect.left;
-                var behavior = (typeof options === 'object' && options.behavior) || 'auto';
-                if (typeof window.scrollTo === 'function') {
-                    window.scrollTo({ top: top, left: left, behavior: behavior });
+                var block = 'start';
+                var inline = 'nearest';
+                var behavior = 'auto';
+
+                if (options === false) {
+                    block = 'end';
+                    inline = 'nearest';
+                } else if (typeof options === 'object' && options !== null) {
+                    if (options.block !== undefined) block = String(options.block);
+                    if (options.inline !== undefined) inline = String(options.inline);
+                    if (options.behavior !== undefined) behavior = String(options.behavior);
+                }
+
+                function _computeOffset(cur, rStart, rEnd, vpSize, align) {
+                    var elemSize = rEnd - rStart;
+                    var start = cur + rStart;
+                    var end = cur + rEnd;
+                    if (align === 'start') return start;
+                    if (align === 'end') return end - vpSize;
+                    if (align === 'center') return start - (vpSize - elemSize) / 2;
+                    // 'nearest'
+                    if (rStart >= 0 && rEnd <= vpSize) return cur;
+                    if (rStart < 0 && rEnd > vpSize) return cur;
+                    if (rStart < 0) return start;
+                    if (rEnd > vpSize) return end - vpSize;
+                    return cur;
+                }
+
+                var win = (typeof window !== 'undefined') ? window : globalThis;
+                var curX = win.scrollX || 0;
+                var curY = win.scrollY || 0;
+                var vpW = win.innerWidth || 800;
+                var vpH = win.innerHeight || 600;
+
+                var targetX = _computeOffset(curX, rect.left, rect.right, vpW, inline);
+                var targetY = _computeOffset(curY, rect.top, rect.bottom, vpH, block);
+
+                var docEl = (typeof document !== 'undefined') ? (document.documentElement || document.body) : null;
+                var maxX = (docEl && docEl.scrollWidth > vpW) ? (docEl.scrollWidth - vpW) : targetX;
+                var maxY = (docEl && docEl.scrollHeight > vpH) ? (docEl.scrollHeight - vpH) : targetY;
+
+                targetX = Math.max(0, Math.min(targetX, maxX));
+                targetY = Math.max(0, Math.min(targetY, maxY));
+
+                if (typeof win.scrollTo === 'function') {
+                    win.scrollTo({ top: targetY, left: targetX, behavior: behavior });
                 }
             },
             cloneNode: function(deep) {
@@ -696,36 +744,46 @@
             }
         };
 
-        var tag = el.localName ? el.localName.toLowerCase() : (el.tagName ? el.tagName.toLowerCase() : '');
-        if (tag.indexOf(':') !== -1) tag = tag.split(':')[1];
         var nt = el.nodeType;
         if (nt !== 1) {
             delete el.hasAttributes; delete el.attributes; delete el.getAttributeNames;
             delete el.getAttribute; delete el.setAttribute; delete el.removeAttribute;
             delete el.hasAttribute; delete el.prefix; delete el.localName; delete el.namespaceURI;
         }
+        _ensureWrapperPrototype(el);
+        _storeWrapper(nodeId, el);
+        return el;
+    }
+
+    function _ensureWrapperPrototype(targetEl) {
+        if (!targetEl || typeof targetEl !== 'object') return;
+        var curProto = Object.getPrototypeOf(targetEl);
+        if (curProto && curProto !== Object.prototype) return;
+        var tag = targetEl.localName ? targetEl.localName.toLowerCase() : (targetEl.tagName ? targetEl.tagName.toLowerCase() : '');
+        if (tag.indexOf(':') !== -1) tag = tag.split(':')[1];
+        var nt = targetEl.nodeType;
         if (typeof globalThis !== 'undefined') {
             if (nt === 11 && globalThis.DocumentFragment) {
-                Object.setPrototypeOf(el, globalThis.DocumentFragment.prototype);
+                Object.setPrototypeOf(targetEl, globalThis.DocumentFragment.prototype);
             } else if (nt === 9 && globalThis.Document) {
-                Object.setPrototypeOf(el, globalThis.Document.prototype);
+                Object.setPrototypeOf(targetEl, globalThis.Document.prototype);
             } else if (nt === 3 && globalThis.Text) {
-                Object.setPrototypeOf(el, globalThis.Text.prototype);
+                Object.setPrototypeOf(targetEl, globalThis.Text.prototype);
             } else if (nt === 8 && globalThis.Comment) {
-                if (el._isPI && globalThis.ProcessingInstruction) {
-                    Object.setPrototypeOf(el, globalThis.ProcessingInstruction.prototype);
+                if (targetEl._isPI && globalThis.ProcessingInstruction) {
+                    Object.setPrototypeOf(targetEl, globalThis.ProcessingInstruction.prototype);
                 } else {
-                    Object.setPrototypeOf(el, globalThis.Comment.prototype);
+                    Object.setPrototypeOf(targetEl, globalThis.Comment.prototype);
                 }
             } else if (nt === 7 && globalThis.ProcessingInstruction) {
-                Object.setPrototypeOf(el, globalThis.ProcessingInstruction.prototype);
+                Object.setPrototypeOf(targetEl, globalThis.ProcessingInstruction.prototype);
             } else if (nt === 10 && globalThis.DocumentType) {
-                delete el.name;
-                Object.setPrototypeOf(el, globalThis.DocumentType.prototype);
+                delete targetEl.name;
+                Object.setPrototypeOf(targetEl, globalThis.DocumentType.prototype);
             } else {
                 var customCtor = (globalThis.customElements && globalThis.customElements.get) ? globalThis.customElements.get(tag) : null;
                 if (customCtor && customCtor.prototype) {
-                    Object.setPrototypeOf(el, customCtor.prototype);
+                    Object.setPrototypeOf(targetEl, customCtor.prototype);
                     if (!customCtor.prototype.hasOwnProperty('constructor')) {
                         try { customCtor.prototype.constructor = customCtor; } catch(e) {}
                     }
@@ -763,24 +821,37 @@
                     var ctorName = _tagToCtorName[tag];
                     var ctor = ctorName ? globalThis[ctorName] : null;
                     if (ctor && ctor.prototype) {
-                        Object.setPrototypeOf(el, ctor.prototype);
+                        Object.setPrototypeOf(targetEl, ctor.prototype);
                     } else {
-                        var customCtor = (globalThis.customElements && globalThis.customElements.get) ? globalThis.customElements.get(tag) : null;
-                        if (customCtor && typeof customCtor === 'function') {
-                            if (globalThis._upgradeCustomElement && !el._isCustomConstructed) {
-                                globalThis._upgradeCustomElement(el, customCtor);
-                            } else if (customCtor.prototype) {
-                                Object.setPrototypeOf(el, customCtor.prototype);
+                        var customCtor2 = (globalThis.customElements && globalThis.customElements.get) ? globalThis.customElements.get(tag) : null;
+                        if (customCtor2 && typeof customCtor2 === 'function') {
+                            if (globalThis._upgradeCustomElement && !targetEl._isCustomConstructed) {
+                                globalThis._upgradeCustomElement(targetEl, customCtor2);
+                            } else if (customCtor2.prototype) {
+                                Object.setPrototypeOf(targetEl, customCtor2.prototype);
                             }
                         } else if (tag.indexOf('-') === -1 && globalThis.HTMLUnknownElement) {
-                            Object.setPrototypeOf(el, globalThis.HTMLUnknownElement.prototype);
+                            Object.setPrototypeOf(targetEl, globalThis.HTMLUnknownElement.prototype);
                         } else if (globalThis.HTMLElement) {
-                            Object.setPrototypeOf(el, globalThis.HTMLElement.prototype);
+                            Object.setPrototypeOf(targetEl, globalThis.HTMLElement.prototype);
                         }
                     }
                 }
             }
         }
-        _storeWrapper(nodeId, el);
-        return el;
     }
+    globalThis._ensureWrapperPrototype = _ensureWrapperPrototype;
+
+    function _upgradeAllCachedWrappers() {
+        if (typeof _wrapperCache === 'object' && _wrapperCache) {
+            for (var k in _wrapperCache) {
+                var entry = _wrapperCache[k];
+                if (!entry) continue;
+                var item = entry.ref ? (entry.ref.deref ? entry.ref.deref() : null) : entry.value;
+                if (item) {
+                    _ensureWrapperPrototype(item);
+                }
+            }
+        }
+    }
+    globalThis._upgradeAllCachedWrappers = _upgradeAllCachedWrappers;

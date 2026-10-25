@@ -54,13 +54,126 @@ impl CssParser {
                         }
                         _ => {}
                     }
-                    self.skip_until(Token::Semicolon);
+                    let mut cond_tokens: Vec<Token> = Vec::new();
+                    while *self.peek() != Token::Semicolon && *self.peek() != Token::Eof {
+                        cond_tokens.push(self.advance());
+                    }
                     if *self.peek() == Token::Semicolon {
                         self.advance();
                     }
+
+                    let mut layer_name = None;
+                    let mut supports_str = None;
+                    let mut supports_matches = true;
+                    let mut media_parts: Vec<String> = Vec::new();
+
+                    let mut i = 0;
+                    while i < cond_tokens.len() {
+                        match &cond_tokens[i] {
+                            Token::Whitespace | Token::Comment(_) => {
+                                i += 1;
+                            }
+                            Token::Ident(name) if name.eq_ignore_ascii_case("layer") => {
+                                i += 1;
+                                while i < cond_tokens.len()
+                                    && matches!(
+                                        cond_tokens[i],
+                                        Token::Whitespace | Token::Comment(_)
+                                    )
+                                {
+                                    i += 1;
+                                }
+                                if i < cond_tokens.len() && cond_tokens[i] == Token::OpenParen {
+                                    i += 1;
+                                    let mut lname = String::new();
+                                    while i < cond_tokens.len()
+                                        && cond_tokens[i] != Token::CloseParen
+                                    {
+                                        lname.push_str(&self.token_to_string(&cond_tokens[i]));
+                                        i += 1;
+                                    }
+                                    if i < cond_tokens.len() && cond_tokens[i] == Token::CloseParen
+                                    {
+                                        i += 1;
+                                    }
+                                    layer_name = Some(lname.trim().to_string());
+                                } else {
+                                    layer_name = Some(String::new());
+                                }
+                            }
+                            Token::Ident(name) if name.eq_ignore_ascii_case("supports") => {
+                                i += 1;
+                                while i < cond_tokens.len()
+                                    && matches!(
+                                        cond_tokens[i],
+                                        Token::Whitespace | Token::Comment(_)
+                                    )
+                                {
+                                    i += 1;
+                                }
+                                if i < cond_tokens.len() && cond_tokens[i] == Token::OpenParen {
+                                    i += 1;
+                                    let mut depth = 1usize;
+                                    let mut s_tokens: Vec<Token> = Vec::new();
+                                    let mut s_str = String::new();
+                                    while i < cond_tokens.len() && depth > 0 {
+                                        match &cond_tokens[i] {
+                                            Token::OpenParen => {
+                                                depth += 1;
+                                                s_tokens.push(cond_tokens[i].clone());
+                                                s_str.push('(');
+                                            }
+                                            Token::CloseParen => {
+                                                depth -= 1;
+                                                if depth > 0 {
+                                                    s_tokens.push(cond_tokens[i].clone());
+                                                    s_str.push(')');
+                                                }
+                                            }
+                                            tok => {
+                                                s_tokens.push(tok.clone());
+                                                s_str.push_str(&self.token_to_string(tok));
+                                            }
+                                        }
+                                        i += 1;
+                                    }
+                                    let mut eval_tokens = s_tokens.clone();
+                                    let has_outer_paren = eval_tokens
+                                        .iter()
+                                        .find(|t| {
+                                            !matches!(t, Token::Whitespace | Token::Comment(_))
+                                        })
+                                        .is_some_and(|t| matches!(t, Token::OpenParen));
+                                    if !has_outer_paren {
+                                        eval_tokens.insert(0, Token::OpenParen);
+                                        eval_tokens.push(Token::CloseParen);
+                                    }
+                                    supports_matches = self.eval_supports_condition(&eval_tokens);
+                                    supports_str = Some(s_str.trim().to_string());
+                                }
+                            }
+                            tok => {
+                                media_parts.push(self.token_to_string(tok));
+                                i += 1;
+                            }
+                        }
+                    }
+
+                    let media_str = if media_parts.is_empty() {
+                        None
+                    } else {
+                        Some(media_parts.join("").trim().to_string())
+                    };
+
                     let trimmed = path.trim().to_string();
                     if !trimmed.is_empty() {
-                        rules.push(Rule::Import(trimmed));
+                        rules.push(Rule::Import(ImportRule {
+                            url: trimmed,
+                            layer: layer_name,
+                            supports: supports_str,
+                            media: media_str,
+                            supports_matches,
+                        }));
                     }
                     continue;
                 }

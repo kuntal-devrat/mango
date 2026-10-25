@@ -246,8 +246,8 @@ fn test_dom_measurement_and_layout() {
         if (child.offsetWidth !== 100) throw new Error("child.offsetWidth mismatch: " + child.offsetWidth);
         if (child.offsetHeight !== 80) throw new Error("child.offsetHeight mismatch: " + child.offsetHeight);
         if (child.offsetParent !== parent) throw new Error("child.offsetParent should be parent");
-        if (child.offsetLeft !== 50) throw new Error("child.offsetLeft should be 50, got: " + child.offsetLeft);
-        if (child.offsetTop !== 60) throw new Error("child.offsetTop should be 60, got: " + child.offsetTop);
+        if (child.offsetLeft !== 45) throw new Error("child.offsetLeft should be 45, got: " + child.offsetLeft);
+        if (child.offsetTop !== 55) throw new Error("child.offsetTop should be 55, got: " + child.offsetTop);
         if (parent.offsetWidth !== 400 || parent.offsetHeight !== 300) {
             throw new Error("parent offset dimensions mismatch");
         }

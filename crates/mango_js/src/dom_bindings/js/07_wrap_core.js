@@ -1,12 +1,27 @@
     function _wrapElement(nodeId) {
         if (nodeId === null || nodeId === undefined) return null;
         var cached = _getCachedWrapper(nodeId);
-        if (cached) return cached;
+        if (cached) {
+            if (typeof _ensureWrapperPrototype === 'function') {
+                _ensureWrapperPrototype(cached);
+            }
+            return cached;
+        }
         var el = {
             _nodeId: nodeId,
             _listeners: {},
             get innerText() { return this.textContent; },
             set innerText(val) { this.textContent = val; },
+            get textContent() {
+                return (typeof _defaultGetTextContent === 'function') ? _defaultGetTextContent(this) : (typeof globalThis !== 'undefined' && globalThis._defaultGetTextContent ? globalThis._defaultGetTextContent(this) : '');
+            },
+            set textContent(val) {
+                if (typeof _defaultSetTextContent === 'function') {
+                    _defaultSetTextContent(this, val);
+                } else if (typeof globalThis !== 'undefined' && globalThis._defaultSetTextContent) {
+                    globalThis._defaultSetTextContent(this, val);
+                }
+            },
             get innerHTML() { return _getInnerHTML(this._nodeId); },
             set innerHTML(val) {
                 var oldKids = this.childNodes ? Array.prototype.slice.call(this.childNodes) : [];

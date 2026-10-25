@@ -9,6 +9,7 @@ pub(crate) const FONT_SANS_BOLD: &[u8] = include_bytes!("../fonts/DejaVuSans-Bol
 pub(crate) const FONT_SERIF: &[u8] = include_bytes!("../fonts/DejaVuSerif.ttf");
 pub(crate) const FONT_SERIF_BOLD: &[u8] = include_bytes!("../fonts/DejaVuSerif-Bold.ttf");
 pub(crate) const FONT_MONO: &[u8] = include_bytes!("../fonts/DejaVuSansMono.ttf");
+pub(crate) const FONT_AHEM: &[u8] = include_bytes!("../fonts/Ahem.ttf");
 
 pub(crate) fn load_system_font(filename: &str) -> Option<Font> {
     #[cfg(target_os = "windows")]
