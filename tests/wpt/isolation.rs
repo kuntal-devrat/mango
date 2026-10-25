@@ -53,6 +53,8 @@ pub fn stream_write(msg: &str) {
     {
         use std::io::Write;
         use std::os::unix::io::FromRawFd;
+        // SAFETY: File descriptor 1 is stdout, standard open file descriptor.
+        // We write to it and immediately invoke `std::mem::forget(file)` to ensure fd 1 is not closed when `file` is dropped.
         let mut file = unsafe { std::fs::File::from_raw_fd(1) };
         let _ = file.write_all(msg.as_bytes());
         let _ = file.flush();

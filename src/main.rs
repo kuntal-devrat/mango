@@ -20,6 +20,8 @@ fn print_help() {
 
 fn main() {
     // Normalize locale to UTF-8 to prevent libxkbcommon fallback to legacy ISO-8859 compose files
+    // SAFETY: Modifying process locale environment variables at startup before
+    // any worker or background threads are spawned prevents data races.
     unsafe {
         if let Ok(lang) = std::env::var("LANG") {
             if !lang.to_lowercase().contains("utf-8") && !lang.to_lowercase().contains("utf8") {
@@ -39,6 +41,8 @@ fn main() {
     // Ignore SIGPIPE on Unix so broken pipes in Wayland, devtools websocket, or child processes
     // return an EPIPE error rather than abruptly terminating the entire browser process.
     #[cfg(unix)]
+    // SAFETY: Setting SIG_IGN on SIGPIPE is an idempotent standard POSIX call that prevents
+    // sudden process termination on broken IPC/network sockets.
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
     }

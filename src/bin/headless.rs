@@ -33,6 +33,8 @@ use mango_render::painter::paint;
 const CONTENT_TOP: u32 = (HEADER_HEIGHT as u32) + 1;
 
 fn main() {
+    // SAFETY: Modifying process locale environment variables at startup before
+    // any worker or background threads are spawned prevents data races.
     unsafe {
         if let Ok(lang) = std::env::var("LANG") {
             if !lang.to_lowercase().contains("utf-8") && !lang.to_lowercase().contains("utf8") {

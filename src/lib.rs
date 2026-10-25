@@ -27,6 +27,8 @@ pub fn trim_memory() {
     unsafe extern "C" {
         fn malloc_trim(pad: usize) -> i32;
     }
+    // SAFETY: `malloc_trim` is an idempotent glibc function that safely releases
+    // freed heap memory back to the OS. Passing 0 leaves minimum pad memory.
     unsafe {
         malloc_trim(0);
     }
