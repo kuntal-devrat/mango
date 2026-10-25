@@ -5,8 +5,8 @@ use crate::values::Value;
 
 pub(crate) fn expand_border_radius_shorthand(value: &Value, important: bool) -> Vec<Declaration> {
     let values = match value {
-        Value::List(items) => items.clone(),
-        single => vec![single.clone()],
+        Value::List(items) => items.as_slice(),
+        single => std::slice::from_ref(single),
     };
 
     let (tl, tr, br, bl) = match values.len() {
@@ -48,8 +48,8 @@ pub(crate) fn expand_border_radius_shorthand(value: &Value, important: bool) -> 
 /// Expands overflow shorthand into overflow-x and overflow-y.
 pub(crate) fn expand_overflow_shorthand(value: &Value, important: bool) -> Vec<Declaration> {
     let values = match value {
-        Value::List(items) => items.clone(),
-        single => vec![single.clone()],
+        Value::List(items) => items.as_slice(),
+        single => std::slice::from_ref(single),
     };
 
     let (ox, oy) = match values.len() {
@@ -67,18 +67,22 @@ pub(crate) fn expand_overflow_shorthand(value: &Value, important: bool) -> Vec<D
 /// Expands list-style shorthand into list-style-type and list-style-position.
 pub(crate) fn expand_list_style_shorthand(value: &Value, important: bool) -> Vec<Declaration> {
     let values = match value {
-        Value::List(items) => items.clone(),
-        single => vec![single.clone()],
+        Value::List(items) => items.as_slice(),
+        single => std::slice::from_ref(single),
     };
 
     let mut decls = Vec::new();
     for v in values {
-        match &v {
+        match v {
             Value::ListStyleType(_) => {
-                decls.push(Declaration::new("list-style-type", v, important));
+                decls.push(Declaration::new("list-style-type", v.clone(), important));
             }
             Value::ListStylePosition(_) => {
-                decls.push(Declaration::new("list-style-position", v, important));
+                decls.push(Declaration::new(
+                    "list-style-position",
+                    v.clone(),
+                    important,
+                ));
             }
             _ => {}
         }
@@ -97,11 +101,11 @@ pub(crate) fn expand_list_style_shorthand(value: &Value, important: bool) -> Vec
 /// Expands 1, 2, 3, or 4-value box shorthands (margin / padding).
 pub(crate) fn expand_four_sides(prefix: &str, value: &Value, important: bool) -> Vec<Declaration> {
     let values = match value {
-        Value::List(items) => items.clone(),
-        single => vec![single.clone()],
+        Value::List(items) => items.as_slice(),
+        single => std::slice::from_ref(single),
     };
 
-    for v in &values {
+    for v in values {
         let is_css_wide_or_var = match v {
             Value::Keyword(k) => matches!(
                 k.to_ascii_lowercase().as_str(),
@@ -191,8 +195,8 @@ pub(crate) fn expand_four_sides(prefix: &str, value: &Value, important: bool) ->
 /// Expands `inset: <top> <right> <bottom> <left>` box offsets shorthand.
 pub(crate) fn expand_inset_shorthand(value: &Value, important: bool) -> Vec<Declaration> {
     let values = match value {
-        Value::List(items) => items.clone(),
-        single => vec![single.clone()],
+        Value::List(items) => items.as_slice(),
+        single => std::slice::from_ref(single),
     };
 
     let (top, right, bottom, left) = match values.len() {
@@ -234,8 +238,8 @@ pub(crate) fn expand_inset_shorthand(value: &Value, important: bool) -> Vec<Decl
 /// Expands `inset-inline: <start> <end>` logical shorthand.
 pub(crate) fn expand_inset_inline_shorthand(value: &Value, important: bool) -> Vec<Declaration> {
     let values = match value {
-        Value::List(items) => items.clone(),
-        single => vec![single.clone()],
+        Value::List(items) => items.as_slice(),
+        single => std::slice::from_ref(single),
     };
     let (start, end) = match values.len() {
         1 => (values[0].clone(), values[0].clone()),
@@ -251,8 +255,8 @@ pub(crate) fn expand_inset_inline_shorthand(value: &Value, important: bool) -> V
 /// Expands `inset-block: <start> <end>` logical shorthand.
 pub(crate) fn expand_inset_block_shorthand(value: &Value, important: bool) -> Vec<Declaration> {
     let values = match value {
-        Value::List(items) => items.clone(),
-        single => vec![single.clone()],
+        Value::List(items) => items.as_slice(),
+        single => std::slice::from_ref(single),
     };
     let (start, end) = match values.len() {
         1 => (values[0].clone(), values[0].clone()),
@@ -273,8 +277,8 @@ pub(crate) fn expand_four_sides_scalar(
     important: bool,
 ) -> Vec<Declaration> {
     let values = match value {
-        Value::List(items) => items.clone(),
-        single => vec![single.clone()],
+        Value::List(items) => items.as_slice(),
+        single => std::slice::from_ref(single),
     };
 
     let (top, right, bottom, left) = match values.len() {
@@ -320,8 +324,8 @@ pub(crate) fn expand_inline_shorthand(
     important: bool,
 ) -> Vec<Declaration> {
     let values = match value {
-        Value::List(items) => items.clone(),
-        single => vec![single.clone()],
+        Value::List(items) => items.as_slice(),
+        single => std::slice::from_ref(single),
     };
     let (start, end) = match values.len() {
         1 => (values[0].clone(), values[0].clone()),
@@ -341,8 +345,8 @@ pub(crate) fn expand_block_shorthand(
     important: bool,
 ) -> Vec<Declaration> {
     let values = match value {
-        Value::List(items) => items.clone(),
-        single => vec![single.clone()],
+        Value::List(items) => items.as_slice(),
+        single => std::slice::from_ref(single),
     };
     let (start, end) = match values.len() {
         1 => (values[0].clone(), values[0].clone()),
@@ -365,8 +369,8 @@ pub(crate) fn expand_two_sides_scalar(
     important: bool,
 ) -> Vec<Declaration> {
     let values = match value {
-        Value::List(items) => items.clone(),
-        single => vec![single.clone()],
+        Value::List(items) => items.as_slice(),
+        single => std::slice::from_ref(single),
     };
     let (val1, val2) = match values.len() {
         1 => (values[0].clone(), values[0].clone()),

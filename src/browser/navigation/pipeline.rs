@@ -281,7 +281,13 @@ fn prepare_document_pipeline_internal(
     let mut image_sources = doc_images;
 
     let mut seen = std::collections::HashSet::new();
-    image_sources.retain(|src| seen.insert(src.clone()));
+    let mut keep = Vec::with_capacity(image_sources.len());
+    for src in &image_sources {
+        keep.push(seen.insert(src.as_str()));
+    }
+    drop(seen);
+    let mut iter = keep.into_iter();
+    image_sources.retain(|_| iter.next().unwrap_or(false));
 
     PreparedDocument {
         url: final_url,

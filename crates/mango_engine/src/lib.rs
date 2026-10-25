@@ -393,7 +393,7 @@ impl Engine {
         } else {
             snapshot.display_list_with_scroll(scroll_y)
         };
-        self.display_list = raw_dl.clone();
+        self.display_list = raw_dl;
         self.layout_snapshot = Some(*snapshot);
         self.display_list_cache.invalidate(None);
         self.display_list.clone()

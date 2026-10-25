@@ -592,28 +592,28 @@ impl<'a> RuleIndex<'a> {
                     pseudo = "selection".to_string();
                 }
                 let bucket = self.pseudo_rules.entry(pseudo).or_default();
-                let mut key_id = None;
-                let mut key_class = None;
-                let mut key_tag = None;
-                let mut key_attr = None;
+                let mut key_id: Option<&str> = None;
+                let mut key_class: Option<&str> = None;
+                let mut key_tag: Option<&str> = None;
+                let mut key_attr: Option<&str> = None;
                 let mut is_root = false;
                 let mut is_where_keys = None;
 
                 for s in &subject.simple_selectors {
                     match s {
                         crate::selectors::SimpleSelector::Id(id) if key_id.is_none() => {
-                            key_id = Some(id.clone());
+                            key_id = Some(id.as_str());
                         }
                         crate::selectors::SimpleSelector::Class(cls) if key_class.is_none() => {
-                            key_class = Some(cls.clone());
+                            key_class = Some(cls.as_str());
                         }
                         crate::selectors::SimpleSelector::Type(tag) if key_tag.is_none() => {
-                            key_tag = Some(tag.to_ascii_lowercase());
+                            key_tag = Some(tag.as_str());
                         }
                         crate::selectors::SimpleSelector::Attribute { name, .. }
                             if key_attr.is_none() =>
                         {
-                            key_attr = Some(name.to_ascii_lowercase());
+                            key_attr = Some(name.as_str());
                         }
                         crate::selectors::SimpleSelector::PseudoClass(p) => {
                             if p.eq_ignore_ascii_case("root") {
@@ -629,13 +629,29 @@ impl<'a> RuleIndex<'a> {
                 }
 
                 if let Some(id) = key_id {
-                    bucket.id_rules.entry(id).or_default().push(indexed);
+                    bucket
+                        .id_rules
+                        .entry(id.to_string())
+                        .or_default()
+                        .push(indexed);
                 } else if let Some(cls) = key_class {
-                    bucket.class_rules.entry(cls).or_default().push(indexed);
+                    bucket
+                        .class_rules
+                        .entry(cls.to_string())
+                        .or_default()
+                        .push(indexed);
                 } else if let Some(tag) = key_tag {
-                    bucket.tag_rules.entry(tag).or_default().push(indexed);
+                    bucket
+                        .tag_rules
+                        .entry(tag.to_ascii_lowercase())
+                        .or_default()
+                        .push(indexed);
                 } else if let Some(attr) = key_attr {
-                    bucket.attr_rules.entry(attr).or_default().push(indexed);
+                    bucket
+                        .attr_rules
+                        .entry(attr.to_ascii_lowercase())
+                        .or_default()
+                        .push(indexed);
                 } else if is_root {
                     bucket.root_rules.push(indexed);
                 } else if let Some(keys) = is_where_keys {
@@ -687,28 +703,28 @@ impl<'a> RuleIndex<'a> {
             }
 
             // 2. Classify key selector: ID > Class > Tag > Attr > Root > :is/:where > Universal
-            let mut key_id = None;
-            let mut key_class = None;
-            let mut key_tag = None;
-            let mut key_attr = None;
+            let mut key_id: Option<&str> = None;
+            let mut key_class: Option<&str> = None;
+            let mut key_tag: Option<&str> = None;
+            let mut key_attr: Option<&str> = None;
             let mut is_root = false;
             let mut is_where_keys = None;
 
             for s in &subject.simple_selectors {
                 match s {
                     crate::selectors::SimpleSelector::Id(id) if key_id.is_none() => {
-                        key_id = Some(id.clone());
+                        key_id = Some(id.as_str());
                     }
                     crate::selectors::SimpleSelector::Class(cls) if key_class.is_none() => {
-                        key_class = Some(cls.clone());
+                        key_class = Some(cls.as_str());
                     }
                     crate::selectors::SimpleSelector::Type(tag) if key_tag.is_none() => {
-                        key_tag = Some(tag.to_ascii_lowercase());
+                        key_tag = Some(tag.as_str());
                     }
                     crate::selectors::SimpleSelector::Attribute { name, .. }
                         if key_attr.is_none() =>
                     {
-                        key_attr = Some(name.to_ascii_lowercase());
+                        key_attr = Some(name.as_str());
                     }
                     crate::selectors::SimpleSelector::PseudoClass(p) => {
                         if p.eq_ignore_ascii_case("root") {
@@ -724,13 +740,25 @@ impl<'a> RuleIndex<'a> {
             }
 
             if let Some(id) = key_id {
-                self.id_rules.entry(id).or_default().push(indexed);
+                self.id_rules
+                    .entry(id.to_string())
+                    .or_default()
+                    .push(indexed);
             } else if let Some(cls) = key_class {
-                self.class_rules.entry(cls).or_default().push(indexed);
+                self.class_rules
+                    .entry(cls.to_string())
+                    .or_default()
+                    .push(indexed);
             } else if let Some(tag) = key_tag {
-                self.tag_rules.entry(tag).or_default().push(indexed);
+                self.tag_rules
+                    .entry(tag.to_ascii_lowercase())
+                    .or_default()
+                    .push(indexed);
             } else if let Some(attr) = key_attr {
-                self.attr_rules.entry(attr).or_default().push(indexed);
+                self.attr_rules
+                    .entry(attr.to_ascii_lowercase())
+                    .or_default()
+                    .push(indexed);
             } else if is_root {
                 self.root_rules.push(indexed);
             } else if let Some(keys) = is_where_keys {
