@@ -211,3 +211,117 @@ pub fn resolve_flexible_lengths(
         }
     }
 }
+
+/// Resolves the flex container's main-axis gap (column-gap for row, row-gap for column),
+/// handling percentage resolution against the inner main-axis size of the flex container.
+/// Per CSS Box Alignment Level 3 §8, percentage gaps resolve against the container's
+/// inner main size if definite, or 0.0 if indefinite.
+pub fn resolve_flex_main_gap(
+    style: &ComputedStyle,
+    is_row: bool,
+    container_main_size: f32,
+    container_height: f32,
+    is_container_main_definite: bool,
+) -> f32 {
+    let gap_length = if is_row {
+        &style.column_gap
+    } else {
+        &style.row_gap
+    };
+
+    if !is_container_main_definite && gap_length.has_percent() {
+        return 0.0;
+    }
+
+    let font_size = style.font_size;
+    let root_font_size = style.root_font_size;
+    gap_length
+        .to_px_with_viewport(
+            font_size,
+            root_font_size,
+            container_main_size,
+            container_height,
+        )
+        .max(0.0)
+}
+
+/// Resolves the flex container's cross-axis gap (row-gap for row, column-gap for column),
+/// handling percentage resolution against the inner cross-axis size of the flex container.
+/// If the cross-axis size is indefinite (e.g. height is 0/auto for row containers),
+/// percentage gaps resolve to 0.0.
+pub fn resolve_flex_cross_gap(
+    style: &ComputedStyle,
+    is_row: bool,
+    container_cross_size: f32,
+    container_height: f32,
+) -> f32 {
+    let gap_length = if is_row {
+        &style.row_gap
+    } else {
+        &style.column_gap
+    };
+
+    if (container_cross_size <= 0.0 || (is_row && container_height <= 0.0))
+        && gap_length.has_percent()
+    {
+        return 0.0;
+    }
+
+    let font_size = style.font_size;
+    let root_font_size = style.root_font_size;
+    gap_length
+        .to_px_with_viewport(
+            font_size,
+            root_font_size,
+            container_cross_size,
+            container_height,
+        )
+        .max(0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_flex_main_gap_row_percentage() {
+        let mut style = ComputedStyle::default();
+        style.column_gap = Length::Percent(10.0);
+        let gap = resolve_flex_main_gap(&style, true, 200.0, 100.0, true);
+        assert_eq!(gap, 20.0);
+    }
+
+    #[test]
+    fn test_resolve_flex_main_gap_column_percentage() {
+        let mut style = ComputedStyle::default();
+        style.row_gap = Length::Percent(15.0);
+        let gap = resolve_flex_main_gap(&style, false, 300.0, 300.0, true);
+        assert_eq!(gap, 45.0);
+    }
+
+    #[test]
+    fn test_resolve_flex_main_gap_indefinite_resolves_zero() {
+        let mut style = ComputedStyle::default();
+        style.column_gap = Length::Percent(10.0);
+        let gap = resolve_flex_main_gap(&style, true, 200.0, 100.0, false);
+        assert_eq!(gap, 0.0);
+
+        // Fixed length still resolves even if indefinite
+        style.column_gap = Length::Px(15.0);
+        let gap_fixed = resolve_flex_main_gap(&style, true, 200.0, 100.0, false);
+        assert_eq!(gap_fixed, 15.0);
+    }
+
+    #[test]
+    fn test_resolve_flex_cross_gap_definite_and_indefinite() {
+        let mut style = ComputedStyle::default();
+        style.row_gap = Length::Percent(10.0);
+        // Definite row cross size (height 200px)
+        let gap = resolve_flex_cross_gap(&style, true, 200.0, 200.0);
+        assert_eq!(gap, 20.0);
+
+        // Indefinite row cross size (height 0.0) -> resolves to 0.0
+        let gap_indef = resolve_flex_cross_gap(&style, true, 0.0, 0.0);
+        assert_eq!(gap_indef, 0.0);
+    }
+}

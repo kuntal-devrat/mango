@@ -98,6 +98,41 @@ fn test_custom_property_inheritance_shares_storage_until_override() {
 }
 
 #[test]
+fn test_custom_property_inheritance_over_256_variables() {
+    // Generate 300 CSS variables on parent
+    let mut style_str = String::new();
+    for i in 0..300 {
+        style_str.push_str(&format!("--var-{}: #0000{:02x}; ", i, i % 256));
+    }
+    let html = format!(
+        r#"<div style="{}"><section style="--local-extra: #123456;"><span style="color: var(--var-280); font-size: var(--missing, 24px);">child</span></section></div>"#,
+        style_str
+    );
+    let doc = parse_html(&html);
+    let root = doc.root();
+    let div_id = doc.find_element_by_tag(root, "div").unwrap();
+    let section_id = doc.find_element_by_tag(root, "section").unwrap();
+    let span_id = doc.find_element_by_tag(root, "span").unwrap();
+
+    let parent_style = compute_style(div_id, &doc, &[], None);
+    assert_eq!(parent_style.custom_properties.len(), 300);
+
+    let section_style = compute_style(section_id, &doc, &[], Some(&parent_style));
+    assert_eq!(section_style.custom_properties.len(), 301);
+    assert!(section_style.custom_properties.contains_key("--var-299"));
+    assert!(
+        section_style
+            .custom_properties
+            .contains_key("--local-extra")
+    );
+
+    let span_style = compute_style(span_id, &doc, &[], Some(&section_style));
+    assert_eq!(span_style.custom_properties.len(), 301);
+    assert_eq!(span_style.color, Color::rgb(0, 0, 24));
+    assert_eq!(span_style.font_size, 24.0);
+}
+
+#[test]
 fn test_custom_property_fallback() {
     let html = r#"<p style="color: var(--non-existent, #00ff00); font-size: var(--missing-size, 18px);">Fallback</p>"#;
     let doc = parse_html(html);

@@ -5,6 +5,7 @@
 
 pub mod background;
 pub mod borders;
+pub mod box_rects;
 pub mod builder;
 pub mod forms;
 pub mod media;

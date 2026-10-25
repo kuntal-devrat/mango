@@ -673,3 +673,113 @@ fn test_github_underlinenav_item_width() {
         item.dimensions.border_box().width()
     );
 }
+
+#[test]
+fn test_flexbox_percentage_gap_resolution() {
+    let html = r#"
+        <div class="container">
+            <div class="item">1</div>
+            <div class="item">2</div>
+        </div>
+    "#;
+    let css = r#"
+        .container {
+            display: flex;
+            width: 200px;
+            gap: 10%;
+        }
+        .item {
+            width: 50px;
+            height: 30px;
+        }
+    "#;
+    let container = layout_html_flex(html, css, 400.0, 400.0);
+    assert_eq!(container.children[0].dimensions.content.x(), 0.0);
+    assert_eq!(container.children[0].dimensions.content.width(), 50.0);
+    assert_eq!(container.children[1].dimensions.content.x(), 70.0);
+    assert_eq!(container.children[1].dimensions.content.width(), 50.0);
+}
+
+#[test]
+fn test_flexbox_column_percentage_gap_resolution() {
+    let html = r#"
+        <div class="container">
+            <div class="item">1</div>
+            <div class="item">2</div>
+        </div>
+    "#;
+    let css = r#"
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 200px;
+            gap: 10%;
+        }
+        .item {
+            width: 50px;
+            height: 30px;
+        }
+    "#;
+    let container = layout_html_flex(html, css, 400.0, 400.0);
+    assert_eq!(container.children[0].dimensions.content.y(), 0.0);
+    assert_eq!(container.children[0].dimensions.content.height(), 30.0);
+    assert_eq!(container.children[1].dimensions.content.y(), 50.0);
+    assert_eq!(container.children[1].dimensions.content.height(), 30.0);
+}
+
+#[test]
+fn test_flexbox_percentage_gap_with_min_width() {
+    let html = r#"
+        <div class="container">
+            <div class="item">1</div>
+            <div class="item">2</div>
+        </div>
+    "#;
+    let css = r#"
+        .container {
+            display: flex;
+            width: 100px;
+            min-width: 200px;
+            gap: 10%;
+        }
+        .item {
+            width: 50px;
+            height: 30px;
+        }
+    "#;
+    let container = layout_html_flex(html, css, 400.0, 400.0);
+    assert_eq!(container.children[0].dimensions.content.x(), 0.0);
+    assert_eq!(container.children[1].dimensions.content.x(), 70.0);
+}
+
+#[test]
+fn test_flex_wrap_reverse_line_stacking() {
+    let html = r#"
+        <div class="container">
+            <div class="item" id="i1">1</div>
+            <div class="item" id="i2">2</div>
+            <div class="item" id="i3">3</div>
+        </div>
+    "#;
+    let css = r#"
+        .container {
+            display: flex;
+            flex-wrap: wrap-reverse;
+            width: 100px;
+        }
+        .item {
+            width: 60px;
+            height: 40px;
+            margin-top: 5px;
+        }
+    "#;
+    let container = layout_html_flex(html, css, 400.0, 400.0);
+    // Line 0 has i1 (60px). Next item i2 (60px) wraps to Line 1. Next item i3 wraps to Line 2.
+    // In wrap-reverse, Line 0 is at cross-bottom, Line 2 is at cross-top.
+    // Line 2 (i3): y = 0 + margin-top = 5.0
+    // Line 1 (i2): y = 45 + margin-top = 50.0
+    // Line 0 (i1): y = 90 + margin-top = 95.0
+    assert_eq!(container.children[2].dimensions.content.y(), 5.0);
+    assert_eq!(container.children[1].dimensions.content.y(), 50.0);
+    assert_eq!(container.children[0].dimensions.content.y(), 95.0);
+}
