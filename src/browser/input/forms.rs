@@ -135,7 +135,25 @@ impl BrowserChrome {
                         .and_then(|rt| rt.get_node_attribute(node_id, "name"))
                         .unwrap_or_default();
                     if !radio_name.is_empty() {
-                        let mut stack = vec![doc.root()];
+                        let form_root = {
+                            let mut curr = Some(node_id);
+                            let mut found_form = None;
+                            while let Some(nid) = curr {
+                                if let Some(node) = doc.get(nid) {
+                                    if let NodeData::Element(el) = &node.data
+                                        && el.tag_name.eq_ignore_ascii_case("form")
+                                    {
+                                        found_form = Some(nid);
+                                        break;
+                                    }
+                                    curr = node.parent;
+                                } else {
+                                    break;
+                                }
+                            }
+                            found_form.unwrap_or(doc.root())
+                        };
+                        let mut stack = vec![form_root];
                         while let Some(nid) = stack.pop() {
                             if let Some(node) = doc.get_mut(nid) {
                                 if let NodeData::Element(ref mut el) = node.data
