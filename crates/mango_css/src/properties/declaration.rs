@@ -307,7 +307,11 @@ impl Declaration {
     /// - `border: 1px solid red` -> `border-*-width`, `border-*-style`, `border-*-color`
     /// - `background: #fff` -> `background-color: #fff`
     pub fn expand_shorthand(self) -> Vec<Declaration> {
-        self.expand_shorthand_ref()
+        if self.is_shorthand() {
+            self.expand_shorthand_ref()
+        } else {
+            vec![self]
+        }
     }
 }
 

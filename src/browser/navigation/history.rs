@@ -246,7 +246,7 @@ impl BrowserChrome {
         if !skip_embedded_sheets_and_fonts {
             self.cached_stylesheets.clear();
             if self.cached_stylesheets.is_empty()
-                && let Some(ref base) = self.base_url.clone()
+                && let Some(base) = self.base_url.as_ref()
             {
                 let mut visited = std::collections::HashSet::new();
                 let mut pending_imports = Vec::new();

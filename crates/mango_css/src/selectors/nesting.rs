@@ -39,16 +39,19 @@ fn expand_single_complex_selector(
 ) -> ComplexSelector {
     if !contains_nesting_complex(child) {
         // No & present: per spec, implicitly treated as `& <child>` or `& <comb> <child>`
-        if child.head.simple_selectors == vec![SimpleSelector::Universal] && !child.tail.is_empty()
+        if child.head.simple_selectors.as_slice() == [SimpleSelector::Universal]
+            && !child.tail.is_empty()
         {
-            let mut tail = parent.tail.clone();
-            tail.extend(child.tail.clone());
+            let mut tail = Vec::with_capacity(parent.tail.len() + child.tail.len());
+            tail.extend(parent.tail.iter().cloned());
+            tail.extend(child.tail.iter().cloned());
             return ComplexSelector::new(parent.head.clone(), tail);
         }
 
-        let mut tail = parent.tail.clone();
+        let mut tail = Vec::with_capacity(parent.tail.len() + 1 + child.tail.len());
+        tail.extend(parent.tail.iter().cloned());
         tail.push((Combinator::Descendant, child.head.clone()));
-        tail.extend(child.tail.clone());
+        tail.extend(child.tail.iter().cloned());
         return ComplexSelector::new(parent.head.clone(), tail);
     }
 
@@ -99,7 +102,7 @@ fn expand_single_complex_selector(
 
             if non_nesting.is_empty() {
                 final_tail.push((*comb, parent.head.clone()));
-                final_tail.extend(parent.tail.clone());
+                final_tail.extend(parent.tail.iter().cloned());
             } else if parent.tail.is_empty() {
                 let mut merged = parent.head.simple_selectors.clone();
                 merged.extend(non_nesting);
@@ -107,9 +110,7 @@ fn expand_single_complex_selector(
             } else {
                 final_tail.push((*comb, parent.head.clone()));
                 let len = parent.tail.len();
-                for item in &parent.tail[..len - 1] {
-                    final_tail.push(item.clone());
-                }
+                final_tail.extend(parent.tail[..len - 1].iter().cloned());
                 let (last_comb, last_comp) = &parent.tail[len - 1];
                 let mut merged = last_comp.simple_selectors.clone();
                 merged.extend(non_nesting);

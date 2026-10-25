@@ -71,7 +71,7 @@ impl CookieJar {
             value = value[1..value.len() - 1].to_string();
         }
 
-        let mut domain = request_host.clone();
+        let mut domain = None;
         let mut explicit_domain = false;
         let mut path = default_cookie_path(&request_url.path);
         let mut secure = false;
@@ -111,7 +111,7 @@ impl CookieJar {
                                     return None;
                                 }
                             }
-                            domain = clean_domain;
+                            domain = Some(clean_domain);
                             explicit_domain = true;
                         }
                     }
@@ -207,6 +207,7 @@ impl CookieJar {
             None
         };
 
+        let domain = domain.unwrap_or(request_host);
         let host_only = !explicit_domain;
         let now = now_secs();
 

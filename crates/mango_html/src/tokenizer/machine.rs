@@ -463,7 +463,7 @@ impl<'a> Tokenizer<'a> {
                     }
                     Some('>') => {
                         self.state = State::Data;
-                        return Token::Comment(self.current_comment.clone());
+                        return Token::Comment(std::mem::take(&mut self.current_comment));
                     }
                     Some(ch) => {
                         self.current_comment.push(ch);
@@ -471,7 +471,7 @@ impl<'a> Tokenizer<'a> {
                     }
                     None => {
                         self.state = State::Data;
-                        return Token::Comment(self.current_comment.clone());
+                        return Token::Comment(std::mem::take(&mut self.current_comment));
                     }
                 },
 
@@ -484,7 +484,7 @@ impl<'a> Tokenizer<'a> {
                     }
                     None => {
                         self.state = State::Data;
-                        return Token::Comment(self.current_comment.clone());
+                        return Token::Comment(std::mem::take(&mut self.current_comment));
                     }
                 },
 
@@ -496,7 +496,7 @@ impl<'a> Tokenizer<'a> {
                         // Handles "<!--->" as empty comment close per WHATWG
                         // (CommentStart '-' -> EndDash, then '>' closes).
                         self.state = State::Data;
-                        return Token::Comment(self.current_comment.clone());
+                        return Token::Comment(std::mem::take(&mut self.current_comment));
                     }
                     Some(ch) => {
                         self.current_comment.push('-');
@@ -505,14 +505,14 @@ impl<'a> Tokenizer<'a> {
                     }
                     None => {
                         self.state = State::Data;
-                        return Token::Comment(self.current_comment.clone());
+                        return Token::Comment(std::mem::take(&mut self.current_comment));
                     }
                 },
 
                 State::CommentEnd => match self.advance() {
                     Some('>') => {
                         self.state = State::Data;
-                        return Token::Comment(self.current_comment.clone());
+                        return Token::Comment(std::mem::take(&mut self.current_comment));
                     }
                     Some('-') => {
                         self.current_comment.push('-');
@@ -523,7 +523,7 @@ impl<'a> Tokenizer<'a> {
                         if self.peek() == Some('>') {
                             self.advance(); // consume '>'
                             self.state = State::Data;
-                            return Token::Comment(self.current_comment.clone());
+                            return Token::Comment(std::mem::take(&mut self.current_comment));
                         } else {
                             self.current_comment.push_str("--!");
                             self.state = State::Comment;
@@ -536,14 +536,14 @@ impl<'a> Tokenizer<'a> {
                     }
                     None => {
                         self.state = State::Data;
-                        return Token::Comment(self.current_comment.clone());
+                        return Token::Comment(std::mem::take(&mut self.current_comment));
                     }
                 },
 
                 State::BogusComment => match self.advance() {
                     Some('>') | None => {
                         self.state = State::Data;
-                        return Token::Comment(self.current_comment.clone());
+                        return Token::Comment(std::mem::take(&mut self.current_comment));
                     }
                     Some(ch) => {
                         self.current_comment.push(ch);
@@ -587,7 +587,7 @@ impl<'a> Tokenizer<'a> {
                     Some('>') => {
                         self.state = State::Data;
                         return Token::Doctype {
-                            name: Some(self.current_doctype_name.clone()),
+                            name: Some(std::mem::take(&mut self.current_doctype_name)),
                             public_id: self.current_doctype_public_id.take(),
                             system_id: self.current_doctype_system_id.take(),
                             force_quirks: false,
@@ -599,7 +599,7 @@ impl<'a> Tokenizer<'a> {
                     None => {
                         self.state = State::Data;
                         return Token::Doctype {
-                            name: Some(self.current_doctype_name.clone()),
+                            name: Some(std::mem::take(&mut self.current_doctype_name)),
                             public_id: self.current_doctype_public_id.take(),
                             system_id: self.current_doctype_system_id.take(),
                             force_quirks: true,
@@ -614,7 +614,7 @@ impl<'a> Tokenizer<'a> {
                             self.advance();
                             self.state = State::Data;
                             return Token::Doctype {
-                                name: Some(self.current_doctype_name.clone()),
+                                name: Some(std::mem::take(&mut self.current_doctype_name)),
                                 public_id: self.current_doctype_public_id.take(),
                                 system_id: self.current_doctype_system_id.take(),
                                 force_quirks: self.current_doctype_force_quirks,
@@ -623,7 +623,7 @@ impl<'a> Tokenizer<'a> {
                         None => {
                             self.state = State::Data;
                             return Token::Doctype {
-                                name: Some(self.current_doctype_name.clone()),
+                                name: Some(std::mem::take(&mut self.current_doctype_name)),
                                 public_id: self.current_doctype_public_id.take(),
                                 system_id: self.current_doctype_system_id.take(),
                                 force_quirks: true,
@@ -677,7 +677,7 @@ impl<'a> Tokenizer<'a> {
                             }
                             self.state = State::Data;
                             return Token::Doctype {
-                                name: Some(self.current_doctype_name.clone()),
+                                name: Some(std::mem::take(&mut self.current_doctype_name)),
                                 public_id: self.current_doctype_public_id.take(),
                                 system_id: self.current_doctype_system_id.take(),
                                 force_quirks: self.current_doctype_force_quirks,

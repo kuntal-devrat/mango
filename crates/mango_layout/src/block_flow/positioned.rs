@@ -712,11 +712,10 @@ pub(crate) fn layout_positioned_element(
     // before its containing block and offsets were resolved. Rebuild its
     // formatting descendants from the preserved source children so stale
     // text/inline boxes are not painted at both the static and final origins.
-    if box_node.raw_children.is_none() && !box_node.children.is_empty() {
+    if let Some(ref raw_children) = box_node.raw_children {
+        box_node.children = raw_children.clone();
+    } else if !box_node.children.is_empty() {
         box_node.raw_children = Some(box_node.children.clone());
-    }
-    if let Some(raw_children) = box_node.raw_children.clone() {
-        box_node.children = raw_children;
     }
 
     let is_flex_or_grid = matches!(
