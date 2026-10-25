@@ -66,26 +66,7 @@
       "status": "Pass"
     },
     "css/css-cascade/duplicate-stylesheets.html": {
-      "status": "Fail",
-      "subtests": {
-        "!important in a run of duplicates wins over a later normal declaration": "PASS",
-        "!important reverses anonymous layer order across a run of duplicates": "PASS",
-        "!important reverses named layer order across runs of duplicates": "PASS",
-        "A later !important wins over an !important run of duplicates": "PASS",
-        "A later anonymous layer wins over a run of duplicate anonymous layers": "PASS",
-        "A later sheet wins over a run of duplicates": "PASS",
-        "A nested implicitly scoped rule keeps each sheet's own scope root": "PASS",
-        "A run of 20 identical sheets applies": "PASS",
-        "A run of duplicate anonymous layers wins over an earlier anonymous layer": "PASS",
-        "A run of duplicate revert-layer declarations chains back to the same value": "PASS",
-        "An unlayered run of duplicates wins over a layered declaration": "PASS",
-        "Duplicates added incrementally cascade in order of appearance": "PASS",
-        "Duplicates after an intervening sheet still win over it": "PASS",
-        "Duplicates in named layers cascade by layer order, not sheet order": "PASS",
-        "Higher specificity wins over a run of duplicates": "PASS",
-        "Identical implicitly scoped sheets keep their own scope roots": "FAIL",
-        "revert-layer past a run of duplicates reverts to the duplicated value": "PASS"
-      }
+      "status": "Pass"
     },
     "css/css-cascade/idlharness.html": {
       "status": "Fail",
@@ -176,10 +157,10 @@
         "#tests > * 2": "FAIL",
         "#tests > * 3": "FAIL",
         "#tests > * 4": "FAIL",
-        "#tests > * 5": "FAIL",
-        "#tests > * 6": "FAIL",
-        "#tests > * 7": "FAIL",
-        "#tests > * 8": "FAIL",
+        "#tests > * 5": "PASS",
+        "#tests > * 6": "PASS",
+        "#tests > * 7": "PASS",
+        "#tests > * 8": "PASS",
         "#tests > * 9": "FAIL"
       }
     },

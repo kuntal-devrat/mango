@@ -314,6 +314,15 @@ impl Length {
         self.to_px_with_viewports(font_size, root_font_size, container_size, vp_w, vp_h)
     }
 
+    /// Returns true if this length is or contains a percentage.
+    pub fn has_percent(&self) -> bool {
+        match self {
+            Length::Percent(_) => true,
+            Length::Calc(calc) => calc.has_percent,
+            _ => false,
+        }
+    }
+
     /// Resolves this length to concrete pixels given contextual metrics and explicit viewport height.
     pub fn to_px_with_viewport(
         &self,

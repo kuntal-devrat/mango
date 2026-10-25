@@ -11,11 +11,7 @@
       "status": "Pass"
     },
     "css/css-cascade/layer-cssom-order-reverse-at-property.html": {
-      "status": "Fail",
-      "subtests": {
-        "Delete layer invalidates @property": "FAIL",
-        "Insert layer invalidates @property": "FAIL"
-      }
+      "status": "Pass"
     },
     "css/css-cascade/layer-cssom-order-reverse.html": {
       "status": "Pass"

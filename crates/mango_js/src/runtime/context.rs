@@ -249,7 +249,7 @@ impl JsRuntime {
         ensure_tokio_runtime();
 
         let shared_doc: SharedDocument = Rc::new(RefCell::new(document));
-        let dom_dirty: DomDirtyFlag = Rc::new(RefCell::new(true));
+        let dom_dirty: DomDirtyFlag = Rc::new(RefCell::new(false));
         let event_loop: SharedEventLoop = Rc::new(RefCell::new(EventLoop::new()));
         let console_buffer = console::new_console_buffer();
         let status_text: SharedStatusText = Rc::new(RefCell::new(String::new()));

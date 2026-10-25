@@ -516,12 +516,18 @@ pub(crate) fn layout_block_children(
                 let font_size = child_style.font_size;
                 let root_font_size = child_style.root_font_size;
                 let cb_h = container_dims.content.height();
-                let is_pct_indefinite = matches!(child_style.height, Length::Percent(_))
+                let is_pct_indefinite = child_style.height.has_percent()
                     && cb_h <= 0.0
                     && !matches!(child_style.position, Position::Absolute | Position::Fixed);
                 if !is_pct_indefinite {
                     let (_, vp_h) = mango_css::get_current_viewport();
-                    let eff_cb_h = if cb_h > 0.0 { cb_h } else { 600.0 };
+                    let eff_cb_h = if cb_h > 0.0 {
+                        cb_h
+                    } else if matches!(child_style.position, Position::Absolute | Position::Fixed) {
+                        vp_h
+                    } else {
+                        0.0
+                    };
                     let tentative_h = child_style.height.to_px_with_viewport(
                         font_size,
                         root_font_size,

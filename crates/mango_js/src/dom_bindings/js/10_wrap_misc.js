@@ -402,12 +402,20 @@
             },
             get offsetLeft() {
                 var p = this.offsetParent;
-                if (p) return Math.round(this.getBoundingClientRect().left - p.getBoundingClientRect().left - (p.clientLeft || 0));
+                if (p) {
+                    var diff = this.getBoundingClientRect().left - p.getBoundingClientRect().left;
+                    if (diff === 0) return 0;
+                    return Math.round(diff - (p.clientLeft || 0));
+                }
                 return Math.round(this.getBoundingClientRect().left);
             },
             get offsetTop() {
                 var p = this.offsetParent;
-                if (p) return Math.round(this.getBoundingClientRect().top - p.getBoundingClientRect().top - (p.clientTop || 0));
+                if (p) {
+                    var diff = this.getBoundingClientRect().top - p.getBoundingClientRect().top;
+                    if (diff === 0) return 0;
+                    return Math.round(diff - (p.clientTop || 0));
+                }
                 return Math.round(this.getBoundingClientRect().top);
             },
             get clientWidth() {
