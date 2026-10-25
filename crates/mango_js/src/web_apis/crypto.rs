@@ -5,6 +5,9 @@ pub(crate) fn fill_secure_random(buf: &mut [u8]) {
         fn SystemFunction036(buffer: *mut u8, length: u32) -> u8;
     }
     if !buf.is_empty() {
+        // SAFETY: `buf.as_mut_ptr()` is a valid, non-null, aligned pointer to `buf.len()`
+        // mutable bytes allocated in memory. `SystemFunction036` (RtlGenRandom) writes
+        // cryptographically secure pseudo-random bytes into the buffer up to the requested length.
         unsafe {
             SystemFunction036(buf.as_mut_ptr(), buf.len() as u32);
         }

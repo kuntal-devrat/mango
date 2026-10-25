@@ -735,7 +735,8 @@ impl FontManager {
     }
 }
 
-// FontManager is safe to share across threads: fontdue::Font is Send + Sync,
-// and we never mutate the fonts after construction.
+// SAFETY: FontManager contains thread-safe types (`Arc<Font>`, `RwLock<...>`, `AtomicU32`).
+// `fontdue::Font` is immutable and safe to share across threads, and we never mutate fonts after construction.
 unsafe impl Send for FontManager {}
+// SAFETY: All internal mutable state is synchronized via `RwLock` or `AtomicU32`.
 unsafe impl Sync for FontManager {}

@@ -4,6 +4,7 @@
 //! (DisplayList commands, compositor tiles, framebuffers, media frames) without
 //! intermediate heap allocations.
 
+use std::cell::UnsafeCell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -29,7 +30,7 @@ impl std::error::Error for ShmError {}
 
 /// An atomic shared-memory ring buffer.
 pub struct ShmRingBuffer {
-    buffer: Vec<u8>,
+    buffer: Box<[UnsafeCell<u8>]>,
     capacity: usize,
     read_pos: AtomicUsize,
     write_pos: AtomicUsize,
@@ -39,8 +40,10 @@ impl ShmRingBuffer {
     /// Creates a shared-memory ring buffer with a given byte capacity.
     pub fn new(capacity: usize) -> Self {
         assert!(capacity > 0, "Capacity must be greater than zero");
+        let mut raw = Vec::with_capacity(capacity);
+        raw.resize_with(capacity, || UnsafeCell::new(0));
         Self {
-            buffer: vec![0u8; capacity],
+            buffer: raw.into_boxed_slice(),
             capacity,
             read_pos: AtomicUsize::new(0),
             write_pos: AtomicUsize::new(0),
@@ -84,9 +87,15 @@ impl ShmRingBuffer {
         let w = self.write_pos.load(Ordering::Acquire);
         let start_idx = w % self.capacity;
 
-        // Unsafe buffer mutation safe because of atomic cursor reservation
         let ptr = self.buffer.as_ptr() as *mut u8;
         let first_chunk = (self.capacity - start_idx).min(data.len());
+
+        // SAFETY:
+        // 1. `self.buffer` holds `UnsafeCell<u8>`, explicitly permitting interior mutability via raw pointer.
+        // 2. Both `ptr.add(start_idx)` for `first_chunk` bytes and `ptr` for `data.len() - first_chunk` bytes
+        //    reside strictly within the allocated capacity bounds `[0, capacity)`.
+        // 3. `available_write()` verified sufficient unread capacity, preventing overlap with active reader regions.
+        // 4. `data` is an independent input slice and cannot alias the ring buffer memory.
         unsafe {
             std::ptr::copy_nonoverlapping(data.as_ptr(), ptr.add(start_idx), first_chunk);
             if data.len() > first_chunk {
@@ -114,8 +123,14 @@ impl ShmRingBuffer {
         let start_idx = r % self.capacity;
         let mut out = vec![0u8; to_read];
 
-        let ptr = self.buffer.as_ptr();
+        let ptr = self.buffer.as_ptr() as *const u8;
         let first_chunk = (self.capacity - start_idx).min(to_read);
+
+        // SAFETY:
+        // 1. Bytes between `r` and `r + to_read` were committed by a writer prior to the atomic `write_pos`
+        //    release store, and cannot be overwritten until `read_pos` advances.
+        // 2. Offsets `ptr.add(start_idx)` and `ptr` remain strictly within the allocated buffer range.
+        // 3. `out` has allocated capacity of `to_read` bytes and does not alias the buffer.
         unsafe {
             std::ptr::copy_nonoverlapping(ptr.add(start_idx), out.as_mut_ptr(), first_chunk);
             if to_read > first_chunk {
@@ -138,7 +153,10 @@ impl ShmRingBuffer {
     }
 }
 
+// SAFETY: `ShmRingBuffer` coordinates thread-safe concurrent reads and writes across
+// independent memory ranges using atomic cursors (`read_pos`, `write_pos`) with Acquire/Release order.
 unsafe impl Send for ShmRingBuffer {}
+// SAFETY: Thread-safe synchronization ensures disjoint reader and writer access without data races.
 unsafe impl Sync for ShmRingBuffer {}
 
 #[cfg(test)]

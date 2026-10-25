@@ -81,6 +81,7 @@ fn test_deno_core_module() {
 struct IsolateScopeGuard(*mut deno_core::v8::Isolate);
 impl IsolateScopeGuard {
     fn new(isolate: &mut deno_core::v8::Isolate) -> Self {
+        // SAFETY: `isolate` is a valid V8 isolate reference. Entering it enables JS execution.
         unsafe {
             isolate.enter();
         }
@@ -89,6 +90,7 @@ impl IsolateScopeGuard {
 }
 impl Drop for IsolateScopeGuard {
     fn drop(&mut self) {
+        // SAFETY: `self.0` points to the isolate entered in `new()`, restoring outer scope.
         unsafe {
             (*self.0).exit();
         }
@@ -99,6 +101,7 @@ struct WrappedRuntime(JsRuntime);
 impl WrappedRuntime {
     fn new() -> Self {
         let mut rt = JsRuntime::new(RuntimeOptions::default());
+        // SAFETY: `JsRuntime::new` enters its isolate; exiting balances that enter so it is idle.
         unsafe {
             rt.v8_isolate().exit();
         }
@@ -117,6 +120,7 @@ impl WrappedRuntime {
 }
 impl Drop for WrappedRuntime {
     fn drop(&mut self) {
+        // SAFETY: `JsRuntime::drop` expects its isolate to be entered; re-entering restores that precondition.
         unsafe {
             self.0.v8_isolate().enter();
         }

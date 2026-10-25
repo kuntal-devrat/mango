@@ -36,6 +36,9 @@ pub(crate) struct IsolateScopeGuard(*mut deno_core::v8::Isolate);
 impl IsolateScopeGuard {
     #[inline]
     pub(crate) fn enter(isolate: &mut deno_core::v8::Isolate) -> Self {
+        // SAFETY: `isolate` is a valid mutable reference to the active V8 isolate.
+        // Entering the isolate prepares it for execution on the current thread,
+        // and is balanced by the paired `exit()` call in `Drop`.
         unsafe {
             isolate.enter();
         }
@@ -46,6 +49,8 @@ impl IsolateScopeGuard {
 impl Drop for IsolateScopeGuard {
     #[inline]
     fn drop(&mut self) {
+        // SAFETY: `self.0` points to the V8 isolate entered in `IsolateScopeGuard::enter`.
+        // Calling `exit()` restores the previous isolate scope depth on the thread.
         unsafe {
             (*self.0).exit();
         }
@@ -68,6 +73,8 @@ impl IsolateExitGuard {
 impl Drop for IsolateExitGuard {
     #[inline]
     fn drop(&mut self) {
+        // SAFETY: `self.0` points to the isolate left entered by `deno_core::JsRuntime::new`.
+        // Exiting balances that constructor-time entry so the isolate is idle when not running.
         unsafe {
             (*self.0).exit();
         }
@@ -417,6 +424,8 @@ impl Drop for JsRuntime {
             mango_render::remove_canvases_for_document(doc.id());
         }
         self.worker_manager.terminate_all();
+        // SAFETY: `v8_isolate()` returns a valid reference to the runtime's V8 isolate.
+        // Entering the isolate is required before invoking `low_memory_notification()`.
         unsafe {
             let isolate = self.runtime.v8_isolate();
             isolate.enter();

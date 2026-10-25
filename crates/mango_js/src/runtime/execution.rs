@@ -415,12 +415,15 @@ impl JsRuntime {
         let mut cx = std::task::Context::from_waker(waker);
         {
             let isolate_ptr: *mut deno_core::v8::Isolate = &mut **self.runtime.v8_isolate();
+            // SAFETY: `isolate_ptr` is a valid pointer derived from the active `deno_core` runtime's isolate.
+            // Entering the isolate prepares it for polling operations and is balanced by the subsequent `exit()`.
             unsafe {
                 (*isolate_ptr).enter();
             }
             let _ = self
                 .runtime
                 .poll_event_loop(&mut cx, deno_core::PollEventLoopOptions::default());
+            // SAFETY: `isolate_ptr` was entered immediately before polling; exiting restores the idle state.
             unsafe {
                 (*isolate_ptr).exit();
             }
@@ -477,12 +480,15 @@ impl JsRuntime {
         let mut cx = std::task::Context::from_waker(waker);
         {
             let isolate_ptr: *mut deno_core::v8::Isolate = &mut **self.runtime.v8_isolate();
+            // SAFETY: `isolate_ptr` is a valid pointer derived from the active `deno_core` runtime's isolate.
+            // Entering the isolate prepares it for polling operations and is balanced by the subsequent `exit()`.
             unsafe {
                 (*isolate_ptr).enter();
             }
             let _ = self
                 .runtime
                 .poll_event_loop(&mut cx, deno_core::PollEventLoopOptions::default());
+            // SAFETY: `isolate_ptr` was entered immediately before polling; exiting restores the idle state.
             unsafe {
                 (*isolate_ptr).exit();
             }
