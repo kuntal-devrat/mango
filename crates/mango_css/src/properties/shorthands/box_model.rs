@@ -102,42 +102,51 @@ pub(crate) fn expand_four_sides(prefix: &str, value: &Value, important: bool) ->
     };
 
     for v in &values {
-        let is_valid = match prefix {
-            "padding" => match v {
-                Value::Length(len) => match len {
-                    crate::values::Length::Px(px) => *px >= 0.0,
-                    crate::values::Length::Percent(pct) => *pct >= 0.0,
-                    crate::values::Length::Calc(_)
-                    | crate::values::Length::Math(_)
-                    | crate::values::Length::Em(_)
-                    | crate::values::Length::Rem(_)
-                    | crate::values::Length::Vw(_)
-                    | crate::values::Length::Vh(_)
-                    | crate::values::Length::Vmin(_)
-                    | crate::values::Length::Vmax(_) => true,
-                    _ => false,
-                },
-                _ => false,
-            },
-            "margin" => match v {
-                Value::Length(len) => matches!(
-                    len,
-                    crate::values::Length::Px(_)
-                        | crate::values::Length::Percent(_)
-                        | crate::values::Length::Auto
-                        | crate::values::Length::Calc(_)
+        let is_css_wide_or_var = match v {
+            Value::Keyword(k) => matches!(
+                k.to_ascii_lowercase().as_str(),
+                "initial" | "inherit" | "unset" | "revert" | "revert-layer"
+            ),
+            Value::Var { .. } => true,
+            _ => false,
+        };
+        let is_valid = is_css_wide_or_var
+            || match prefix {
+                "padding" => match v {
+                    Value::Length(len) => match len {
+                        crate::values::Length::Px(px) => *px >= 0.0,
+                        crate::values::Length::Percent(pct) => *pct >= 0.0,
+                        crate::values::Length::Calc(_)
                         | crate::values::Length::Math(_)
                         | crate::values::Length::Em(_)
                         | crate::values::Length::Rem(_)
                         | crate::values::Length::Vw(_)
                         | crate::values::Length::Vh(_)
                         | crate::values::Length::Vmin(_)
-                        | crate::values::Length::Vmax(_)
-                ),
-                _ => false,
-            },
-            _ => true,
-        };
+                        | crate::values::Length::Vmax(_) => true,
+                        _ => false,
+                    },
+                    _ => false,
+                },
+                "margin" => match v {
+                    Value::Length(len) => matches!(
+                        len,
+                        crate::values::Length::Px(_)
+                            | crate::values::Length::Percent(_)
+                            | crate::values::Length::Auto
+                            | crate::values::Length::Calc(_)
+                            | crate::values::Length::Math(_)
+                            | crate::values::Length::Em(_)
+                            | crate::values::Length::Rem(_)
+                            | crate::values::Length::Vw(_)
+                            | crate::values::Length::Vh(_)
+                            | crate::values::Length::Vmin(_)
+                            | crate::values::Length::Vmax(_)
+                    ),
+                    _ => false,
+                },
+                _ => true,
+            };
         if !is_valid {
             return Vec::new();
         }

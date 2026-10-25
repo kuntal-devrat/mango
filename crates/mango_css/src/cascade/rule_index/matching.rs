@@ -45,7 +45,14 @@ pub(crate) fn selector_targets_host(sel: &crate::selectors::ComplexSelector) -> 
     subject.simple_selectors.iter().any(|s| match s {
         crate::selectors::SimpleSelector::PseudoClass(p) => {
             let lower = p.to_ascii_lowercase();
-            lower == "host" || lower.starts_with("host(") || lower.starts_with("host-context(")
+            lower == "host"
+                || lower.starts_with("host(")
+                || lower.starts_with("host-context(")
+                || lower == "scope"
+                || (lower.starts_with("is(")
+                    && (lower.contains(":host") || lower.contains(":scope")))
+                || (lower.starts_with("where(")
+                    && (lower.contains(":host") || lower.contains(":scope")))
         }
         _ => false,
     })
@@ -281,7 +288,10 @@ pub(crate) fn apply_style_rule(
         // Enforce shadow boundary:
         // If matching against a shadow host with shadow stylesheets, only :host selectors match.
         if let Some(host_id) = crate::selectors::current_host_element() {
-            if host_id.raw() == node_id.raw() && !selector_targets_host(complex_sel) {
+            if host_id.raw() == node_id.raw()
+                && !selector_targets_host(complex_sel)
+                && winning_root.map(|r| r.raw()) != Some(host_id.raw())
+            {
                 continue;
             }
         }

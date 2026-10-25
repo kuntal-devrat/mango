@@ -679,9 +679,6 @@ impl CssParser {
                         }
                     }
                     "margin-trim" => {
-                        // CSS Box 4 grammar:
-                        //   none | block | block-start | block-end | inline |
-                        //   inline-start | inline-end | [block-start || block-end]
                         let mut idents: Vec<String> = Vec::new();
                         let mut only_idents = true;
                         for token in value_tokens {
@@ -693,28 +690,24 @@ impl CssParser {
                         }
                         if !only_idents {
                             None
-                        } else {
-                            if idents.len() == 1 && idents[0] == "none" {
-                                Some(Value::Keyword("none".to_string()))
-                            } else if !idents.is_empty()
-                                && idents.len() <= 4
-                                && idents.iter().all(|ident| {
-                                    matches!(
-                                        ident.as_str(),
-                                        "block"
-                                            | "block-start"
-                                            | "block-end"
-                                            | "inline"
-                                            | "inline-start"
-                                            | "inline-end"
-                                    )
-                                })
-                                && idents.windows(2).all(|pair| pair[0] != pair[1])
+                        } else if idents.len() == 1 {
+                            match idents[0].as_str() {
+                                "none" => Some(Value::Keyword("none".to_string())),
+                                "block" => Some(Value::Keyword("block".to_string())),
+                                "block-start" => Some(Value::Keyword("block-start".to_string())),
+                                "block-end" => Some(Value::Keyword("block-end".to_string())),
+                                _ => None,
+                            }
+                        } else if idents.len() == 2 {
+                            if (idents[0] == "block-start" && idents[1] == "block-end")
+                                || (idents[0] == "block-end" && idents[1] == "block-start")
                             {
-                                Some(Value::Keyword(idents.join(" ")))
+                                Some(Value::Keyword("block".to_string()))
                             } else {
                                 None
                             }
+                        } else {
+                            None
                         }
                     }
                     _ => {

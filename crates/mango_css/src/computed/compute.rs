@@ -148,14 +148,17 @@ pub fn compute_style_with_shadow_and_part_indexes(
 
     // Apply registered @property initial-values for custom properties not explicitly set
     for (name, reg) in &author_index.property_rules {
-        // Non-inherited registered properties must not be copied into every
-        // descendant's inherited map. Their initial value is resolved at the
-        // declaration site; retaining them here would force a full 2k-entry
-        // map clone for every node on pages such as GitHub.
         if !reg.inherits {
-            continue;
-        }
-        if !style.custom_properties.contains_key(name) {
+            if !style.local_custom_properties.contains_key(name)
+                && !style.custom_properties.contains_key(name)
+            {
+                if let Some(ref init_val) = reg.initial_value {
+                    style
+                        .local_custom_properties
+                        .insert(name.clone(), init_val.clone());
+                }
+            }
+        } else if !style.custom_properties.contains_key(name) {
             if let Some(ref init_val) = reg.initial_value {
                 let cp = Arc::make_mut(&mut style.custom_properties);
                 cp.insert(name.clone(), init_val.clone());
@@ -165,9 +168,16 @@ pub fn compute_style_with_shadow_and_part_indexes(
     if let Some(shadow) = shadow_index {
         for (name, reg) in &shadow.property_rules {
             if !reg.inherits {
-                continue;
-            }
-            if !style.custom_properties.contains_key(name) {
+                if !style.local_custom_properties.contains_key(name)
+                    && !style.custom_properties.contains_key(name)
+                {
+                    if let Some(ref init_val) = reg.initial_value {
+                        style
+                            .local_custom_properties
+                            .insert(name.clone(), init_val.clone());
+                    }
+                }
+            } else if !style.custom_properties.contains_key(name) {
                 if let Some(ref init_val) = reg.initial_value {
                     let cp = Arc::make_mut(&mut style.custom_properties);
                     cp.insert(name.clone(), init_val.clone());

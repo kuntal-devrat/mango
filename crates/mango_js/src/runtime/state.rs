@@ -28,6 +28,15 @@ impl JsRuntime {
         *self.layout_bounds.borrow_mut() = bounds;
     }
 
+    /// Sets an on-demand layout provider callback that is invoked automatically
+    /// when measurement APIs query geometry while the DOM/style tree is dirty.
+    pub fn set_layout_callback<F>(&self, cb: F)
+    where
+        F: Fn(&Document) -> std::collections::HashMap<u32, [f32; 4]> + 'static,
+    {
+        *self.layout_callback.borrow_mut() = Some(Box::new(cb));
+    }
+
     /// Sets cross-origin isolation status directly on the runtime.
     pub fn set_cross_origin_isolated(&mut self, isolated: bool) {
         let _ = self.execute_script(&format!("globalThis.__setCrossOriginIsolated({isolated});"));

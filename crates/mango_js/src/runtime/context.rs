@@ -90,6 +90,8 @@ pub struct JsRuntime {
     pub session_storage: web_apis::SharedSessionStorage,
     /// Layout geometry published by the browser for measurement APIs.
     pub(crate) layout_bounds: dom_bindings::LayoutBounds,
+    /// On-demand layout provider callback invoked when measurement APIs query dirty DOM.
+    pub(crate) layout_callback: dom_bindings::LayoutCallback,
     /// Shared cookie jar backing `document.cookie` — owned by the browser so
     /// it can be persisted to the profile.
     pub(crate) cookie_jar: dom_bindings::CookieStore,
@@ -255,6 +257,7 @@ impl JsRuntime {
         let pending_open: web_apis::SharedPendingOpenWindow = Rc::new(RefCell::new(None));
         let layout_bounds: dom_bindings::LayoutBounds =
             Rc::new(RefCell::new(std::collections::HashMap::new()));
+        let layout_callback: dom_bindings::LayoutCallback = Rc::new(RefCell::new(None));
         let worker_manager = crate::worker::WorkerManager::new();
         let ws_manager = mango_net::WebSocketManager::new();
         let broadcast_channel_hub = crate::broadcast_channel::BroadcastChannelHub::new();
@@ -301,6 +304,7 @@ impl JsRuntime {
             state.put(crate::ops::web::OpLocalStorage(local_storage.clone()));
             state.put(crate::ops::web::OpSessionStorage(session_storage.clone()));
             state.put(layout_bounds.clone());
+            state.put(layout_callback.clone());
             state.put(cookie_jar.clone());
             state.put(worker_manager.clone());
             state.put(ws_manager.clone());
@@ -349,6 +353,7 @@ impl JsRuntime {
             local_storage,
             session_storage,
             layout_bounds,
+            layout_callback,
             cookie_jar,
             hovered_nodes: std::collections::HashSet::new(),
             active_nodes: std::collections::HashSet::new(),

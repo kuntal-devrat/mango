@@ -184,13 +184,32 @@ fn resolve_matched_declarations(matched_decls: &[MatchedDeclaration]) -> HashMap
     resolve_matched_declarations_with_importance(matched_decls).0
 }
 
+fn canonical_property_name(name: &str) -> &str {
+    match name {
+        "margin-block-start" => "margin-top",
+        "margin-block-end" => "margin-bottom",
+        "margin-inline-start" => "margin-left",
+        "margin-inline-end" => "margin-right",
+        "padding-block-start" => "padding-top",
+        "padding-block-end" => "padding-bottom",
+        "padding-inline-start" => "padding-left",
+        "padding-inline-end" => "padding-right",
+        "inset-block-start" => "top",
+        "inset-block-end" => "bottom",
+        "inset-inline-start" => "left",
+        "inset-inline-end" => "right",
+        other => other,
+    }
+}
+
 fn resolve_matched_declarations_with_importance(
     matched_decls: &[MatchedDeclaration],
 ) -> (HashMap<String, Value>, std::collections::HashSet<String>) {
     let mut decls_by_prop: HashMap<String, Vec<&MatchedDeclaration>> = HashMap::new();
     for matched in matched_decls {
+        let prop = canonical_property_name(&matched.declaration.name);
         decls_by_prop
-            .entry(matched.declaration.name.clone())
+            .entry(prop.to_string())
             .or_default()
             .push(matched);
     }

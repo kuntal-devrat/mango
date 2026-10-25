@@ -135,7 +135,12 @@ pub fn resolve_item_cross_size(
                         Dimensions::new(Rect::new(0.0, 0.0, item_w + pad_main + border_main, 0.0));
                     let mut item_float_ctx = FloatContext::new();
                     layout_flex_item(child, &item_cb, &mut item_float_ctx, c_fs);
-                    child.dimensions.content.size.height.max(c_fs * 1.3)
+                    let measured_h = child.dimensions.content.size.height;
+                    if child.is_inline() || child.box_type.is_text() {
+                        measured_h.max(c_fs * 1.3)
+                    } else {
+                        measured_h
+                    }
                 }
             }
         }

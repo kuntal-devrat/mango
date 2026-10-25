@@ -12,6 +12,7 @@ pub fn op_mango_get_computed_style(
     state: &mut OpState,
     node_id: u32,
 ) -> std::collections::HashMap<String, String> {
+    crate::ops::dom::query::ensure_layout_up_to_date(state);
     use std::collections::HashMap;
 
     let doc = match state.try_borrow::<SharedDocument>() {
@@ -38,7 +39,21 @@ pub fn op_mango_get_computed_style(
                 if el.tag_name.eq_ignore_ascii_case("style") {
                     let css_text = d.text_content(child.id);
                     if !css_text.trim().is_empty() {
-                        out.push(mango_css::parser::parse_stylesheet(&css_text));
+                        let mut sheet = mango_css::parser::parse_stylesheet(&css_text);
+                        let mut parent_id = d.get(child.id).and_then(|n| n.parent);
+                        if let Some(pid) = parent_id {
+                            if let Some(host) = d.get_host_for_shadow_root(pid) {
+                                parent_id = Some(host);
+                            } else if let Some(pnode) = d.get(pid) {
+                                if let NodeData::Element(pel) = &pnode.data {
+                                    if pel.tag_name.eq_ignore_ascii_case("head") {
+                                        parent_id = d.get(pid).and_then(|n| n.parent);
+                                    }
+                                }
+                            }
+                        }
+                        sheet.scoping_element = parent_id;
+                        out.push(sheet);
                     }
                 }
             }

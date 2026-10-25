@@ -106,7 +106,9 @@ pub fn collect_styles_recursive(doc: &Document, node_id: NodeId, out: &mut Vec<S
                     let mut sheet = parse_stylesheet(&css_text);
                     let mut parent_id = doc.get(child.id).and_then(|n| n.parent);
                     if let Some(pid) = parent_id {
-                        if let Some(pnode) = doc.get(pid) {
+                        if let Some(host) = doc.get_host_for_shadow_root(pid) {
+                            parent_id = Some(host);
+                        } else if let Some(pnode) = doc.get(pid) {
                             if let NodeData::Element(pel) = &pnode.data {
                                 if pel.tag_name.eq_ignore_ascii_case("head") {
                                     // Style in <head> scopes to the document root (<html>)

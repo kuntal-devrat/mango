@@ -18,6 +18,11 @@ pub type DomDirtyFlag = Rc<RefCell<bool>>;
 /// without `mango_js` depending on `mango_layout`.
 pub type LayoutBounds = Rc<RefCell<std::collections::HashMap<u32, [f32; 4]>>>;
 
+/// Optional layout provider callback invoked on demand when layout is dirty and
+/// a measurement API (`getBoundingClientRect`, `offsetWidth`, etc.) is accessed.
+pub type LayoutCallback =
+    Rc<RefCell<Option<Box<dyn Fn(&Document) -> std::collections::HashMap<u32, [f32; 4]>>>>>;
+
 /// Shared cookie jar backing `document.cookie`.
 ///
 /// The browser owns the jar (it loads and saves it from the profile) and shares

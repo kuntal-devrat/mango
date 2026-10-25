@@ -394,6 +394,23 @@ pub fn run_wpt_file(root: &Path, rel_path: &str, timeout: Duration) -> WptFileRe
 
     let mut rt = JsRuntime::new(doc, 800.0, 600.0);
 
+    let sheets_for_cb = external_sheets.clone();
+    rt.set_layout_callback(move |doc| {
+        let refs: Vec<&mango_css::parser::Stylesheet> = sheets_for_cb.iter().collect();
+        let (root, _) = mango_layout::layout_document_with_scroll_xy(
+            doc,
+            &refs,
+            mango_core::Size::new(800.0, 600.0),
+            0.0,
+            0.0,
+        );
+        let mut rects = std::collections::HashMap::new();
+        mango_layout::display_list::stacking::collect_box_rects_with_scroll(
+            &root, 0.0, 0.0, &mut rects,
+        );
+        rects
+    });
+
     for (src, sub_content) in iframes {
         let script = format!(
             "if (typeof __registerSubresource === 'function') {{ __registerSubresource({}, {}); }}",
