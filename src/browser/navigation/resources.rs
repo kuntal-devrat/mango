@@ -307,7 +307,7 @@ fn decode_data_uri_font(data_uri: &str) -> Result<Vec<u8>, Box<dyn std::error::E
             Ok(decoded)
         } else {
             // Plain text / percent-encoded
-            Ok(payload.as_bytes().to_vec())
+            Ok(percent_encoding::percent_decode_str(payload).collect::<Vec<u8>>())
         }
     } else {
         Err("Malformed data: URI — no comma separator".into())
@@ -511,4 +511,27 @@ pub fn extract_title(doc: &Document) -> Option<String> {
     let title_id = doc.find_element_by_tag(doc.root(), "title")?;
     let text = doc.text_content(title_id).trim().to_string();
     if text.is_empty() { None } else { Some(text) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_decode_data_uri() {
+        // Base64
+        let b64_uri = "data:text/plain;base64,SGVsbG8sIFdvcmxkIQ==";
+        let decoded = decode_data_uri_font(b64_uri).unwrap();
+        assert_eq!(decoded, b"Hello, World!");
+
+        // Percent-encoded
+        let pct_uri = "data:text/plain,Hello%2C%20World%21";
+        let decoded2 = decode_data_uri_font(pct_uri).unwrap();
+        assert_eq!(decoded2, b"Hello, World!");
+
+        // Plain text
+        let plain_uri = "data:text/plain,Hello";
+        let decoded3 = decode_data_uri_font(plain_uri).unwrap();
+        assert_eq!(decoded3, b"Hello");
+    }
 }
