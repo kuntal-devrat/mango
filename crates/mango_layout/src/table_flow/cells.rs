@@ -111,7 +111,9 @@ pub fn measure_and_layout_cells(
                 cell_ref.row_idx,
                 cell_ref.cell_idx,
             );
-            let &(_, cell_total_h) = cell_layouts.get(&cell_key).unwrap();
+            let Some(&(_, cell_total_h)) = cell_layouts.get(&cell_key) else {
+                continue;
+            };
 
             let r_start = cell_ref.start_row;
             let r_span = cell_ref.row_span;
@@ -279,7 +281,9 @@ pub fn position_rows_and_cells(
             cell_ref.row_idx,
             cell_ref.cell_idx,
         );
-        let &(cell_w, _) = cell_layouts.get(&cell_key).unwrap();
+        let Some(&(cell_w, _)) = cell_layouts.get(&cell_key) else {
+            continue;
+        };
 
         let c_start = cell_ref.start_col;
         let r_start = cell_ref.start_row;

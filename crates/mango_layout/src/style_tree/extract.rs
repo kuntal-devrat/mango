@@ -225,7 +225,9 @@ pub fn compute_slot_assignments(
             {
                 let slot_name = slot_el.get_attribute("name").unwrap_or("");
                 if slot_name == child_slot {
-                    map.get_mut(&slot_id).unwrap().push(light_child.id);
+                    if let Some(slot_list) = map.get_mut(&slot_id) {
+                        slot_list.push(light_child.id);
+                    }
                     break;
                 }
             }

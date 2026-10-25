@@ -59,7 +59,10 @@ impl BrowserChrome {
                 focused_control: self.focused_control.take(),
                 page_display_list: std::mem::take(&mut self.page_display_list),
                 display_list_cache: std::mem::replace(
-                    &mut *self.display_list_cache.lock().unwrap(),
+                    &mut *self
+                        .display_list_cache
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner()),
                     mango_layout::display_list::DisplayListCache::new(),
                 ),
                 image_rx: self.image_rx.take(),
@@ -178,7 +181,10 @@ impl BrowserChrome {
             }
             self.page_display_list = mango_render::display_list::DisplayList::new();
             self.layer_tree.clear_page_tiles();
-            self.display_list_cache.lock().unwrap().clear();
+            self.display_list_cache
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clear();
             self.cached_stylesheets.clear();
             self.style_snapshot.clear();
             self.image_rx = None;

@@ -89,7 +89,9 @@ impl CertificatePinSet {
             return Ok(true); // No pins configured for this host
         };
 
-        let expected_pins = self.host_pins.get(&target_host).unwrap();
+        let Some(expected_pins) = self.host_pins.get(&target_host) else {
+            return Ok(true);
+        };
         for presented in presented_spki_hashes {
             if expected_pins.iter().any(|exp| exp == presented) {
                 return Ok(true);

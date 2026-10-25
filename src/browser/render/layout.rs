@@ -55,7 +55,10 @@ impl BrowserChrome {
         // a multi-gigabyte peak even though only one page state is needed.
         self.root_box = None;
         self.page_display_list = mango_render::display_list::DisplayList::new();
-        self.display_list_cache.lock().unwrap().clear();
+        self.display_list_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
 
         // Build the page stylesheet index once per DOM version. Animations,
         // image completion, scrolling, and other relayouts reuse it without
@@ -112,7 +115,10 @@ impl BrowserChrome {
         self.cached_scrollable_height =
             crate::scroll::compute_scrollable_height(self.root_box.as_ref());
         self.page_dirty = true;
-        self.display_list_cache.lock().unwrap().invalidate(None);
+        self.display_list_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .invalidate(None);
 
         self.refresh_animation_targets();
         self.publish_layout_bounds();

@@ -251,7 +251,9 @@ impl<'a> CssTokenizer<'a> {
             let mut hash = String::new();
             while let Some(next) = self.peek() {
                 if next.is_ascii_alphanumeric() || next == '-' || next == '_' {
-                    hash.push(self.advance().unwrap());
+                    if let Some(c) = self.advance() {
+                        hash.push(c);
+                    }
                 } else {
                     break;
                 }
@@ -273,13 +275,17 @@ impl<'a> CssTokenizer<'a> {
 
             while let Some(next) = self.peek() {
                 if next.is_ascii_digit() {
-                    num_str.push(self.advance().unwrap());
+                    if let Some(c) = self.advance() {
+                        num_str.push(c);
+                    }
                 } else if next == '.'
                     && !has_dot
                     && self.peek2().map(|p| p.is_ascii_digit()).unwrap_or(false)
                 {
                     has_dot = true;
-                    num_str.push(self.advance().unwrap());
+                    if let Some(c) = self.advance() {
+                        num_str.push(c);
+                    }
                 } else {
                     break;
                 }
@@ -299,13 +305,19 @@ impl<'a> CssTokenizer<'a> {
                     _ => (false, false),
                 };
                 if is_exp {
-                    num_str.push(self.advance().unwrap());
+                    if let Some(c) = self.advance() {
+                        num_str.push(c);
+                    }
                     if has_sign {
-                        num_str.push(self.advance().unwrap());
+                        if let Some(c) = self.advance() {
+                            num_str.push(c);
+                        }
                     }
                     while let Some(next) = self.peek() {
                         if next.is_ascii_digit() {
-                            num_str.push(self.advance().unwrap());
+                            if let Some(c) = self.advance() {
+                                num_str.push(c);
+                            }
                         } else {
                             break;
                         }
@@ -340,7 +352,9 @@ impl<'a> CssTokenizer<'a> {
             }
             while let Some(next) = self.peek() {
                 if is_ident_char(next) {
-                    ident.push(self.advance().unwrap());
+                    if let Some(c) = self.advance() {
+                        ident.push(c);
+                    }
                 } else if next == '\\' {
                     self.advance();
                     if let Some(escaped) = self.consume_escape() {
@@ -404,7 +418,9 @@ impl<'a> CssTokenizer<'a> {
         let mut ident = String::new();
         while let Some(next) = self.peek() {
             if is_ident_char(next) {
-                ident.push(self.advance().unwrap());
+                if let Some(c) = self.advance() {
+                    ident.push(c);
+                }
             } else if next == '\\' {
                 self.advance();
                 if let Some(escaped) = self.consume_escape() {
@@ -420,16 +436,18 @@ impl<'a> CssTokenizer<'a> {
     fn consume_escape(&mut self) -> Option<char> {
         let first = self.advance()?;
         if first.is_ascii_hexdigit() {
-            let mut hex_val = first.to_digit(16).unwrap();
+            let mut hex_val = first.to_digit(16).unwrap_or(0);
             let mut count = 1;
             while count < 6 {
                 if let Some(p) = self.peek()
                     && p.is_ascii_hexdigit()
                 {
-                    let digit = self.advance().unwrap().to_digit(16).unwrap();
-                    hex_val = hex_val * 16 + digit;
-                    count += 1;
-                    continue;
+                    if let Some(c) = self.advance() {
+                        let digit = c.to_digit(16).unwrap_or(0);
+                        hex_val = hex_val * 16 + digit;
+                        count += 1;
+                        continue;
+                    }
                 }
                 break;
             }

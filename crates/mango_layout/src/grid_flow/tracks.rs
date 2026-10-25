@@ -23,11 +23,13 @@ pub fn expand_column_templates(
             .any(|t| matches!(t, GridTrackSize::Subgrid));
 
     if is_subgrid_cols {
-        parent_subgrid_cols
-            .unwrap()
-            .iter()
-            .map(|&w| GridTrackSize::Length(Length::Px(w)))
-            .collect()
+        if let Some(cols) = parent_subgrid_cols {
+            cols.iter()
+                .map(|&w| GridTrackSize::Length(Length::Px(w)))
+                .collect()
+        } else {
+            Vec::new()
+        }
     } else if !template_columns.is_empty() {
         let mut expanded = Vec::new();
         let mut non_repeat_fixed = 0.0f32;

@@ -163,10 +163,12 @@ pub(crate) fn render_layout_box(
 
     let push_blend =
         s_ref.is_some_and(|st| st.mix_blend_mode != mango_css::values::BlendMode::Normal);
-    if push_blend {
-        list.push(DisplayCommand::PushBlendMode {
-            mode: s_ref.unwrap().mix_blend_mode,
-        });
+    if let Some(st) = s_ref {
+        if push_blend {
+            list.push(DisplayCommand::PushBlendMode {
+                mode: st.mix_blend_mode,
+            });
+        }
     }
 
     // A CSS transform establishes a containing block for fixed/absolute descendants
@@ -209,27 +211,30 @@ pub(crate) fn render_layout_box(
     );
 
     let push_clip_path = s_ref.is_some_and(|st| st.clip_path != mango_css::values::ClipPath::None);
-    if push_clip_path {
-        list.push(DisplayCommand::PushClipPath {
-            clip_path: Box::new(s_ref.unwrap().clip_path.clone()),
-            rect: elem_rect,
-        });
-    }
-
     let push_filter = s_ref.is_some_and(|st| !st.filter.is_empty());
-    if push_filter {
-        list.push(DisplayCommand::PushFilter {
-            filters: s_ref.unwrap().filter.clone(),
-            rect: elem_rect,
-        });
-    }
-
     let push_backdrop = s_ref.is_some_and(|st| !st.backdrop_filter.is_empty());
-    if push_backdrop {
-        list.push(DisplayCommand::PushBackdropFilter {
-            filters: s_ref.unwrap().backdrop_filter.clone(),
-            rect: elem_rect,
-        });
+
+    if let Some(st) = s_ref {
+        if push_clip_path {
+            list.push(DisplayCommand::PushClipPath {
+                clip_path: Box::new(st.clip_path.clone()),
+                rect: elem_rect,
+            });
+        }
+
+        if push_filter {
+            list.push(DisplayCommand::PushFilter {
+                filters: st.filter.clone(),
+                rect: elem_rect,
+            });
+        }
+
+        if push_backdrop {
+            list.push(DisplayCommand::PushBackdropFilter {
+                filters: st.backdrop_filter.clone(),
+                rect: elem_rect,
+            });
+        }
     }
 
     render_layout_box_inner(

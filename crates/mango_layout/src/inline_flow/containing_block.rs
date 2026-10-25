@@ -137,8 +137,14 @@ pub(crate) fn resolve_inline_containing_blocks(
                 | WritingMode::VerticalLr
                 | WritingMode::SidewaysRl
                 | WritingMode::SidewaysLr => {
-                    let first_x = matching.first().unwrap().dimensions.content.x();
-                    let last_x = matching.last().unwrap().dimensions.content.x();
+                    let first_x = matching
+                        .first()
+                        .map(|b| b.dimensions.content.x())
+                        .unwrap_or(0.0);
+                    let last_x = matching
+                        .last()
+                        .map(|b| b.dimensions.content.x())
+                        .unwrap_or(0.0);
                     let first_boxes: Vec<&LayoutBox> = matching
                         .iter()
                         .filter(|b| (b.dimensions.content.x() - first_x).abs() < 1.0)
@@ -211,8 +217,14 @@ pub(crate) fn resolve_inline_containing_blocks(
                     compute_inline_containing_block_rect(first_box, last_box, effective_dir, wm)
                 }
                 WritingMode::HorizontalTb => {
-                    let first_y = matching.first().unwrap().dimensions.content.y();
-                    let last_y = matching.last().unwrap().dimensions.content.y();
+                    let first_y = matching
+                        .first()
+                        .map(|b| b.dimensions.content.y())
+                        .unwrap_or(0.0);
+                    let last_y = matching
+                        .last()
+                        .map(|b| b.dimensions.content.y())
+                        .unwrap_or(0.0);
                     let first_boxes: Vec<&LayoutBox> = matching
                         .iter()
                         .filter(|b| (b.dimensions.content.y() - first_y).abs() < 1.0)

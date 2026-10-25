@@ -11,13 +11,14 @@ impl<'a> TreeBuilder<'a> {
         }
 
         // 1. If the last entry is a marker or already in open_elements, return.
-        match self.active_formatting_elements.last().unwrap() {
-            FormattingEntry::Marker => return,
-            FormattingEntry::Element { node_id, .. } => {
+        match self.active_formatting_elements.last() {
+            Some(FormattingEntry::Marker) => return,
+            Some(FormattingEntry::Element { node_id, .. }) => {
                 if self.open_elements.contains(node_id) {
                     return;
                 }
             }
+            None => return,
         }
 
         // 2. Find the last entry before the end that is either a marker or in open_elements.
@@ -206,7 +207,9 @@ impl<'a> TreeBuilder<'a> {
             }
 
             // Step 6: There IS a furthest block
-            let fb_id = furthest_block.unwrap();
+            let Some(fb_id) = furthest_block else {
+                return;
+            };
             let common_ancestor = if stack_idx > 0 {
                 self.open_elements[stack_idx - 1]
             } else {
@@ -216,11 +219,9 @@ impl<'a> TreeBuilder<'a> {
             let mut node;
             let mut last_node = fb_id;
 
-            let fb_stack_idx = self
-                .open_elements
-                .iter()
-                .rposition(|&id| id == fb_id)
-                .unwrap();
+            let Some(fb_stack_idx) = self.open_elements.iter().rposition(|&id| id == fb_id) else {
+                return;
+            };
             let mut curr_stack_idx = fb_stack_idx;
 
             for _ in 0..3 {

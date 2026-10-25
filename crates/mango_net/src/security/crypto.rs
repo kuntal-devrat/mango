@@ -235,8 +235,9 @@ fn sha512_internal(data: &[u8], is_384: bool) -> [u8; 64] {
 
     for chunk in msg.as_chunks::<128>().0 {
         let mut w = [0u64; 80];
-        for i in 0..16 {
-            w[i] = u64::from_be_bytes(chunk[i * 8..(i + 1) * 8].try_into().unwrap());
+        let (words8, _) = chunk.as_chunks::<8>();
+        for (i, &word_bytes) in words8.iter().enumerate().take(16) {
+            w[i] = u64::from_be_bytes(word_bytes);
         }
         for i in 16..80 {
             let s0 = w[i - 15].rotate_right(1) ^ w[i - 15].rotate_right(8) ^ (w[i - 15] >> 7);

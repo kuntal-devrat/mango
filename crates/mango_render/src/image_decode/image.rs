@@ -64,7 +64,10 @@ impl AnimatedImage {
                 return &frame.image;
             }
         }
-        &self.frames.last().unwrap().image
+        self.frames
+            .last()
+            .map(|f| &f.image)
+            .unwrap_or(&self.frames[0].image)
     }
 }
 

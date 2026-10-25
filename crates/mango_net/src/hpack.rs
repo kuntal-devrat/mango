@@ -512,10 +512,8 @@ fn build_huffman_tree() -> HuffmanNode {
         let mut curr = &mut root;
         for i in (0..*bits).rev() {
             let bit = ((*code >> i) & 1) as usize;
-            if curr.children[bit].is_none() {
-                curr.children[bit] = Some(Box::new(HuffmanNode::new()));
-            }
-            curr = curr.children[bit].as_mut().unwrap();
+            let next = curr.children[bit].get_or_insert_with(|| Box::new(HuffmanNode::new()));
+            curr = next.as_mut();
         }
         curr.symbol = Some(*sym);
     }

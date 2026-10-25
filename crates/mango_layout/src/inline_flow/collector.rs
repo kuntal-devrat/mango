@@ -388,8 +388,7 @@ fn collect_inline_atoms_internal(
                 } else if crate::shaping::is_thai_char(ch)
                     && style.word_break != mango_css::values::WordBreak::KeepAll
                 {
-                    let is_syllable_boundary = if !current_word.is_empty() {
-                        let prev = current_word.chars().last().unwrap();
+                    let is_syllable_boundary = if let Some(prev) = current_word.chars().last() {
                         matches!(ch, '\u{0E40}'..='\u{0E44}')
                             || (matches!(ch, '\u{0E01}'..='\u{0E2E}')
                                 && (matches!(prev, '\u{0E30}'..='\u{0E3A}' | '\u{0E47}'..='\u{0E4E}')))
