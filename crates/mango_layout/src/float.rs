@@ -113,27 +113,21 @@ impl FloatContext {
         margin_top: f32,
         clear: Clear,
     ) -> (f32, bool) {
-        match clear {
-            Clear::None => (current_y, false),
-            Clear::Left | Clear::Right | Clear::Both | Clear::InlineStart | Clear::InlineEnd => {
-                let max_bottom = match clear {
-                    Clear::Left | Clear::InlineStart => self.left_bottom(),
-                    Clear::Right | Clear::InlineEnd => self.right_bottom(),
-                    Clear::Both => self.max_bottom(),
-                    Clear::None => unreachable!(),
-                };
-                if let Some(bottom) = max_bottom {
-                    let hypothetical_border_top = current_y + margin_top;
-                    if hypothetical_border_top < bottom {
-                        (bottom, true)
-                    } else {
-                        (current_y, false)
-                    }
-                } else {
-                    (current_y, false)
-                }
+        let max_bottom = match clear {
+            Clear::None => return (current_y, false),
+            Clear::Left | Clear::InlineStart => self.left_bottom(),
+            Clear::Right | Clear::InlineEnd => self.right_bottom(),
+            Clear::Both => self.max_bottom(),
+        };
+
+        if let Some(bottom) = max_bottom {
+            let hypothetical_border_top = current_y + margin_top;
+            if hypothetical_border_top < bottom {
+                return (bottom, true);
             }
         }
+
+        (current_y, false)
     }
 
     /// Determines available horizontal range `(start_x, end_x)` at vertical band `[y, y + height]`.
