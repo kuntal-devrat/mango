@@ -189,7 +189,12 @@ pub fn position_flex_items_on_line(params: LinePlacementParams) {
                 }
             }
         } else {
-            let is_cross_reversed = !is_row && style.direction == mango_css::values::Direction::Rtl;
+            let is_cross_reversed = if is_row {
+                style.flex_wrap == mango_css::values::FlexWrap::WrapReverse
+            } else {
+                (style.direction == mango_css::values::Direction::Rtl)
+                    ^ (style.flex_wrap == mango_css::values::FlexWrap::WrapReverse)
+            };
             let free =
                 line_cross_size - (item_cross + m.pad_cross + m.border_cross + m.margin_cross);
             cross_offset = match item_align {
@@ -744,4 +749,24 @@ pub fn calculate_abspos_static_positions(
         child.dimensions.content.origin.x = static_x - margin_l;
         child.dimensions.content.origin.y = static_y - margin_t;
     }
+}
+
+/// Resolves the main-axis gap for flex item placement on a line.
+///
+/// Ensures percentage gaps resolve against the inner main-axis size of the flex container.
+#[inline]
+pub fn resolve_item_placement_gap(
+    style: &ComputedStyle,
+    is_row: bool,
+    container_main_size: f32,
+    container_height: f32,
+    is_container_main_definite: bool,
+) -> f32 {
+    super::lines::resolve_flex_main_gap(
+        style,
+        is_row,
+        container_main_size,
+        container_height,
+        is_container_main_definite,
+    )
 }

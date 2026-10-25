@@ -28,7 +28,8 @@ pub(crate) fn extract_floats_from_children(
     let mut retained_children = Vec::new();
 
     for mut child in children.drain(..) {
-        let is_float = child.style.as_ref().is_some_and(|s| s.float != Float::None);
+        let is_float =
+            !child.is_text() && child.style.as_ref().is_some_and(|s| s.float != Float::None);
         if is_float {
             if child.link_target.is_none() {
                 child.link_target = parent_link.map(|s| s.to_string());

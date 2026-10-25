@@ -51,6 +51,7 @@ pub fn resolve_item_cross_size(
         AlignSelf::SafeEnd => AlignItems::SafeEnd,
     };
 
+    let is_wrap = container_style.flex_wrap != mango_css::values::FlexWrap::NoWrap;
     let mut cross_size = if is_row {
         if !is_child_height_auto {
             let h = child_style.height.to_px_with_viewport(
@@ -161,13 +162,12 @@ pub fn resolve_item_cross_size(
         } else {
             w
         }
-    } else if matches!(item_align, AlignItems::Normal | AlignItems::Stretch)
+    } else if !is_wrap
+        && matches!(item_align, AlignItems::Normal | AlignItems::Stretch)
         && child_style.width == Length::Auto
     {
-        // An auto cross size on a column flex item is stretched to the flex
-        // line's cross size, including replaced elements.  Do not let an
-        // intrinsic SVG width bypass stretch: the corresponding main size
-        // remains governed by the replaced element's intrinsic height.
+        // An auto cross size on a single-line column flex item is stretched to the flex
+        // line's cross size, including replaced elements.
         (content_width - pad_cross - border_cross - margin_cross.max(0.0)).max(0.0)
     } else if let Some(ratio) = child_style.aspect_ratio
         && ratio > 0.0
@@ -217,7 +217,7 @@ pub fn resolve_item_cross_size(
     } {
         w
     } else {
-        if matches!(item_align, AlignItems::Normal | AlignItems::Stretch) {
+        if !is_wrap && matches!(item_align, AlignItems::Normal | AlignItems::Stretch) {
             (content_width - pad_cross - border_cross - margin_cross.max(0.0)).max(0.0)
         } else {
             let fit_w = crate::block_flow::calculate_shrink_to_fit_width(child, content_width);
@@ -234,8 +234,10 @@ pub fn resolve_item_cross_size(
                 );
                 if max_w > 0.0 {
                     (max_w - pad_cross - border_cross - margin_cross.max(0.0)).max(0.0)
-                } else {
+                } else if !is_wrap {
                     (content_width - pad_cross - border_cross - margin_cross.max(0.0)).max(0.0)
+                } else {
+                    0.0
                 }
             }
         }

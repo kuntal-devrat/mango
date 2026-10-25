@@ -704,6 +704,9 @@ pub fn build_styled_node<'a>(
             // Inherit parent style, forced to inline display
             let mut style = parent_style.cloned().unwrap_or_default();
             style.display = Display::Inline;
+            style.position = mango_css::values::Position::Static;
+            style.float = mango_css::values::Float::None;
+            style.clear = mango_css::values::Clear::None;
             // CSS rule: Raw text nodes do not have backgrounds, borders, or box-shadows
             style.background_image = None;
             style.background_color = mango_core::Color::TRANSPARENT;
@@ -712,6 +715,20 @@ pub fn build_styled_node<'a>(
             style.border_right_width = 0.0;
             style.border_bottom_width = 0.0;
             style.border_left_width = 0.0;
+            style.margin_top = mango_css::values::Length::Px(0.0);
+            style.margin_right = mango_css::values::Length::Px(0.0);
+            style.margin_bottom = mango_css::values::Length::Px(0.0);
+            style.margin_left = mango_css::values::Length::Px(0.0);
+            style.padding_top = mango_css::values::Length::Px(0.0);
+            style.padding_right = mango_css::values::Length::Px(0.0);
+            style.padding_bottom = mango_css::values::Length::Px(0.0);
+            style.padding_left = mango_css::values::Length::Px(0.0);
+            style.width = mango_css::values::Length::Auto;
+            style.height = mango_css::values::Length::Auto;
+            style.min_width = mango_css::values::Length::Auto;
+            style.min_height = mango_css::values::Length::Auto;
+            style.max_width = mango_css::values::Length::Auto;
+            style.max_height = mango_css::values::Length::Auto;
 
             Some(StyledNode::with_text(Some(node_id), style, text_to_use))
         }

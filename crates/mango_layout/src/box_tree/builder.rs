@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use mango_css::values::{Display, Length, Position};
+use mango_css::values::{Clear, Display, Float, Length, Position};
 
 use crate::box_model::BoxType;
 use crate::style_tree::StyledNode;
@@ -198,10 +198,22 @@ pub fn build_box_tree_with_maps(
         let mut style = (*styled_node.style).clone();
         style.display = Display::Inline;
         style.position = Position::Static;
+        style.float = Float::None;
+        style.clear = Clear::None;
         style.margin_top = Length::Px(0.0);
         style.margin_right = Length::Px(0.0);
         style.margin_bottom = Length::Px(0.0);
         style.margin_left = Length::Px(0.0);
+        style.padding_top = Length::Px(0.0);
+        style.padding_right = Length::Px(0.0);
+        style.padding_bottom = Length::Px(0.0);
+        style.padding_left = Length::Px(0.0);
+        style.width = Length::Auto;
+        style.height = Length::Auto;
+        style.min_width = Length::Auto;
+        style.min_height = Length::Auto;
+        style.max_width = Length::Auto;
+        style.max_height = Length::Auto;
         Some(std::sync::Arc::new(style))
     } else {
         Some(styled_node.style.clone())

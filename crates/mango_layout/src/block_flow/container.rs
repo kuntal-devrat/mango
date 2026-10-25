@@ -506,7 +506,7 @@ pub(crate) fn layout_block_children(
             } else {
                 cursor_y + child.dimensions.border.top + child.dimensions.padding.top
             };
-            child.dimensions.content.origin = Point::new(child_x.round(), child_y.round());
+            child.dimensions.content.origin = Point::new(child_x, child_y);
 
             // Pre-calculate definite/tentative height for child so descendants resolving
             // percentage heights have a definite containing block height.

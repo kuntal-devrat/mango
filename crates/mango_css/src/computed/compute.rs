@@ -78,6 +78,20 @@ pub fn compute_style_with_shadow_and_part_indexes(
         // Copy-on-write below preserves CSS semantics when a node overrides a
         // variable, while the common case remains one shared immutable map.
         style.custom_properties = Arc::clone(&parent.custom_properties);
+        // Inherit any inheritable custom properties from parent.local_custom_properties
+        if !parent.local_custom_properties.is_empty() {
+            for (prop, val) in &parent.local_custom_properties {
+                let non_inherited = author_index
+                    .property_rules
+                    .get(prop)
+                    .or_else(|| shadow_index.and_then(|shadow| shadow.property_rules.get(prop)))
+                    .is_some_and(|reg| !reg.inherits);
+                if !non_inherited {
+                    let cp = Arc::make_mut(&mut style.custom_properties);
+                    cp.insert(prop.clone(), val.clone());
+                }
+            }
+        }
         style.color = parent.color;
         style.font_size = parent.font_size;
         style.font_weight = parent.font_weight;
@@ -132,17 +146,9 @@ pub fn compute_style_with_shadow_and_part_indexes(
         }
     }
     if !custom_props.is_empty() {
-        if style.custom_properties.len() > 256 {
-            for (prop, val) in custom_props {
-                style
-                    .local_custom_properties
-                    .insert(prop.clone(), val.clone());
-            }
-        } else {
-            let cp = Arc::make_mut(&mut style.custom_properties);
-            for (prop, val) in custom_props {
-                cp.insert(prop.clone(), val.clone());
-            }
+        let cp = Arc::make_mut(&mut style.custom_properties);
+        for (prop, val) in custom_props {
+            cp.insert(prop.clone(), val.clone());
         }
     }
 

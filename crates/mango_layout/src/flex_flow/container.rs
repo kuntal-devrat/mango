@@ -9,11 +9,13 @@ use crate::float::FloatContext;
 use super::alignment::{
     compute_align_content_spacing, compute_justify_content_spacing, compute_line_cross_sizes,
 };
-use super::lines::{build_flex_lines, resolve_flexible_lengths};
+use super::lines::{
+    build_flex_lines, resolve_flex_cross_gap, resolve_flex_main_gap, resolve_flexible_lengths,
+};
 use super::metrics::measure_item_metrics;
 use super::placement::{
-    ContainerFinalizeParams, LinePlacementParams, apply_wrap_reverse,
-    calculate_abspos_static_positions, finalize_container_height, position_flex_items_on_line,
+    ContainerFinalizeParams, LinePlacementParams, calculate_abspos_static_positions,
+    finalize_container_height, position_flex_items_on_line,
 };
 
 /// Executes Flexbox layout on a flex container box according to CSS Flexible Box Layout Module Level 1.
@@ -413,38 +415,6 @@ pub fn layout_flex(
     let is_wrap = style.flex_wrap != FlexWrap::NoWrap;
     let is_wrap_reverse = style.flex_wrap == FlexWrap::WrapReverse;
 
-    let main_gap = if is_row {
-        style.column_gap.to_px_with_viewport(
-            font_size,
-            root_font_size,
-            content_width,
-            container_height,
-        )
-    } else {
-        style.row_gap.to_px_with_viewport(
-            font_size,
-            root_font_size,
-            content_width,
-            container_height,
-        )
-    };
-
-    let cross_gap = if is_row {
-        style.row_gap.to_px_with_viewport(
-            font_size,
-            root_font_size,
-            content_width,
-            container_height,
-        )
-    } else {
-        style.column_gap.to_px_with_viewport(
-            font_size,
-            root_font_size,
-            content_width,
-            container_height,
-        )
-    };
-
     // 3. Sort children by `order` (stable sort)
     container
         .children
@@ -538,6 +508,14 @@ pub fn layout_flex(
         min_main_size
     };
 
+    let main_gap = resolve_flex_main_gap(
+        &style,
+        is_row,
+        container_main_size,
+        container_height,
+        is_container_main_definite,
+    );
+
     let lines = build_flex_lines(
         &item_metrics,
         is_wrap,
@@ -571,6 +549,8 @@ pub fn layout_flex(
         content_width
     };
 
+    let cross_gap = resolve_flex_cross_gap(&style, is_row, container_cross_size, container_height);
+
     let (mut line_cross_sizes, line_baseline_ascents) = compute_line_cross_sizes(
         &lines,
         &item_metrics,
@@ -581,13 +561,16 @@ pub fn layout_flex(
         container_cross_size,
     );
 
-    let (mut cross_cursor, line_spacing) = compute_align_content_spacing(
+    let (cross_cursor, line_spacing) = compute_align_content_spacing(
         &mut line_cross_sizes,
         &style,
         is_wrap,
         container_cross_size,
         cross_gap,
     );
+
+    let cross_start_offset = cross_cursor;
+    let mut normal_cross_cursor = cross_start_offset;
 
     for (line_idx, line) in lines.iter().enumerate() {
         let (main_cursor, item_spacing) = compute_justify_content_spacing(
@@ -602,6 +585,14 @@ pub fn layout_flex(
         );
 
         let line_cross_size = line_cross_sizes[line_idx];
+
+        let line_cross_cursor = if is_wrap_reverse {
+            let after_lines_size: f32 = line_cross_sizes[line_idx + 1..].iter().sum();
+            let after_lines_count = line_cross_sizes.len() - 1 - line_idx;
+            cross_start_offset + after_lines_size + after_lines_count as f32 * line_spacing
+        } else {
+            normal_cross_cursor
+        };
 
         position_flex_items_on_line(LinePlacementParams {
             line,
@@ -618,12 +609,12 @@ pub fn layout_flex(
             content_width,
             line_cross_size,
             line_baseline_ascent: line_baseline_ascents[line_idx],
-            cross_cursor,
+            cross_cursor: line_cross_cursor,
             main_cursor,
             item_spacing,
         });
 
-        cross_cursor += line_cross_size + line_spacing;
+        normal_cross_cursor += line_cross_size + line_spacing;
     }
 
     // 7. Calculate container final height
@@ -636,7 +627,7 @@ pub fn layout_flex(
         root_font_size,
         container_height,
         content_height,
-        cross_cursor,
+        cross_cursor: normal_cross_cursor,
         cross_gap,
         container_y,
         pad_top,
@@ -644,10 +635,6 @@ pub fn layout_flex(
         border_top,
         border_bottom,
     });
-
-    if is_wrap_reverse {
-        apply_wrap_reverse(container, is_row, container_x, container_y);
-    }
 
     // 8. Calculate static positions for out-of-flow positioned children (CSS Flexbox §4.1)
     calculate_abspos_static_positions(

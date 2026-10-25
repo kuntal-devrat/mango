@@ -23,7 +23,15 @@ pub fn establishes_bfc(box_node: &LayoutBox) -> bool {
     }
     if matches!(
         style.display,
-        Display::FlowRoot | Display::InlineBlock | Display::TableCell | Display::TableCaption
+        Display::FlowRoot
+            | Display::InlineBlock
+            | Display::TableCell
+            | Display::TableCaption
+            | Display::Flex
+            | Display::InlineFlex
+            | Display::Grid
+            | Display::InlineGrid
+            | Display::Table
     ) {
         return true;
     }
