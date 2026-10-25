@@ -622,12 +622,14 @@ impl CookieJar {
         // Write temp file.
         {
             use std::io::Write as _;
-            let mut f = std::fs::File::create(&tmp_path)?;
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create(true).truncate(true);
             #[cfg(unix)]
             {
-                use std::os::unix::fs::PermissionsExt as _;
-                let _ = f.set_permissions(std::fs::Permissions::from_mode(0o600));
+                use std::os::unix::fs::OpenOptionsExt as _;
+                options.mode(0o600);
             }
+            let mut f = options.open(&tmp_path)?;
             f.write_all(body.as_bytes())?;
             f.sync_all()?;
         }
