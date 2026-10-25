@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use mango_css::computed::ComputedStyle;
+use mango_css::values::WritingMode;
 use mango_html::dom::NodeId;
 
 use crate::box_model::BoxType;
@@ -48,6 +49,8 @@ pub struct LayoutBox {
     pub positioned_descendant_cache: std::sync::OnceLock<bool>,
     /// Explicitly overridden containing block (e.g. for absolute elements inside fragmented inline elements).
     pub custom_containing_block: Option<Dimensions>,
+    /// Containing block for fixed elements when an ancestor traps fixed positioning (transform, will-change, etc.).
+    pub fixed_containing_block: Option<Dimensions>,
     /// DOM node identifier of containing inline element, if this box is an out-of-flow child of an inline.
     pub containing_inline_id: Option<NodeId>,
     /// Computed style of containing positioned inline ancestor, used to resolve static position relative offsets.
@@ -56,6 +59,8 @@ pub struct LayoutBox {
     pub static_position: Option<mango_core::Point>,
     /// Whether the static position represents the bottom edge of the hypothetical box (e.g. in RTL vertical flow).
     pub is_static_bottom_anchored: bool,
+    /// Writing mode of the containing block, used to resolve alignment axes.
+    pub containing_block_writing_mode: Option<WritingMode>,
 }
 
 /// Supported geometric shapes for `<area>` elements in HTML image maps.

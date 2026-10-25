@@ -214,16 +214,39 @@ fn layout_table_contents(
     }
 
     if row_refs.is_empty() {
-        // Lay out bottom captions if any
-        for &cap_idx in &bottom_caption_indices {
-            let caption = &mut table_box.children[cap_idx];
-            let mut caption_cb = Dimensions::new(Rect::new(table_x, current_y, table_w, 10000.0));
-            caption_cb.content.size.width = table_w;
-            let mut cap_float_ctx = FloatContext::new();
-            crate::block_flow::layout_block(caption, &caption_cb, &mut cap_float_ctx);
-            current_y += caption.dimensions.margin_box().height();
+        let mut max_child_w: f32 = 0.0;
+        for (idx, child) in table_box.children.iter_mut().enumerate() {
+            if top_caption_indices.contains(&idx) {
+                continue;
+            }
+            if bottom_caption_indices.contains(&idx) {
+                let mut caption_cb =
+                    Dimensions::new(Rect::new(table_x, current_y, table_w, 10000.0));
+                caption_cb.content.size.width = table_w;
+                let mut cap_float_ctx = FloatContext::new();
+                crate::block_flow::layout_block(child, &caption_cb, &mut cap_float_ctx);
+                current_y += child.dimensions.margin_box().height();
+                max_child_w = max_child_w.max(child.dimensions.margin_box().width());
+            } else {
+                let mut child_cb = Dimensions::new(Rect::new(table_x, current_y, table_w, 10000.0));
+                child_cb.content.size.width = table_w;
+                let mut child_float_ctx = FloatContext::new();
+                crate::block_flow::layout_block(child, &child_cb, &mut child_float_ctx);
+                current_y += child.dimensions.margin_box().height();
+                let cw = child.dimensions.border_box().width();
+                max_child_w = max_child_w.max(cw);
+            }
         }
-        let raw_h = (current_y - table_box.dimensions.content.y()).max(10.0);
+        let is_auto_table_width =
+            style.width == Length::Auto && table_box.get_attribute("width").is_none();
+        if is_auto_table_width && max_child_w > 0.0 {
+            table_box.dimensions.content.size.width = max_child_w;
+        }
+        let raw_h = (current_y - table_box.dimensions.content.y()).max(if max_child_w > 0.0 {
+            0.0
+        } else {
+            10.0
+        });
         let font_size = style.font_size;
         let (_, vp_h) = mango_css::get_current_viewport();
         let min_h = style

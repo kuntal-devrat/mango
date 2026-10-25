@@ -38,10 +38,12 @@ impl LayoutBox {
             is_independent_formatting_context: false,
             positioned_descendant_cache: std::sync::OnceLock::new(),
             custom_containing_block: None,
+            fixed_containing_block: None,
             containing_inline_id: None,
             positioned_inline_style: None,
             static_position: None,
             is_static_bottom_anchored: false,
+            containing_block_writing_mode: None,
         }
     }
 
@@ -178,10 +180,12 @@ impl LayoutBox {
             is_independent_formatting_context: false,
             positioned_descendant_cache: std::sync::OnceLock::new(),
             custom_containing_block: None,
+            fixed_containing_block: None,
             containing_inline_id: None,
             positioned_inline_style: None,
             static_position: None,
             is_static_bottom_anchored: false,
+            containing_block_writing_mode: None,
         }
     }
 

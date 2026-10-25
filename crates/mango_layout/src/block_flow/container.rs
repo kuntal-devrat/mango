@@ -185,7 +185,7 @@ pub(crate) fn layout_block_children(
         })
         .unwrap_or(false);
     let is_root = box_node.tag_name.as_deref().is_some_and(|t| t == "html");
-    let child_cb = if is_positioned_ancestor || is_root {
+    let mut child_cb = if is_positioned_ancestor || is_root {
         box_node.dimensions
     } else {
         *containing_block
@@ -355,8 +355,30 @@ pub(crate) fn layout_block_children(
             }
         }
         let box_establishes_bfc = establishes_bfc(box_node);
+        let box_traps_fixed = box_node
+            .style
+            .as_ref()
+            .map(|s| {
+                !s.transform.is_identity()
+                    || !s.filter.is_empty()
+                    || !s.backdrop_filter.is_empty()
+                    || matches!(
+                        s.contain,
+                        mango_css::values::Contain::Paint
+                            | mango_css::values::Contain::Strict
+                            | mango_css::values::Contain::Layout
+                            | mango_css::values::Contain::Content
+                    )
+                    || s.will_change
+            })
+            .unwrap_or(false);
 
         for child in box_node.children.iter_mut() {
+            if box_traps_fixed {
+                child.fixed_containing_block = Some(box_node.dimensions);
+            } else if box_node.fixed_containing_block.is_some() {
+                child.fixed_containing_block = box_node.fixed_containing_block;
+            }
             let child_pos = child
                 .style
                 .as_ref()
@@ -408,6 +430,10 @@ pub(crate) fn layout_block_children(
                 if diff > 0.0 {
                     box_node.dimensions.margin.top = collapsed;
                     box_node.dimensions.content.origin.y += diff;
+                    container_dims.content.origin.y = box_node.dimensions.content.origin.y;
+                    if is_positioned_ancestor || is_root {
+                        child_cb = box_node.dimensions;
+                    }
                 }
                 cursor_y = box_node.dimensions.content.origin.y;
             }

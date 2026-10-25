@@ -454,7 +454,7 @@
         offsetLeft: {
             get: function() {
                 var p = this.offsetParent;
-                if (p) return Math.round(this.getBoundingClientRect().left - p.getBoundingClientRect().left);
+                if (p) return Math.round(this.getBoundingClientRect().left - p.getBoundingClientRect().left - (p.clientLeft || 0));
                 return Math.round(this.getBoundingClientRect().left);
             },
             configurable: true
@@ -462,7 +462,7 @@
         offsetTop: {
             get: function() {
                 var p = this.offsetParent;
-                if (p) return Math.round(this.getBoundingClientRect().top - p.getBoundingClientRect().top);
+                if (p) return Math.round(this.getBoundingClientRect().top - p.getBoundingClientRect().top - (p.clientTop || 0));
                 return Math.round(this.getBoundingClientRect().top);
             },
             configurable: true

@@ -1,5 +1,7 @@
 use mango_core::Point;
-use mango_css::values::{BoxSizing, Direction, Display, Length, Position, WritingMode};
+use mango_css::values::{
+    AlignSelf, BoxSizing, Direction, Display, JustifySelf, Length, Position, WritingMode,
+};
 
 use crate::box_tree::LayoutBox;
 use crate::dimensions::Dimensions;
@@ -59,14 +61,60 @@ pub fn layout_positioned_children_with_cb(
     let is_positioned_ancestor = box_node
         .style
         .as_ref()
-        .map(|s| !matches!(s.position, Position::Static))
+        .map(|s| {
+            !matches!(s.position, Position::Static)
+                || !s.transform.is_identity()
+                || !s.filter.is_empty()
+                || !s.backdrop_filter.is_empty()
+                || matches!(
+                    s.contain,
+                    mango_css::values::Contain::Paint
+                        | mango_css::values::Contain::Strict
+                        | mango_css::values::Contain::Layout
+                        | mango_css::values::Contain::Content
+                )
+                || s.will_change
+        })
         .unwrap_or(false);
     let container_dims = if is_positioned_ancestor {
         box_node.dimensions
     } else {
         *containing_block
     };
+    let cb_wm = if is_positioned_ancestor {
+        box_node
+            .style
+            .as_ref()
+            .map(|s| s.writing_mode)
+            .unwrap_or(WritingMode::HorizontalTb)
+    } else {
+        box_node
+            .containing_block_writing_mode
+            .unwrap_or(WritingMode::HorizontalTb)
+    };
+    let box_traps_fixed = box_node
+        .style
+        .as_ref()
+        .map(|s| {
+            !s.transform.is_identity()
+                || !s.filter.is_empty()
+                || !s.backdrop_filter.is_empty()
+                || matches!(
+                    s.contain,
+                    mango_css::values::Contain::Paint
+                        | mango_css::values::Contain::Strict
+                        | mango_css::values::Contain::Layout
+                        | mango_css::values::Contain::Content
+                )
+                || s.will_change
+        })
+        .unwrap_or(false);
     for child in box_node.children.iter_mut() {
+        if box_traps_fixed {
+            child.fixed_containing_block = Some(box_node.dimensions);
+        } else if child.fixed_containing_block.is_none() {
+            child.fixed_containing_block = box_node.fixed_containing_block;
+        }
         let child_pos = child
             .style
             .as_ref()
@@ -76,13 +124,20 @@ pub fn layout_positioned_children_with_cb(
             if child.containing_inline_id.is_some() {
                 continue;
             }
-            let child_custom_cb = child.custom_containing_block;
+            child.containing_block_writing_mode = Some(cb_wm);
+            let child_custom_cb = if child.containing_inline_id.is_some() {
+                child.custom_containing_block
+            } else {
+                None
+            };
             let cb = if let Some(ref custom_cb) = child_custom_cb {
                 custom_cb
             } else {
                 &container_dims
             };
             layout_positioned_element(child, cb, float_ctx);
+        } else {
+            child.containing_block_writing_mode = Some(cb_wm);
         }
     }
 }
@@ -160,27 +215,48 @@ pub(crate) fn layout_positioned_element(
         || box_node.get_attribute("data-mango-popover-open") == Some("pending")
         || box_node.get_attribute(":popover-open") == Some("pending");
 
-    let fixed_cb;
-    let custom_cb_copy = box_node.custom_containing_block;
-    let cb = if style.position == Position::Fixed || is_top_layer {
-        fixed_cb = Dimensions::new(mango_core::Rect::new(0.0, 0.0, vp_w, vp_h));
-        &fixed_cb
-    } else if let Some(ref custom_cb) = custom_cb_copy {
+    let fixed_cb_storage;
+    let custom_cb_copy = if box_node.containing_inline_id.is_some() {
+        box_node.custom_containing_block
+    } else {
+        None
+    };
+    let fixed_cb_copy = box_node.fixed_containing_block;
+    let cb = if let Some(ref custom_cb) = custom_cb_copy {
         custom_cb
+    } else if style.position == Position::Fixed {
+        if let Some(ref fcb) = fixed_cb_copy {
+            fcb
+        } else {
+            fixed_cb_storage = Dimensions::new(mango_core::Rect::new(0.0, 0.0, vp_w, vp_h));
+            &fixed_cb_storage
+        }
+    } else if is_top_layer {
+        fixed_cb_storage = Dimensions::new(mango_core::Rect::new(0.0, 0.0, vp_w, vp_h));
+        &fixed_cb_storage
     } else {
         containing_block
     };
 
-    calculate_block_width(box_node, cb);
-    if style.height != Length::Auto {
-        calculate_block_height(box_node, cb);
-    }
-
-    let pad_box = if style.position == Position::Fixed || is_top_layer {
+    let pad_box = if let Some(ref custom_cb) = custom_cb_copy {
+        custom_cb.padding_box()
+    } else if (style.position == Position::Fixed && fixed_cb_copy.is_none()) || is_top_layer {
         mango_core::Rect::new(0.0, 0.0, vp_w, vp_h)
     } else {
         cb.padding_box()
     };
+
+    let abspos_cb = Dimensions::new(pad_box);
+    let sizing_cb = if style.position == Position::Absolute {
+        &abspos_cb
+    } else {
+        cb
+    };
+
+    calculate_block_width(box_node, sizing_cb);
+    if style.height != Length::Auto {
+        calculate_block_height(box_node, sizing_cb);
+    }
 
     let pad_w = pad_box.width();
     let pad_h = pad_box.height();
@@ -248,6 +324,27 @@ pub(crate) fn layout_positioned_element(
         }
     };
 
+    let cb_wm = if style.position == Position::Fixed && custom_cb_copy.is_none() && !is_top_layer {
+        WritingMode::HorizontalTb
+    } else {
+        box_node
+            .containing_block_writing_mode
+            .unwrap_or(WritingMode::HorizontalTb)
+    };
+    let is_table =
+        matches!(style.display, Display::Table) || box_node.tag_name.as_deref() == Some("table");
+    let (allows_stretch_w, allows_stretch_h) = if cb_wm.is_vertical() {
+        (
+            !is_table && matches!(style.align_self, AlignSelf::Auto | AlignSelf::Stretch),
+            !is_table && matches!(style.justify_self, JustifySelf::Auto | JustifySelf::Stretch),
+        )
+    } else {
+        (
+            !is_table && matches!(style.justify_self, JustifySelf::Auto | JustifySelf::Stretch),
+            !is_table && matches!(style.align_self, AlignSelf::Auto | AlignSelf::Stretch),
+        )
+    };
+
     // 1. Horizontal positioning (CSS 2.1 § 10.3.7)
     let is_left_auto = style.left == Length::Auto;
     let is_right_auto = style.right == Length::Auto;
@@ -270,7 +367,8 @@ pub(crate) fn layout_positioned_element(
     };
 
     // If both left and right are specified and width is auto, width expands to fill the span
-    let has_left_right_auto_width = !is_left_auto && !is_right_auto && style.width == Length::Auto;
+    let has_left_right_auto_width =
+        !is_left_auto && !is_right_auto && style.width == Length::Auto && allows_stretch_w;
     let mut stretched_w = None;
     if has_left_right_auto_width {
         let non_content_h = box_node.dimensions.padding.left
@@ -332,7 +430,7 @@ pub(crate) fn layout_positioned_element(
 
     // If both top and bottom are specified and height is auto, height expands to fill the span
     let has_top_bottom_auto_height =
-        !is_top_auto && !is_bottom_auto && style.height == Length::Auto;
+        !is_top_auto && !is_bottom_auto && style.height == Length::Auto && allows_stretch_h;
     let mut stretched_h = None;
     if has_top_bottom_auto_height {
         let non_content_v = box_node.dimensions.padding.top
@@ -666,6 +764,74 @@ pub(crate) fn layout_positioned_element(
         let dy = actual_content_y - box_node.dimensions.content.y();
         box_node.dimensions.content.origin.y = actual_content_y;
         shift_descendants(box_node, 0.0, dy);
+    }
+
+    if !is_top_auto && !is_bottom_auto && !has_top_bottom_auto_height {
+        let top_px = calc_top_px(&style.top);
+        let bottom_px = calc_bottom_px(&style.bottom);
+        let actual_border_box_h = box_node.dimensions.border_box().height();
+        let actual_box_y = if is_margin_t_auto && is_margin_b_auto {
+            let free_space = (pad_h - top_px - bottom_px - actual_border_box_h).max(0.0);
+            let m = free_space / 2.0;
+            box_node.dimensions.margin.top = m;
+            box_node.dimensions.margin.bottom = m;
+            pad_box.y() + top_px + m
+        } else if is_margin_t_auto {
+            let m = (pad_h - top_px - bottom_px - actual_border_box_h - margin_b).max(0.0);
+            box_node.dimensions.margin.top = m;
+            box_node.dimensions.margin.bottom = margin_b;
+            pad_box.y() + top_px + m
+        } else if is_margin_b_auto {
+            let m = (pad_h - top_px - bottom_px - actual_border_box_h - margin_t).max(0.0);
+            box_node.dimensions.margin.top = margin_t;
+            box_node.dimensions.margin.bottom = m;
+            pad_box.y() + top_px + margin_t
+        } else {
+            box_node.dimensions.margin.top = margin_t;
+            box_node.dimensions.margin.bottom = margin_b;
+            pad_box.y() + top_px + margin_t
+        };
+        let actual_content_y =
+            actual_box_y + box_node.dimensions.border.top + box_node.dimensions.padding.top;
+        let dy = actual_content_y - box_node.dimensions.content.y();
+        if dy.abs() > 0.001 {
+            box_node.dimensions.content.origin.y = actual_content_y;
+            shift_descendants(box_node, 0.0, dy);
+        }
+    }
+
+    if !is_left_auto && !is_right_auto && !has_left_right_auto_width {
+        let left_px = calc_left_px(&style.left);
+        let right_px = calc_right_px(&style.right);
+        let actual_border_box_w = box_node.dimensions.border_box().width();
+        let actual_box_x = if is_margin_l_auto && is_margin_r_auto {
+            let free_space = (pad_w - left_px - right_px - actual_border_box_w).max(0.0);
+            let m = free_space / 2.0;
+            box_node.dimensions.margin.left = m;
+            box_node.dimensions.margin.right = m;
+            pad_box.x() + left_px + m
+        } else if is_margin_l_auto {
+            let m = (pad_w - left_px - right_px - actual_border_box_w - margin_r).max(0.0);
+            box_node.dimensions.margin.left = m;
+            box_node.dimensions.margin.right = margin_r;
+            pad_box.x() + left_px + m
+        } else if is_margin_r_auto {
+            let m = (pad_w - left_px - right_px - actual_border_box_w - margin_l).max(0.0);
+            box_node.dimensions.margin.left = margin_l;
+            box_node.dimensions.margin.right = m;
+            pad_box.x() + left_px + margin_l
+        } else {
+            box_node.dimensions.margin.left = margin_l;
+            box_node.dimensions.margin.right = margin_r;
+            pad_box.x() + left_px + margin_l
+        };
+        let actual_content_x =
+            actual_box_x + box_node.dimensions.border.left + box_node.dimensions.padding.left;
+        let dx = actual_content_x - box_node.dimensions.content.x();
+        if dx.abs() > 0.001 {
+            box_node.dimensions.content.origin.x = actual_content_x;
+            shift_descendants(box_node, dx, 0.0);
+        }
     }
 
     let is_static_y = is_top_auto && is_bottom_auto;

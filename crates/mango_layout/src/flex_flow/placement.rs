@@ -189,22 +189,32 @@ pub fn position_flex_items_on_line(params: LinePlacementParams) {
                 }
             }
         } else {
+            let is_cross_reversed = !is_row && style.direction == mango_css::values::Direction::Rtl;
+            let free =
+                line_cross_size - (item_cross + m.pad_cross + m.border_cross + m.margin_cross);
             cross_offset = match item_align {
                 AlignItems::Normal
                 | AlignItems::FlexStart
                 | AlignItems::Stretch
                 | AlignItems::SafeFlexStart
-                | AlignItems::SafeStart => 0.0,
+                | AlignItems::SafeStart => {
+                    if is_cross_reversed {
+                        free
+                    } else {
+                        0.0
+                    }
+                }
                 AlignItems::Baseline => {
                     if is_row && line_baseline_ascent > 0.0 {
                         (line_baseline_ascent - m.baseline_ascent).max(0.0)
+                    } else if is_cross_reversed {
+                        free
                     } else {
                         0.0
                     }
                 }
                 AlignItems::FlexEnd | AlignItems::SafeFlexEnd | AlignItems::SafeEnd => {
-                    let off = line_cross_size
-                        - (item_cross + m.pad_cross + m.border_cross + m.margin_cross);
+                    let off = if is_cross_reversed { 0.0 } else { free };
                     if matches!(item_align, AlignItems::SafeFlexEnd | AlignItems::SafeEnd) {
                         off.max(0.0)
                     } else {
@@ -212,9 +222,7 @@ pub fn position_flex_items_on_line(params: LinePlacementParams) {
                     }
                 }
                 AlignItems::Center | AlignItems::SafeCenter => {
-                    let off = (line_cross_size
-                        - (item_cross + m.pad_cross + m.border_cross + m.margin_cross))
-                        / 2.0;
+                    let off = free / 2.0;
                     if item_align == AlignItems::SafeCenter {
                         off.max(0.0)
                     } else {
@@ -686,6 +694,8 @@ pub fn calculate_abspos_static_positions(
             AlignSelf::SafeEnd => AlignItems::SafeEnd,
         };
 
+        let is_cross_reversed = (style.flex_wrap == mango_css::values::FlexWrap::WrapReverse)
+            ^ (!is_row && style.direction == mango_css::values::Direction::Rtl);
         let free_cross = cross_size - item_cross_size;
         let cross_pos = match align {
             AlignItems::Normal
@@ -693,9 +703,27 @@ pub fn calculate_abspos_static_positions(
             | AlignItems::Stretch
             | AlignItems::Baseline
             | AlignItems::SafeFlexStart
-            | AlignItems::SafeStart => 0.0,
-            AlignItems::FlexEnd => free_cross,
-            AlignItems::SafeFlexEnd | AlignItems::SafeEnd => free_cross.max(0.0),
+            | AlignItems::SafeStart => {
+                if is_cross_reversed {
+                    free_cross
+                } else {
+                    0.0
+                }
+            }
+            AlignItems::FlexEnd => {
+                if is_cross_reversed {
+                    0.0
+                } else {
+                    free_cross
+                }
+            }
+            AlignItems::SafeFlexEnd | AlignItems::SafeEnd => {
+                if is_cross_reversed {
+                    0.0
+                } else {
+                    free_cross.max(0.0)
+                }
+            }
             AlignItems::Center => free_cross / 2.0,
             AlignItems::SafeCenter => (free_cross / 2.0).max(0.0),
         };

@@ -282,10 +282,10 @@ pub fn op_mango_get_computed_style(
         mango_css::values::Position::Sticky => "sticky",
     };
     map.insert("position".to_string(), pos_str.to_string());
-    let top_str = format_css_length(&style.top, style.font_size, style.root_font_size, cb_w);
-    let right_str = format_css_length(&style.right, style.font_size, style.root_font_size, cb_w);
-    let bottom_str = format_css_length(&style.bottom, style.font_size, style.root_font_size, cb_w);
-    let left_str = format_css_length(&style.left, style.font_size, style.root_font_size, cb_w);
+    let top_str = format_css_length(&style.top, style.font_size, style.root_font_size, None);
+    let right_str = format_css_length(&style.right, style.font_size, style.root_font_size, None);
+    let bottom_str = format_css_length(&style.bottom, style.font_size, style.root_font_size, None);
+    let left_str = format_css_length(&style.left, style.font_size, style.root_font_size, None);
     map.insert("top".to_string(), top_str.clone());
     map.insert("right".to_string(), right_str.clone());
     map.insert("bottom".to_string(), bottom_str.clone());
