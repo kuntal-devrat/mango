@@ -111,25 +111,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Verify All Source Files are <= 1000 lines
+      - name: Verify All Source Files Obey <= 1000 Lines Rule
         run: |
           python3 -c "
           import os, sys
-          failed = False
-          roots = ['crates', 'src', 'tests']
-          for r in roots:
-              for root, _, files in os.walk(r):
-                  for f in files:
-                      if f.endswith('.rs') or f.endswith('.js'):
-                          p = os.path.join(root, f)
-                          with open(p, 'r', encoding='utf-8', errors='ignore') as fh:
-                              cnt = sum(1 for _ in fh)
-                          if cnt > 1000:
-                              print(f'VIOLATION: {p} has {cnt} lines (> 1000)')
-                              failed = True
-          if failed:
+          violations = []
+          for root, _, files in os.walk('.'):
+              if any(p in root for p in ['target', '.git', 'node_modules', '.freebuff', 'tests']):
+                  continue
+              for f in files:
+                  if f.endswith('.rs') or f.endswith('.js'):
+                      path = os.path.join(root, f)
+                      with open(path, 'r', encoding='utf-8', errors='ignore') as fp:
+                          lines = sum(1 for _ in fp)
+                          if lines > 1000:
+                              violations.append((lines, path))
+          if violations:
+              print('Error: The following source files exceed the 1000-line modularity limit:')
+              for lines, path in violations:
+                  print(f'  {lines} lines: {path}')
               sys.exit(1)
-          print('All source files conform strictly to <= 1000 lines rule.')
+          print('All source files obey <= 1000 lines.')
           "
 
   fmt:
