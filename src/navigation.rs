@@ -281,4 +281,28 @@ mod tests {
             NavigationTarget::NetworkUrl("http://insecure.example.com".to_string())
         );
     }
+
+    #[test]
+    fn test_is_special_or_local_page() {
+        // Positive cases (special protocols and raw HTML)
+        assert!(is_special_or_local_page("<html><body>"));
+        assert!(is_special_or_local_page("<!DOCTYPE html>"));
+        assert!(is_special_or_local_page("data:text/html,<h1>Hello</h1>"));
+        assert!(is_special_or_local_page("about:blank"));
+        assert!(is_special_or_local_page("about:welcome"));
+        assert!(is_special_or_local_page("test:suite"));
+
+        // Case insensitivity and whitespace trimming
+        assert!(is_special_or_local_page("  ABOUT:BLANK  "));
+        assert!(is_special_or_local_page("\tDaTa:text/plain,hi\n"));
+        assert!(is_special_or_local_page(" TEST:forms "));
+
+        // Negative cases
+        assert!(!is_special_or_local_page("http://example.com"));
+        assert!(!is_special_or_local_page("https://google.com"));
+        assert!(!is_special_or_local_page("file:///var/log/syslog"));
+        assert!(!is_special_or_local_page("search query"));
+        assert!(!is_special_or_local_page("localhost:8080"));
+        assert!(!is_special_or_local_page("example.com"));
+    }
 }
