@@ -347,3 +347,20 @@ impl BrowserChrome {
         mango_layout::a11y::A11yTree::build(&doc, self.root_box.as_ref())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_truncate_label() {
+        assert_eq!(truncate_label("hello", 10), "hello");
+        assert_eq!(truncate_label("hello", 5), "hello");
+        assert_eq!(truncate_label("hello world", 8), "hello...");
+        assert_eq!(truncate_label("12345678", 8), "12345678");
+        assert_eq!(truncate_label("hello", 2), "...");
+        assert_eq!(truncate_label("hello", 3), "...");
+        assert_eq!(truncate_label("こんにちは世界", 5), "こん...");
+        assert_eq!(truncate_label("こんにちは", 5), "こんにちは");
+    }
+}
