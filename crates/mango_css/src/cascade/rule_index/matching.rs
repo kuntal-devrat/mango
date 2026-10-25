@@ -240,12 +240,15 @@ fn match_scope_level(
     None
 }
 
+static EMPTY_LAYER_PATH: std::sync::LazyLock<std::sync::Arc<[u32]>> =
+    std::sync::LazyLock::new(|| std::sync::Arc::from([]));
+
 pub(crate) fn apply_style_rule(
     style_rule: &StyleRule,
     node_id: NodeId,
     doc: &Document,
     origin: Origin,
-    layer_path: std::sync::Arc<[u32]>,
+    layer_path: &std::sync::Arc<[u32]>,
     scope_chain: &[ScopeDef],
     rule_source_order: usize,
     out: &mut Vec<MatchedDeclaration>,
@@ -347,7 +350,7 @@ pub(crate) fn apply_style_rule(
                         specificity,
                         origin,
                         source_order: rule_source_order * 1000 + decl_idx,
-                        layer_path: layer_path.clone(),
+                        layer_path: std::sync::Arc::clone(layer_path),
                         rule_id: rule_source_order,
                         scope_proximity,
                     });
@@ -362,7 +365,7 @@ pub(crate) fn apply_style_rule(
                     specificity,
                     origin,
                     source_order: rule_source_order * 1000 + decl_idx,
-                    layer_path: layer_path.clone(),
+                    layer_path: std::sync::Arc::clone(layer_path),
                     rule_id: rule_source_order,
                     scope_proximity,
                 });
@@ -407,7 +410,7 @@ pub(crate) fn collect_matches_for_node<'a>(
     _source_order: &mut usize,
     out: &mut Vec<MatchedDeclaration>,
 ) {
-    let mut seen_rules: HashSet<usize> = HashSet::new();
+    let mut seen_rules: HashSet<usize> = HashSet::with_capacity(32);
 
     // 0. Root rules (only for <html>)
     if elem.tag_name.eq_ignore_ascii_case("html") {
@@ -418,7 +421,7 @@ pub(crate) fn collect_matches_for_node<'a>(
                     node_id,
                     doc,
                     cand.origin,
-                    cand.layer_path.clone(),
+                    &cand.layer_path,
                     &cand.scope_chain,
                     cand.source_order,
                     out,
@@ -435,7 +438,7 @@ pub(crate) fn collect_matches_for_node<'a>(
                 node_id,
                 doc,
                 cand.origin,
-                cand.layer_path.clone(),
+                &cand.layer_path,
                 &cand.scope_chain,
                 cand.source_order,
                 out,
@@ -453,7 +456,7 @@ pub(crate) fn collect_matches_for_node<'a>(
                     node_id,
                     doc,
                     cand.origin,
-                    cand.layer_path.clone(),
+                    &cand.layer_path,
                     &cand.scope_chain,
                     cand.source_order,
                     out,
@@ -473,7 +476,7 @@ pub(crate) fn collect_matches_for_node<'a>(
                     node_id,
                     doc,
                     cand.origin,
-                    cand.layer_path.clone(),
+                    &cand.layer_path,
                     &cand.scope_chain,
                     cand.source_order,
                     out,
@@ -492,7 +495,7 @@ pub(crate) fn collect_matches_for_node<'a>(
                         node_id,
                         doc,
                         cand.origin,
-                        cand.layer_path.clone(),
+                        &cand.layer_path,
                         &cand.scope_chain,
                         cand.source_order,
                         out,
@@ -513,7 +516,7 @@ pub(crate) fn collect_matches_for_node<'a>(
                         node_id,
                         doc,
                         cand.origin,
-                        cand.layer_path.clone(),
+                        &cand.layer_path,
                         &cand.scope_chain,
                         cand.source_order,
                         out,
@@ -540,7 +543,7 @@ pub(crate) fn collect_matches_for_node<'a>(
                     node_id,
                     doc,
                     cand.origin,
-                    std::sync::Arc::from([]),
+                    &EMPTY_LAYER_PATH,
                     &[],
                     cand.source_order,
                     out,
@@ -557,7 +560,7 @@ pub(crate) fn collect_part_matches_for_node<'a>(
     source_order: &mut usize,
     out: &mut Vec<MatchedDeclaration>,
 ) {
-    let mut seen_rules = HashSet::new();
+    let mut seen_rules = HashSet::with_capacity(16);
     for cand in &index.universal_rules {
         let is_part_rule = cand.style_rule.selectors.selectors.iter().any(|s| {
             let subject = if let Some((_, compound)) = s.tail.last() {
@@ -578,7 +581,7 @@ pub(crate) fn collect_part_matches_for_node<'a>(
             node_id,
             doc,
             cand.origin,
-            cand.layer_path.clone(),
+            &cand.layer_path,
             &cand.scope_chain,
             *source_order + cand.source_order,
             out,

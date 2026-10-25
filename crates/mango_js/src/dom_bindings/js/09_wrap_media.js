@@ -123,11 +123,21 @@
             set alt(val) { this.setAttribute('alt', String(val)); },
             get target() {
                 if (this._isPI) return this._target || '';
-                return (typeof this.getAttribute === 'function') ? (this.getAttribute('target') || '') : '';
+                var tag = (this.tagName || '').toLowerCase();
+                if (tag === 'a' || tag === 'area' || tag === 'form' || tag === 'base' || tag === 'link') {
+                    return (typeof this.getAttribute === 'function') ? (this.getAttribute('target') || '') : '';
+                }
+                if (this._customTarget !== undefined) return this._customTarget;
+                return (typeof this.getAttribute === 'function') ? (this.getAttribute('target') || '') : undefined;
             },
             set target(val) {
                 if (this._isPI) { this._target = String(val); return; }
-                if (typeof this.setAttribute === 'function') this.setAttribute('target', String(val));
+                var tag = (this.tagName || '').toLowerCase();
+                if (tag === 'a' || tag === 'area' || tag === 'form' || tag === 'base' || tag === 'link') {
+                    if (typeof this.setAttribute === 'function') this.setAttribute('target', String(val));
+                } else {
+                    this._customTarget = val;
+                }
             },
             substringData: function(offset, count) {
                 if (arguments.length < 2) {

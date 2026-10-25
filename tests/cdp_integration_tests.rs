@@ -275,4 +275,47 @@ fn test_cdp_websocket_json_rpc_session() {
         decoded.starts_with(b"\x89PNG\r\n\x1a\n"),
         "Valid PNG signature"
     );
+
+    // 8. Runtime.callFunctionOn with arguments
+    let resp = rpc_call(json!({
+        "id": 8,
+        "method": "Runtime.callFunctionOn",
+        "params": {
+            "functionDeclaration": "function(a, b) { return a + b; }",
+            "arguments": [
+                { "value": 15 },
+                { "value": 25 }
+            ]
+        }
+    }));
+    assert_eq!(resp["id"], 8);
+    assert_eq!(resp["result"]["result"]["type"], "number");
+    assert_eq!(resp["result"]["result"]["value"], 40.0);
+
+    // 9. DOM.getBoxModel for #headline
+    let resp = rpc_call(json!({
+        "id": 9,
+        "method": "DOM.getBoxModel",
+        "params": { "nodeId": headline_id }
+    }));
+    assert_eq!(resp["id"], 9);
+    assert!(resp["result"]["model"]["width"].as_f64().unwrap_or(0.0) >= 0.0);
+    assert!(resp["result"]["model"]["border"].is_array());
+
+    // 10. DOM.getBoxModel with objectId
+    let resp = rpc_call(json!({
+        "id": 10,
+        "method": "DOM.getBoxModel",
+        "params": { "objectId": format!("node:{headline_id}") }
+    }));
+    assert_eq!(resp["id"], 10);
+    assert!(resp["result"]["model"]["border"].is_array());
+
+    // 11. DOM.requestChildNodes
+    let resp = rpc_call(json!({
+        "id": 11,
+        "method": "DOM.requestChildNodes",
+        "params": { "nodeId": headline_id, "depth": 1 }
+    }));
+    assert_eq!(resp["id"], 11);
 }

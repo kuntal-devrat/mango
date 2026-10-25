@@ -603,6 +603,59 @@ fn test_scope_template_clone() {
 }
 
 #[test]
+fn test_wpt_template_clone_target_style() {
+    let html = r#"
+        <!DOCTYPE html>
+        <html>
+        <body>
+        <template id="target-template">
+          <div>
+            <div class="target"></div>
+          </div>
+        </template>
+        </body>
+        </html>
+    "#;
+    let doc = parse_html(html);
+    let mut rt = JsRuntime::new(doc, 800.0, 600.0);
+    let script = r#"
+        function createElement(parent, tag, text) {
+            var element = document.createElement(tag || 'div');
+            element.textContent = text || '';
+            parent.appendChild(element);
+            return element;
+        }
+
+        function createTargetContainer(parent, className) {
+            var targetContainer = createElement(parent);
+            targetContainer.classList.add('container');
+            var template = document.querySelector('#target-template');
+            if (template) {
+                targetContainer.appendChild(template.content.cloneNode(true));
+            }
+            var target = targetContainer.querySelector('.target') || targetContainer;
+            target.classList.add('target', className);
+            target.parentElement.classList.add('parent');
+            targetContainer.target = target;
+            return targetContainer;
+        }
+
+        var container = createElement(document.body);
+        var actualTargetContainer = createTargetContainer(container, 'actual');
+        var target = actualTargetContainer.target;
+        if (!target.style) {
+            throw new Error("target.style is undefined! target=" + target);
+        }
+        target.style.setProperty("margin", "20px");
+        if (target.style.getPropertyValue("margin") !== "20px") {
+            throw new Error("expected margin 20px, got " + target.style.getPropertyValue("margin"));
+        }
+    "#;
+    rt.execute_script(script)
+        .expect("template clone target style test failed");
+}
+
+#[test]
 fn test_detached_nodes_are_recycled_after_gc() {
     let html = r#"<!doctype html><html><body><div id="churn-host"></div></body></html>"#;
     let doc = parse_html(html);
