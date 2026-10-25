@@ -1820,6 +1820,7 @@ dependencies = [
  "mango_net",
  "mango_platform",
  "mango_render",
+ "percent-encoding",
  "rayon",
  "serde",
  "serde_json",
