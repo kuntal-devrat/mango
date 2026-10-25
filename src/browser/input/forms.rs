@@ -413,15 +413,16 @@ impl BrowserChrome {
                 let doc = self.active_document();
 
                 let mut options = Vec::new();
-                if let Some(node) = doc.get(node_id) {
-                    let mut child = node.first_child;
-                    while let Some(cid) = child {
-                        if let Some(cnode) = doc.get(cid) {
-                            if let NodeData::Element(el) = &cnode.data
+                if doc.get(node_id).is_some() {
+                    let mut stack = vec![node_id];
+                    while let Some(curr_id) = stack.pop() {
+                        if let Some(curr_node) = doc.get(curr_id) {
+                            if curr_id != node_id
+                                && let NodeData::Element(el) = &curr_node.data
                                 && el.tag_name.eq_ignore_ascii_case("option")
                             {
                                 // BUG-008 fix: Use recursive text_content to handle nested inline elements
-                                let opt_text = doc.text_content(cid);
+                                let opt_text = doc.text_content(curr_id);
                                 let text = if opt_text.trim().is_empty() {
                                     el.get_attribute("value").unwrap_or("").to_string()
                                 } else {
@@ -431,15 +432,25 @@ impl BrowserChrome {
                                 let selected =
                                     el.get_attribute("selected").is_some() || hit.value == value;
                                 options.push(SelectDropdownOption {
-                                    node_id: cid,
+                                    node_id: curr_id,
                                     text,
                                     value,
                                     selected,
                                 });
                             }
-                            child = cnode.next_sibling;
-                        } else {
-                            break;
+                            let mut child = curr_node.first_child;
+                            let mut children = Vec::new();
+                            while let Some(cid) = child {
+                                children.push(cid);
+                                if let Some(cnode) = doc.get(cid) {
+                                    child = cnode.next_sibling;
+                                } else {
+                                    break;
+                                }
+                            }
+                            for c in children.into_iter().rev() {
+                                stack.push(c);
+                            }
                         }
                     }
                 }
