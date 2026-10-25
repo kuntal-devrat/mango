@@ -8,18 +8,17 @@ pub(crate) fn fill_secure_random(buf: &mut [u8]) {
         // SAFETY: `buf.as_mut_ptr()` is a valid, non-null, aligned pointer to `buf.len()`
         // mutable bytes allocated in memory. `SystemFunction036` (RtlGenRandom) writes
         // cryptographically secure pseudo-random bytes into the buffer up to the requested length.
-        unsafe {
-            SystemFunction036(buf.as_mut_ptr(), buf.len() as u32);
-        }
+        let ret = unsafe { SystemFunction036(buf.as_mut_ptr(), buf.len() as u32) };
+        assert_ne!(ret, 0, "Failed to generate secure random bytes");
     }
 }
 
 #[cfg(not(windows))]
 pub(crate) fn fill_secure_random(buf: &mut [u8]) {
     use std::io::Read;
-    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
-        let _ = f.read_exact(buf);
-    }
+    let mut f = std::fs::File::open("/dev/urandom").expect("Failed to open /dev/urandom");
+    f.read_exact(buf)
+        .expect("Failed to read secure random bytes from /dev/urandom");
 }
 
 pub(crate) fn encode_base64_bytes(input: &[u8]) -> String {
