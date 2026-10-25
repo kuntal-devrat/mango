@@ -125,3 +125,23 @@ pub fn is_table_colgroup(box_node: &LayoutBox) -> bool {
     box_node.tag_name.as_deref() == Some("colgroup")
         || box_node.style.as_ref().map(|s| s.display) == Some(Display::TableColumnGroup)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mango_css::values::BorderStyle;
+
+    #[test]
+    fn test_style_priority() {
+        assert_eq!(style_priority(BorderStyle::Double), 8);
+        assert_eq!(style_priority(BorderStyle::Solid), 7);
+        assert_eq!(style_priority(BorderStyle::Dashed), 6);
+        assert_eq!(style_priority(BorderStyle::Dotted), 5);
+        assert_eq!(style_priority(BorderStyle::Ridge), 4);
+        assert_eq!(style_priority(BorderStyle::Outset), 3);
+        assert_eq!(style_priority(BorderStyle::Groove), 2);
+        assert_eq!(style_priority(BorderStyle::Inset), 1);
+        assert_eq!(style_priority(BorderStyle::None), 0);
+        assert_eq!(style_priority(BorderStyle::Hidden), 0);
+    }
+}
