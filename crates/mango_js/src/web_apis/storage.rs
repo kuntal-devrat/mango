@@ -81,10 +81,31 @@ pub fn save_local_storage_to_file(
         let _ = std::fs::create_dir_all(parent);
     }
     let tmp_path = path.with_extension("tmp");
-    std::fs::write(&tmp_path, body)?;
+    {
+        use std::io::Write as _;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut f = options.open(&tmp_path)?;
+        f.write_all(body.as_bytes())?;
+        f.sync_all()?;
+    }
     if std::fs::rename(&tmp_path, path).is_err() {
         let _ = std::fs::remove_file(path);
         std::fs::rename(&tmp_path, path)?;
+    }
+    // Fsync parent directory for durability.
+    #[cfg(unix)]
+    {
+        if let Some(parent) = path.parent() {
+            if let Ok(dir) = std::fs::File::open(parent) {
+                let _ = dir.sync_all();
+            }
+        }
     }
     Ok(())
 }
