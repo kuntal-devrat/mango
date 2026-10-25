@@ -38,6 +38,7 @@ pub fn resolve_sheet_imports(
                 }
             }
             let Some(dir) = base_dir else {
+                new_rules.push(Rule::Import(import));
                 continue;
             };
             let path = dir.join(&import.url);
@@ -56,6 +57,8 @@ pub fn resolve_sheet_imports(
                 } else {
                     new_rules.extend(imported_sheet.rules);
                 }
+            } else {
+                new_rules.push(Rule::Import(import));
             }
         } else {
             new_rules.push(rule);
