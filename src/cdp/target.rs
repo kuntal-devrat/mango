@@ -314,22 +314,48 @@ impl CdpTarget {
 
     /// Computes box model quad coordinates for `DOM.getBoxModel`.
     pub fn get_box_model(&self, node_id: usize) -> Option<BoxModel> {
-        let nid = NodeId::from_raw(node_id as u32);
+        let raw_id = node_id as u32;
         let root = self.root_box.as_ref()?;
-        let target_box = root.find_box_for_node(nid)?;
+
+        // Resolve exact NodeId from document if present, or match by index
+        let target_nid = self.doc.get(NodeId::from_raw(raw_id)).map(|n| n.id);
+
+        fn find_box_with_offset(
+            b: &LayoutBox,
+            target_nid: Option<NodeId>,
+            target_index: u32,
+            ox: f32,
+            oy: f32,
+        ) -> Option<(&LayoutBox, f32, f32)> {
+            if b.node_id == target_nid || b.node_id.is_some_and(|id| id.index() == target_index) {
+                return Some((b, ox, oy));
+            }
+            let child_ox = ox + b.dimensions.content.x();
+            let child_oy = oy + b.dimensions.content.y();
+            for child in &b.children {
+                if let Some(res) =
+                    find_box_with_offset(child, target_nid, target_index, child_ox, child_oy)
+                {
+                    return Some(res);
+                }
+            }
+            None
+        }
+
+        let (target_box, ox, oy) = find_box_with_offset(root, target_nid, raw_id, 0.0, 0.0)?;
 
         let bb = target_box.dimensions.border_box();
         let cb = target_box.dimensions.content_box();
         let pb = target_box.dimensions.padding_box();
         let mb = target_box.dimensions.margin_box();
 
-        fn to_quad(r: &Rect) -> [f32; 8] {
-            let x = r.x();
-            let y = r.y();
+        let to_quad = |r: &Rect| -> [f32; 8] {
+            let x = r.x() + ox;
+            let y = r.y() + oy;
             let w = r.width();
             let h = r.height();
             [x, y, x + w, y, x + w, y + h, x, y + h]
-        }
+        };
 
         Some(BoxModel {
             content: to_quad(&cb),

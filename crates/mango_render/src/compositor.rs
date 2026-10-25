@@ -206,6 +206,9 @@ impl SoftwareCompositor {
 
         let span_w = (out_x1 - out_x0) as usize;
         let global_alpha = (opacity.clamp(0.0, 1.0) * 255.0).round() as u32;
+        if global_alpha == 0 {
+            return;
+        }
 
         for y in out_y0..out_y1 {
             let src_local_y = (y - dst_y) as usize;
@@ -221,29 +224,57 @@ impl SoftwareCompositor {
                 let src_slice = &src[src_start..src_end];
                 let dst_slice = &mut target[dst_start..dst_end];
 
-                for (dst_px, &src_px) in dst_slice.iter_mut().zip(src_slice.iter()) {
-                    let pixel_a = ((src_px >> 24) & 0xFF) as u32;
-                    let effective_a = if pixel_a == 0 && (src_px & 0x00FFFFFF != 0) {
-                        global_alpha
-                    } else {
-                        (pixel_a * global_alpha + 127) / 255
-                    };
+                if global_alpha == 255 {
+                    for (dst_px, &src_px) in dst_slice.iter_mut().zip(src_slice.iter()) {
+                        let pixel_a = (src_px >> 24) & 0xFF;
+                        let effective_a = if pixel_a == 0 && (src_px & 0x00FFFFFF != 0) {
+                            255
+                        } else {
+                            pixel_a
+                        };
 
-                    if effective_a == 255 {
-                        *dst_px = src_px & 0x00FFFFFF;
-                    } else if effective_a > 0 {
-                        let inv_a = 255 - effective_a;
-                        let dst = *dst_px;
-                        let dst_r = (dst >> 16) & 0xFF;
-                        let dst_g = (dst >> 8) & 0xFF;
-                        let dst_b = dst & 0xFF;
-                        let src_r = (src_px >> 16) & 0xFF;
-                        let src_g = (src_px >> 8) & 0xFF;
-                        let src_b = src_px & 0xFF;
-                        let out_r = (src_r * effective_a + dst_r * inv_a + 127) / 255;
-                        let out_g = (src_g * effective_a + dst_g * inv_a + 127) / 255;
-                        let out_b = (src_b * effective_a + dst_b * inv_a + 127) / 255;
-                        *dst_px = (out_r << 16) | (out_g << 8) | out_b;
+                        if effective_a == 255 {
+                            *dst_px = src_px & 0x00FFFFFF;
+                        } else if effective_a > 0 {
+                            let inv_a = 255 - effective_a;
+                            let dst = *dst_px;
+                            let dst_r = (dst >> 16) & 0xFF;
+                            let dst_g = (dst >> 8) & 0xFF;
+                            let dst_b = dst & 0xFF;
+                            let src_r = (src_px >> 16) & 0xFF;
+                            let src_g = (src_px >> 8) & 0xFF;
+                            let src_b = src_px & 0xFF;
+                            let out_r = (src_r * effective_a + dst_r * inv_a + 127) / 255;
+                            let out_g = (src_g * effective_a + dst_g * inv_a + 127) / 255;
+                            let out_b = (src_b * effective_a + dst_b * inv_a + 127) / 255;
+                            *dst_px = (out_r << 16) | (out_g << 8) | out_b;
+                        }
+                    }
+                } else {
+                    for (dst_px, &src_px) in dst_slice.iter_mut().zip(src_slice.iter()) {
+                        let pixel_a = (src_px >> 24) & 0xFF;
+                        let effective_a = if pixel_a == 0 && (src_px & 0x00FFFFFF != 0) {
+                            global_alpha
+                        } else {
+                            (pixel_a * global_alpha + 127) / 255
+                        };
+
+                        if effective_a == 255 {
+                            *dst_px = src_px & 0x00FFFFFF;
+                        } else if effective_a > 0 {
+                            let inv_a = 255 - effective_a;
+                            let dst = *dst_px;
+                            let dst_r = (dst >> 16) & 0xFF;
+                            let dst_g = (dst >> 8) & 0xFF;
+                            let dst_b = dst & 0xFF;
+                            let src_r = (src_px >> 16) & 0xFF;
+                            let src_g = (src_px >> 8) & 0xFF;
+                            let src_b = src_px & 0xFF;
+                            let out_r = (src_r * effective_a + dst_r * inv_a + 127) / 255;
+                            let out_g = (src_g * effective_a + dst_g * inv_a + 127) / 255;
+                            let out_b = (src_b * effective_a + dst_b * inv_a + 127) / 255;
+                            *dst_px = (out_r << 16) | (out_g << 8) | out_b;
+                        }
                     }
                 }
             }

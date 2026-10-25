@@ -320,22 +320,36 @@ impl CdpSession {
                 JsonRpcResponse::success(id, json!({}), Some(sid))
             }
             "DOM.getBoxModel" => {
-                let node_id = match req
+                let node_id = req
                     .params
                     .get("nodeId")
                     .and_then(|v| v.as_u64())
                     .map(|v| v as usize)
-                {
+                    .or_else(|| {
+                        req.params
+                            .get("objectId")
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| {
+                                s.strip_prefix("node:")
+                                    .or_else(|| s.strip_prefix("nodeId:"))
+                                    .unwrap_or(s)
+                                    .parse::<usize>()
+                                    .ok()
+                            })
+                    });
+
+                let nid = match node_id {
                     Some(nid) => nid,
                     None => {
                         return JsonRpcResponse::invalid_params(
                             id,
-                            "Missing 'nodeId' parameter",
+                            "Missing 'nodeId' or 'objectId' parameter",
                             Some(sid),
                         );
                     }
                 };
-                match target.get_box_model(node_id) {
+
+                match target.get_box_model(nid) {
                     Some(model) => {
                         JsonRpcResponse::success(id, json!({ "model": model }), Some(sid))
                     }
@@ -344,6 +358,7 @@ impl CdpSession {
                     }
                 }
             }
+            "DOM.requestChildNodes" => JsonRpcResponse::success(id, json!({}), Some(sid)),
             "DOM.setAttributeValue" => {
                 let node_id = req
                     .params
@@ -465,7 +480,70 @@ impl CdpSession {
                     .get("functionDeclaration")
                     .and_then(|v| v.as_str())
                     .unwrap_or("() => {}");
-                let expr = format!("({func_declaration})()");
+
+                let object_id = req.params.get("objectId").and_then(|v| v.as_str());
+
+                let args_json: Vec<String> = req
+                    .params
+                    .get("arguments")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .map(|arg| {
+                                if let Some(val) = arg.get("value") {
+                                    serde_json::to_string(val)
+                                        .unwrap_or_else(|_| "undefined".to_string())
+                                } else if let Some(obj_id) =
+                                    arg.get("objectId").and_then(|v| v.as_str())
+                                {
+                                    if let Some(nid) = obj_id
+                                        .strip_prefix("node:")
+                                        .or_else(|| obj_id.strip_prefix("nodeId:"))
+                                    {
+                                        format!("_wrapElement({nid})")
+                                    } else if let Ok(nid) = obj_id.parse::<u32>() {
+                                        format!("_wrapElement({nid})")
+                                    } else {
+                                        "null".to_string()
+                                    }
+                                } else {
+                                    "undefined".to_string()
+                                }
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                let this_expr = if let Some(oid) = object_id {
+                    if let Some(nid) = oid
+                        .strip_prefix("node:")
+                        .or_else(|| oid.strip_prefix("nodeId:"))
+                    {
+                        format!("_wrapElement({nid})")
+                    } else if let Ok(nid) = oid.parse::<u32>() {
+                        format!("_wrapElement({nid})")
+                    } else {
+                        "globalThis".to_string()
+                    }
+                } else {
+                    "globalThis".to_string()
+                };
+
+                let joined_args = args_json.join(", ");
+                let await_promise = req
+                    .params
+                    .get("awaitPromise")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                let expr = if await_promise {
+                    format!(
+                        "(async () => await ({func_declaration}).call({this_expr}, {joined_args}))()"
+                    )
+                } else {
+                    format!("(({func_declaration}).call({this_expr}, {joined_args}))")
+                };
+
                 let remote_obj = target.evaluate_js(&expr);
                 JsonRpcResponse::success(id, json!({ "result": remote_obj }), Some(sid))
             }

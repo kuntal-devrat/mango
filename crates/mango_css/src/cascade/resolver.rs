@@ -176,6 +176,9 @@ pub fn resolve_cascade_with_shadow_and_part_indexes_details(
         }
     }
 
+    if matched_decls.is_empty() {
+        return (HashMap::new(), std::collections::HashSet::new());
+    }
     matched_decls.sort_by(|a, b| a.compare_cascade(b));
     resolve_matched_declarations_with_importance(&matched_decls)
 }
@@ -205,16 +208,16 @@ fn canonical_property_name(name: &str) -> &str {
 fn resolve_matched_declarations_with_importance(
     matched_decls: &[MatchedDeclaration],
 ) -> (HashMap<String, Value>, std::collections::HashSet<String>) {
-    let mut decls_by_prop: HashMap<String, Vec<&MatchedDeclaration>> = HashMap::new();
+    if matched_decls.is_empty() {
+        return (HashMap::new(), std::collections::HashSet::new());
+    }
+    let mut decls_by_prop: HashMap<&str, Vec<&MatchedDeclaration>> = HashMap::new();
     for matched in matched_decls {
         let prop = canonical_property_name(&matched.declaration.name);
-        decls_by_prop
-            .entry(prop.to_string())
-            .or_default()
-            .push(matched);
+        decls_by_prop.entry(prop).or_default().push(matched);
     }
 
-    let mut resolved = HashMap::new();
+    let mut resolved = HashMap::with_capacity(decls_by_prop.len());
     let mut important_props = std::collections::HashSet::new();
     for (prop_name, decls) in decls_by_prop {
         let mut chosen_val = None;
@@ -295,9 +298,9 @@ fn resolve_matched_declarations_with_importance(
 
         if let Some(val) = chosen_val {
             if is_important {
-                important_props.insert(prop_name.clone());
+                important_props.insert(prop_name.to_string());
             }
-            resolved.insert(prop_name, val);
+            resolved.insert(prop_name.to_string(), val);
         }
     }
     (resolved, important_props)
@@ -355,6 +358,10 @@ pub fn resolve_pseudo_element_cascade_with_shadow_index(
         &mut source_order,
         &mut matched_decls,
     );
+
+    if matched_decls.is_empty() {
+        return HashMap::new();
+    }
 
     matched_decls.sort_by(|a, b| a.compare_cascade(b));
     resolve_matched_declarations(&matched_decls)

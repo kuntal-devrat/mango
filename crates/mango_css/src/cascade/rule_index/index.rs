@@ -848,6 +848,14 @@ impl<'a> RuleIndex<'a> {
         );
     }
 
+    /// Returns true if this index contains any candidate rules for the given pseudo-element.
+    pub fn has_pseudo_rules(&self, pseudo: &str) -> bool {
+        let key = pseudo.to_ascii_lowercase();
+        self.pseudo_rules
+            .get(&key)
+            .is_some_and(|b| b.total_rules() > 0)
+    }
+
     /// Locates the appropriate ancestor container element for `node_id`, matching `name_filter` if given,
     /// and returns its resolved (width, height) in pixels.
     pub fn find_container_size_for_node(

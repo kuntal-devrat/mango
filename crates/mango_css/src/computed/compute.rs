@@ -327,6 +327,12 @@ pub fn compute_pseudo_style_with_shadow_index(
     host_style: &ComputedStyle,
     pseudo: &str,
 ) -> Option<ComputedStyle> {
+    if !author_index.has_pseudo_rules(pseudo)
+        && shadow_index.is_none_or(|si| !si.has_pseudo_rules(pseudo))
+    {
+        return None;
+    }
+
     let cascaded = crate::cascade::resolve_pseudo_element_cascade_with_shadow_index(
         node_id,
         doc,

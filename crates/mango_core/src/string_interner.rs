@@ -337,13 +337,29 @@ impl StringInterner {
         self.strings.shrink_to_fit();
     }
 
-    /// Clears all interned strings, resetting the interner to an empty state.
+    /// Clears all interned strings, resetting the interner while preserving
+    /// the canonical empty string `""` at index 0 ([`InternedString::EMPTY`]).
     ///
     /// Preserves allocated capacity for reuse. All previously returned
-    /// `InternedString` handles become invalid after this call.
+    /// `InternedString` handles (except `InternedString::EMPTY`) become invalid after this call.
     pub fn clear(&mut self) {
         self.map.clear();
         self.strings.clear();
+        self.intern("");
+    }
+
+    /// Clears all interned strings and re-interns the canonical empty string `""` at index 0 ([`InternedString::EMPTY`]).
+    ///
+    /// Alias for [`clear`](Self::clear).
+    pub fn clear_retaining_empty(&mut self) {
+        self.clear();
+    }
+
+    /// Resets the interner, clearing all strings and restoring the canonical set of common HTML/CSS strings.
+    pub fn reset_with_common_strings(&mut self) {
+        self.map.clear();
+        self.strings.clear();
+        *self = Self::with_common_strings();
     }
 
     /// Returns `true` if the given string has already been interned.
@@ -454,9 +470,35 @@ mod tests {
         interner.intern("b");
         assert_eq!(interner.len(), 2);
         interner.clear();
-        assert!(interner.is_empty());
+        assert_eq!(interner.len(), 1);
+        assert_eq!(interner.resolve(InternedString::EMPTY), "");
         let h = interner.intern("c");
         assert_eq!(interner.resolve(h), "c");
+        assert_eq!(h.raw(), 1);
+    }
+
+    #[test]
+    fn test_clear_retaining_empty() {
+        let mut interner = StringInterner::with_common_strings();
+        assert_eq!(interner.resolve(InternedString::EMPTY), "");
+        interner.intern("custom_var");
+        interner.clear_retaining_empty();
+        assert_eq!(interner.len(), 1);
+        assert_eq!(interner.resolve(InternedString::EMPTY), "");
+        assert_eq!(interner.get(""), Some(InternedString::EMPTY));
+        let h = interner.intern("first_after_clear");
+        assert_ne!(h, InternedString::EMPTY);
+        assert_eq!(h.raw(), 1);
+    }
+
+    #[test]
+    fn test_reset_with_common_strings() {
+        let mut interner = StringInterner::new();
+        interner.intern("random");
+        interner.reset_with_common_strings();
+        assert_eq!(interner.resolve(InternedString::EMPTY), "");
+        assert!(interner.contains("div"));
+        assert!(interner.contains("span"));
     }
 
     #[test]
