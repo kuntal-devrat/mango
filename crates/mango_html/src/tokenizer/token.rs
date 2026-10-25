@@ -48,4 +48,5 @@ pub enum State {
     AfterDoctypeName,
     BogusComment,
     RawText { tag: String },
+    Cdata,
 }

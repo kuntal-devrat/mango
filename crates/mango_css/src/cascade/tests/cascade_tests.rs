@@ -57,6 +57,15 @@ fn test_inline_style_overrides_author() {
 }
 
 #[test]
+fn test_cdata_stylesheet_parsing() {
+    let css = "<![CDATA[ div { background-color: green; } ]]>";
+    let tokens = crate::tokenizer::CssTokenizer::tokenize(css);
+    println!("Tokens: {:?}", tokens);
+    let sheet = parse_stylesheet(css);
+    assert_eq!(sheet.rules.len(), 1);
+}
+
+#[test]
 fn test_presentational_hints() {
     let html = r##"<table id="hnmain" width="85%" bgcolor="#f6f6ef" cellpadding="0"><tr><td bgcolor="ff6600">News</td></tr></table>"##;
     let doc = parse_html(html);

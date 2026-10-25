@@ -262,6 +262,12 @@ impl JsRuntime {
         std::panic::set_hook(Box::new(|_| {}));
         let name_owned = name.to_string();
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if !name_owned.starts_with('<') {
+                let _ = self.runtime.execute_script(
+                    "<named_sync>",
+                    "if (typeof _syncWindowNamedProperties === 'function') _syncWindowNamedProperties();",
+                );
+            }
             self.runtime.execute_script(name_owned, source.to_string())
         }));
         std::panic::set_hook(prev_hook);
@@ -427,9 +433,11 @@ impl JsRuntime {
         dirty || timer_fired
     }
 
-    /// Whether any timer, animation frame, or queued task is still waiting.
+    /// Whether any timer, animation frame, or queued task is still waiting to be expedited.
     pub fn has_pending_event_loop_work(&self) -> bool {
-        self.event_loop.borrow().pending_count() > 0
+        self.event_loop
+            .borrow()
+            .has_expeditable_work(std::time::Duration::from_millis(250))
     }
 
     /// Runs exactly one animation-frame turn with pending timers expedited.

@@ -161,6 +161,21 @@ pub enum WritingMode {
     HorizontalTb,
     VerticalRl,
     VerticalLr,
+    SidewaysRl,
+    SidewaysLr,
+}
+
+impl WritingMode {
+    #[inline]
+    pub fn is_vertical(&self) -> bool {
+        matches!(
+            self,
+            WritingMode::VerticalRl
+                | WritingMode::VerticalLr
+                | WritingMode::SidewaysRl
+                | WritingMode::SidewaysLr
+        )
+    }
 }
 
 /// CSS `resize` property values.

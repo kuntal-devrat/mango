@@ -9,6 +9,7 @@ use crate::box_tree::LayoutBox;
 pub enum InlineAtomKind {
     Text { text: String, is_space: bool },
     AtomicBox(Box<LayoutBox>),
+    OutOfFlow(Box<LayoutBox>),
     LineBreak,
     WordBreakOpportunity,
     SoftHyphen,
@@ -24,6 +25,7 @@ pub struct InlineAtom {
     pub height: f32,
     pub link_target: Option<String>,
     pub link_frame: Option<String>,
+    pub owner_inline_id: Option<mango_html::dom::NodeId>,
 }
 
 impl InlineAtom {
@@ -31,6 +33,7 @@ impl InlineAtom {
         match &self.kind {
             InlineAtomKind::Text { is_space, .. } => *is_space,
             InlineAtomKind::AtomicBox(_)
+            | InlineAtomKind::OutOfFlow(_)
             | InlineAtomKind::LineBreak
             | InlineAtomKind::WordBreakOpportunity
             | InlineAtomKind::SoftHyphen

@@ -83,20 +83,43 @@ pub fn build_iframe_element_with_maps(
     // Build nested browsing context content:
     // 1. If `srcdoc` is provided, parse and lay out inner document
     // 2. If `src` is `data:text/html,...`, decode and lay out
+    // 3. If `src` is a relative local file and base_dir is known, read and lay out
     let inner_html = if let Some(ref doc_html) = srcdoc {
         Some(doc_html.clone())
     } else if src.starts_with("data:text/html") {
         decode_data_uri_html(&src)
+    } else if let Some(base_dir) = crate::style_tree::current_document_base_dir() {
+        let candidate = base_dir.join(&src);
+        if candidate.exists() {
+            std::fs::read_to_string(&candidate).ok()
+        } else {
+            None
+        }
     } else {
         None
     };
 
     if let Some(html) = inner_html {
+        let (saved_vw, saved_vh) = mango_css::get_current_viewport();
         let inner_doc = mango_html::parse_html(&html);
-        if let Some(inner_styled_root) = crate::style_tree::build_style_tree(&inner_doc, &[]) {
-            let inner_box = build_box_tree_with_maps(&inner_styled_root, maps);
+        if let Some(inner_styled_root) = crate::style_tree::build_style_tree_with_size(
+            &inner_doc,
+            &[],
+            intrinsic_width,
+            intrinsic_height,
+        ) {
+            let mut inner_box = build_box_tree_with_maps(&inner_styled_root, maps);
+            let inner_cb = crate::dimensions::Dimensions::new(mango_core::Rect::new(
+                0.0,
+                0.0,
+                intrinsic_width,
+                intrinsic_height,
+            ));
+            let mut inner_float_ctx = crate::float::FloatContext::new();
+            crate::block_flow::layout_block(&mut inner_box, &inner_cb, &mut inner_float_ctx);
             b.children.push(inner_box);
         }
+        mango_css::set_current_viewport(saved_vw, saved_vh);
     } else {
         // Fallback content inside <iframe>...</iframe> for older/unsupported frame markup
         for child in &styled_node.children {

@@ -37,6 +37,11 @@ impl LayoutBox {
             scroll_offset_y: 0.0,
             is_independent_formatting_context: false,
             positioned_descendant_cache: std::sync::OnceLock::new(),
+            custom_containing_block: None,
+            containing_inline_id: None,
+            positioned_inline_style: None,
+            static_position: None,
+            is_static_bottom_anchored: false,
         }
     }
 
@@ -172,6 +177,11 @@ impl LayoutBox {
             scroll_offset_y: 0.0,
             is_independent_formatting_context: false,
             positioned_descendant_cache: std::sync::OnceLock::new(),
+            custom_containing_block: None,
+            containing_inline_id: None,
+            positioned_inline_style: None,
+            static_position: None,
+            is_static_bottom_anchored: false,
         }
     }
 
@@ -221,6 +231,24 @@ impl LayoutBox {
                 }
             }
         }
+    }
+
+    #[inline]
+    pub fn is_out_of_flow(&self) -> bool {
+        self.style
+            .as_ref()
+            .map(|s| {
+                matches!(
+                    s.position,
+                    mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
+                )
+            })
+            .unwrap_or(false)
+    }
+
+    #[inline]
+    pub fn is_in_flow_block(&self) -> bool {
+        self.is_block() && !self.is_out_of_flow()
     }
 
     #[inline]

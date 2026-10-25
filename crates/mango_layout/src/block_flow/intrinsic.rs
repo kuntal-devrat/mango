@@ -64,7 +64,7 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
     if let Some(mw) = min_w_bound {
         final_w = final_w.max(mw);
     }
-    final_w.min(max_width)
+    final_w
 }
 
 fn calculate_raw_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f32 {
@@ -83,7 +83,13 @@ fn calculate_raw_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
         };
         let family = mango_render::FontFamily::from_css_name(&family_name);
         let w = crate::inline_flow::measure_text_width_with_style(text, font_size, weight, family);
-        return w.min(max_width);
+        let mut min_w = 0.0f32;
+        for word in text.split_whitespace() {
+            let ww =
+                crate::inline_flow::measure_text_width_with_style(word, font_size, weight, family);
+            min_w = min_w.max(ww);
+        }
+        return w.min(max_width).max(min_w);
     }
     if let crate::box_model::BoxType::ReplacedElement {
         intrinsic_width, ..
@@ -388,6 +394,121 @@ fn calculate_raw_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
         }
     }
 
+    fn calculate_vertical_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f32 {
+        let (family, weight) = if let Some(s) = box_node.style.as_ref() {
+            (
+                crate::inline_flow::shaping::font_family_for(s),
+                crate::inline_flow::shaping::font_weight_for(s),
+            )
+        } else {
+            (
+                mango_render::FontFamily::Serif,
+                mango_render::FontWeight::Regular,
+            )
+        };
+        let base_col_w = box_node.style.as_ref().map_or(16.0, |s| {
+            crate::inline_flow::shaping::used_line_height(s, family, weight)
+        });
+
+        let max_col_h = if let Some(s) = box_node.style.as_ref() {
+            let fs = s.font_size;
+            let rfs = s.root_font_size;
+            match s.height {
+                mango_css::values::Length::Px(px) if px > 0.0 => px,
+                mango_css::values::Length::Em(em) if em > 0.0 => em * fs,
+                mango_css::values::Length::Rem(rem) if rem > 0.0 => rem * rfs,
+                _ => 400.0,
+            }
+        } else {
+            400.0
+        };
+
+        let mut col_count = 1usize;
+        let mut cur_y = 0.0f32;
+
+        fn traverse_vertical_inlines(
+            node: &LayoutBox,
+            max_col_h: f32,
+            col_count: &mut usize,
+            cur_y: &mut f32,
+        ) {
+            let pos = node
+                .style
+                .as_ref()
+                .map(|s| s.position)
+                .unwrap_or(mango_css::values::Position::Static);
+            if matches!(
+                pos,
+                mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
+            ) {
+                return;
+            }
+            if node.tag_name.as_deref() == Some("br") {
+                *col_count += 1;
+                *cur_y = 0.0;
+                return;
+            }
+            match &node.box_type {
+                crate::box_model::BoxType::TextNode(raw_text) => {
+                    let style = node.style.as_ref();
+                    let (font_size, is_bold, family_name, letter_spacing) = if let Some(s) = style {
+                        let bold = crate::inline_flow::is_bold_weight(s.font_weight, s.font_size);
+                        let ls = s.letter_spacing.to_px(s.font_size, s.root_font_size, 400.0);
+                        (s.font_size, bold, s.font_family.clone(), ls)
+                    } else {
+                        (16.0, false, "sans-serif".to_string(), 0.0)
+                    };
+                    let weight = if is_bold {
+                        mango_render::FontWeight::Bold
+                    } else {
+                        mango_render::FontWeight::Regular
+                    };
+                    let family = mango_render::FontFamily::from_css_name(&family_name);
+
+                    for ch in raw_text.chars() {
+                        let ch_str = ch.to_string();
+                        let glyph_adv =
+                            crate::inline_flow::measure_text_width_with_style_and_spacing(
+                                &ch_str,
+                                font_size,
+                                weight,
+                                family,
+                                letter_spacing,
+                            )
+                            .max(1.0);
+
+                        if *cur_y + glyph_adv > max_col_h && *cur_y > 0.0 {
+                            *col_count += 1;
+                            *cur_y = glyph_adv;
+                        } else {
+                            *cur_y += glyph_adv;
+                        }
+                    }
+                }
+                crate::box_model::BoxType::InlineBlock => {
+                    let adv = node.dimensions.margin_box().height().max(16.0);
+                    if *cur_y + adv > max_col_h && *cur_y > 0.0 {
+                        *col_count += 1;
+                        *cur_y = adv;
+                    } else {
+                        *cur_y += adv;
+                    }
+                }
+                _ => {
+                    for child in &node.children {
+                        traverse_vertical_inlines(child, max_col_h, col_count, cur_y);
+                    }
+                }
+            }
+        }
+
+        for child in &box_node.children {
+            traverse_vertical_inlines(child, max_col_h, &mut col_count, &mut cur_y);
+        }
+
+        (col_count as f32 * base_col_w).min(max_width)
+    }
+
     let has_inlines = box_node.children.iter().any(|c| {
         let pos = c
             .style
@@ -400,14 +521,25 @@ fn calculate_raw_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
         ) && c.is_inline()
     });
     if has_inlines {
+        let is_vertical = box_node
+            .style
+            .as_ref()
+            .map(|s| s.writing_mode != mango_css::values::WritingMode::HorizontalTb)
+            .unwrap_or(false);
+        if is_vertical {
+            return calculate_vertical_shrink_to_fit_width(box_node, max_width);
+        }
+
         let mut max_line_w = 0.0f32;
         let mut curr_line_w = 0.0f32;
+        let mut min_content_w = 0.0f32;
 
         fn accumulate_inline_width(
             node: &LayoutBox,
             parent_style: Option<&mango_css::computed::ComputedStyle>,
             curr_line: &mut f32,
             max_line: &mut f32,
+            min_content: &mut f32,
             max_width: f32,
         ) {
             let pos = node
@@ -429,6 +561,7 @@ fn calculate_raw_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
             match &node.box_type {
                 crate::box_model::BoxType::InlineBlock => {
                     let w = calculate_shrink_to_fit_width(node, max_width);
+                    *min_content = min_content.max(w);
                     let c_style = node.style.as_ref();
                     let (p_left, p_right, b_left, b_right, m_left, m_right) =
                         if let Some(cs) = c_style {
@@ -499,7 +632,7 @@ fn calculate_raw_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                     for ch in transformed_text.chars() {
                         if ch.is_ascii_whitespace() {
                             if !current_word.is_empty() {
-                                text_w +=
+                                let w =
                                     crate::inline_flow::measure_text_width_with_style_and_spacing(
                                         &current_word,
                                         font_size,
@@ -507,6 +640,8 @@ fn calculate_raw_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                                         family,
                                         letter_spacing,
                                     );
+                                text_w += w;
+                                *min_content = min_content.max(w);
                                 current_word.clear();
                             }
                             text_w +=
@@ -523,13 +658,15 @@ fn calculate_raw_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                         }
                     }
                     if !current_word.is_empty() {
-                        text_w += crate::inline_flow::measure_text_width_with_style_and_spacing(
+                        let w = crate::inline_flow::measure_text_width_with_style_and_spacing(
                             &current_word,
                             font_size,
                             weight,
                             family,
                             letter_spacing,
                         );
+                        text_w += w;
+                        *min_content = min_content.max(w);
                     }
                     *curr_line += text_w;
                 }
@@ -585,6 +722,8 @@ fn calculate_raw_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                             (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
                         };
                     *curr_line += w + p_left + p_right + b_left + b_right + m_left + m_right;
+                    *min_content =
+                        min_content.max(w + p_left + p_right + b_left + b_right + m_left + m_right);
                 }
                 _ => {
                     let next_parent_style = node.style.as_deref().or(parent_style);
@@ -594,6 +733,7 @@ fn calculate_raw_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                             next_parent_style,
                             curr_line,
                             max_line,
+                            min_content,
                             max_width,
                         );
                     }
@@ -603,10 +743,17 @@ fn calculate_raw_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
 
         let p_style = box_node.style.as_deref();
         for child in &box_node.children {
-            accumulate_inline_width(child, p_style, &mut curr_line_w, &mut max_line_w, max_width);
+            accumulate_inline_width(
+                child,
+                p_style,
+                &mut curr_line_w,
+                &mut max_line_w,
+                &mut min_content_w,
+                max_width,
+            );
         }
         max_line_w = max_line_w.max(curr_line_w);
-        return max_line_w.min(max_width);
+        return max_line_w.min(max_width).max(min_content_w);
     }
 
     let mut measured = 0.0f32;

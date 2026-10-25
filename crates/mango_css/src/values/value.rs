@@ -362,6 +362,74 @@ impl Value {
                 FlexWrap::WrapReverse => "wrap-reverse",
             }
             .to_string(),
+            Value::BorderStyle(s) => match s {
+                BorderStyle::None => "none",
+                BorderStyle::Solid => "solid",
+                BorderStyle::Dashed => "dashed",
+                BorderStyle::Dotted => "dotted",
+                BorderStyle::Double => "double",
+                BorderStyle::Hidden => "hidden",
+                BorderStyle::Groove => "groove",
+                BorderStyle::Ridge => "ridge",
+                BorderStyle::Inset => "inset",
+                BorderStyle::Outset => "outset",
+            }
+            .to_string(),
+            Value::TextAlign(ta) => match ta {
+                TextAlign::Left => "left",
+                TextAlign::Right => "right",
+                TextAlign::Center => "center",
+                TextAlign::Justify => "justify",
+            }
+            .to_string(),
+            Value::FontWeight(fw) => match fw {
+                FontWeight::Normal => "normal".to_string(),
+                FontWeight::Bold => "bold".to_string(),
+                FontWeight::Bolder => "bolder".to_string(),
+                FontWeight::Lighter => "lighter".to_string(),
+                FontWeight::Numeric(n) => format!("{n}"),
+            },
+            Value::FontStyle(fs) => match fs {
+                FontStyle::Normal => "normal",
+                FontStyle::Italic => "italic",
+                FontStyle::Oblique => "oblique",
+            }
+            .to_string(),
+            Value::TextTransform(tt) => match tt {
+                TextTransform::None => "none",
+                TextTransform::Uppercase => "uppercase",
+                TextTransform::Lowercase => "lowercase",
+                TextTransform::Capitalize => "capitalize",
+            }
+            .to_string(),
+            Value::Direction(d) => match d {
+                Direction::Ltr => "ltr",
+                Direction::Rtl => "rtl",
+            }
+            .to_string(),
+            Value::UnicodeBidi(ub) => match ub {
+                UnicodeBidi::Normal => "normal",
+                UnicodeBidi::Embed => "embed",
+                UnicodeBidi::BidiOverride => "bidi-override",
+                UnicodeBidi::Isolate => "isolate",
+                UnicodeBidi::IsolateOverride => "isolate-override",
+                UnicodeBidi::Plaintext => "plaintext",
+            }
+            .to_string(),
+            Value::WhiteSpace(ws) => match ws {
+                WhiteSpace::Normal => "normal",
+                WhiteSpace::Nowrap => "nowrap",
+                WhiteSpace::Pre => "pre",
+                WhiteSpace::PreWrap => "pre-wrap",
+                WhiteSpace::PreLine => "pre-line",
+                WhiteSpace::BreakSpaces => "break-spaces",
+            }
+            .to_string(),
+            Value::TextOverflow(to) => match to {
+                TextOverflow::Clip => "clip",
+                TextOverflow::Ellipsis => "ellipsis",
+            }
+            .to_string(),
             Value::BoxSizing(bs) => match bs {
                 BoxSizing::ContentBox => "content-box",
                 BoxSizing::BorderBox => "border-box",

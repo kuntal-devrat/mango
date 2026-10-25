@@ -492,6 +492,41 @@ fn serialize_svg_recursive(node: &StyledNode, out: &mut String) {
             out.push('"');
         }
 
+        if let Some(fill) = node.style.fill {
+            if !node
+                .attributes
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("fill"))
+            {
+                use std::fmt::Write;
+                let _ = write!(
+                    out,
+                    " fill=\"rgba({}, {}, {}, {})\"",
+                    fill.r,
+                    fill.g,
+                    fill.b,
+                    fill.a as f32 / 255.0
+                );
+            }
+        }
+        if let Some(stroke) = node.style.stroke {
+            if !node
+                .attributes
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("stroke"))
+            {
+                use std::fmt::Write;
+                let _ = write!(
+                    out,
+                    " stroke=\"rgba({}, {}, {}, {})\"",
+                    stroke.r,
+                    stroke.g,
+                    stroke.b,
+                    stroke.a as f32 / 255.0
+                );
+            }
+        }
+
         if node.children.is_empty() && node.text.is_none() {
             out.push_str("/>");
         } else {

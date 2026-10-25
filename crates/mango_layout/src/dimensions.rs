@@ -1,10 +1,10 @@
 //! Box dimensions and geometric representations for the CSS box model.
 
 use mango_core::{EdgeSizes, Point, Rect};
-use mango_css::values::WritingMode;
+use mango_css::values::{Direction, WritingMode};
 
 /// Full dimensional properties of a layout box, conforming to the CSS box model.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Dimensions {
     /// Content area rectangle (relative to document origin).
     pub content: Rect,
@@ -14,6 +14,16 @@ pub struct Dimensions {
     pub border: EdgeSizes,
     /// Margin edge sizes.
     pub margin: EdgeSizes,
+    /// Writing mode of this box / containing block.
+    pub writing_mode: WritingMode,
+    /// Direction of this box / containing block.
+    pub direction: Direction,
+}
+
+impl Default for Dimensions {
+    fn default() -> Self {
+        Self::ZERO
+    }
 }
 
 impl Dimensions {
@@ -22,6 +32,8 @@ impl Dimensions {
         padding: EdgeSizes::ZERO,
         border: EdgeSizes::ZERO,
         margin: EdgeSizes::ZERO,
+        writing_mode: WritingMode::HorizontalTb,
+        direction: Direction::Ltr,
     };
 
     #[inline]
@@ -31,6 +43,8 @@ impl Dimensions {
             padding: EdgeSizes::ZERO,
             border: EdgeSizes::ZERO,
             margin: EdgeSizes::ZERO,
+            writing_mode: WritingMode::HorizontalTb,
+            direction: Direction::Ltr,
         }
     }
 
@@ -47,6 +61,8 @@ impl Dimensions {
             padding,
             border,
             margin,
+            writing_mode: WritingMode::HorizontalTb,
+            direction: Direction::Ltr,
         }
     }
 
@@ -168,6 +184,8 @@ impl Dimensions {
             padding,
             border,
             margin,
+            writing_mode: WritingMode::HorizontalTb,
+            direction: Direction::Ltr,
         }
     }
 
@@ -176,7 +194,10 @@ impl Dimensions {
     pub fn inline_size(&self, wm: WritingMode) -> f32 {
         match wm {
             WritingMode::HorizontalTb => self.content.width(),
-            WritingMode::VerticalRl | WritingMode::VerticalLr => self.content.height(),
+            WritingMode::VerticalRl
+            | WritingMode::VerticalLr
+            | WritingMode::SidewaysRl
+            | WritingMode::SidewaysLr => self.content.height(),
         }
     }
 
@@ -185,7 +206,10 @@ impl Dimensions {
     pub fn block_size(&self, wm: WritingMode) -> f32 {
         match wm {
             WritingMode::HorizontalTb => self.content.height(),
-            WritingMode::VerticalRl | WritingMode::VerticalLr => self.content.width(),
+            WritingMode::VerticalRl
+            | WritingMode::VerticalLr
+            | WritingMode::SidewaysRl
+            | WritingMode::SidewaysLr => self.content.width(),
         }
     }
 
@@ -195,7 +219,10 @@ impl Dimensions {
         let p = self.padding_box();
         match wm {
             WritingMode::HorizontalTb => p.width(),
-            WritingMode::VerticalRl | WritingMode::VerticalLr => p.height(),
+            WritingMode::VerticalRl
+            | WritingMode::VerticalLr
+            | WritingMode::SidewaysRl
+            | WritingMode::SidewaysLr => p.height(),
         }
     }
 
@@ -205,7 +232,10 @@ impl Dimensions {
         let p = self.padding_box();
         match wm {
             WritingMode::HorizontalTb => p.height(),
-            WritingMode::VerticalRl | WritingMode::VerticalLr => p.width(),
+            WritingMode::VerticalRl
+            | WritingMode::VerticalLr
+            | WritingMode::SidewaysRl
+            | WritingMode::SidewaysLr => p.width(),
         }
     }
 
@@ -215,7 +245,10 @@ impl Dimensions {
         let b = self.border_box();
         match wm {
             WritingMode::HorizontalTb => b.width(),
-            WritingMode::VerticalRl | WritingMode::VerticalLr => b.height(),
+            WritingMode::VerticalRl
+            | WritingMode::VerticalLr
+            | WritingMode::SidewaysRl
+            | WritingMode::SidewaysLr => b.height(),
         }
     }
 
@@ -225,7 +258,10 @@ impl Dimensions {
         let b = self.border_box();
         match wm {
             WritingMode::HorizontalTb => b.height(),
-            WritingMode::VerticalRl | WritingMode::VerticalLr => b.width(),
+            WritingMode::VerticalRl
+            | WritingMode::VerticalLr
+            | WritingMode::SidewaysRl
+            | WritingMode::SidewaysLr => b.width(),
         }
     }
 
@@ -235,7 +271,10 @@ impl Dimensions {
         let m = self.margin_box();
         match wm {
             WritingMode::HorizontalTb => m.width(),
-            WritingMode::VerticalRl | WritingMode::VerticalLr => m.height(),
+            WritingMode::VerticalRl
+            | WritingMode::VerticalLr
+            | WritingMode::SidewaysRl
+            | WritingMode::SidewaysLr => m.height(),
         }
     }
 
@@ -245,7 +284,10 @@ impl Dimensions {
         let m = self.margin_box();
         match wm {
             WritingMode::HorizontalTb => m.height(),
-            WritingMode::VerticalRl | WritingMode::VerticalLr => m.width(),
+            WritingMode::VerticalRl
+            | WritingMode::VerticalLr
+            | WritingMode::SidewaysRl
+            | WritingMode::SidewaysLr => m.width(),
         }
     }
 
@@ -254,7 +296,10 @@ impl Dimensions {
     pub fn non_content_inline(&self, wm: WritingMode) -> f32 {
         match wm {
             WritingMode::HorizontalTb => self.non_content_horizontal(),
-            WritingMode::VerticalRl | WritingMode::VerticalLr => self.non_content_vertical(),
+            WritingMode::VerticalRl
+            | WritingMode::VerticalLr
+            | WritingMode::SidewaysRl
+            | WritingMode::SidewaysLr => self.non_content_vertical(),
         }
     }
 
@@ -263,7 +308,10 @@ impl Dimensions {
     pub fn non_content_block(&self, wm: WritingMode) -> f32 {
         match wm {
             WritingMode::HorizontalTb => self.non_content_vertical(),
-            WritingMode::VerticalRl | WritingMode::VerticalLr => self.non_content_horizontal(),
+            WritingMode::VerticalRl
+            | WritingMode::VerticalLr
+            | WritingMode::SidewaysRl
+            | WritingMode::SidewaysLr => self.non_content_horizontal(),
         }
     }
 
@@ -272,7 +320,10 @@ impl Dimensions {
     pub fn total_inline_edges(&self, wm: WritingMode) -> f32 {
         match wm {
             WritingMode::HorizontalTb => self.total_horizontal_edges(),
-            WritingMode::VerticalRl | WritingMode::VerticalLr => self.total_vertical_edges(),
+            WritingMode::VerticalRl
+            | WritingMode::VerticalLr
+            | WritingMode::SidewaysRl
+            | WritingMode::SidewaysLr => self.total_vertical_edges(),
         }
     }
 
@@ -281,7 +332,10 @@ impl Dimensions {
     pub fn total_block_edges(&self, wm: WritingMode) -> f32 {
         match wm {
             WritingMode::HorizontalTb => self.total_vertical_edges(),
-            WritingMode::VerticalRl | WritingMode::VerticalLr => self.total_horizontal_edges(),
+            WritingMode::VerticalRl
+            | WritingMode::VerticalLr
+            | WritingMode::SidewaysRl
+            | WritingMode::SidewaysLr => self.total_horizontal_edges(),
         }
     }
 

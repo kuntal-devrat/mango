@@ -229,17 +229,12 @@ impl JsRuntime {
                     if (typeof globalThis._invokeConnectedCallback === 'function' && document.body) {
                         try { globalThis._invokeConnectedCallback(document.body); } catch(e) {}
                     }
-                    if (document.body) {
+                    if (document.body && (typeof window === 'undefined' || !window.onload)) {
                         var bodyOnload = document.body.getAttribute('onload');
                         if (bodyOnload) {
                             try { (new Function(bodyOnload)).call(window); } catch(e) {}
                         }
                     }
-                }
-                if (typeof window !== 'undefined' && typeof window.onload === 'function') {
-                    try { window.onload(); } catch(e) {}
-                } else if (typeof onload === 'function') {
-                    try { onload(); } catch(e) {}
                 }
             })()"#,
         );

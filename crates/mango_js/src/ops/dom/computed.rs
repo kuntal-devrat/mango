@@ -651,6 +651,11 @@ pub fn op_mango_get_computed_style(
         mango_css::values::AlignItems::FlexEnd => "flex-end",
         mango_css::values::AlignItems::Center => "center",
         mango_css::values::AlignItems::Baseline => "baseline",
+        mango_css::values::AlignItems::SafeCenter => "safe center",
+        mango_css::values::AlignItems::SafeFlexStart => "safe flex-start",
+        mango_css::values::AlignItems::SafeFlexEnd => "safe flex-end",
+        mango_css::values::AlignItems::SafeStart => "safe start",
+        mango_css::values::AlignItems::SafeEnd => "safe end",
     };
     map.insert("align-items".to_string(), ai_str.to_string());
 
@@ -661,6 +666,11 @@ pub fn op_mango_get_computed_style(
         mango_css::values::AlignSelf::FlexEnd => "flex-end",
         mango_css::values::AlignSelf::Center => "center",
         mango_css::values::AlignSelf::Baseline => "baseline",
+        mango_css::values::AlignSelf::SafeCenter => "safe center",
+        mango_css::values::AlignSelf::SafeFlexStart => "safe flex-start",
+        mango_css::values::AlignSelf::SafeFlexEnd => "safe flex-end",
+        mango_css::values::AlignSelf::SafeStart => "safe start",
+        mango_css::values::AlignSelf::SafeEnd => "safe end",
     };
     map.insert("align-self".to_string(), as_str.to_string());
 

@@ -237,6 +237,7 @@ fn layout_table_contents(
             final_h = final_h.min(max_h);
         }
         table_box.dimensions.content.size.height = final_h;
+        apply_table_relative_offsets(table_box);
         return;
     }
 
@@ -484,4 +485,50 @@ fn layout_table_contents(
         final_h = final_h.min(max_h);
     }
     table_box.dimensions.content.size.height = final_h;
+
+    // 10. Apply relative positioning offsets to table children (CSS Position 3 § 5.1)
+    apply_table_relative_offsets(table_box);
+}
+
+fn apply_table_relative_offsets(table_box: &mut LayoutBox) {
+    let table_dims = table_box.dimensions;
+    for child in &mut table_box.children {
+        if is_table_caption(child) {
+            if child.style.as_ref().map(|s| s.position) == Some(Position::Relative) {
+                crate::block_flow::apply_relative_offset(child, &table_dims);
+            }
+        } else if is_table_row_group(child) {
+            if child.style.as_ref().map(|s| s.position) == Some(Position::Relative) {
+                crate::block_flow::apply_relative_offset(child, &table_dims);
+            }
+            let group_dims = child.dimensions;
+            for row in &mut child.children {
+                if is_table_row(row) {
+                    if row.style.as_ref().map(|s| s.position) == Some(Position::Relative) {
+                        crate::block_flow::apply_relative_offset(row, &group_dims);
+                    }
+                    let row_dims = row.dimensions;
+                    for cell in &mut row.children {
+                        if is_table_cell(cell) {
+                            if cell.style.as_ref().map(|s| s.position) == Some(Position::Relative) {
+                                crate::block_flow::apply_relative_offset(cell, &row_dims);
+                            }
+                        }
+                    }
+                }
+            }
+        } else if is_table_row(child) {
+            if child.style.as_ref().map(|s| s.position) == Some(Position::Relative) {
+                crate::block_flow::apply_relative_offset(child, &table_dims);
+            }
+            let row_dims = child.dimensions;
+            for cell in &mut child.children {
+                if is_table_cell(cell) {
+                    if cell.style.as_ref().map(|s| s.position) == Some(Position::Relative) {
+                        crate::block_flow::apply_relative_offset(cell, &row_dims);
+                    }
+                }
+            }
+        }
+    }
 }

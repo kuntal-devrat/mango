@@ -46,6 +46,10 @@ pub enum Token {
     Delim(char),
     /// Comment block `/* ... */`
     Comment(String),
+    /// CDO token `<!--`
+    Cdo,
+    /// CDC token `-->`
+    Cdc,
     /// End of input stream.
     Eof,
 }
@@ -123,6 +127,56 @@ impl<'a> CssTokenizer<'a> {
                 return Token::Comment(comment);
             }
             return Token::Delim('/');
+        }
+
+        // CDO: <!-- or CDATA: <![CDATA[
+        if ch == '<' {
+            let n1 = self.peek();
+            let mut it = self.chars.clone();
+            let n2 = it.next();
+            let n3 = it.next();
+            if n1 == Some('!') {
+                if n2 == Some('-') && n3 == Some('-') {
+                    // Consume "!--"
+                    self.advance();
+                    self.advance();
+                    self.advance();
+                    return Token::Cdo;
+                }
+                // Check <![CDATA[
+                if n2 == Some('[') && n3 == Some('C') {
+                    let mut rest = String::new();
+                    for _ in 0..5 {
+                        if let Some(c) = it.next() {
+                            rest.push(c);
+                        }
+                    }
+                    if rest == "DATA[" {
+                        // Consume "![CDATA[" (8 chars after '<')
+                        for _ in 0..8 {
+                            self.advance();
+                        }
+                        return Token::Cdo;
+                    }
+                }
+            }
+            return Token::Delim('<');
+        }
+
+        // CDC: --> or ]]>
+        if ch == '-' {
+            if self.peek() == Some('-') && self.peek2() == Some('>') {
+                self.advance(); // consume '-'
+                self.advance(); // consume '>'
+                return Token::Cdc;
+            }
+        }
+        if ch == ']' {
+            if self.peek() == Some(']') && self.peek2() == Some('>') {
+                self.advance(); // consume ']'
+                self.advance(); // consume '>'
+                return Token::Cdc;
+            }
         }
 
         // Whitespace

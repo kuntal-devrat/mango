@@ -190,17 +190,25 @@ pub fn paint_with_clip(
                 };
                 let r = intersect_rect(active_clip, eff_rect);
                 if r.width() > 0.0 && r.height() > 0.0 {
-                    fill_rect_mode(
-                        buffer,
-                        buf_width,
-                        buf_height,
-                        r.x() as i32,
-                        r.y() as i32,
-                        r.width() as u32,
-                        r.height() as u32,
-                        *color,
-                        active_blend,
-                    );
+                    let x0 = r.x().round() as i32;
+                    let y0 = r.y().round() as i32;
+                    let x1 = (r.x() + r.width()).round() as i32;
+                    let y1 = (r.y() + r.height()).round() as i32;
+                    let w = (x1 - x0).max(0) as u32;
+                    let h = (y1 - y0).max(0) as u32;
+                    if w > 0 && h > 0 {
+                        fill_rect_mode(
+                            buffer,
+                            buf_width,
+                            buf_height,
+                            x0,
+                            y0,
+                            w,
+                            h,
+                            *color,
+                            active_blend,
+                        );
+                    }
                 }
             }
             DisplayCommand::FillRoundedRect { rect, color, radii } => {

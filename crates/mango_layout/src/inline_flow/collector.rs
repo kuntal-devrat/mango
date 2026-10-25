@@ -23,10 +23,60 @@ pub(crate) fn collect_inline_atoms(
     container_width: f32,
     container_height: f32,
 ) {
-    let style = box_node
+    collect_inline_atoms_internal(
+        box_node,
+        out,
+        link_target,
+        link_frame,
+        container_width,
+        container_height,
+        None,
+        None,
+    );
+}
+
+fn collect_inline_atoms_internal(
+    box_node: &LayoutBox,
+    out: &mut Vec<InlineAtom>,
+    link_target: Option<&str>,
+    link_frame: Option<&str>,
+    container_width: f32,
+    container_height: f32,
+    owner_inline_id: Option<mango_html::dom::NodeId>,
+    positioned_inline_style: Option<&Arc<ComputedStyle>>,
+) {
+    let (next_owner_id, next_pos_style) = if box_node.box_type == BoxType::InlineNode
+        && box_node
+            .style
+            .as_ref()
+            .map(|s| s.position != mango_css::values::Position::Static)
+            .unwrap_or(false)
+    {
+        (
+            box_node.node_id.or(owner_inline_id),
+            box_node.style.as_ref(),
+        )
+    } else {
+        (owner_inline_id, positioned_inline_style)
+    };
+
+    let mut style = box_node
         .style
         .clone()
         .unwrap_or_else(|| Arc::new(ComputedStyle::default()));
+
+    if let Some(pos_style) = next_pos_style {
+        if matches!(box_node.box_type, BoxType::TextNode(_)) {
+            let mut merged = (*style).clone();
+            merged.position = pos_style.position;
+            merged.top = pos_style.top;
+            merged.bottom = pos_style.bottom;
+            merged.left = pos_style.left;
+            merged.right = pos_style.right;
+            merged.z_index = pos_style.z_index;
+            style = Arc::new(merged);
+        }
+    }
     if style.float != mango_css::values::Float::None {
         return;
     }
@@ -40,6 +90,18 @@ pub(crate) fn collect_inline_atoms(
             mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
         )
     {
+        let mut box_clone = box_node.clone();
+        box_clone.containing_inline_id = next_owner_id;
+        box_clone.positioned_inline_style = next_pos_style.cloned();
+        out.push(InlineAtom {
+            kind: InlineAtomKind::OutOfFlow(Box::new(box_clone)),
+            style: style.clone(),
+            width: 0.0,
+            height: 0.0,
+            link_target: None,
+            link_frame: None,
+            owner_inline_id: next_owner_id,
+        });
         return;
     }
     let font_size = style.font_size;
@@ -55,6 +117,7 @@ pub(crate) fn collect_inline_atoms(
             height: line_height,
             link_target: None,
             link_frame: None,
+            owner_inline_id: next_owner_id,
         });
         return;
     }
@@ -70,6 +133,7 @@ pub(crate) fn collect_inline_atoms(
             height: 0.0,
             link_target: current_link.map(|s| s.to_string()),
             link_frame: current_frame.map(|s| s.to_string()),
+            owner_inline_id: next_owner_id,
         });
         return;
     }
@@ -129,6 +193,7 @@ pub(crate) fn collect_inline_atoms(
                             height: line_height,
                             link_target: current_link.map(|s| s.to_string()),
                             link_frame: current_frame.map(|s| s.to_string()),
+                            owner_inline_id: next_owner_id,
                         });
                     }
                 } else {
@@ -149,6 +214,7 @@ pub(crate) fn collect_inline_atoms(
                         height: line_height,
                         link_target: current_link.map(|s| s.to_string()),
                         link_frame: current_frame.map(|s| s.to_string()),
+                        owner_inline_id: next_owner_id,
                     });
                 }
             };
@@ -165,6 +231,7 @@ pub(crate) fn collect_inline_atoms(
                             height: 0.0,
                             link_target: current_link.map(|s| s.to_string()),
                             link_frame: current_frame.map(|s| s.to_string()),
+                            owner_inline_id: next_owner_id,
                         });
                     }
                     continue;
@@ -177,6 +244,7 @@ pub(crate) fn collect_inline_atoms(
                         height: 0.0,
                         link_target: current_link.map(|s| s.to_string()),
                         link_frame: current_frame.map(|s| s.to_string()),
+                        owner_inline_id: next_owner_id,
                     });
                 } else if ch == '\n' {
                     push_word(std::mem::take(&mut current_word), out);
@@ -188,8 +256,15 @@ pub(crate) fn collect_inline_atoms(
                             height: line_height,
                             link_target: current_link.map(|s| s.to_string()),
                             link_frame: current_frame.map(|s| s.to_string()),
+                            owner_inline_id: next_owner_id,
                         });
-                    } else if out.last().map(|a| !a.is_space()).unwrap_or(true) {
+                    } else if out
+                        .iter()
+                        .rev()
+                        .find(|a| !matches!(a.kind, InlineAtomKind::OutOfFlow(_)))
+                        .map(|a| !a.is_space())
+                        .unwrap_or(true)
+                    {
                         let space_w = (measure_text_width_with_style_and_spacing(
                             " ",
                             font_size,
@@ -208,6 +283,7 @@ pub(crate) fn collect_inline_atoms(
                             height: line_height,
                             link_target: current_link.map(|s| s.to_string()),
                             link_frame: current_frame.map(|s| s.to_string()),
+                            owner_inline_id: next_owner_id,
                         });
                     }
                 } else if ch.is_ascii_whitespace() {
@@ -232,8 +308,16 @@ pub(crate) fn collect_inline_atoms(
                             height: line_height,
                             link_target: current_link.map(|s| s.to_string()),
                             link_frame: current_frame.map(|s| s.to_string()),
+                            owner_inline_id: next_owner_id,
                         });
-                    } else if preserve_spaces || out.last().map(|a| !a.is_space()).unwrap_or(true) {
+                    } else if preserve_spaces
+                        || out
+                            .iter()
+                            .rev()
+                            .find(|a| !matches!(a.kind, InlineAtomKind::OutOfFlow(_)))
+                            .map(|a| !a.is_space() && !matches!(a.kind, InlineAtomKind::LineBreak))
+                            .unwrap_or(false)
+                    {
                         let space_char = if ch == '\t' { "    " } else { " " };
                         let space_w = (measure_text_width_with_style_and_spacing(
                             space_char,
@@ -253,6 +337,7 @@ pub(crate) fn collect_inline_atoms(
                             height: line_height,
                             link_target: current_link.map(|s| s.to_string()),
                             link_frame: current_frame.map(|s| s.to_string()),
+                            owner_inline_id: next_owner_id,
                         });
                     }
                 } else if is_cjk_closing_punct(ch)
@@ -362,6 +447,7 @@ pub(crate) fn collect_inline_atoms(
                 current_frame,
                 container_width,
                 container_height,
+                next_owner_id,
             );
         }
 
@@ -386,17 +472,20 @@ pub(crate) fn collect_inline_atoms(
                     height: 0.0,
                     link_target: current_link.map(|s| s.to_string()),
                     link_frame: current_frame.map(|s| s.to_string()),
+                    owner_inline_id: next_owner_id,
                 });
             }
 
             for child in &box_node.children {
-                collect_inline_atoms(
+                collect_inline_atoms_internal(
                     child,
                     out,
                     current_link,
                     current_frame,
                     container_width,
                     container_height,
+                    next_owner_id,
+                    next_pos_style,
                 );
             }
 
@@ -417,6 +506,7 @@ pub(crate) fn collect_inline_atoms(
                     height: 0.0,
                     link_target: current_link.map(|s| s.to_string()),
                     link_frame: current_frame.map(|s| s.to_string()),
+                    owner_inline_id: next_owner_id,
                 });
             }
         }
@@ -433,6 +523,7 @@ pub(crate) fn collect_inline_atoms(
                 padding: EdgeSizes::ZERO,
                 border: EdgeSizes::ZERO,
                 margin: EdgeSizes::ZERO,
+                ..Default::default()
             };
             let mut inner_float_ctx = FloatContext::new();
             crate::block_flow::layout_block(&mut box_clone, &cb, &mut inner_float_ctx);
@@ -447,6 +538,66 @@ pub(crate) fn collect_inline_atoms(
                 height: outer_h,
                 link_target: current_link.map(|s| s.to_string()),
                 link_frame: current_frame.map(|s| s.to_string()),
+                owner_inline_id: next_owner_id,
+            });
+        }
+
+        BoxType::BlockNode => {
+            // CSS 2.1 §9.2.1.1 IB-split: A block inside an inline forces a line break before and after,
+            // occupying its own line. Per CSS Position 3 §2.1, the block itself is not part of the inline box.
+            while let Some(last) = out.last() {
+                if last.is_space() {
+                    out.pop();
+                } else {
+                    break;
+                }
+            }
+            if !out.is_empty()
+                && !matches!(out.last().map(|a| &a.kind), Some(InlineAtomKind::LineBreak))
+            {
+                out.push(InlineAtom {
+                    kind: InlineAtomKind::LineBreak,
+                    style: style.clone(),
+                    width: 0.0,
+                    height: 0.0,
+                    link_target: None,
+                    link_frame: None,
+                    owner_inline_id: None,
+                });
+            }
+
+            let mut box_clone = box_node.clone();
+            let cb = Dimensions {
+                content: Rect::new(0.0, 0.0, container_width, container_height),
+                padding: EdgeSizes::ZERO,
+                border: EdgeSizes::ZERO,
+                margin: EdgeSizes::ZERO,
+                ..Default::default()
+            };
+            let mut inner_float_ctx = FloatContext::new();
+            crate::block_flow::layout_block(&mut box_clone, &cb, &mut inner_float_ctx);
+
+            let outer_w = box_clone.dimensions.margin_box().width();
+            let outer_h = box_clone.dimensions.margin_box().height();
+
+            out.push(InlineAtom {
+                kind: InlineAtomKind::AtomicBox(Box::new(box_clone)),
+                style: style.clone(),
+                width: outer_w,
+                height: outer_h,
+                link_target: current_link.map(|s| s.to_string()),
+                link_frame: current_frame.map(|s| s.to_string()),
+                owner_inline_id: None,
+            });
+
+            out.push(InlineAtom {
+                kind: InlineAtomKind::LineBreak,
+                style: style.clone(),
+                width: 0.0,
+                height: 0.0,
+                link_target: None,
+                link_frame: None,
+                owner_inline_id: None,
             });
         }
 
@@ -461,6 +612,7 @@ pub(crate) fn collect_ruby_atoms(
     current_frame: Option<&str>,
     _container_width: f32,
     _container_height: f32,
+    owner_inline_id: Option<mango_html::dom::NodeId>,
 ) {
     let ruby_style = ruby_node
         .style
@@ -611,6 +763,7 @@ pub(crate) fn collect_ruby_atoms(
             height: pair_h,
             link_target: current_link.map(|s| s.to_string()),
             link_frame: current_frame.map(|s| s.to_string()),
+            owner_inline_id,
         });
     }
 }

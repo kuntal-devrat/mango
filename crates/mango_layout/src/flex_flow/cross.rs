@@ -44,6 +44,11 @@ pub fn resolve_item_cross_size(
         AlignSelf::FlexEnd => AlignItems::FlexEnd,
         AlignSelf::Center => AlignItems::Center,
         AlignSelf::Baseline => AlignItems::Baseline,
+        AlignSelf::SafeCenter => AlignItems::SafeCenter,
+        AlignSelf::SafeFlexStart => AlignItems::SafeFlexStart,
+        AlignSelf::SafeFlexEnd => AlignItems::SafeFlexEnd,
+        AlignSelf::SafeStart => AlignItems::SafeStart,
+        AlignSelf::SafeEnd => AlignItems::SafeEnd,
     };
 
     let mut cross_size = if is_row {

@@ -131,8 +131,8 @@ fn prepare_document_pipeline_internal(
     let mut import_links = Vec::new();
     for sheet in &inline_sheets {
         for rule in &sheet.rules {
-            if let mango_css::parser::Rule::Import(import_path) = rule {
-                import_links.push(import_path.clone());
+            if let mango_css::parser::Rule::Import(import) = rule {
+                import_links.push(import.url.clone());
             }
         }
     }
@@ -522,8 +522,8 @@ fn load_stylesheets_parallel_cancellable(
                     let mut sheet = parse_stylesheet(&css_text);
                     resolve_font_faces_in_rules(&mut sheet.rules, &resolved);
                     for rule in &sheet.rules {
-                        if let mango_css::parser::Rule::Import(import_path) = rule {
-                            import_rules.push((resolved.clone(), import_path.clone()));
+                        if let mango_css::parser::Rule::Import(import) = rule {
+                            import_rules.push((resolved.clone(), import.url.clone()));
                         }
                     }
                     out.push(sheet);
@@ -630,8 +630,8 @@ fn load_imported_stylesheets_parallel_cancellable(
                     let mut sheet = parse_stylesheet(&css_text);
                     resolve_font_faces_in_rules(&mut sheet.rules, &resolved);
                     for rule in &sheet.rules {
-                        if let mango_css::parser::Rule::Import(import_path) = rule {
-                            pending_imports.push((resolved.clone(), import_path.clone()));
+                        if let mango_css::parser::Rule::Import(import) = rule {
+                            pending_imports.push((resolved.clone(), import.url.clone()));
                         }
                     }
                     out.push(sheet);

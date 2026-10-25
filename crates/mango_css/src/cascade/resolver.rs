@@ -10,7 +10,7 @@ use crate::values::Value;
 
 use super::hints::collect_presentational_hints;
 use super::rule_index::RuleIndex;
-use super::types::{MatchedDeclaration, Origin};
+use super::types::{MatchedDeclaration, Origin, compare_layer_paths};
 use super::user_agent::user_agent_stylesheet;
 
 /// The cached global User-Agent RuleIndex.
@@ -34,11 +34,60 @@ pub fn resolve_cascade_with_shadow_index(
     author_index: &RuleIndex,
     shadow_index: Option<&RuleIndex>,
 ) -> HashMap<String, Value> {
+    resolve_cascade_with_shadow_index_details(node_id, doc, author_index, shadow_index).0
+}
+
+/// Resolves all specified property values along with the set of properties whose
+/// winning declarations were marked `!important`.
+pub fn resolve_cascade_with_shadow_index_details(
+    node_id: NodeId,
+    doc: &Document,
+    author_index: &RuleIndex,
+    shadow_index: Option<&RuleIndex>,
+) -> (HashMap<String, Value>, std::collections::HashSet<String>) {
+    resolve_cascade_with_shadow_and_part_index_details(
+        node_id,
+        doc,
+        author_index,
+        shadow_index,
+        None,
+    )
+}
+
+/// Resolves all specified property values with author index, optional shadow index, and optional outer part index.
+pub fn resolve_cascade_with_shadow_and_part_index_details(
+    node_id: NodeId,
+    doc: &Document,
+    author_index: &RuleIndex,
+    shadow_index: Option<&RuleIndex>,
+    part_index: Option<&RuleIndex>,
+) -> (HashMap<String, Value>, std::collections::HashSet<String>) {
+    let part_indexes = match part_index {
+        Some(pi) => vec![pi],
+        None => Vec::new(),
+    };
+    resolve_cascade_with_shadow_and_part_indexes_details(
+        node_id,
+        doc,
+        author_index,
+        shadow_index,
+        &part_indexes,
+    )
+}
+
+/// Resolves all specified property values with author index, optional shadow index, and multiple outer part indexes.
+pub fn resolve_cascade_with_shadow_and_part_indexes_details(
+    node_id: NodeId,
+    doc: &Document,
+    author_index: &RuleIndex,
+    shadow_index: Option<&RuleIndex>,
+    part_indexes: &[&RuleIndex],
+) -> (HashMap<String, Value>, std::collections::HashSet<String>) {
     let mut matched_decls: Vec<MatchedDeclaration> = Vec::new();
     let mut source_order = 0;
 
     let Some(node) = doc.get(node_id) else {
-        return HashMap::new();
+        return (HashMap::new(), std::collections::HashSet::new());
     };
 
     if let NodeData::Element(elem) = &node.data {
@@ -83,6 +132,16 @@ pub fn resolve_cascade_with_shadow_index(
             &mut matched_decls,
         );
 
+        // 2.5 Outer part rules (CSS Shadow Parts)
+        for p_index in part_indexes {
+            p_index.collect_part_matches_for_node(
+                node_id,
+                doc,
+                &mut source_order,
+                &mut matched_decls,
+            );
+        }
+
         // 3. Inline style="..." attribute on the element itself
         if let Some(style_attr) = elem.get_attribute("style") {
             let inline_decls = parse_declaration_list(style_attr);
@@ -118,10 +177,16 @@ pub fn resolve_cascade_with_shadow_index(
     }
 
     matched_decls.sort_by(|a, b| a.compare_cascade(b));
-    resolve_matched_declarations(&matched_decls)
+    resolve_matched_declarations_with_importance(&matched_decls)
 }
 
 fn resolve_matched_declarations(matched_decls: &[MatchedDeclaration]) -> HashMap<String, Value> {
+    resolve_matched_declarations_with_importance(matched_decls).0
+}
+
+fn resolve_matched_declarations_with_importance(
+    matched_decls: &[MatchedDeclaration],
+) -> (HashMap<String, Value>, std::collections::HashSet<String>) {
     let mut decls_by_prop: HashMap<String, Vec<&MatchedDeclaration>> = HashMap::new();
     for matched in matched_decls {
         decls_by_prop
@@ -131,11 +196,14 @@ fn resolve_matched_declarations(matched_decls: &[MatchedDeclaration]) -> HashMap
     }
 
     let mut resolved = HashMap::new();
+    let mut important_props = std::collections::HashSet::new();
     for (prop_name, decls) in decls_by_prop {
         let mut chosen_val = None;
+        let mut is_important = false;
         let mut idx = decls.len();
-        let mut skipping_same_layer: Option<&std::sync::Arc<[u32]>> = None;
-        let mut skipping_author_origin = false;
+        let mut skipping_origins: std::collections::HashSet<Origin> =
+            std::collections::HashSet::new();
+        let mut skipping_layers: Vec<(Origin, std::sync::Arc<[u32]>)> = Vec::new();
         let mut skipping_rule_id: Option<usize> = None;
         let mut reverted_from_important = false;
 
@@ -150,16 +218,14 @@ fn resolve_matched_declarations(matched_decls: &[MatchedDeclaration]) -> HashMap
                 skipping_rule_id = None;
             }
 
-            if skipping_author_origin
-                && (decl.origin == Origin::Author || decl.origin == Origin::Inline)
-            {
+            if skipping_origins.contains(&decl.origin) {
                 continue;
             }
-            if let Some(target_layer) = skipping_same_layer {
-                if decl.origin == Origin::Author && decl.layer_path == *target_layer {
-                    continue;
-                }
-                skipping_same_layer = None;
+            if skipping_layers.iter().any(|(orig, layer)| {
+                *orig == decl.origin
+                    && compare_layer_paths(&decl.layer_path, layer) != std::cmp::Ordering::Less
+            }) {
+                continue;
             }
 
             match &decl.declaration.value {
@@ -176,31 +242,46 @@ fn resolve_matched_declarations(matched_decls: &[MatchedDeclaration]) -> HashMap
                         chosen_val = None;
                         break;
                     }
-                    if decl.origin == Origin::Author && !decl.layer_path.is_empty() {
-                        skipping_same_layer = Some(&decl.layer_path);
+                    if decl.origin == Origin::Inline {
+                        skipping_origins.insert(Origin::Inline);
+                    } else if decl.origin == Origin::Author || decl.origin == Origin::Shadow {
+                        let has_earlier_layer = decls.iter().take(idx).any(|d| {
+                            d.origin == decl.origin
+                                && compare_layer_paths(&d.layer_path, &decl.layer_path)
+                                    == std::cmp::Ordering::Less
+                        });
+                        if has_earlier_layer {
+                            skipping_layers.push((decl.origin, decl.layer_path.clone()));
+                        } else {
+                            skipping_origins.insert(decl.origin);
+                        }
                     } else {
-                        skipping_author_origin = true;
+                        skipping_origins.insert(decl.origin);
                     }
                     continue;
                 }
                 Value::Keyword(k) if k.eq_ignore_ascii_case("revert") => {
-                    if decl.origin == Origin::Author || decl.origin == Origin::Inline {
-                        skipping_author_origin = true;
-                    }
+                    skipping_origins.insert(Origin::Inline);
+                    skipping_origins.insert(Origin::Author);
+                    skipping_origins.insert(Origin::Shadow);
                     continue;
                 }
                 val => {
                     chosen_val = Some(val.clone());
+                    is_important = decl.declaration.important;
                     break;
                 }
             }
         }
 
         if let Some(val) = chosen_val {
+            if is_important {
+                important_props.insert(prop_name.clone());
+            }
             resolved.insert(prop_name, val);
         }
     }
-    resolved
+    (resolved, important_props)
 }
 
 /// Resolves all specified property values for a given DOM node by applying

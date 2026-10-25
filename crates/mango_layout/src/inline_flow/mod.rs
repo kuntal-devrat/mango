@@ -5,6 +5,7 @@
 pub mod atom;
 pub mod collector;
 pub mod container;
+pub mod containing_block;
 pub mod line;
 pub mod metrics;
 pub mod shaping;

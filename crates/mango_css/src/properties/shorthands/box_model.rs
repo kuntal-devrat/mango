@@ -320,8 +320,8 @@ pub(crate) fn expand_inline_shorthand(
         _ => return Vec::new(),
     };
     vec![
-        Declaration::new(format!("{prefix}-left"), start, important),
-        Declaration::new(format!("{prefix}-right"), end, important),
+        Declaration::new(format!("{prefix}-inline-start"), start, important),
+        Declaration::new(format!("{prefix}-inline-end"), end, important),
     ]
 }
 
@@ -341,8 +341,8 @@ pub(crate) fn expand_block_shorthand(
         _ => return Vec::new(),
     };
     vec![
-        Declaration::new(format!("{prefix}-top"), start, important),
-        Declaration::new(format!("{prefix}-bottom"), end, important),
+        Declaration::new(format!("{prefix}-block-start"), start, important),
+        Declaration::new(format!("{prefix}-block-end"), end, important),
     ]
 }
 

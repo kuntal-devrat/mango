@@ -36,16 +36,40 @@ fn subject_targets_scope(style_rule: &StyleRule) -> bool {
     selector_targets_scope(Some(&style_rule.selectors))
 }
 
+pub(crate) fn selector_targets_host(sel: &crate::selectors::ComplexSelector) -> bool {
+    let subject = if let Some((_, compound)) = sel.tail.last() {
+        compound
+    } else {
+        &sel.head
+    };
+    subject.simple_selectors.iter().any(|s| match s {
+        crate::selectors::SimpleSelector::PseudoClass(p) => {
+            let lower = p.to_ascii_lowercase();
+            lower == "host" || lower.starts_with("host(") || lower.starts_with("host-context(")
+        }
+        _ => false,
+    })
+}
+
 fn match_scope_chain(
     chain: &[ScopeDef],
     node_id: NodeId,
     doc: &Document,
     style_rule: &StyleRule,
+    pseudo: Option<&str>,
 ) -> Option<NodeId> {
     if chain.is_empty() {
         return Some(node_id);
     }
-    match_scope_level(chain, chain.len() - 1, node_id, doc, style_rule, true)
+    match_scope_level(
+        chain,
+        chain.len() - 1,
+        node_id,
+        doc,
+        style_rule,
+        true,
+        pseudo,
+    )
 }
 
 fn match_scope_level(
@@ -55,10 +79,12 @@ fn match_scope_level(
     doc: &Document,
     style_rule: &StyleRule,
     is_innermost: bool,
+    pseudo: Option<&str>,
 ) -> Option<NodeId> {
     let scope_def = &chain[level];
     let root_sel = scope_def.root;
     let limit_sel = scope_def.limit;
+    let scoping_element = scope_def.scoping_element;
 
     let can_target_self = if is_innermost {
         subject_targets_scope(style_rule)
@@ -67,20 +93,52 @@ fn match_scope_level(
     };
 
     let mut candidates = Vec::new();
-    if can_target_self {
-        candidates.push(target_node);
-    }
-    let mut cur = doc.get(target_node).and_then(|n| n.parent);
-    while let Some(pid) = cur {
-        candidates.push(pid);
-        cur = doc.get(pid).and_then(|n| n.parent);
+    if root_sel.is_some() {
+        if can_target_self {
+            candidates.push(target_node);
+        }
+        let mut cur = Some(target_node);
+        while let Some(curr_id) = cur {
+            let parent = doc
+                .get(curr_id)
+                .and_then(|n| n.parent)
+                .or_else(|| doc.get_host_for_shadow_root(curr_id));
+            if let Some(pid) = parent {
+                candidates.push(pid);
+                cur = Some(pid);
+            } else {
+                break;
+            }
+        }
+    } else if let Some(scop_id) = scoping_element {
+        let mut is_in_scope = false;
+        if target_node.raw() == scop_id.raw() {
+            if can_target_self {
+                is_in_scope = true;
+            }
+        } else {
+            let mut cur = Some(target_node);
+            while let Some(curr_id) = cur {
+                if curr_id.raw() == scop_id.raw() {
+                    is_in_scope = true;
+                    break;
+                }
+                cur = doc
+                    .get(curr_id)
+                    .and_then(|n| n.parent)
+                    .or_else(|| doc.get_host_for_shadow_root(curr_id));
+            }
+        }
+        if is_in_scope {
+            candidates.push(scop_id);
+        }
     }
 
     for root_cand in candidates {
         let mut outer_root_opt = None;
         if level > 0 {
             if let Some(outer_root) =
-                match_scope_level(chain, level - 1, root_cand, doc, style_rule, false)
+                match_scope_level(chain, level - 1, root_cand, doc, style_rule, false, None)
             {
                 outer_root_opt = Some(outer_root);
             } else {
@@ -118,7 +176,10 @@ fn match_scope_level(
                         hit = true;
                         break;
                     }
-                    curr_opt = doc.get(elem).and_then(|n| n.parent);
+                    curr_opt = doc
+                        .get(elem)
+                        .and_then(|n| n.parent)
+                        .or_else(|| doc.get_host_for_shadow_root(elem));
                 }
                 hit
             }
@@ -153,7 +214,11 @@ fn match_scope_level(
                         return false;
                     }
                 }
-                sel.matches(target_node, doc)
+                if let Some(p) = pseudo {
+                    sel.matches_pseudo_element(target_node, doc, p)
+                } else {
+                    sel.matches(target_node, doc)
+                }
             });
             crate::selectors::set_current_scope_root(None);
 
@@ -179,7 +244,7 @@ pub(crate) fn apply_style_rule(
     out: &mut Vec<MatchedDeclaration>,
 ) {
     let winning_root = if !scope_chain.is_empty() {
-        if let Some(root_node) = match_scope_chain(scope_chain, node_id, doc, style_rule) {
+        if let Some(root_node) = match_scope_chain(scope_chain, node_id, doc, style_rule, None) {
             Some(root_node)
         } else {
             return;
@@ -192,7 +257,11 @@ pub(crate) fn apply_style_rule(
         let mut hops = 0u32;
         let mut cur = node_id;
         while cur.raw() != root.raw() {
-            if let Some(parent) = doc.get(cur).and_then(|n| n.parent) {
+            if let Some(parent) = doc
+                .get(cur)
+                .and_then(|n| n.parent)
+                .or_else(|| doc.get_host_for_shadow_root(cur))
+            {
                 hops += 1;
                 cur = parent;
             } else {
@@ -207,7 +276,15 @@ pub(crate) fn apply_style_rule(
     }
 
     let mut max_specificity: Option<Specificity> = None;
+    let mut non_visited_match = false;
     for complex_sel in &style_rule.selectors.selectors {
+        // Enforce shadow boundary:
+        // If matching against a shadow host with shadow stylesheets, only :host selectors match.
+        if let Some(host_id) = crate::selectors::current_host_element() {
+            if host_id.raw() == node_id.raw() && !selector_targets_host(complex_sel) {
+                continue;
+            }
+        }
         if winning_root.map(|r| r.raw()) == Some(node_id.raw()) {
             let subject = if let Some((_, compound)) = complex_sel.tail.last() {
                 compound
@@ -229,6 +306,9 @@ pub(crate) fn apply_style_rule(
         }
         let m = complex_sel.matches(node_id, doc);
         if m {
+            if !is_visited_selector(complex_sel) {
+                non_visited_match = true;
+            }
             let spec = Specificity::of(complex_sel);
             max_specificity = Some(match max_specificity {
                 Some(current) => current.max(spec),
@@ -242,10 +322,15 @@ pub(crate) fn apply_style_rule(
     }
 
     if let Some(specificity) = max_specificity {
+        let is_visited_only = !non_visited_match;
         let mut decl_idx = 0;
         for decl in &style_rule.declarations {
             if decl.is_shorthand() {
                 for expanded in decl.expand_shorthand_ref() {
+                    // CSS Selectors 4 § 4.1: Styling of :visited is restricted to color properties only.
+                    if is_visited_only && !is_allowed_visited_property(&expanded.name) {
+                        continue;
+                    }
                     decl_idx += 1;
                     out.push(MatchedDeclaration {
                         declaration: expanded,
@@ -258,6 +343,9 @@ pub(crate) fn apply_style_rule(
                     });
                 }
             } else {
+                if is_visited_only && !is_allowed_visited_property(&decl.name) {
+                    continue;
+                }
                 decl_idx += 1;
                 out.push(MatchedDeclaration {
                     declaration: decl.clone(),
@@ -271,6 +359,34 @@ pub(crate) fn apply_style_rule(
             }
         }
     }
+}
+
+fn is_visited_selector(complex_sel: &crate::selectors::ComplexSelector) -> bool {
+    let subject = if let Some((_, compound)) = complex_sel.tail.last() {
+        compound
+    } else {
+        &complex_sel.head
+    };
+    subject.simple_selectors.iter().any(|s| match s {
+        crate::selectors::SimpleSelector::PseudoClass(p) => p.eq_ignore_ascii_case("visited"),
+        _ => false,
+    })
+}
+
+fn is_allowed_visited_property(prop: &str) -> bool {
+    matches!(
+        prop,
+        "color"
+            | "background-color"
+            | "border-top-color"
+            | "border-right-color"
+            | "border-bottom-color"
+            | "border-left-color"
+            | "outline-color"
+            | "column-rule-color"
+            | "fill"
+            | "stroke"
+    )
 }
 
 pub(crate) fn collect_matches_for_node<'a>(
@@ -424,6 +540,42 @@ pub(crate) fn collect_matches_for_node<'a>(
     }
 }
 
+pub(crate) fn collect_part_matches_for_node<'a>(
+    index: &RuleIndex<'a>,
+    node_id: NodeId,
+    doc: &Document,
+    source_order: &mut usize,
+    out: &mut Vec<MatchedDeclaration>,
+) {
+    let mut seen_rules = HashSet::new();
+    for cand in &index.universal_rules {
+        let is_part_rule = cand.style_rule.selectors.selectors.iter().any(|s| {
+            let subject = if let Some((_, compound)) = s.tail.last() {
+                compound
+            } else {
+                &s.head
+            };
+            subject.has_part_pseudo()
+        });
+        if !is_part_rule {
+            continue;
+        }
+        if !seen_rules.insert(cand.source_order) {
+            continue;
+        }
+        apply_style_rule(
+            cand.style_rule,
+            node_id,
+            doc,
+            cand.origin,
+            cand.layer_path.clone(),
+            &cand.scope_chain,
+            *source_order + cand.source_order,
+            out,
+        );
+    }
+}
+
 pub(crate) fn collect_pseudo_matches_for_node<'a>(
     index: &RuleIndex<'a>,
     node_id: NodeId,
@@ -450,6 +602,36 @@ pub(crate) fn collect_pseudo_matches_for_node<'a>(
         if !seen_rules.insert(cand.source_order) {
             return;
         }
+        if let Some(host_id) = crate::selectors::current_host_element() {
+            if host_id.raw() == node_id.raw()
+                && !cand
+                    .style_rule
+                    .selectors
+                    .selectors
+                    .iter()
+                    .any(selector_targets_host)
+            {
+                return;
+            }
+        }
+        let winning_root = if !cand.scope_chain.is_empty() {
+            if let Some(root_node) = match_scope_chain(
+                &cand.scope_chain,
+                node_id,
+                doc,
+                cand.style_rule,
+                Some(&pseudo_lower),
+            ) {
+                Some(root_node)
+            } else {
+                return;
+            }
+        } else {
+            None
+        };
+        if let Some(root) = winning_root {
+            crate::selectors::set_current_scope_root(Some(root));
+        }
         let mut max_specificity: Option<Specificity> = None;
         for complex_sel in &cand.style_rule.selectors.selectors {
             if complex_sel.matches_pseudo_element(node_id, doc, pseudo) {
@@ -460,7 +642,22 @@ pub(crate) fn collect_pseudo_matches_for_node<'a>(
                 });
             }
         }
+        if winning_root.is_some() {
+            crate::selectors::set_current_scope_root(None);
+        }
         if let Some(specificity) = max_specificity {
+            let scope_proximity = winning_root.map(|root| {
+                let mut depth = 0u32;
+                let mut cur = Some(node_id);
+                while let Some(elem) = cur {
+                    if elem.raw() == root.raw() {
+                        break;
+                    }
+                    depth += 1;
+                    cur = doc.get(elem).and_then(|n| n.parent);
+                }
+                depth
+            });
             let mut decl_idx = 0;
             for decl in &cand.style_rule.declarations {
                 if decl.is_shorthand() {
@@ -473,7 +670,7 @@ pub(crate) fn collect_pseudo_matches_for_node<'a>(
                             source_order: cand.source_order * 1000 + decl_idx,
                             layer_path: cand.layer_path.clone(),
                             rule_id: cand.source_order,
-                            scope_proximity: None,
+                            scope_proximity,
                         });
                     }
                 } else {
@@ -485,7 +682,7 @@ pub(crate) fn collect_pseudo_matches_for_node<'a>(
                         source_order: cand.source_order * 1000 + decl_idx,
                         layer_path: cand.layer_path.clone(),
                         rule_id: cand.source_order,
-                        scope_proximity: None,
+                        scope_proximity,
                     });
                 }
             }

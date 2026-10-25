@@ -8,6 +8,13 @@ use crate::box_tree::LayoutBox;
 use super::builder::render_layout_box;
 use super::types::apply_opacity;
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct StickyContainingBlock {
+    pub rect: Rect,
+    pub scroll_right: Option<f32>,
+    pub scroll_bottom: Option<f32>,
+}
+
 fn sticky_axis_target(
     in_flow: f32,
     size: f32,
@@ -18,7 +25,8 @@ fn sticky_axis_target(
     font_size: f32,
     containing_start: f32,
     containing_end: f32,
-    margin_start: f32,
+    containing_scroll_end: Option<f32>,
+    inline_offset: f32,
     margin_end: f32,
 ) -> f32 {
     let has_start = start != mango_css::values::Length::Auto;
@@ -49,7 +57,7 @@ fn sticky_axis_target(
         }
     }
 
-    let start_edge = viewport_start + start_px + margin_start;
+    let start_edge = viewport_start + start_px + inline_offset;
     let end_edge = viewport_start + viewport_size - end_px - size - margin_end;
     let mut target = in_flow;
 
@@ -65,11 +73,19 @@ fn sticky_axis_target(
         target = end_edge;
     }
 
+    let eff_containing_end = if oversized_view && has_start && start_px > 0.0 {
+        containing_scroll_end
+            .unwrap_or(containing_end)
+            .max(containing_end)
+    } else {
+        containing_end
+    };
+
     // A sticky translation cannot move the border box outside its containing
     // block. If the requested movement would require an inverted range (for
     // example, an item larger than the containing block), leave it in-flow.
     if target > in_flow {
-        let max_target = containing_end - size;
+        let max_target = eff_containing_end - size;
         if max_target >= in_flow {
             target = target.min(max_target);
         } else {
@@ -113,6 +129,7 @@ pub(crate) fn sticky_shift(
     scroll_y: f32,
     escaped_scroll_x: f32,
     escaped_scroll_y: f32,
+    sticky_cb: Option<StickyContainingBlock>,
 ) -> (f32, f32) {
     let (viewport_x, viewport_y, viewport_w, viewport_h) = match active_viewport {
         Some(vp) => (vp.x(), vp.y(), vp.width(), vp.height()),
@@ -134,15 +151,48 @@ pub(crate) fn sticky_shift(
         parent.tag_name.as_deref(),
         Some("tr" | "tbody" | "thead" | "tfoot" | "table")
     );
-    let (cb_top, cb_bottom, cb_left, cb_right) = if is_table_part && let Some(tb) = active_table {
-        (tb.y(), tb.bottom(), tb.x(), tb.right())
+    let (cb_top, cb_bottom, cb_left, cb_right, containing_scroll_right, containing_scroll_bottom) =
+        if is_table_part && let Some(tb) = active_table {
+            (tb.y(), tb.bottom(), tb.x(), tb.right(), None, None)
+        } else if let Some(scb) = sticky_cb {
+            (
+                scb.rect.y() + parent.dimensions.padding.top,
+                scb.rect.bottom() - parent.dimensions.padding.bottom,
+                scb.rect.x() + parent.dimensions.padding.left,
+                scb.rect.right() - parent.dimensions.padding.right,
+                scb.scroll_right,
+                scb.scroll_bottom,
+            )
+        } else {
+            let (sr, sb) = if parent.is_scroll_container() {
+                let (sw, sh) = parent.scrollable_extent();
+                (
+                    Some(pad_box.x() + sw - parent.dimensions.padding.right),
+                    Some(pad_box.y() + sh - parent.dimensions.padding.bottom),
+                )
+            } else {
+                (None, None)
+            };
+            (
+                pad_box.y() + parent.dimensions.padding.top,
+                pad_box.bottom() - parent.dimensions.padding.bottom,
+                pad_box.x() + parent.dimensions.padding.left,
+                pad_box.right() - parent.dimensions.padding.right,
+                sr,
+                sb,
+            )
+        };
+
+    let is_inline_text = matches!(child.box_type, BoxType::TextNode(_));
+    let inline_offset_y = if is_inline_text {
+        child.dimensions.margin.top
     } else {
-        (
-            pad_box.y() + parent.dimensions.padding.top,
-            pad_box.bottom() - parent.dimensions.padding.bottom,
-            pad_box.x() + parent.dimensions.padding.left,
-            pad_box.right() - parent.dimensions.padding.right,
-        )
+        0.0
+    };
+    let inline_offset_x = if is_inline_text {
+        child.dimensions.margin.left
+    } else {
+        0.0
     };
 
     let target_y = sticky_axis_target(
@@ -155,7 +205,8 @@ pub(crate) fn sticky_shift(
         cs.font_size,
         cb_top,
         cb_bottom,
-        child.dimensions.margin.top,
+        containing_scroll_bottom,
+        inline_offset_y,
         child.dimensions.margin.bottom,
     );
     let target_x = sticky_axis_target(
@@ -168,7 +219,8 @@ pub(crate) fn sticky_shift(
         cs.font_size,
         cb_left,
         cb_right,
-        child.dimensions.margin.left,
+        containing_scroll_right,
+        inline_offset_x,
         child.dimensions.margin.right,
     );
 
@@ -189,6 +241,9 @@ pub(crate) fn paint_children_and_scrollbars(
     table_rect: Option<Rect>,
     escaped_scroll_x: f32,
     escaped_scroll_y: f32,
+    sticky_cb: Option<StickyContainingBlock>,
+    skip_html_bg: bool,
+    skip_body_bg: bool,
 ) {
     let active_viewport = if box_node.is_scroll_container() {
         Some(pad_box)
@@ -200,8 +255,19 @@ pub(crate) fn paint_children_and_scrollbars(
     } else {
         table_rect
     };
-    let mut sorted_children: Vec<&LayoutBox> = box_node.children.iter().collect();
-    sorted_children.sort_by_key(|c| paint_layer_of(c));
+    let mut sorted_children: Vec<(usize, &LayoutBox)> =
+        box_node.children.iter().enumerate().collect();
+    sorted_children.sort_by(|(idx_a, a), (idx_b, b)| {
+        let layer_a = paint_layer_of(a);
+        let layer_b = paint_layer_of(b);
+        if layer_a != layer_b {
+            return layer_a.cmp(&layer_b);
+        }
+        match (a.node_id, b.node_id) {
+            (Some(na), Some(nb)) if na != nb => na.index().cmp(&nb.index()),
+            _ => idx_a.cmp(idx_b),
+        }
+    });
 
     // Root element (<html>) and <body> overflow belongs to the viewport (CSS 2.1 §11.1.1).
     // They must never clip their children in the document display list.
@@ -297,76 +363,135 @@ pub(crate) fn paint_children_and_scrollbars(
         }
     }
 
-    for child in sorted_children {
+    let traps_fixed = style.is_some_and(|s| {
+        !s.transform.is_identity()
+            || !s.filter.is_empty()
+            || !s.backdrop_filter.is_empty()
+            || matches!(
+                s.contain,
+                mango_css::values::Contain::Paint | mango_css::values::Contain::Strict
+            )
+            || s.will_change
+    });
+
+    let traps_absolute = traps_fixed
+        || is_root_or_body
+        || style.is_some_and(|s| {
+            s.position != mango_css::values::Position::Static
+                || matches!(
+                    s.contain,
+                    mango_css::values::Contain::Layout | mango_css::values::Contain::Content
+                )
+        });
+
+    let mut inline_shifts: std::collections::HashMap<mango_html::dom::NodeId, (f32, f32)> =
+        std::collections::HashMap::new();
+
+    let (_max_scroll_x, _max_scroll_y) = if box_node.is_scroll_container() {
+        box_node.max_scroll()
+    } else {
+        (0.0, 0.0)
+    };
+    let base_child_offset_x = if box_node.is_scroll_container() {
+        offset_x - box_node.scroll_offset_x
+    } else {
+        offset_x
+    };
+    let base_child_offset_y = if box_node.is_scroll_container() {
+        offset_y - box_node.scroll_offset_y
+    } else {
+        offset_y
+    };
+
+    for child in &box_node.children {
+        if let Some(cs) = &child.style {
+            if cs.position == mango_css::values::Position::Sticky {
+                if let Some(nid) = child.node_id {
+                    inline_shifts.entry(nid).or_insert_with(|| {
+                        let (dx, dy) = sticky_shift(
+                            box_node,
+                            child,
+                            cs,
+                            pad_box,
+                            active_viewport,
+                            active_table,
+                            base_child_offset_x,
+                            base_child_offset_y,
+                            scroll_x,
+                            scroll_y,
+                            escaped_scroll_x,
+                            escaped_scroll_y,
+                            sticky_cb,
+                        );
+                        (dx - escaped_scroll_x, dy - escaped_scroll_y)
+                    });
+                }
+            }
+        }
+    }
+
+    let mut normal_children = Vec::new();
+    let mut escaped_children = Vec::new();
+    for item in sorted_children {
+        let child = item.1;
+        let child_pos = child.style.as_ref().map(|s| s.position);
+        let is_fixed_escaped =
+            child_pos == Some(mango_css::values::Position::Fixed) && !traps_fixed;
+        let is_absolute_escaped = child_pos == Some(mango_css::values::Position::Absolute)
+            && !traps_absolute
+            && child.containing_inline_id.is_none();
+        if is_fixed_escaped || is_absolute_escaped {
+            escaped_children.push(item);
+        } else {
+            normal_children.push(item);
+        }
+    }
+
+    for (_orig_idx, child) in normal_children {
         let mut child_offset_x = offset_x;
         let mut child_offset_y = offset_y;
-        // Tracks scroll-container scroll that was canceled by a fixed
-        // ancestor, so sticky descendants can recover the scrolled position.
-        let mut child_escaped_sx = escaped_scroll_x;
-        let mut child_escaped_sy = escaped_scroll_y;
 
         if box_node.is_scroll_container() {
             child_offset_x -= box_node.scroll_offset_x;
             child_offset_y -= box_node.scroll_offset_y;
         }
 
+        let child_escaped_sx = escaped_scroll_x;
+        let child_escaped_sy = escaped_scroll_y;
+
         if let Some(cs) = &child.style {
-            if cs.position == mango_css::values::Position::Fixed {
-                if box_node.is_scroll_container() {
-                    child_offset_x += box_node.scroll_offset_x;
-                    child_offset_y += box_node.scroll_offset_y;
-                    // The scroll offset was added back (canceled). Track it so
-                    // sticky descendants can subtract it to recover the
-                    // effective scrolled position.  Accumulate in case an
-                    // outer scroll container was also escaped.
-                    child_escaped_sx += box_node.scroll_offset_x;
-                    child_escaped_sy += box_node.scroll_offset_y;
-                }
-                child_offset_x += scroll_x;
-                child_offset_y += scroll_y;
-            } else if cs.position == mango_css::values::Position::Sticky {
-                let (dx, dy) = sticky_shift(
-                    box_node,
-                    child,
-                    cs,
-                    pad_box,
-                    active_viewport,
-                    active_table,
-                    child_offset_x,
-                    child_offset_y,
-                    scroll_x,
-                    scroll_y,
-                    child_escaped_sx,
-                    child_escaped_sy,
-                );
-                // sticky_shift subtracts escaped_scroll internally to compute
-                // the effective scrollport position, but the painted position
-                // (border_box + offset) still includes the escaped scroll.
-                // Subtract it here so the element paints at the target.
+            if cs.position == mango_css::values::Position::Sticky {
+                let (dx, dy) = if let Some(nid) = child.node_id
+                    && let Some(&(idx, idy)) = inline_shifts.get(&nid)
+                {
+                    (idx + child_escaped_sx, idy + child_escaped_sy)
+                } else {
+                    sticky_shift(
+                        box_node,
+                        child,
+                        cs,
+                        pad_box,
+                        active_viewport,
+                        active_table,
+                        child_offset_x,
+                        child_offset_y,
+                        scroll_x,
+                        scroll_y,
+                        child_escaped_sx,
+                        child_escaped_sy,
+                        sticky_cb,
+                    )
+                };
                 child_offset_x += dx - child_escaped_sx;
                 child_offset_y += dy - child_escaped_sy;
             }
         }
 
-        let traps_fixed = style.is_some_and(|s| {
-            !s.transform.is_identity()
-                || !s.filter.is_empty()
-                || !s.backdrop_filter.is_empty()
-                || matches!(
-                    s.contain,
-                    mango_css::values::Contain::Paint | mango_css::values::Contain::Strict
-                )
-                || s.will_change
-        });
-        let is_fixed_escaped = clip_rect.is_some()
-            && !traps_fixed
-            && child
-                .style
-                .as_ref()
-                .is_some_and(|s| s.position == mango_css::values::Position::Fixed);
-
-        if is_fixed_escaped {
-            list.push(DisplayCommand::PopClip);
+        if let Some(inline_id) = child.containing_inline_id {
+            if let Some(&(idx, idy)) = inline_shifts.get(&inline_id) {
+                child_offset_x += idx;
+                child_offset_y += idy;
+            }
         }
 
         render_layout_box(
@@ -381,13 +506,10 @@ pub(crate) fn paint_children_and_scrollbars(
             active_table,
             child_escaped_sx,
             child_escaped_sy,
+            sticky_cb,
+            skip_html_bg,
+            skip_body_bg,
         );
-
-        if is_fixed_escaped {
-            list.push(DisplayCommand::PushClip {
-                rect: clip_rect.unwrap(),
-            });
-        }
     }
 
     if clip_rect.is_some() {
@@ -494,6 +616,44 @@ pub(crate) fn paint_children_and_scrollbars(
             }
         }
     }
+
+    for (_orig_idx, child) in escaped_children {
+        let mut child_offset_x = offset_x;
+        let mut child_offset_y = offset_y;
+
+        let child_pos = child.style.as_ref().map(|s| s.position);
+        let is_fixed_escaped =
+            child_pos == Some(mango_css::values::Position::Fixed) && !traps_fixed;
+
+        if is_fixed_escaped {
+            child_offset_x += scroll_x;
+            child_offset_y += scroll_y;
+        }
+
+        if let Some(inline_id) = child.containing_inline_id {
+            if let Some(&(idx, idy)) = inline_shifts.get(&inline_id) {
+                child_offset_x += idx;
+                child_offset_y += idy;
+            }
+        }
+
+        render_layout_box(
+            child,
+            list,
+            opacity,
+            child_offset_x,
+            child_offset_y,
+            scroll_x,
+            scroll_y,
+            scroll_viewport,
+            active_table,
+            escaped_scroll_x,
+            escaped_scroll_y,
+            sticky_cb,
+            skip_html_bg,
+            skip_body_bg,
+        );
+    }
 }
 
 /// Collects border-box geometry with sticky offsets applied.
@@ -517,6 +677,7 @@ pub fn collect_box_rects_with_scroll(
         scroll_y: f32,
         escaped_scroll_x: f32,
         escaped_scroll_y: f32,
+        sticky_cb: Option<StickyContainingBlock>,
         out: &mut std::collections::HashMap<u32, [f32; 4]>,
     ) {
         if let Some(node_id) = node.node_id {
@@ -530,6 +691,10 @@ pub fn collect_box_rects_with_scroll(
                     border.height(),
                 ],
             );
+        }
+
+        if matches!(node.box_type, BoxType::IFrame { .. }) {
+            return;
         }
 
         let orig_pad_box = node.dimensions.padding_box();
@@ -550,57 +715,195 @@ pub fn collect_box_rects_with_scroll(
             table_rect
         };
 
+        let is_root_or_body = node
+            .tag_name
+            .as_deref()
+            .is_some_and(|t| t == "html" || t == "body");
+
+        let style = node.style.as_deref();
+        let traps_fixed = style.is_some_and(|s| {
+            !s.transform.is_identity()
+                || !s.filter.is_empty()
+                || !s.backdrop_filter.is_empty()
+                || matches!(
+                    s.contain,
+                    mango_css::values::Contain::Paint | mango_css::values::Contain::Strict
+                )
+                || s.will_change
+        });
+
+        let traps_absolute = traps_fixed
+            || is_root_or_body
+            || style.is_some_and(|s| {
+                s.position != mango_css::values::Position::Static
+                    || matches!(
+                        s.contain,
+                        mango_css::values::Contain::Layout | mango_css::values::Contain::Content
+                    )
+            });
+
+        let mut inline_shifts: std::collections::HashMap<mango_html::dom::NodeId, (f32, f32)> =
+            std::collections::HashMap::new();
+
+        let (_max_scroll_x, _max_scroll_y) = if node.is_scroll_container() {
+            node.max_scroll()
+        } else {
+            (0.0, 0.0)
+        };
+        let base_child_offset_x = if node.is_scroll_container() {
+            offset_x - node.scroll_offset_x
+        } else {
+            offset_x
+        };
+        let base_child_offset_y = if node.is_scroll_container() {
+            offset_y - node.scroll_offset_y
+        } else {
+            offset_y
+        };
+
+        for child in &node.children {
+            if let Some(cs) = &child.style {
+                if cs.position == mango_css::values::Position::Sticky {
+                    if let Some(nid) = child.node_id {
+                        inline_shifts.entry(nid).or_insert_with(|| {
+                            let (dx, dy) = sticky_shift(
+                                node,
+                                child,
+                                cs,
+                                pad_box,
+                                active_viewport,
+                                active_table,
+                                base_child_offset_x,
+                                base_child_offset_y,
+                                scroll_x,
+                                scroll_y,
+                                escaped_scroll_x,
+                                escaped_scroll_y,
+                                sticky_cb,
+                            );
+                            (dx - escaped_scroll_x, dy - escaped_scroll_y)
+                        });
+                    }
+                }
+            }
+        }
+
         for child in &node.children {
             let mut child_offset_x = offset_x;
             let mut child_offset_y = offset_y;
-            let mut child_escaped_sx = escaped_scroll_x;
-            let mut child_escaped_sy = escaped_scroll_y;
+
+            let child_pos = child.style.as_ref().map(|s| s.position);
+            let _is_in_flow = child_pos.unwrap_or(mango_css::values::Position::Static)
+                == mango_css::values::Position::Static;
 
             if node.is_scroll_container() {
                 child_offset_x -= node.scroll_offset_x;
                 child_offset_y -= node.scroll_offset_y;
             }
 
-            if let Some(cs) = &child.style {
-                if cs.position == mango_css::values::Position::Fixed {
-                    if node.is_scroll_container() {
-                        child_offset_x += node.scroll_offset_x;
-                        child_offset_y += node.scroll_offset_y;
-                        child_escaped_sx += node.scroll_offset_x;
-                        child_escaped_sy += node.scroll_offset_y;
-                    }
+            let is_fixed_escaped =
+                child_pos == Some(mango_css::values::Position::Fixed) && !traps_fixed;
+            let is_absolute_escaped = child_pos == Some(mango_css::values::Position::Absolute)
+                && !traps_absolute
+                && child.containing_inline_id.is_none();
+            let is_child_escaped = is_fixed_escaped || is_absolute_escaped;
+
+            let child_escaped_sx = escaped_scroll_x;
+            let child_escaped_sy = escaped_scroll_y;
+
+            if is_child_escaped {
+                if node.is_scroll_container() {
+                    child_offset_x += node.scroll_offset_x;
+                    child_offset_y += node.scroll_offset_y;
+                }
+                if is_fixed_escaped {
                     child_offset_x += scroll_x;
                     child_offset_y += scroll_y;
-                } else if cs.position == mango_css::values::Position::Sticky {
-                    let (dx, dy) = sticky_shift(
-                        node,
-                        child,
-                        cs,
-                        pad_box,
-                        active_viewport,
-                        active_table,
-                        child_offset_x,
-                        child_offset_y,
-                        scroll_x,
-                        scroll_y,
-                        child_escaped_sx,
-                        child_escaped_sy,
-                    );
+                }
+            } else if let Some(cs) = &child.style {
+                if cs.position == mango_css::values::Position::Sticky {
+                    let (dx, dy) = if let Some(nid) = child.node_id
+                        && let Some(&(idx, idy)) = inline_shifts.get(&nid)
+                    {
+                        (idx + child_escaped_sx, idy + child_escaped_sy)
+                    } else {
+                        sticky_shift(
+                            node,
+                            child,
+                            cs,
+                            pad_box,
+                            active_viewport,
+                            active_table,
+                            child_offset_x,
+                            child_offset_y,
+                            scroll_x,
+                            scroll_y,
+                            child_escaped_sx,
+                            child_escaped_sy,
+                            sticky_cb,
+                        )
+                    };
                     child_offset_x += dx - child_escaped_sx;
                     child_offset_y += dy - child_escaped_sy;
                 }
             }
 
+            if let Some(inline_id) = child.containing_inline_id {
+                if let Some(&(idx, idy)) = inline_shifts.get(&inline_id) {
+                    child_offset_x += idx;
+                    child_offset_y += idy;
+                }
+            }
+
+            let child_viewport = if is_child_escaped {
+                scroll_viewport
+            } else {
+                active_viewport
+            };
+
+            let is_non_atomic_inline =
+                matches!(child.box_type, BoxType::InlineNode | BoxType::TextNode(_))
+                    || child
+                        .style
+                        .as_ref()
+                        .is_some_and(|s| s.display == mango_css::values::Display::Inline);
+            let current_sticky_cb = if child.is_anonymous() || is_non_atomic_inline {
+                sticky_cb
+            } else {
+                let child_pad = child.dimensions.padding_box();
+                let child_pad_box = Rect::new(
+                    child_pad.x() + child_offset_x,
+                    child_pad.y() + child_offset_y,
+                    child_pad.width(),
+                    child_pad.height(),
+                );
+                let (scroll_right, scroll_bottom) = if child.is_scroll_container() {
+                    let (sw, sh) = child.scrollable_extent();
+                    (
+                        Some(child_pad_box.x() + sw - child.dimensions.padding.right),
+                        Some(child_pad_box.y() + sh - child.dimensions.padding.bottom),
+                    )
+                } else {
+                    (None, None)
+                };
+                Some(StickyContainingBlock {
+                    rect: child_pad_box,
+                    scroll_right,
+                    scroll_bottom,
+                })
+            };
+
             walk(
                 child,
                 child_offset_x,
                 child_offset_y,
-                active_viewport,
+                child_viewport,
                 active_table,
                 scroll_x,
                 scroll_y,
                 child_escaped_sx,
                 child_escaped_sy,
+                current_sticky_cb,
                 out,
             );
         }
@@ -608,7 +911,7 @@ pub fn collect_box_rects_with_scroll(
 
     out.clear();
     walk(
-        root, 0.0, 0.0, None, None, scroll_x, scroll_y, 0.0, 0.0, out,
+        root, 0.0, 0.0, None, None, scroll_x, scroll_y, 0.0, 0.0, None, out,
     );
 }
 

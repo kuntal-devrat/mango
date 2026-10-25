@@ -31,7 +31,8 @@ pub use cascade::{
     RegisteredKeyframes, RegisteredProperty, RuleIndex, compare_layer_paths,
     current_media_environment, find_container_size_for_node, matches_container_query,
     matches_media_query, matches_media_query_env, matches_media_query_size, resolve_cascade,
-    resolve_cascade_with_index, resolve_cascade_with_shadow_index, resolve_pseudo_element_cascade,
+    resolve_cascade_with_index, resolve_cascade_with_shadow_index,
+    resolve_cascade_with_shadow_index_details, resolve_pseudo_element_cascade,
     resolve_pseudo_element_cascade_with_index, resolve_pseudo_element_cascade_with_shadow_index,
     set_device_pixel_ratio, set_hover, set_media_environment, set_pointer,
     set_prefers_color_scheme, set_prefers_contrast, set_prefers_reduced_motion,
@@ -40,6 +41,7 @@ pub use cascade::{
 pub use computed::{
     ComputedStyle, compute_pseudo_style, compute_pseudo_style_with_index,
     compute_pseudo_style_with_shadow_index, compute_style, compute_style_with_index,
+    compute_style_with_shadow_and_part_index, compute_style_with_shadow_and_part_indexes,
     compute_style_with_shadow_index,
 };
 pub use parser::{

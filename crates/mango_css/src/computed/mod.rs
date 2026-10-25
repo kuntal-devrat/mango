@@ -14,6 +14,7 @@ mod tests;
 pub use apply::apply_cascaded_properties;
 pub use compute::{
     compute_pseudo_style, compute_pseudo_style_with_index, compute_pseudo_style_with_shadow_index,
-    compute_style, compute_style_with_index, compute_style_with_shadow_index,
+    compute_style, compute_style_with_index, compute_style_with_shadow_and_part_index,
+    compute_style_with_shadow_and_part_indexes, compute_style_with_shadow_index,
 };
 pub use style::ComputedStyle;

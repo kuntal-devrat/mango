@@ -1,5 +1,5 @@
 use mango_core::Point;
-use mango_css::values::{BoxSizing, Display, Length, Position};
+use mango_css::values::{BoxSizing, Direction, Display, Length, Position, WritingMode};
 
 use crate::box_tree::LayoutBox;
 use crate::dimensions::Dimensions;
@@ -73,7 +73,16 @@ pub fn layout_positioned_children_with_cb(
             .map(|s| s.position)
             .unwrap_or(Position::Static);
         if matches!(child_pos, Position::Absolute | Position::Fixed) {
-            layout_positioned_element(child, &container_dims, float_ctx);
+            if child.containing_inline_id.is_some() {
+                continue;
+            }
+            let child_custom_cb = child.custom_containing_block;
+            let cb = if let Some(ref custom_cb) = child_custom_cb {
+                custom_cb
+            } else {
+                &container_dims
+            };
+            layout_positioned_element(child, cb, float_ctx);
         }
     }
 }
@@ -118,16 +127,46 @@ pub(crate) fn layout_positioned_element(
     containing_block: &Dimensions,
     float_ctx: &mut FloatContext,
 ) {
-    let static_x = box_node.dimensions.content.origin.x;
-    let static_y = box_node.dimensions.content.origin.y;
+    if std::env::var("WPT_TEST_FILTER")
+        .map(|f| f.contains("vrl-rtl-rtl-in-multicol"))
+        .unwrap_or(false)
+    {
+        eprintln!(
+            "LAYOUT_POSITIONED_ELEMENT ENTRY: tag={:?} id={:?} inline_id={:?} current_origin={:?} static_pos={:?}",
+            box_node.tag_name,
+            box_node.node_id,
+            box_node.containing_inline_id,
+            box_node.dimensions.content.origin,
+            box_node.static_position
+        );
+    }
+    if box_node.static_position.is_none() {
+        box_node.static_position = Some(box_node.dimensions.content.origin);
+    }
+    let static_pt = box_node
+        .static_position
+        .unwrap_or(box_node.dimensions.content.origin);
+    let static_x = static_pt.x;
+    let static_y = static_pt.y;
 
     let style = box_node.style.clone().unwrap_or_default();
     let font_size = style.font_size;
     let (vp_w, vp_h) = mango_css::values::get_current_viewport();
+
+    let is_top_layer = (box_node.tag_name.as_deref() == Some("dialog")
+        && box_node.get_attribute("open").is_some())
+        || box_node.get_attribute("data-mango-popover-open") == Some("true")
+        || box_node.get_attribute(":popover-open") == Some("true")
+        || box_node.get_attribute("data-mango-popover-open") == Some("pending")
+        || box_node.get_attribute(":popover-open") == Some("pending");
+
     let fixed_cb;
-    let cb = if style.position == Position::Fixed {
+    let custom_cb_copy = box_node.custom_containing_block;
+    let cb = if style.position == Position::Fixed || is_top_layer {
         fixed_cb = Dimensions::new(mango_core::Rect::new(0.0, 0.0, vp_w, vp_h));
         &fixed_cb
+    } else if let Some(ref custom_cb) = custom_cb_copy {
+        custom_cb
     } else {
         containing_block
     };
@@ -137,10 +176,10 @@ pub(crate) fn layout_positioned_element(
         calculate_block_height(box_node, cb);
     }
 
-    let pad_box = if style.position == Position::Fixed {
+    let pad_box = if style.position == Position::Fixed || is_top_layer {
         mango_core::Rect::new(0.0, 0.0, vp_w, vp_h)
     } else {
-        containing_block.padding_box()
+        cb.padding_box()
     };
 
     let pad_w = pad_box.width();
@@ -231,7 +270,9 @@ pub(crate) fn layout_positioned_element(
     };
 
     // If both left and right are specified and width is auto, width expands to fill the span
-    if !is_left_auto && !is_right_auto && style.width == Length::Auto {
+    let has_left_right_auto_width = !is_left_auto && !is_right_auto && style.width == Length::Auto;
+    let mut stretched_w = None;
+    if has_left_right_auto_width {
         let non_content_h = box_node.dimensions.padding.left
             + box_node.dimensions.padding.right
             + box_node.dimensions.border.left
@@ -264,6 +305,7 @@ pub(crate) fn layout_positioned_element(
             clamped_w = clamped_w.max(min_content_w);
         }
         box_node.dimensions.content.size.width = clamped_w;
+        stretched_w = Some(clamped_w);
     }
 
     // 2. Vertical positioning (CSS 2.1 § 10.6.4)
@@ -291,6 +333,7 @@ pub(crate) fn layout_positioned_element(
     // If both top and bottom are specified and height is auto, height expands to fill the span
     let has_top_bottom_auto_height =
         !is_top_auto && !is_bottom_auto && style.height == Length::Auto;
+    let mut stretched_h = None;
     if has_top_bottom_auto_height {
         let non_content_v = box_node.dimensions.padding.top
             + box_node.dimensions.padding.bottom
@@ -324,6 +367,7 @@ pub(crate) fn layout_positioned_element(
             clamped_h = clamped_h.max(min_content_h);
         }
         box_node.dimensions.content.size.height = clamped_h;
+        stretched_h = Some(clamped_h);
     }
 
     let border_box_w = box_node.dimensions.border_box().width();
@@ -366,8 +410,22 @@ pub(crate) fn layout_positioned_element(
     } else {
         box_node.dimensions.margin.left = margin_l;
         box_node.dimensions.margin.right = margin_r;
-        // Static position: hypothetical in-flow position inside containing block's content box (CSS 2.1 § 10.3.7)
-        let base_x = if static_x >= containing_block.content.x() {
+        let base_x = if is_top_layer {
+            match style.writing_mode {
+                WritingMode::HorizontalTb => {
+                    if style.direction == Direction::Rtl {
+                        pad_box.right() - border_box_w
+                    } else {
+                        pad_box.left()
+                    }
+                }
+                WritingMode::VerticalRl | WritingMode::SidewaysRl => pad_box.right() - border_box_w,
+                WritingMode::VerticalLr | WritingMode::SidewaysLr => pad_box.left(),
+            }
+        } else if box_node.containing_inline_id.is_some()
+            || static_x != 0.0
+            || containing_block.content.x() == 0.0
+        {
             static_x
         } else {
             containing_block.content.x()
@@ -377,6 +435,8 @@ pub(crate) fn layout_positioned_element(
 
     let is_bottom_anchored_auto_height =
         is_top_auto && !is_bottom_auto && style.height == Length::Auto;
+
+    let is_bottom_anchored_static_y = box_node.is_static_bottom_anchored;
 
     let border_box_y = if !is_top_auto && !is_bottom_auto {
         let top_px = calc_top_px(&style.top);
@@ -424,9 +484,40 @@ pub(crate) fn layout_positioned_element(
     } else {
         box_node.dimensions.margin.top = margin_t;
         box_node.dimensions.margin.bottom = margin_b;
-        // Static position: hypothetical in-flow position inside containing block's content box (CSS 2.1 § 10.6.4)
-        let base_y = if static_y >= containing_block.content.y() {
-            static_y
+        let base_y = if is_top_layer {
+            match style.writing_mode {
+                WritingMode::HorizontalTb => pad_box.top(),
+                WritingMode::VerticalLr | WritingMode::VerticalRl => {
+                    if style.direction == Direction::Rtl {
+                        pad_box.bottom() - border_box_h
+                    } else {
+                        pad_box.top()
+                    }
+                }
+                WritingMode::SidewaysLr => {
+                    if style.direction == Direction::Ltr {
+                        pad_box.bottom() - border_box_h
+                    } else {
+                        pad_box.top()
+                    }
+                }
+                WritingMode::SidewaysRl => {
+                    if style.direction == Direction::Rtl {
+                        pad_box.bottom() - border_box_h
+                    } else {
+                        pad_box.top()
+                    }
+                }
+            }
+        } else if box_node.containing_inline_id.is_some()
+            || static_y != 0.0
+            || containing_block.content.y() == 0.0
+        {
+            if style.writing_mode.is_vertical() && is_bottom_anchored_static_y {
+                static_y - border_box_h
+            } else {
+                static_y
+            }
         } else {
             containing_block.content.y()
         };
@@ -539,12 +630,29 @@ pub(crate) fn layout_positioned_element(
         crate::table_flow::layout_table(box_node, cb, float_ctx);
     } else if matches!(style.display, Display::Flex | Display::InlineFlex) {
         crate::flex_flow::layout_flex(box_node, cb, float_ctx);
+        if let Some(sh) = stretched_h {
+            box_node.dimensions.content.size.height = sh;
+        }
+        if let Some(sw) = stretched_w {
+            box_node.dimensions.content.size.width = sw;
+        }
     } else if style.display == Display::Grid || style.display == Display::InlineGrid {
         crate::grid_flow::layout_grid(box_node, cb, float_ctx);
+        if let Some(sh) = stretched_h {
+            box_node.dimensions.content.size.height = sh;
+        }
+        if let Some(sw) = stretched_w {
+            box_node.dimensions.content.size.width = sw;
+        }
     } else {
-        layout_block_children(box_node, float_ctx);
-        if !has_top_bottom_auto_height {
+        layout_block_children(box_node, cb, float_ctx);
+        if let Some(sh) = stretched_h {
+            box_node.dimensions.content.size.height = sh;
+        } else if !has_top_bottom_auto_height {
             calculate_block_height(box_node, cb);
+        }
+        if let Some(sw) = stretched_w {
+            box_node.dimensions.content.size.width = sw;
         }
         center_button_children(box_node);
     }
@@ -558,6 +666,23 @@ pub(crate) fn layout_positioned_element(
         let dy = actual_content_y - box_node.dimensions.content.y();
         box_node.dimensions.content.origin.y = actual_content_y;
         shift_descendants(box_node, 0.0, dy);
+    }
+
+    let is_static_y = is_top_auto && is_bottom_auto;
+    if is_static_y
+        && !is_top_layer
+        && style.writing_mode.is_vertical()
+        && is_bottom_anchored_static_y
+    {
+        let actual_border_box_h = box_node.dimensions.border_box().height();
+        let actual_box_y = static_y - actual_border_box_h + margin_t;
+        let actual_content_y =
+            actual_box_y + box_node.dimensions.border.top + box_node.dimensions.padding.top;
+        let dy = actual_content_y - box_node.dimensions.content.y();
+        if dy.abs() > 0.001 {
+            box_node.dimensions.content.origin.y = actual_content_y;
+            shift_descendants(box_node, 0.0, dy);
+        }
     }
 
     if let Some(name) = &style.anchor_name {
@@ -578,10 +703,36 @@ pub(crate) fn shift_descendants(box_node: &mut LayoutBox, dx: f32, dy: f32) {
             .map(|s| s.position)
             .unwrap_or(Position::Static);
         if child_pos == Position::Fixed {
+            let (shift_x, shift_y) = if let Some(style) = &child.style {
+                let sx = if style.left == Length::Auto && style.right == Length::Auto {
+                    dx
+                } else {
+                    0.0
+                };
+                let sy = if style.top == Length::Auto && style.bottom == Length::Auto {
+                    dy
+                } else {
+                    0.0
+                };
+                (sx, sy)
+            } else {
+                (dx, dy)
+            };
+            child.dimensions.content.origin.x += shift_x;
+            child.dimensions.content.origin.y += shift_y;
+            if let Some(ref mut pt) = child.static_position {
+                pt.x += shift_x;
+                pt.y += shift_y;
+            }
+            shift_descendants(child, shift_x, shift_y);
             continue;
         }
         child.dimensions.content.origin.x += dx;
         child.dimensions.content.origin.y += dy;
+        if let Some(ref mut pt) = child.static_position {
+            pt.x += dx;
+            pt.y += dy;
+        }
         shift_descendants(child, dx, dy);
     }
 }

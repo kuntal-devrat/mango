@@ -19,8 +19,54 @@ pub fn compute_style_with_shadow_index(
     shadow_index: Option<&crate::cascade::RuleIndex>,
     parent_style: Option<&ComputedStyle>,
 ) -> ComputedStyle {
-    let cascaded =
-        crate::cascade::resolve_cascade_with_shadow_index(node_id, doc, author_index, shadow_index);
+    compute_style_with_shadow_and_part_index(
+        node_id,
+        doc,
+        author_index,
+        shadow_index,
+        None,
+        parent_style,
+    )
+}
+
+pub fn compute_style_with_shadow_and_part_index(
+    node_id: NodeId,
+    doc: &Document,
+    author_index: &crate::cascade::RuleIndex,
+    shadow_index: Option<&crate::cascade::RuleIndex>,
+    part_index: Option<&crate::cascade::RuleIndex>,
+    parent_style: Option<&ComputedStyle>,
+) -> ComputedStyle {
+    let part_indexes = match part_index {
+        Some(pi) => vec![pi],
+        None => Vec::new(),
+    };
+    compute_style_with_shadow_and_part_indexes(
+        node_id,
+        doc,
+        author_index,
+        shadow_index,
+        &part_indexes,
+        parent_style,
+    )
+}
+
+pub fn compute_style_with_shadow_and_part_indexes(
+    node_id: NodeId,
+    doc: &Document,
+    author_index: &crate::cascade::RuleIndex,
+    shadow_index: Option<&crate::cascade::RuleIndex>,
+    part_indexes: &[&crate::cascade::RuleIndex],
+    parent_style: Option<&ComputedStyle>,
+) -> ComputedStyle {
+    let (cascaded, important_props) =
+        crate::cascade::resolve_cascade_with_shadow_and_part_indexes_details(
+            node_id,
+            doc,
+            author_index,
+            shadow_index,
+            part_indexes,
+        );
     let mut style = ComputedStyle::default();
 
     // ── 1. Inherited properties: start with parent values if available ──
@@ -135,6 +181,7 @@ pub fn compute_style_with_shadow_index(
     let mut visited = HashSet::new();
     for (prop, val) in &cascaded {
         if prop.starts_with("--") {
+            resolved_cascaded.insert(prop.clone(), val.clone());
             continue;
         }
         if !value_has_vars(val) {
@@ -166,19 +213,69 @@ pub fn compute_style_with_shadow_index(
 
     apply_cascaded_properties(&mut style, &resolved_cascaded, parent_style);
 
-    // Apply keyframe animation styles (offset 0.0 for starting/paused animations)
-    let anim_names: Vec<String> = style.animations.iter().map(|a| a.name.clone()).collect();
-    for anim_name in anim_names {
-        if let Some(kf_reg) = author_index.keyframe_rules.get(&anim_name) {
+    // Apply keyframe animation styles
+    // Per CSS Cascade 4 § 3, animation declarations are overridden by !important author declarations.
+    let animations = style.animations.clone();
+    let mut animated_custom_props = false;
+    for anim in &animations {
+        let anim_name = &anim.name;
+        if anim_name.is_empty() {
+            continue;
+        }
+        let progress = if anim.duration_ms > 0.0 && anim.delay_ms < 0.0 {
+            (-anim.delay_ms / anim.duration_ms).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let decls_opt = if let Some(kf_reg) = author_index.keyframe_rules.get(anim_name) {
             let kf = crate::animation::Keyframes::from_rule(&kf_reg.keyframes);
-            let decls = kf.sample(0.0);
-            apply_cascaded_properties(&mut style, &decls, parent_style);
+            Some(kf.sample_with_underlying(progress, Some(&resolved_cascaded)))
         } else if let Some(shadow) = shadow_index {
-            if let Some(kf_reg) = shadow.keyframe_rules.get(&anim_name) {
+            shadow.keyframe_rules.get(anim_name).map(|kf_reg| {
                 let kf = crate::animation::Keyframes::from_rule(&kf_reg.keyframes);
-                let decls = kf.sample(0.0);
-                apply_cascaded_properties(&mut style, &decls, parent_style);
+                kf.sample_with_underlying(progress, Some(&resolved_cascaded))
+            })
+        } else {
+            None
+        };
+
+        if let Some(mut decls) = decls_opt {
+            decls.retain(|prop, _| !important_props.contains(prop));
+            for (k, v) in &decls {
+                if k.starts_with("--") {
+                    animated_custom_props = true;
+                    style.local_custom_properties.insert(k.clone(), v.clone());
+                    let cp = std::sync::Arc::make_mut(&mut style.custom_properties);
+                    cp.insert(k.clone(), v.clone());
+                }
             }
+            apply_cascaded_properties(&mut style, &decls, parent_style);
+        }
+    }
+
+    if animated_custom_props {
+        let mut re_resolved = HashMap::new();
+        for (prop, val) in &cascaded {
+            if !prop.starts_with("--") && value_has_vars(val) {
+                visited.clear();
+                let resolved = if style.local_custom_properties.is_empty() {
+                    resolve_value_vars(val, &style.custom_properties, &mut visited)
+                } else {
+                    resolve_value_vars_with_local(
+                        val,
+                        &style.local_custom_properties,
+                        &style.custom_properties,
+                        &mut visited,
+                    )
+                };
+                if let Some(res) = resolved {
+                    re_resolved.insert(prop.clone(), res);
+                }
+            }
+        }
+        if !re_resolved.is_empty() {
+            expand_deferred_shorthands(&mut re_resolved);
+            apply_cascaded_properties(&mut style, &re_resolved, parent_style);
         }
     }
 
@@ -265,6 +362,7 @@ pub fn compute_pseudo_style_with_shadow_index(
     let mut visited = HashSet::new();
     for (prop, val) in &cascaded {
         if prop.starts_with("--") {
+            resolved_cascaded.insert(prop.clone(), val.clone());
             continue;
         }
         if !value_has_vars(val) {

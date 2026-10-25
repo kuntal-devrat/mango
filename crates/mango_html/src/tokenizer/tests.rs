@@ -118,3 +118,11 @@ fn test_multi_char_and_unrecognized_entity_decoding() {
     }
     assert_eq!(text2, "one & two");
 }
+
+#[test]
+fn test_style_cdata_parsing() {
+    let html = r#"<style type="text/css"><![CDATA[ div { color: green; } ]]></style>"#;
+    let doc = crate::parse_html(html);
+    let text = doc.text_content(doc.root());
+    assert!(text.contains("div { color: green; }"));
+}

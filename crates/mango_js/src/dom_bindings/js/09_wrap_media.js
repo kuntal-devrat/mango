@@ -41,6 +41,16 @@
             close: function(retVal) {
                 if (!this.hasAttribute('open')) return;
                 if (retVal !== undefined) this.returnValue = String(retVal);
+                var trans = _getTransitionSpec(this, 'overlay') || _getTransitionSpec(this, 'display');
+                if (trans && trans.allowDiscrete && trans.durationMs > 0) {
+                    var self = this;
+                    setTimeout(function() {
+                        self.removeAttribute('open');
+                        self.removeAttribute('data-mango-modal');
+                        self.dispatchEvent({ type: 'close', target: self });
+                    }, trans.durationMs);
+                    return;
+                }
                 this.removeAttribute('open');
                 this.removeAttribute('data-mango-modal');
                 this.dispatchEvent({ type: 'close', target: this });
@@ -614,15 +624,35 @@
                 if (typeof document !== 'undefined' && document.activeElement) {
                     this._previousFocus = document.activeElement;
                 }
-                this.setAttribute('data-mango-popover-open', 'true');
-                this.setAttribute(':popover-open', 'true');
+
+                var trans = _getTransitionSpec(this, 'overlay');
+                if (trans && trans.stepEnd && trans.durationMs > 0) {
+                    this._overlayTransition = 'in';
+                    this.setAttribute('data-mango-popover-open', 'pending');
+                    this.setAttribute(':popover-open', 'pending');
+                    var self = this;
+                    setTimeout(function() {
+                        self._overlayTransition = 'done';
+                        self.setAttribute('data-mango-popover-open', 'true');
+                        self.setAttribute(':popover-open', 'true');
+                        var te = (typeof TransitionEvent !== 'undefined')
+                            ? new TransitionEvent('transitionend', { propertyName: 'overlay' })
+                            : (typeof Event !== 'undefined' ? new Event('transitionend') : { type: 'transitionend' });
+                        te.propertyName = 'overlay';
+                        self.dispatchEvent(te);
+                    }, trans.durationMs);
+                } else {
+                    this.setAttribute('data-mango-popover-open', 'true');
+                    this.setAttribute(':popover-open', 'true');
+                }
 
                 var evtAfter = typeof ToggleEvent !== 'undefined' ? new ToggleEvent('toggle', { oldState: 'closed', newState: 'open' }) : new Event('toggle');
                 evtAfter.oldState = 'closed'; evtAfter.newState = 'open';
                 this.dispatchEvent(evtAfter);
             },
             hidePopover: function() {
-                if (this.popover === null || this.getAttribute('data-mango-popover-open') !== 'true') {
+                var isOpen = this.getAttribute('data-mango-popover-open') === 'true' || this.getAttribute('data-mango-popover-open') === 'pending';
+                if (this.popover === null || !isOpen) {
                     var err = typeof DOMException !== 'undefined' ? new DOMException("Popover is not open", "InvalidStateError") : new Error("Popover is not open");
                     err.name = "InvalidStateError";
                     throw err;
@@ -631,12 +661,28 @@
                 evtBefore.oldState = 'open'; evtBefore.newState = 'closed';
                 this.dispatchEvent(evtBefore);
 
-                this.removeAttribute('data-mango-popover-open');
-                this.removeAttribute(':popover-open');
-
-                if (globalThis._popoverStack) {
-                    var idx = globalThis._popoverStack.indexOf(this);
-                    if (idx !== -1) globalThis._popoverStack.splice(idx, 1);
+                var trans = _getTransitionSpec(this, 'overlay');
+                if (trans && (trans.allowDiscrete || trans.stepEnd) && trans.durationMs > 0) {
+                    this._overlayTransition = 'out';
+                    this.setAttribute('data-mango-popover-open', 'true');
+                    this.setAttribute(':popover-open', 'true');
+                    var self = this;
+                    setTimeout(function() {
+                        self._overlayTransition = null;
+                        self.removeAttribute('data-mango-popover-open');
+                        self.removeAttribute(':popover-open');
+                        if (globalThis._popoverStack) {
+                            var idx = globalThis._popoverStack.indexOf(self);
+                            if (idx !== -1) globalThis._popoverStack.splice(idx, 1);
+                        }
+                    }, trans.durationMs);
+                } else {
+                    this.removeAttribute('data-mango-popover-open');
+                    this.removeAttribute(':popover-open');
+                    if (globalThis._popoverStack) {
+                        var idx = globalThis._popoverStack.indexOf(this);
+                        if (idx !== -1) globalThis._popoverStack.splice(idx, 1);
+                    }
                 }
 
                 if (this._previousFocus && typeof this._previousFocus.focus === 'function') {

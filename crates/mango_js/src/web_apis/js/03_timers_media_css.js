@@ -318,7 +318,8 @@
             flexDirection:    s.flexDirection    || 'row',
             alignItems:       s.alignItems       || 'stretch',
             justifyContent:   s.justifyContent   || 'flex-start',
-            cursor:           s.cursor           || 'auto'
+            cursor:           s.cursor           || 'auto',
+            overlay:          (el && el._overlayTransition === 'in') ? 'none' : ((el && (el.hasAttribute && (el.hasAttribute('data-mango-popover-open') || el.hasAttribute(':popover-open') || (el.tagName === 'DIALOG' && el.hasAttribute('open')) || el._overlayTransition === 'out'))) ? 'auto' : 'none')
         };
 
         if (backendProps) {

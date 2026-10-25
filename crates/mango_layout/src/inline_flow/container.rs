@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use mango_core::Point;
 use mango_css::values::{TextAlign, WritingMode};
 
 use crate::box_model::BoxType;
@@ -70,6 +71,9 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
         writing_mode,
         WritingMode::VerticalRl | WritingMode::VerticalLr
     ) {
+        if container.dimensions.content.size.height == 0.0 && container_height > 0.0 {
+            container.dimensions.content.size.height = container_height;
+        }
         return layout_vertical_inline_children(container, float_ctx, writing_mode);
     }
 
@@ -77,6 +81,57 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
     if container.raw_children.is_none() {
         container.raw_children = Some(std::mem::take(&mut container.children));
     }
+
+    // Check for CSS Multi-column layout on this inline container
+    let col_count_opt = container.style.as_ref().and_then(|s| s.column_count);
+    let col_width_opt = container
+        .style
+        .as_ref()
+        .and_then(|s| s.column_width.as_ref());
+    let font_size = container
+        .style
+        .as_ref()
+        .map(|s| s.font_size)
+        .unwrap_or(16.0);
+    let gap = container
+        .style
+        .as_ref()
+        .map(|s| s.column_gap.to_px(font_size, 16.0, container_width))
+        .unwrap_or(0.0);
+    let resolved_cols = match (col_count_opt, col_width_opt) {
+        (Some(c), Some(w_len)) => {
+            let w_px = w_len.to_px(font_size, 16.0, container_width);
+            if w_px > 0.0 {
+                let max_cols = ((container_width + gap) / (w_px + gap)).floor().max(1.0) as usize;
+                c.min(max_cols).max(1)
+            } else {
+                c.max(1)
+            }
+        }
+        (Some(c), None) => c.max(1),
+        (None, Some(w_len)) => {
+            let w_px = w_len.to_px(font_size, 16.0, container_width);
+            if w_px > 0.0 {
+                ((container_width + gap) / (w_px + gap)).floor().max(1.0) as usize
+            } else {
+                1
+            }
+        }
+        (None, None) => 1,
+    };
+
+    let (layout_width, target_col_h) = if resolved_cols > 1 {
+        let col_w =
+            ((container_width - (resolved_cols - 1) as f32 * gap) / resolved_cols as f32).max(1.0);
+        let col_h = if container_height > 0.0 {
+            container_height
+        } else {
+            0.0
+        };
+        (col_w, col_h)
+    } else {
+        (container_width, container_height)
+    };
 
     // Collect all inline atoms from children (no synthetic spaces between TextNodes)
     let mut atoms: Vec<InlineAtom> = Vec::new();
@@ -87,7 +142,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
                 &mut atoms,
                 child.link_target.as_deref(),
                 child.link_frame.as_deref(),
-                container_width,
+                layout_width,
                 container_height,
             );
         }
@@ -190,6 +245,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
                         height: m_h,
                         link_target: None,
                         link_frame: None,
+                        owner_inline_id: None,
                     },
                 );
             }
@@ -228,7 +284,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
     let text_indent = container
         .style
         .as_ref()
-        .map(|s| s.text_indent.to_px(s.font_size, 16.0, container_width))
+        .map(|s| s.text_indent.to_px(s.font_size, 16.0, layout_width))
         .unwrap_or(0.0);
     let mut is_first_line = true;
 
@@ -238,12 +294,11 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
         .map(|s| s.text_wrap)
         .unwrap_or(mango_css::values::TextWrap::Wrap);
 
-    let balance_width =
-        if text_wrap == mango_css::values::TextWrap::Balance && container_width > 0.0 {
-            compute_balanced_line_width(&atoms, container_width)
-        } else {
-            None
-        };
+    let balance_width = if text_wrap == mango_css::values::TextWrap::Balance && layout_width > 0.0 {
+        compute_balanced_line_width(&atoms, layout_width)
+    } else {
+        None
+    };
 
     let get_line_x_and_width = |min_x: f32, max_x: f32, is_first: bool| -> (f32, f32, f32) {
         let line_indent = if is_first { text_indent } else { 0.0 };
@@ -285,8 +340,9 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
     while let Some(atom) = atom_queue.pop_front() {
         if matches!(atom.kind, InlineAtomKind::LineBreak) {
             let (min_x, max_x) =
-                float_ctx.available_span(current_y, atom.height, container_x, container_width);
+                float_ctx.available_span(current_y, atom.height, container_x, layout_width);
             let (line_x, available_width, _) = get_line_x_and_width(min_x, max_x, is_first_line);
+            let block_start_x = if is_container_rtl { max_x } else { min_x };
             let line_h = finalize_line(
                 &line_atoms,
                 line_x,
@@ -295,6 +351,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
                 text_align,
                 &mut positioned_boxes,
                 true,
+                block_start_x,
             );
             current_y += line_h.max(atom.height);
             is_first_line = false;
@@ -316,7 +373,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
 
         let atom_height = atom.height;
         let (mut min_x, mut max_x) =
-            float_ctx.available_span(current_y, atom_height, container_x, container_width);
+            float_ctx.available_span(current_y, atom_height, container_x, layout_width);
         let (mut line_x, mut available_width, mut wrap_width) =
             get_line_x_and_width(min_x, max_x, is_first_line);
 
@@ -329,7 +386,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
         {
             current_y = next_y;
             let (new_min, new_max) =
-                float_ctx.available_span(current_y, atom_height, container_x, container_width);
+                float_ctx.available_span(current_y, atom_height, container_x, layout_width);
             min_x = new_min;
             max_x = new_max;
             let (lx, aw, ww) = get_line_x_and_width(min_x, max_x, is_first_line);
@@ -372,7 +429,8 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
                 atom.height,
                 atom.link_target.as_deref(),
                 atom.link_frame.as_deref(),
-                container_width,
+                layout_width,
+                atom.owner_inline_id,
             );
             if !chunks.is_empty() {
                 let first = chunks.remove(0);
@@ -416,8 +474,10 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
                     height: atom.height,
                     link_target: atom.link_target.clone(),
                     link_frame: atom.link_frame.clone(),
+                    owner_inline_id: atom.owner_inline_id,
                 };
                 line_atoms.push(hyphen_atom);
+                let block_start_x = if is_container_rtl { max_x } else { min_x };
                 let line_h = finalize_line(
                     &line_atoms,
                     line_x,
@@ -426,6 +486,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
                     text_align,
                     &mut positioned_boxes,
                     false,
+                    block_start_x,
                 );
                 current_y += line_h;
                 is_first_line = false;
@@ -476,6 +537,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
                     height: atom.height,
                     link_target: atom.link_target,
                     link_frame: atom.link_frame,
+                    owner_inline_id: atom.owner_inline_id,
                 };
                 atom_queue.push_front(suffix_atom);
                 continue;
@@ -507,6 +569,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
                         }
                         orphan_prevented = true;
 
+                        let block_start_x = if is_container_rtl { max_x } else { min_x };
                         let line_h = finalize_line(
                             &line_atoms,
                             line_x,
@@ -515,6 +578,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
                             text_align,
                             &mut positioned_boxes,
                             false,
+                            block_start_x,
                         );
                         current_y += line_h;
                         is_first_line = false;
@@ -551,7 +615,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
                         let letter_spacing_px =
                             prev.style
                                 .letter_spacing
-                                .to_px(font_size, 16.0, container_width);
+                                .to_px(font_size, 16.0, layout_width);
                         prev.width = measure_text_width_with_style_and_spacing(
                             text,
                             font_size,
@@ -564,6 +628,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
             }
 
             // Line break
+            let block_start_x = if is_container_rtl { max_x } else { min_x };
             let line_h = finalize_line(
                 &line_atoms,
                 line_x,
@@ -572,6 +637,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
                 text_align,
                 &mut positioned_boxes,
                 false,
+                block_start_x,
             );
             current_y += line_h;
             is_first_line = false;
@@ -592,7 +658,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
                         let weight = font_weight_for(st);
                         let family = font_family_for(st);
                         let letter_spacing_px =
-                            st.letter_spacing.to_px(font_size, 16.0, container_width);
+                            st.letter_spacing.to_px(font_size, 16.0, layout_width);
                         last_box.dimensions.content.size.width =
                             measure_text_width_with_style_and_spacing(
                                 t,
@@ -618,8 +684,9 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
     if !line_atoms.is_empty() && max_lines.is_none_or(|max| line_count < max) {
         let line_height = line_atoms.iter().map(|a| a.height).fold(0.0f32, f32::max);
         let (min_x, max_x) =
-            float_ctx.available_span(current_y, line_height, container_x, container_width);
+            float_ctx.available_span(current_y, line_height, container_x, layout_width);
         let (line_x, available_width, _) = get_line_x_and_width(min_x, max_x, is_first_line);
+        let block_start_x = if is_container_rtl { max_x } else { min_x };
 
         let line_h = finalize_line(
             &line_atoms,
@@ -629,25 +696,88 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
             text_align,
             &mut positioned_boxes,
             true,
+            block_start_x,
         );
         current_y += line_h;
     }
 
-    if let Some(source_children) = container.raw_children.as_deref() {
-        for sc in source_children {
-            let is_oof = sc.style.as_ref().is_some_and(|s| {
-                matches!(
-                    s.position,
-                    mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
-                )
-            });
-            if is_oof {
-                positioned_boxes.push(sc.clone());
+    resolve_inline_containing_blocks(container, &mut positioned_boxes, writing_mode, float_ctx);
+
+    if resolved_cols > 1 {
+        let col_h = if target_col_h > 0.0 {
+            target_col_h
+        } else {
+            let total_content_h = current_y - container_y;
+            (total_content_h / resolved_cols as f32).max(20.0)
+        };
+
+        let mut fragmented_boxes = Vec::new();
+        for mut b in positioned_boxes {
+            let rel_top = (b.dimensions.content.y() - container_y).max(0.0);
+            let rel_bottom = (b.dimensions.content.bottom() - container_y).max(0.0);
+            let start_col = (rel_top / col_h).floor() as usize;
+            let end_col = if rel_bottom > rel_top {
+                ((rel_bottom - 0.001) / col_h).floor() as usize
+            } else {
+                start_col
+            };
+            let start_col = start_col.min(resolved_cols - 1);
+            let end_col = end_col.min(resolved_cols - 1);
+
+            if start_col == end_col {
+                let col_idx = start_col;
+                let col_x = if is_container_rtl {
+                    container_x + (resolved_cols - 1 - col_idx) as f32 * (layout_width + gap)
+                } else {
+                    container_x + col_idx as f32 * (layout_width + gap)
+                };
+                let dx = col_x - container_x;
+                let dy = -(col_idx as f32 * col_h);
+                b.dimensions.content.origin.x += dx;
+                b.dimensions.content.origin.y += dy;
+                crate::block_flow::shift_descendants(&mut b, dx, dy);
+                fragmented_boxes.push(b);
+            } else {
+                for c in start_col..=end_col {
+                    let col_top = c as f32 * col_h;
+                    let col_bottom = (c + 1) as f32 * col_h;
+                    let slice_top = rel_top.max(col_top);
+                    let slice_bottom = rel_bottom.min(col_bottom);
+                    let slice_h = slice_bottom - slice_top;
+                    if slice_h > 0.0 {
+                        let mut frag = b.clone();
+                        let col_x = if is_container_rtl {
+                            container_x + (resolved_cols - 1 - c) as f32 * (layout_width + gap)
+                        } else {
+                            container_x + c as f32 * (layout_width + gap)
+                        };
+                        let new_x = col_x + (b.dimensions.content.x() - container_x);
+                        let new_y = container_y + (slice_top - col_top);
+                        let dx = new_x - frag.dimensions.content.x();
+                        let dy = new_y - frag.dimensions.content.y();
+                        frag.dimensions.content.origin = Point::new(new_x, new_y);
+                        frag.dimensions.content.size.height = slice_h;
+                        crate::block_flow::shift_descendants(&mut frag, dx, dy);
+                        fragmented_boxes.push(frag);
+                    }
+                }
             }
         }
+        positioned_boxes = fragmented_boxes;
     }
 
-    let total_height = current_y - container_y;
+    let total_height = if resolved_cols > 1 {
+        if container_height > 0.0 {
+            container_height
+        } else {
+            let total_content_h = current_y - container_y;
+            (total_content_h / resolved_cols as f32).max(20.0)
+        }
+    } else {
+        current_y - container_y
+    };
     container.children = positioned_boxes;
     total_height
 }
+
+pub(crate) use super::containing_block::resolve_inline_containing_blocks;

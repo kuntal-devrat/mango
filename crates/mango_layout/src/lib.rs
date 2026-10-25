@@ -69,7 +69,8 @@ pub use snapshot::LayoutSnapshot;
 pub use style_tree::{
     PageStyleIndex, StyleInvalidator, StyledNode, build_style_tree,
     build_style_tree_with_cached_index, build_style_tree_with_env, build_style_tree_with_size,
-    collect_image_maps, extract_style_elements,
+    collect_image_maps, current_document_base_dir, extract_style_elements, resolve_sheet_imports,
+    set_current_document_base_dir,
 };
 pub use table_flow::layout_table;
 
@@ -207,7 +208,23 @@ fn layout_styled_document(
         Dimensions::new(Rect::new(0.0, 0.0, env.viewport_width, env.viewport_height));
     let mut float_ctx = FloatContext::new();
 
-    layout_block(&mut root_box, &containing_block, &mut float_ctx);
+    let root_pos = root_box
+        .style
+        .as_ref()
+        .map(|s| s.position)
+        .unwrap_or(mango_css::values::Position::Static);
+    if matches!(
+        root_pos,
+        mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
+    ) {
+        crate::block_flow::positioned::layout_positioned_element(
+            &mut root_box,
+            &containing_block,
+            &mut float_ctx,
+        );
+    } else {
+        layout_block(&mut root_box, &containing_block, &mut float_ctx);
+    }
 
     clamp_scroll_offsets(&mut root_box);
 
@@ -219,7 +236,18 @@ fn layout_styled_document(
 fn clamp_scroll_offsets(box_node: &mut LayoutBox) {
     if box_node.is_scroll_container() {
         let (max_x, max_y) = box_node.max_scroll();
-        box_node.scroll_offset_x = box_node.scroll_offset_x.clamp(0.0, max_x);
+        let is_rtl_x = box_node.style.as_ref().is_some_and(|s| {
+            s.writing_mode == mango_css::values::WritingMode::VerticalRl
+                || s.direction == mango_css::values::Direction::Rtl
+        });
+        if is_rtl_x {
+            box_node.scroll_offset_x = box_node.scroll_offset_x.clamp(-max_x, 0.0);
+        } else {
+            box_node.scroll_offset_x = box_node.scroll_offset_x.clamp(0.0, max_x);
+        }
+        if let Some(id) = box_node.get_attribute("id") {
+            if id.starts_with("scroller") {}
+        }
         box_node.scroll_offset_y = box_node.scroll_offset_y.clamp(0.0, max_y);
     }
     for child in &mut box_node.children {

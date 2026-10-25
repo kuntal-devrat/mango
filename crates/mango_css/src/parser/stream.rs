@@ -51,7 +51,10 @@ impl CssParser {
     }
 
     pub(crate) fn skip_whitespace_and_comments(&mut self) {
-        while let Token::Whitespace | Token::Comment(_) = self.peek() {
+        while matches!(
+            self.peek(),
+            Token::Whitespace | Token::Comment(_) | Token::Cdo | Token::Cdc
+        ) {
             self.advance();
         }
     }

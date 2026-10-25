@@ -217,9 +217,10 @@ pub fn build_box_tree_with_maps(
         collect_child_boxes_with_maps(child, &mut raw_children, maps);
     }
 
-    // CSS 2.1 §9.2.1.1: If an inline element contains block-level children,
+    // CSS 2.1 §9.2.1.1: If an inline element contains in-flow block-level children,
     // it cannot establish a pure inline context; promote it to a block container.
-    if root_box.box_type == BoxType::InlineNode && raw_children.iter().any(|c| c.is_block()) {
+    if root_box.box_type == BoxType::InlineNode && raw_children.iter().any(|c| c.is_in_flow_block())
+    {
         root_box.box_type = BoxType::BlockNode;
     }
 
@@ -290,7 +291,7 @@ pub fn build_box_tree_with_maps(
     } else if root_box.is_block() {
         // Apply CSS 2.1 §9.2.1.1: If block container has mixed block and inline children,
         // wrap contiguous sequences of inline children into anonymous block boxes.
-        let has_blocks = raw_children.iter().any(|c| c.is_block());
+        let has_blocks = raw_children.iter().any(|c| c.is_in_flow_block());
         let has_inlines = raw_children.iter().any(|c| c.is_inline());
 
         if has_blocks && has_inlines {
@@ -305,7 +306,13 @@ pub fn build_box_tree_with_maps(
             };
 
             for child in raw_children {
-                if child.is_inline() {
+                if child.is_out_of_flow() {
+                    if let Some(ref mut anon) = current_anonymous {
+                        anon.children.push(child);
+                    } else {
+                        final_children.push(child);
+                    }
+                } else if child.is_inline() {
                     let anon = current_anonymous.get_or_insert_with(|| {
                         LayoutBox::new_anonymous_block(Some(styled_node.style.clone()))
                     });

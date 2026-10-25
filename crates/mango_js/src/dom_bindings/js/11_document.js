@@ -11,17 +11,26 @@
     try { globalThis._mangoWrap = _wrapElement; globalThis._wrapElement = _wrapElement; } catch (e) {}
 
     function _syncWindowNamedProperties() {
-        if (typeof document !== 'undefined' && typeof document.querySelectorAll === 'function') {
+        if (typeof _querySelectorAll === 'function') {
             try {
-                var list = document.querySelectorAll('[id]');
-                for (var i = 0; i < list.length; i++) {
-                    var el = list[i];
-                    var elId = el.id;
+                var ids = _querySelectorAll(0, '[id]') || [];
+                for (var i = 0; i < ids.length; i++) {
+                    var el = _wrapElement(ids[i]);
+                    if (!el) continue;
+                    var elId = (el.getAttribute && el.getAttribute('id')) || el.id;
                     if (elId && !(elId in globalThis)) {
                         (function(targetId) {
                             try {
                                 Object.defineProperty(globalThis, targetId, {
                                     get: function() { return document.getElementById(targetId); },
+                                    set: function(v) {
+                                        Object.defineProperty(globalThis, targetId, {
+                                            value: v,
+                                            writable: true,
+                                            configurable: true,
+                                            enumerable: true
+                                        });
+                                    },
                                     configurable: true,
                                     enumerable: false
                                 });
@@ -303,6 +312,14 @@
         enumerable: true
     });
     if (globalThis.Document && globalThis.Document.prototype) {
+        Object.defineProperty(globalThis.Document.prototype, 'scrollingElement', {
+            get: function() {
+                if (this.compatMode === 'BackCompat') return this.body || null;
+                return this.documentElement || this.body || null;
+            },
+            configurable: true,
+            enumerable: true
+        });
         Object.defineProperty(globalThis.Document.prototype, 'location', {
             get: function() {
                 if (this._location !== undefined) return this._location;

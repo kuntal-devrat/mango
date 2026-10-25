@@ -8,7 +8,7 @@ use super::background::paint_background;
 use super::borders::paint_borders;
 use super::forms::render_form_control;
 use super::media::paint_media;
-use super::stacking::paint_children_and_scrollbars;
+use super::stacking::{StickyContainingBlock, paint_children_and_scrollbars};
 use super::text::paint_text;
 use super::types::{mul_matrix, resolve_origin};
 
@@ -31,6 +31,89 @@ pub fn build_display_list_with_scroll_xy(
     scroll_y: f32,
 ) -> DisplayList {
     let mut list = DisplayList::new();
+
+    // CSS 2.1 §14.2 & CSS Backgrounds 3 §2.11: The Canvas Background
+    // The background of the root element (<html>) becomes the background of the canvas.
+    // If the root element has a transparent background, the background of the <body>
+    // element propagates to the canvas instead, and the body's own background becomes transparent.
+    let html_box = if root
+        .tag_name
+        .as_deref()
+        .is_some_and(|t| t.eq_ignore_ascii_case("html"))
+    {
+        Some(root)
+    } else {
+        root.children.iter().find(|c| {
+            c.tag_name
+                .as_deref()
+                .is_some_and(|t| t.eq_ignore_ascii_case("html"))
+        })
+    };
+
+    let body_box = if let Some(h) = html_box {
+        h.children.iter().find(|c| {
+            c.tag_name
+                .as_deref()
+                .is_some_and(|t| t.eq_ignore_ascii_case("body"))
+        })
+    } else if root
+        .tag_name
+        .as_deref()
+        .is_some_and(|t| t.eq_ignore_ascii_case("body"))
+    {
+        Some(root)
+    } else {
+        None
+    };
+
+    let has_visible_bg = |b: &LayoutBox| -> bool {
+        if let Some(s) = &b.style {
+            (s.background_color != mango_core::Color::TRANSPARENT && s.background_color.a > 0)
+                || !s.background_layers.is_empty()
+        } else {
+            false
+        }
+    };
+
+    let mut skip_html_bg = false;
+    let mut skip_body_bg = false;
+
+    if let Some(h) = html_box.filter(|h| has_visible_bg(h)) {
+        let (vw, vh) = mango_css::get_current_viewport();
+        let canvas_w = vw.max(root.dimensions.border_box().width()).max(10_000.0);
+        let canvas_h = vh.max(root.dimensions.border_box().height()).max(10_000.0);
+        let canvas_rect = Rect::new(0.0, 0.0, canvas_w, canvas_h);
+        paint_background(
+            h,
+            h.style.as_deref(),
+            canvas_rect,
+            canvas_rect,
+            canvas_rect,
+            1.0,
+            scroll_x,
+            scroll_y,
+            &mut list,
+        );
+        skip_html_bg = true;
+    } else if let Some(b) = body_box.filter(|b| has_visible_bg(b)) {
+        let (vw, vh) = mango_css::get_current_viewport();
+        let canvas_w = vw.max(root.dimensions.border_box().width()).max(10_000.0);
+        let canvas_h = vh.max(root.dimensions.border_box().height()).max(10_000.0);
+        let canvas_rect = Rect::new(0.0, 0.0, canvas_w, canvas_h);
+        paint_background(
+            b,
+            b.style.as_deref(),
+            canvas_rect,
+            canvas_rect,
+            canvas_rect,
+            1.0,
+            scroll_x,
+            scroll_y,
+            &mut list,
+        );
+        skip_body_bg = true;
+    }
+
     let mut init_offset_x = 0.0;
     let mut init_offset_y = 0.0;
     if let Some(s) = &root.style
@@ -51,6 +134,9 @@ pub fn build_display_list_with_scroll_xy(
         None,
         0.0,
         0.0,
+        None,
+        skip_html_bg,
+        skip_body_bg,
     );
     list
 }
@@ -69,6 +155,9 @@ pub(crate) fn render_layout_box(
     table_rect: Option<Rect>,
     escaped_scroll_x: f32,
     escaped_scroll_y: f32,
+    sticky_cb: Option<StickyContainingBlock>,
+    skip_html_bg: bool,
+    skip_body_bg: bool,
 ) {
     let s_ref = box_node.style.as_ref();
 
@@ -155,6 +244,9 @@ pub(crate) fn render_layout_box(
         table_rect,
         escaped_scroll_x,
         escaped_scroll_y,
+        sticky_cb,
+        skip_html_bg,
+        skip_body_bg,
     );
 
     if push_backdrop {
@@ -186,21 +278,15 @@ fn render_layout_box_inner(
     table_rect: Option<Rect>,
     escaped_scroll_x: f32,
     escaped_scroll_y: f32,
+    sticky_cb: Option<StickyContainingBlock>,
+    skip_html_bg: bool,
+    skip_body_bg: bool,
 ) {
     let style = box_node.style.as_deref();
     let is_visible = style.is_none_or(|s| s.is_visible());
     let opacity = style.map_or(1.0, |s| s.opacity) * parent_opacity;
 
     if opacity <= 0.001 {
-        return;
-    }
-
-    if let Some(s) = style
-        && (s.overflow_x == mango_css::values::Overflow::Hidden
-            || s.overflow_y == mango_css::values::Overflow::Hidden)
-        && (box_node.dimensions.padding_box().width() <= 1.0
-            || box_node.dimensions.padding_box().height() <= 1.0)
-    {
         return;
     }
 
@@ -230,9 +316,24 @@ fn render_layout_box_inner(
         box_node.dimensions.content.height(),
     );
 
-    if is_visible {
-        let is_text_node = matches!(box_node.box_type, BoxType::TextNode(_));
-        if !is_text_node {
+    let is_modal_dialog = box_node.tag_name.as_deref() == Some("dialog")
+        && box_node.get_attribute("open").is_some()
+        && box_node.get_attribute("data-mango-modal") == Some("true");
+    let is_auto_popover = box_node.get_attribute("data-mango-popover-open") == Some("true")
+        || box_node.get_attribute(":popover-open") == Some("true");
+
+    let is_text_node = matches!(box_node.box_type, BoxType::TextNode(_));
+    if !is_text_node && (is_visible || is_modal_dialog || is_auto_popover) {
+        let is_html = box_node
+            .tag_name
+            .as_deref()
+            .is_some_and(|t| t.eq_ignore_ascii_case("html"));
+        let is_body = box_node
+            .tag_name
+            .as_deref()
+            .is_some_and(|t| t.eq_ignore_ascii_case("body"));
+        let skip_this_bg = (skip_html_bg && is_html) || (skip_body_bg && is_body);
+        if !skip_this_bg {
             paint_background(
                 box_node,
                 style,
@@ -244,9 +345,39 @@ fn render_layout_box_inner(
                 scroll_y,
                 list,
             );
+        }
+        if is_visible {
             paint_borders(box_node, style, border_box, opacity, list);
         }
+    }
 
+    if is_visible {
+        if box_node.tag_name.as_deref() == Some("div") {
+            if std::env::var("WPT_TEST_FILTER")
+                .map(|f| f.contains("in-multicol"))
+                .unwrap_or(false)
+            {
+                eprintln!(
+                    "DIV IN DISPLAY LIST: id={:?} origin={:?}",
+                    box_node.node_id, box_node.dimensions.content.origin
+                );
+            }
+        }
+        if let BoxType::TextNode(ref t) = box_node.box_type {
+            if std::env::var("WPT_TEST_FILTER")
+                .map(|f| f.contains("in-multicol"))
+                .unwrap_or(false)
+            {
+                eprintln!(
+                    "TEXT IN BUILDER: {:?} node_id={:?} orig_content={:?} offset_y={} border_box_y={}",
+                    t,
+                    box_node.node_id,
+                    box_node.dimensions.content.origin,
+                    offset_y,
+                    border_box.y()
+                );
+            }
+        }
         paint_text(
             box_node, style, border_box, content_x, content_y, opacity, list,
         );
@@ -271,6 +402,31 @@ fn render_layout_box_inner(
         }
     }
 
+    let is_non_atomic_inline = matches!(
+        box_node.box_type,
+        BoxType::InlineNode | BoxType::TextNode(_)
+    ) || box_node
+        .style
+        .as_ref()
+        .is_some_and(|s| s.display == mango_css::values::Display::Inline);
+    let current_sticky_cb = if box_node.is_anonymous() || is_non_atomic_inline {
+        sticky_cb
+    } else {
+        let (scroll_right, scroll_bottom) = if box_node.is_scroll_container() {
+            let (sw, sh) = box_node.scrollable_extent();
+            (
+                Some(pad_box.x() + sw - box_node.dimensions.padding.right),
+                Some(pad_box.y() + sh - box_node.dimensions.padding.bottom),
+            )
+        } else {
+            (None, None)
+        };
+        Some(StickyContainingBlock {
+            rect: pad_box,
+            scroll_right,
+            scroll_bottom,
+        })
+    };
     paint_children_and_scrollbars(
         box_node,
         style,
@@ -285,5 +441,8 @@ fn render_layout_box_inner(
         table_rect,
         escaped_scroll_x,
         escaped_scroll_y,
+        current_sticky_cb,
+        skip_html_bg,
+        skip_body_bg,
     );
 }

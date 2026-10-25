@@ -37,17 +37,9 @@ impl Declaration {
             "margin"
                 | "margin-inline"
                 | "margin-block"
-                | "margin-inline-start"
-                | "margin-inline-end"
-                | "margin-block-start"
-                | "margin-block-end"
                 | "padding"
                 | "padding-inline"
                 | "padding-block"
-                | "padding-inline-start"
-                | "padding-inline-end"
-                | "padding-block-start"
-                | "padding-block-end"
                 | "inset"
                 | "inset-inline"
                 | "inset-block"
@@ -87,12 +79,6 @@ impl Declaration {
                 | "border-start-end-radius"
                 | "border-end-start-radius"
                 | "border-end-end-radius"
-                | "inline-size"
-                | "block-size"
-                | "min-inline-size"
-                | "max-inline-size"
-                | "min-block-size"
-                | "max-block-size"
                 | "background"
                 | "font"
                 | "flex"
@@ -137,50 +123,10 @@ impl Declaration {
             "margin" => expand_four_sides("margin", &self.value, important),
             "margin-inline" => expand_inline_shorthand("margin", &self.value, important),
             "margin-block" => expand_block_shorthand("margin", &self.value, important),
-            "margin-inline-start" => vec![Declaration::new(
-                "margin-left",
-                self.value.clone(),
-                important,
-            )],
-            "margin-inline-end" => vec![Declaration::new(
-                "margin-right",
-                self.value.clone(),
-                important,
-            )],
-            "margin-block-start" => vec![Declaration::new(
-                "margin-top",
-                self.value.clone(),
-                important,
-            )],
-            "margin-block-end" => vec![Declaration::new(
-                "margin-bottom",
-                self.value.clone(),
-                important,
-            )],
 
             "padding" => expand_four_sides("padding", &self.value, important),
             "padding-inline" => expand_inline_shorthand("padding", &self.value, important),
             "padding-block" => expand_block_shorthand("padding", &self.value, important),
-            "padding-inline-start" => vec![Declaration::new(
-                "padding-left",
-                self.value.clone(),
-                important,
-            )],
-            "padding-inline-end" => vec![Declaration::new(
-                "padding-right",
-                self.value.clone(),
-                important,
-            )],
-            "padding-block-start" => vec![Declaration::new(
-                "padding-top",
-                self.value.clone(),
-                important,
-            )],
-            "padding-block-end" => vec![Declaration::new(
-                "padding-bottom",
-                self.value.clone(),
-                important,
-            )],
 
             "inset" => expand_inset_shorthand(&self.value, important),
             "inset-inline" => expand_inset_inline_shorthand(&self.value, important),
@@ -299,21 +245,6 @@ impl Declaration {
             )],
             "border-end-end-radius" => vec![Declaration::new(
                 "border-bottom-right-radius",
-                self.value.clone(),
-                important,
-            )],
-
-            "inline-size" => vec![Declaration::new("width", self.value.clone(), important)],
-            "block-size" => vec![Declaration::new("height", self.value.clone(), important)],
-            "min-inline-size" => vec![Declaration::new("min-width", self.value.clone(), important)],
-            "max-inline-size" => vec![Declaration::new("max-width", self.value.clone(), important)],
-            "min-block-size" => vec![Declaration::new(
-                "min-height",
-                self.value.clone(),
-                important,
-            )],
-            "max-block-size" => vec![Declaration::new(
-                "max-height",
                 self.value.clone(),
                 important,
             )],

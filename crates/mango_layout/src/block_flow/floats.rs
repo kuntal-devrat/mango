@@ -6,7 +6,10 @@ use crate::dimensions::Dimensions;
 use crate::float::FloatContext;
 
 use super::container::layout_block_children;
-use super::positioned::{center_button_children, layout_positioned_children, shift_descendants};
+use super::positioned::{
+    center_button_children, layout_positioned_children, layout_positioned_children_with_cb,
+    shift_descendants,
+};
 use super::sizing::{calculate_block_height, calculate_block_width};
 
 pub(crate) fn has_floats_recursive(box_node: &LayoutBox) -> bool {
@@ -104,10 +107,10 @@ pub(crate) fn layout_single_float(
     } else if child_disp == Some(Display::Grid) || child_disp == Some(Display::InlineGrid) {
         crate::grid_flow::layout_grid(child, container_dims, &mut inner_float_ctx);
     } else {
-        layout_block_children(child, &mut inner_float_ctx);
+        layout_block_children(child, container_dims, &mut inner_float_ctx);
         calculate_block_height(child, container_dims);
         center_button_children(child);
-        layout_positioned_children(child, &mut inner_float_ctx);
+        layout_positioned_children_with_cb(child, container_dims, &mut inner_float_ctx);
     }
 
     // If final height changed the available horizontal span, adjust child_x

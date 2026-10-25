@@ -77,10 +77,22 @@ fn test_parse_import_rules() {
     "#;
     let sheet = parse_stylesheet(css);
     assert_eq!(sheet.rules.len(), 5);
-    assert_eq!(sheet.rules[0], Rule::Import("base.css".to_string()));
-    assert_eq!(sheet.rules[1], Rule::Import("theme.css".to_string()));
-    assert_eq!(sheet.rules[2], Rule::Import("layout.css".to_string()));
-    assert_eq!(sheet.rules[3], Rule::Import("typography.css".to_string()));
+    assert_eq!(
+        sheet.rules[0],
+        Rule::Import(crate::parser::types::ImportRule::new("base.css"))
+    );
+    assert_eq!(
+        sheet.rules[1],
+        Rule::Import(crate::parser::types::ImportRule::new("theme.css"))
+    );
+    assert_eq!(
+        sheet.rules[2],
+        Rule::Import(crate::parser::types::ImportRule::new("layout.css"))
+    );
+    assert_eq!(
+        sheet.rules[3],
+        Rule::Import(crate::parser::types::ImportRule::new("typography.css"))
+    );
 }
 
 #[test]

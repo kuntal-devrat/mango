@@ -110,7 +110,12 @@ pub(crate) fn matches_pseudo_class(
         "link" | "any-link" => {
             el.tag_name.eq_ignore_ascii_case("a") && el.get_attribute("href").is_some()
         }
-        "visited" => false,
+        "visited" => {
+            el.tag_name.eq_ignore_ascii_case("a")
+                && (el.get_attribute("href") == Some("")
+                    || el.get_attribute("href") == Some("#")
+                    || el.get_attribute("data-mango-visited") == Some("true"))
+        }
         "root" => el.tag_name.eq_ignore_ascii_case("html"),
         "scope" => {
             if let Some(scope_id) = current_scope_root() {
