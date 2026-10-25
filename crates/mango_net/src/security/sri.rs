@@ -90,7 +90,9 @@ pub fn verify_subresource_integrity(bytes: &[u8], integrity_attr: &str) -> Resul
     }
 
     // Select the strongest algorithm present
-    let strongest_algo = items.iter().map(|item| item.algorithm).max().unwrap();
+    let Some(strongest_algo) = items.iter().map(|item| item.algorithm).max() else {
+        return Ok(true);
+    };
     let candidates: Vec<&SriItem> = items
         .iter()
         .filter(|i| i.algorithm == strongest_algo)
@@ -109,9 +111,14 @@ pub fn verify_subresource_integrity(bytes: &[u8], integrity_attr: &str) -> Resul
         }
     }
 
+    let expected_digest = candidates
+        .first()
+        .map(|c| c.digest_base64.clone())
+        .unwrap_or_default();
+
     Err(SriError::DigestMismatch {
         algorithm: strongest_algo,
-        expected: candidates[0].digest_base64.clone(),
+        expected: expected_digest,
         actual: actual_base64,
     })
 }

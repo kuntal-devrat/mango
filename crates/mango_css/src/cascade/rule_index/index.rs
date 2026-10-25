@@ -52,7 +52,11 @@ impl LayerScope {
                 order
             };
             path.push(next_order);
-            current_scope = &mut current_scope.sublayers.get_mut(part).unwrap().children;
+            if let Some(entry) = current_scope.sublayers.get_mut(part) {
+                current_scope = &mut entry.children;
+            } else {
+                break;
+            }
         }
         path
     }

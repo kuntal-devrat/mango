@@ -44,8 +44,7 @@ pub fn resolve_explicit_levels(chars: &[char], types: &mut [BidiClass], base_lev
 
     for i in 0..n {
         let original_type = types[i];
-        let current = stack.last().unwrap();
-        let current_level = current.level;
+        let current_level = stack.last().map(|e| e.level).unwrap_or(base_level);
 
         match original_type {
             // X2: RLE
@@ -188,10 +187,12 @@ pub fn resolve_explicit_levels(chars: &[char], types: &mut [BidiClass], base_lev
                     // ignore
                 } else if overflow_embedding_count > 0 {
                     overflow_embedding_count -= 1;
-                } else if stack.len() >= 2 && !stack.last().unwrap().isolate_status {
+                } else if stack.len() >= 2
+                    && !stack.last().map(|e| e.isolate_status).unwrap_or(false)
+                {
                     stack.pop();
                 }
-                levels[i] = stack.last().unwrap().level;
+                levels[i] = stack.last().map(|e| e.level).unwrap_or(base_level);
                 types[i] = BidiClass::BN;
             }
             // X6a: PDI
@@ -202,7 +203,7 @@ pub fn resolve_explicit_levels(chars: &[char], types: &mut [BidiClass], base_lev
                     overflow_embedding_count = 0;
                     // Pop until we find an isolate entry
                     while stack.len() > 1 {
-                        if stack.last().unwrap().isolate_status {
+                        if stack.last().map(|e| e.isolate_status).unwrap_or(false) {
                             stack.pop();
                             break;
                         }
@@ -210,13 +211,13 @@ pub fn resolve_explicit_levels(chars: &[char], types: &mut [BidiClass], base_lev
                     }
                     valid_isolate_count -= 1;
                 }
-                levels[i] = stack.last().unwrap().level;
+                levels[i] = stack.last().map(|e| e.level).unwrap_or(base_level);
                 types[i] = BidiClass::ON;
             }
             // X6: All other characters
             _ => {
                 levels[i] = current_level;
-                if let Some(ovr) = stack.last().unwrap().override_status {
+                if let Some(ovr) = stack.last().and_then(|e| e.override_status) {
                     types[i] = ovr;
                 }
             }

@@ -107,8 +107,8 @@ pub fn create_pseudo_styled_node(
     }
 
     if parts.len() == 1 {
-        match parts.into_iter().next().unwrap() {
-            PseudoPart::Text(text) => {
+        match parts.into_iter().next() {
+            Some(PseudoPart::Text(text)) => {
                 if style.display == Display::Inline {
                     Some(StyledNode::with_text(None, style, text))
                 } else {
@@ -121,7 +121,7 @@ pub fn create_pseudo_styled_node(
                     Some(pseudo_node)
                 }
             }
-            PseudoPart::Image(url) => {
+            Some(PseudoPart::Image(url)) => {
                 let mut img_style = style;
                 if img_style.display == Display::Inline {
                     img_style.display = Display::InlineBlock;
@@ -131,6 +131,7 @@ pub fn create_pseudo_styled_node(
                 img_node.attributes = vec![("src".to_string(), url)];
                 Some(img_node)
             }
+            None => None,
         }
     } else {
         let mut pseudo_node = StyledNode::new(None, style.clone());

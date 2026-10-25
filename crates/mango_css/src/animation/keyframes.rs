@@ -102,7 +102,8 @@ impl Keyframes {
             .frames
             .iter()
             .find(|f| f.offset >= progress)
-            .unwrap_or_else(|| self.frames.last().unwrap());
+            .or_else(|| self.frames.last())
+            .unwrap_or(&self.frames[0]);
 
         if (after.offset - before.offset).abs() < f32::EPSILON {
             let mut out = HashMap::new();

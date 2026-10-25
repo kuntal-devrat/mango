@@ -469,12 +469,13 @@ pub(crate) fn finalize_line(
                     };
 
                     if can_merge {
-                        let last_run = runs.last_mut().unwrap();
-                        last_run.text.push_str(text);
-                        if is_rtl && seg_rtl {
-                            last_run.start_x = atom_start_x;
+                        if let Some(last_run) = runs.last_mut() {
+                            last_run.text.push_str(text);
+                            if is_rtl && seg_rtl {
+                                last_run.start_x = atom_start_x;
+                            }
+                            last_run.width += atom_w;
                         }
-                        last_run.width += atom_w;
                     } else {
                         let family = font_family_for(&atom.style);
                         let weight = font_weight_for(&atom.style);

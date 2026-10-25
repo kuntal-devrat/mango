@@ -221,7 +221,9 @@ impl WebLocksEngine {
                 if is_shared {
                     while let Some(front) = res_state.pending.front() {
                         if front.mode == LockMode::Shared {
-                            let next = res_state.pending.pop_front().unwrap();
+                            let Some(next) = res_state.pending.pop_front() else {
+                                break;
+                            };
                             let next_grant = LockGrant {
                                 grant_id: NEXT_GRANT_ID.fetch_add(1, Ordering::Relaxed),
                                 name: next.name,
@@ -237,13 +239,17 @@ impl WebLocksEngine {
                 }
             }
         } else if res_state.held.iter().all(|g| g.mode == LockMode::Shared)
-            && !res_state.pending.is_empty()
-            && res_state.pending.front().unwrap().mode == LockMode::Shared
+            && res_state
+                .pending
+                .front()
+                .is_some_and(|f| f.mode == LockMode::Shared)
         {
             // If holders are Shared and front of queue is Shared, drain shared queue
             while let Some(front) = res_state.pending.front() {
                 if front.mode == LockMode::Shared {
-                    let next = res_state.pending.pop_front().unwrap();
+                    let Some(next) = res_state.pending.pop_front() else {
+                        break;
+                    };
                     let next_grant = LockGrant {
                         grant_id: NEXT_GRANT_ID.fetch_add(1, Ordering::Relaxed),
                         name: next.name,

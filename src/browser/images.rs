@@ -406,7 +406,10 @@ impl BrowserChrome {
         }
         if loaded_any {
             self.page_dirty = true;
-            self.display_list_cache.lock().unwrap().clear();
+            self.display_list_cache
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clear();
         }
         loaded_any
     }

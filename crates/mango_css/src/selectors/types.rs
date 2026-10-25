@@ -437,7 +437,9 @@ impl ComplexSelector {
         }
 
         // Right-to-left matching
-        let (last_comb, last_compound) = self.tail.last().unwrap();
+        let Some((last_comb, last_compound)) = self.tail.last() else {
+            return self.head.matches(node_id, doc);
+        };
         if !last_compound.matches(node_id, doc) {
             return false;
         }
@@ -488,11 +490,7 @@ impl ComplexSelector {
 
     /// Tests whether this selector targets the specified pseudo-element of `node_id`.
     pub fn matches_pseudo_element(&self, node_id: NodeId, doc: &Document, pseudo: &str) -> bool {
-        let last_compound = if self.tail.is_empty() {
-            &self.head
-        } else {
-            &self.tail.last().unwrap().1
-        };
+        let last_compound = self.tail.last().map(|(_, c)| c).unwrap_or(&self.head);
 
         let pseudo_canon = canonical_pseudo(pseudo);
 
@@ -536,12 +534,11 @@ impl ComplexSelector {
             return false;
         }
 
-        if self.tail.is_empty() {
-            return true;
+        if let Some((last_comb, _)) = self.tail.last() {
+            self.match_tail(node_id, self.tail.len() - 1, *last_comb, None, doc)
+        } else {
+            true
         }
-
-        let (last_comb, _) = self.tail.last().unwrap();
-        self.match_tail(node_id, self.tail.len() - 1, *last_comb, None, doc)
     }
 
     fn match_tail(

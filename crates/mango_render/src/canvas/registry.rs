@@ -17,9 +17,14 @@ where
     F: FnOnce(&mut Canvas2D) -> R,
 {
     let mut reg = canvas_registry().write().ok()?;
-    let canvas = reg.entry(node_id).or_insert_with(|| {
-        Canvas2D::new(width, height).expect("Failed to initialize canvas pixmap")
-    });
+    use std::collections::hash_map::Entry;
+    let canvas = match reg.entry(node_id) {
+        Entry::Occupied(entry) => entry.into_mut(),
+        Entry::Vacant(entry) => {
+            let new_canvas = Canvas2D::new(width, height)?;
+            entry.insert(new_canvas)
+        }
+    };
     Some(f(canvas))
 }
 

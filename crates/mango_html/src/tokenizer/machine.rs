@@ -103,11 +103,15 @@ impl<'a> Tokenizer<'a> {
                                 break;
                             }
                             if ch == ';' {
-                                entity.push(self.advance().unwrap());
+                                if let Some(c) = self.advance() {
+                                    entity.push(c);
+                                }
                                 break;
                             }
                             if ch.is_alphanumeric() || ch == '#' {
-                                entity.push(self.advance().unwrap());
+                                if let Some(c) = self.advance() {
+                                    entity.push(c);
+                                }
                             } else {
                                 break;
                             }
@@ -629,7 +633,9 @@ impl<'a> Tokenizer<'a> {
                             let mut keyword = String::new();
                             while let Some(ch) = self.peek() {
                                 if ch.is_ascii_alphabetic() {
-                                    keyword.push(self.advance().unwrap());
+                                    if let Some(c) = self.advance() {
+                                        keyword.push(c);
+                                    }
                                 } else {
                                     break;
                                 }
@@ -730,11 +736,15 @@ impl<'a> Tokenizer<'a> {
                                 break;
                             }
                             if ch == ';' {
-                                entity.push(self.advance().unwrap());
+                                if let Some(c) = self.advance() {
+                                    entity.push(c);
+                                }
                                 break;
                             }
                             if ch.is_alphanumeric() || ch == '#' {
-                                entity.push(self.advance().unwrap());
+                                if let Some(c) = self.advance() {
+                                    entity.push(c);
+                                }
                             } else {
                                 break;
                             }

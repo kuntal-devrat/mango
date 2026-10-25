@@ -21,7 +21,10 @@ impl BrowserChrome {
                     tab.scroll_y_f64 = new_y;
                     tab.scroll_y = self.scroll_y;
                 }
-                self.display_list_cache.lock().unwrap().clear();
+                self.display_list_cache
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clear();
                 needs_redraw = true;
             }
             if !finished {
@@ -71,7 +74,10 @@ impl BrowserChrome {
         let current_font_epoch = mango_render::web_font_epoch();
         if self.last_font_epoch != current_font_epoch {
             self.last_font_epoch = current_font_epoch;
-            self.display_list_cache.lock().unwrap().clear();
+            self.display_list_cache
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clear();
             self.page_dirty = true;
             self.layout_pending = true;
             return true;
