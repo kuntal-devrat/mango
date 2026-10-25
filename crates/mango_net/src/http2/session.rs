@@ -4,12 +4,77 @@ use std::collections::HashMap;
 
 use super::frame::{FrameType, HTTP2_CLIENT_PREFACE, Http2Frame};
 
+/// Classification of subresource priority for HTTP/2 stream scheduling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SubresourcePriority {
+    /// Render-blocking stylesheets (Highest priority: weight = 255).
+    Style,
+    /// Parser-blocking and deferred JavaScript (High priority: weight = 219).
+    Script,
+    /// Web fonts required for text layout (Medium priority: weight = 179).
+    Font,
+    /// Document HTML / navigation (Highest priority: weight = 255).
+    Document,
+    /// Visible or off-screen images (Low priority: weight = 99).
+    Image,
+    /// Background media or lowest priority items (Lowest priority: weight = 15).
+    Other,
+}
+
 /// Stream prioritization parameters (RFC 7540 §5.3 / RFC 9113).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StreamPriority {
     pub parent_stream_id: u32,
     pub weight: u8,
     pub exclusive: bool,
+}
+
+impl StreamPriority {
+    /// Priority for render-blocking stylesheets and main document (weight = 255).
+    pub const STYLE: Self = Self {
+        parent_stream_id: 0,
+        weight: 255,
+        exclusive: false,
+    };
+
+    /// Priority for scripts (weight = 219).
+    pub const SCRIPT: Self = Self {
+        parent_stream_id: 0,
+        weight: 219,
+        exclusive: false,
+    };
+
+    /// Priority for web fonts (weight = 179).
+    pub const FONT: Self = Self {
+        parent_stream_id: 0,
+        weight: 179,
+        exclusive: false,
+    };
+
+    /// Priority for images and media (weight = 99).
+    pub const IMAGE: Self = Self {
+        parent_stream_id: 0,
+        weight: 99,
+        exclusive: false,
+    };
+
+    /// Low / default priority (weight = 15).
+    pub const LOW: Self = Self {
+        parent_stream_id: 0,
+        weight: 15,
+        exclusive: false,
+    };
+
+    /// Returns standard stream priority parameters for a given subresource type.
+    pub fn for_resource_type(resource_type: SubresourcePriority) -> Self {
+        match resource_type {
+            SubresourcePriority::Document | SubresourcePriority::Style => Self::STYLE,
+            SubresourcePriority::Script => Self::SCRIPT,
+            SubresourcePriority::Font => Self::FONT,
+            SubresourcePriority::Image => Self::IMAGE,
+            SubresourcePriority::Other => Self::LOW,
+        }
+    }
 }
 
 impl Default for StreamPriority {
@@ -71,6 +136,7 @@ pub struct Http2Session {
     pub hpack_encoder: crate::hpack::HpackEncoder,
     pub hpack_decoder: crate::hpack::HpackDecoder,
     pub preface_sent: bool,
+    pub outbound_queue: Vec<Http2Frame>,
 }
 
 impl Default for Http2Session {
@@ -91,6 +157,7 @@ impl Http2Session {
             hpack_encoder: crate::hpack::HpackEncoder::new(),
             hpack_decoder: crate::hpack::HpackDecoder::new(),
             preface_sent: false,
+            outbound_queue: Vec::new(),
         }
     }
 
@@ -109,12 +176,18 @@ impl Http2Session {
         bytes
     }
 
-    /// Allocates a new client stream for an outgoing HTTP request.
+    /// Allocates a new client stream for an outgoing HTTP request with default priority.
     pub fn open_stream(&mut self) -> u32 {
+        self.open_stream_with_priority(StreamPriority::default())
+    }
+
+    /// Allocates a new client stream with explicit stream prioritization.
+    pub fn open_stream_with_priority(&mut self, priority: StreamPriority) -> u32 {
         let stream_id = self.next_stream_id;
         self.next_stream_id += 2;
         let mut stream = Http2Stream::new(stream_id, self.initial_window_size);
         stream.state = StreamState::Open;
+        stream.priority = priority;
         self.streams.insert(stream_id, stream);
         stream_id
     }
@@ -126,16 +199,137 @@ impl Http2Session {
         headers: &[(&str, &str)],
         end_stream: bool,
     ) -> Http2Frame {
+        let priority = self
+            .streams
+            .get(&stream_id)
+            .map(|s| s.priority)
+            .unwrap_or_default();
+        self.create_headers_frame_with_priority(stream_id, headers, end_stream, priority)
+    }
+
+    /// Creates a HEADERS frame with embedded RFC 7540 §6.2 stream priority fields (PRIORITY flag 0x20).
+    pub fn create_headers_frame_with_priority(
+        &mut self,
+        stream_id: u32,
+        headers: &[(&str, &str)],
+        end_stream: bool,
+        priority: StreamPriority,
+    ) -> Http2Frame {
+        if let Some(stream) = self.streams.get_mut(&stream_id) {
+            stream.priority = priority;
+        }
         let fields: Vec<crate::hpack::HeaderField> = headers
             .iter()
             .map(|(k, v)| crate::hpack::HeaderField::new(*k, *v))
             .collect();
-        let payload = self.hpack_encoder.encode(&fields);
-        let mut flags = 0x4; // END_HEADERS
+        let encoded_headers = self.hpack_encoder.encode(&fields);
+
+        // Prepend 5-byte Priority specification (RFC 7540 §6.2)
+        let dep_raw =
+            ((priority.exclusive as u32) << 31) | (priority.parent_stream_id & 0x7FFF_FFFF);
+        let mut payload = Vec::with_capacity(5 + encoded_headers.len());
+        payload.extend_from_slice(&dep_raw.to_be_bytes());
+        payload.push(priority.weight);
+        payload.extend_from_slice(&encoded_headers);
+
+        let mut flags = 0x4 | 0x20; // END_HEADERS | PRIORITY
         if end_stream {
             flags |= 0x1; // END_STREAM
         }
         Http2Frame::new(FrameType::Headers, flags, stream_id, payload)
+    }
+
+    /// Creates an RFC 7540 §6.3 PRIORITY frame for an active stream.
+    pub fn create_priority_frame(
+        &mut self,
+        stream_id: u32,
+        priority: StreamPriority,
+    ) -> Http2Frame {
+        if let Some(stream) = self.streams.get_mut(&stream_id) {
+            stream.priority = priority;
+        }
+        let dep_raw =
+            ((priority.exclusive as u32) << 31) | (priority.parent_stream_id & 0x7FFF_FFFF);
+        let mut payload = Vec::with_capacity(5);
+        payload.extend_from_slice(&dep_raw.to_be_bytes());
+        payload.push(priority.weight);
+        Http2Frame::new(FrameType::Priority, 0x0, stream_id, payload)
+    }
+
+    /// Enqueues an outgoing frame awaiting multiplexed transmission.
+    pub fn enqueue_frame(&mut self, frame: Http2Frame) {
+        self.outbound_queue.push(frame);
+    }
+
+    /// Number of queued frames awaiting transmission.
+    pub fn queued_frame_count(&self) -> usize {
+        self.outbound_queue.len()
+    }
+
+    /// Opens a new stream with the given priority and enqueues its initial HEADERS request frame.
+    pub fn send_request_with_priority(
+        &mut self,
+        headers: &[(&str, &str)],
+        end_stream: bool,
+        priority: StreamPriority,
+    ) -> u32 {
+        let stream_id = self.open_stream_with_priority(priority);
+        let frame =
+            self.create_headers_frame_with_priority(stream_id, headers, end_stream, priority);
+        self.enqueue_frame(frame);
+        stream_id
+    }
+
+    /// Enqueues a DATA frame on an existing stream.
+    pub fn send_data(&mut self, stream_id: u32, data: Vec<u8>, end_stream: bool) {
+        let flags = if end_stream { 0x1 } else { 0x0 };
+        let frame = Http2Frame::new(FrameType::Data, flags, stream_id, data);
+        self.enqueue_frame(frame);
+    }
+
+    /// Schedules and drains outbound frames according to stream priority weights and dependency order.
+    ///
+    /// Frames on higher-priority streams (e.g. CSS weight 255 and JS weight 219)
+    /// are scheduled before lower-priority streams (e.g. fonts weight 179 and images weight 99).
+    /// Control frames (stream 0) always take absolute precedence over all stream frames.
+    pub fn schedule_outbound_frames(&mut self) -> Vec<Http2Frame> {
+        let mut queued: Vec<(usize, u16, Http2Frame)> = self
+            .outbound_queue
+            .drain(..)
+            .enumerate()
+            .map(|(seq, frame)| {
+                let sid = frame.header.stream_id;
+                let weight: u16 = if sid == 0 {
+                    u16::MAX // Stream 0 control frames always take absolute precedence
+                } else {
+                    self.streams
+                        .get(&sid)
+                        .map(|s| s.priority.weight as u16)
+                        .unwrap_or(16)
+                };
+                (seq, weight, frame)
+            })
+            .collect();
+
+        // Sort descending by weight, preserving arrival sequence (seq) for ties
+        queued.sort_by(|a, b| {
+            b.1.cmp(&a.1) // Higher weight first
+                .then_with(|| a.0.cmp(&b.0)) // Earlier arrival first
+        });
+
+        queued.into_iter().map(|(_, _, frame)| frame).collect()
+    }
+
+    /// Pops the single highest-priority scheduled frame from the outbound queue.
+    pub fn pop_next_scheduled_frame(&mut self) -> Option<Http2Frame> {
+        if self.outbound_queue.is_empty() {
+            return None;
+        }
+        let scheduled = self.schedule_outbound_frames();
+        let mut iter = scheduled.into_iter();
+        let next = iter.next();
+        self.outbound_queue = iter.collect();
+        next
     }
 
     /// Decodes an HPACK compressed header block (RFC 7541).

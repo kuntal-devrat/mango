@@ -27,6 +27,8 @@ pub struct ResourceLoader {
     /// Populated as documents load; consulted before every subresource fetch.
     pub(crate) csp_by_origin:
         Arc<std::sync::Mutex<std::collections::HashMap<String, Vec<crate::security::CspPolicy>>>>,
+    /// HTTP/2 multiplexing connection pool with stream priority scheduling.
+    pub http2_pool: Arc<std::sync::Mutex<crate::http2::Http2ConnectionPool>>,
 }
 
 impl Default for ResourceLoader {
@@ -53,7 +55,57 @@ impl ResourceLoader {
             cache: Arc::new(ResourceCache::new()),
             hsts: Arc::new(std::sync::Mutex::new(crate::security::HstsStore::new())),
             csp_by_origin: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            http2_pool: Arc::new(std::sync::Mutex::new(
+                crate::http2::Http2ConnectionPool::new(),
+            )),
         }
+    }
+
+    /// Returns a handle to the HTTP/2 connection pool.
+    pub fn http2_pool(&self) -> Arc<std::sync::Mutex<crate::http2::Http2ConnectionPool>> {
+        self.http2_pool.clone()
+    }
+
+    /// Maps a CSP resource directive to the corresponding HTTP/2 stream priority.
+    pub fn priority_for_directive(
+        directive: crate::security::ResourceDirective,
+    ) -> crate::http2::StreamPriority {
+        match directive {
+            crate::security::ResourceDirective::Style => crate::http2::StreamPriority::STYLE,
+            crate::security::ResourceDirective::Script => crate::http2::StreamPriority::SCRIPT,
+            crate::security::ResourceDirective::Font => crate::http2::StreamPriority::FONT,
+            crate::security::ResourceDirective::Image
+            | crate::security::ResourceDirective::Media => crate::http2::StreamPriority::IMAGE,
+            _ => crate::http2::StreamPriority::LOW,
+        }
+    }
+
+    /// Maps a CSP resource directive to a `SubresourcePriority` classification.
+    pub fn subresource_priority(
+        directive: crate::security::ResourceDirective,
+    ) -> crate::http2::SubresourcePriority {
+        match directive {
+            crate::security::ResourceDirective::Style => crate::http2::SubresourcePriority::Style,
+            crate::security::ResourceDirective::Script => crate::http2::SubresourcePriority::Script,
+            crate::security::ResourceDirective::Font => crate::http2::SubresourcePriority::Font,
+            crate::security::ResourceDirective::Image => crate::http2::SubresourcePriority::Image,
+            _ => crate::http2::SubresourcePriority::Other,
+        }
+    }
+
+    /// Registers a prioritized HTTP/2 request on the origin's session and returns the stream ID and priority.
+    pub fn register_http2_request(
+        &self,
+        origin: &str,
+        path: &str,
+        resource_type: crate::http2::SubresourcePriority,
+    ) -> (u32, crate::http2::StreamPriority) {
+        let session_arc = self.http2_pool.lock().unwrap().get_or_create(origin);
+        let mut session = session_arc.lock().unwrap();
+        let priority = crate::http2::StreamPriority::for_resource_type(resource_type);
+        let headers = [(":method", "GET"), (":path", path), (":scheme", "https")];
+        let stream_id = session.send_request_with_priority(&headers, true, priority);
+        (stream_id, priority)
     }
 
     /// Returns a handle to the shared cookie jar used for requests.
