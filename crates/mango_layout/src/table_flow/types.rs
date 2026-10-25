@@ -129,6 +129,7 @@ pub fn is_table_colgroup(box_node: &LayoutBox) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mango_core::Color;
     use mango_css::values::BorderStyle;
 
     #[test]
@@ -143,5 +144,129 @@ mod tests {
         assert_eq!(style_priority(BorderStyle::Inset), 1);
         assert_eq!(style_priority(BorderStyle::None), 0);
         assert_eq!(style_priority(BorderStyle::Hidden), 0);
+    }
+
+    #[test]
+    fn test_resolve_border_conflict_hidden() {
+        let a = BorderSide {
+            width: 1.0,
+            style: BorderStyle::Solid,
+            color: Color::RED,
+            precedence: 1,
+        };
+        let b = BorderSide {
+            width: 2.0,
+            style: BorderStyle::Hidden,
+            color: Color::BLUE,
+            precedence: 2,
+        };
+
+        let result = resolve_border_conflict(a, b);
+        assert_eq!(result.style, BorderStyle::Hidden);
+        assert_eq!(result.width, 0.0);
+        assert_eq!(result.precedence, 255);
+        assert_eq!(result.color, Color::TRANSPARENT);
+    }
+
+    #[test]
+    fn test_resolve_border_conflict_none() {
+        let a = BorderSide {
+            width: 1.0,
+            style: BorderStyle::None,
+            color: Color::RED,
+            precedence: 1,
+        };
+        let b = BorderSide {
+            width: 2.0,
+            style: BorderStyle::Solid,
+            color: Color::BLUE,
+            precedence: 2,
+        };
+
+        let result1 = resolve_border_conflict(a, b);
+        assert_eq!(result1.style, BorderStyle::Solid);
+        assert_eq!(result1.width, 2.0);
+
+        let result2 = resolve_border_conflict(b, a);
+        assert_eq!(result2.style, BorderStyle::Solid);
+        assert_eq!(result2.width, 2.0);
+    }
+
+    #[test]
+    fn test_resolve_border_conflict_width() {
+        let a = BorderSide {
+            width: 3.0,
+            style: BorderStyle::Solid,
+            color: Color::RED,
+            precedence: 1,
+        };
+        let b = BorderSide {
+            width: 2.0,
+            style: BorderStyle::Double,
+            color: Color::BLUE,
+            precedence: 2,
+        };
+
+        let result = resolve_border_conflict(a, b);
+        assert_eq!(result.width, 3.0);
+        assert_eq!(result.style, BorderStyle::Solid);
+    }
+
+    #[test]
+    fn test_resolve_border_conflict_style_priority() {
+        let a = BorderSide {
+            width: 2.0,
+            style: BorderStyle::Solid,
+            color: Color::RED,
+            precedence: 1,
+        };
+        let b = BorderSide {
+            width: 2.0,
+            style: BorderStyle::Double,
+            color: Color::BLUE,
+            precedence: 2,
+        };
+
+        let result = resolve_border_conflict(a, b);
+        assert_eq!(result.style, BorderStyle::Double);
+    }
+
+    #[test]
+    fn test_resolve_border_conflict_precedence() {
+        let a = BorderSide {
+            width: 2.0,
+            style: BorderStyle::Solid,
+            color: Color::RED,
+            precedence: 3,
+        };
+        let b = BorderSide {
+            width: 2.0,
+            style: BorderStyle::Solid,
+            color: Color::BLUE,
+            precedence: 2,
+        };
+
+        let result = resolve_border_conflict(a, b);
+        assert_eq!(result.precedence, 3);
+        assert_eq!(result.color, Color::RED);
+    }
+
+    #[test]
+    fn test_resolve_border_conflict_tie_breaker() {
+        let a = BorderSide {
+            width: 2.0,
+            style: BorderStyle::Solid,
+            color: Color::RED,
+            precedence: 2,
+        };
+        let b = BorderSide {
+            width: 2.0,
+            style: BorderStyle::Solid,
+            color: Color::BLUE,
+            precedence: 2,
+        };
+
+        let result = resolve_border_conflict(a, b);
+        assert_eq!(result.color, Color::RED);
     }
 }
