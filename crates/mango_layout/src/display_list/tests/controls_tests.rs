@@ -666,3 +666,66 @@ fn test_build_display_list_with_scroll_xy() {
     assert_eq!(inflow_rect.x(), 20.0);
     assert_eq!(inflow_rect.y(), 30.0);
 }
+
+#[test]
+fn test_form_button_custom_border_radius() {
+    // 1. input[type="submit"] with uniform border-radius
+    let html = r#"<!DOCTYPE html><html><body><input type="submit" value="Submit" style="border-radius: 12px;"/></body></html>"#;
+    let doc = mango_html::parse_html(html);
+    let (_root, dl) = crate::layout_document(&doc, &[], mango_core::Size::new(800.0, 600.0));
+    let has_rounded = dl.iter().any(|cmd| match cmd {
+        DisplayCommand::FillRoundedRect { radii, .. } => radii == &[12.0, 12.0, 12.0, 12.0],
+        _ => false,
+    });
+    let has_border = dl.iter().any(|cmd| match cmd {
+        DisplayCommand::DrawBorder { radii, .. } => radii == &[12.0, 12.0, 12.0, 12.0],
+        _ => false,
+    });
+    assert!(
+        has_rounded,
+        "input[type=submit] must emit FillRoundedRect with 12px radii"
+    );
+    assert!(
+        has_border,
+        "input[type=submit] must emit DrawBorder with 12px radii"
+    );
+
+    // 2. select with uniform border-radius
+    let select_html = r#"<!DOCTYPE html><html><body><select style="border-radius: 20px;"><option>Apple</option></select></body></html>"#;
+    let s_doc = mango_html::parse_html(select_html);
+    let (_s_root, s_dl) = crate::layout_document(&s_doc, &[], mango_core::Size::new(800.0, 600.0));
+    let s_has_rounded = s_dl.iter().any(|cmd| match cmd {
+        DisplayCommand::FillRoundedRect { radii, .. } => radii == &[20.0, 20.0, 20.0, 20.0],
+        _ => false,
+    });
+    let s_has_border = s_dl.iter().any(|cmd| match cmd {
+        DisplayCommand::DrawBorder { radii, .. } => radii == &[20.0, 20.0, 20.0, 20.0],
+        _ => false,
+    });
+    assert!(
+        s_has_rounded,
+        "select must emit FillRoundedRect with 20px radii"
+    );
+    assert!(s_has_border, "select must emit DrawBorder with 20px radii");
+
+    // 3. button with asymmetric corner radii
+    let btn_html = r#"<!DOCTYPE html><html><body><button style="border-radius: 8px 16px 24px 32px;">Click</button></body></html>"#;
+    let b_doc = mango_html::parse_html(btn_html);
+    let (_b_root, b_dl) = crate::layout_document(&b_doc, &[], mango_core::Size::new(800.0, 600.0));
+    let b_has_rounded = b_dl.iter().any(|cmd| match cmd {
+        DisplayCommand::FillRoundedRect { radii, .. } => radii == &[8.0, 16.0, 24.0, 32.0],
+        _ => false,
+    });
+    let b_has_border = b_dl.iter().any(|cmd| match cmd {
+        DisplayCommand::DrawBorder { radii, .. } => radii == &[8.0, 16.0, 24.0, 32.0],
+        _ => false,
+    });
+    assert!(
+        b_has_rounded,
+        "button must emit FillRoundedRect with asymmetric radii"
+    );
+    assert!(
+        b_has_border,
+        "button must emit DrawBorder with asymmetric radii"
+    );
+}
