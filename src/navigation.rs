@@ -250,9 +250,36 @@ mod tests {
 
     #[test]
     fn test_url_encoding() {
+        // Empty string
+        assert_eq!(url_encode(""), "");
+
+        // Unreserved characters (should not be encoded)
+        let unreserved = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.~";
+        assert_eq!(url_encode(unreserved), unreserved);
+
+        // Spaces (encoded as +)
         assert_eq!(url_encode("hello world"), "hello+world");
-        assert_eq!(url_encode("rust & web"), "rust+%26+web");
+        assert_eq!(url_encode("   "), "+++");
+
+        // Reserved characters and symbols
+        assert_eq!(
+            url_encode("!*'();:@&=+$,/?%#[]"),
+            "%21%2A%27%28%29%3B%3A%40%26%3D%2B%24%2C%2F%3F%25%23%5B%5D"
+        );
+
+        // Multi-byte Unicode characters
         assert_eq!(url_encode("🦀"), "%F0%9F%A6%80");
+        assert_eq!(url_encode("résumé"), "r%C3%A9sum%C3%A9");
+        assert_eq!(
+            url_encode("こんにちは"),
+            "%E3%81%93%E3%82%93%E3%81%AB%E3%81%A1%E3%81%AF"
+        );
+
+        // Mixed content
+        assert_eq!(
+            url_encode("hello & 🦀 world!"),
+            "hello+%26+%F0%9F%A6%80+world%21"
+        );
     }
 
     #[test]
