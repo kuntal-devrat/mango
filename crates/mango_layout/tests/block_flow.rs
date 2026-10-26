@@ -362,3 +362,26 @@ fn test_block_aspect_ratio_derives_width() {
     assert_eq!(div.dimensions.content.width(), 300.0);
     assert_eq!(div.dimensions.content.height(), 168.75);
 }
+
+#[test]
+fn test_mixed_unit_calc_resolution_in_layout() {
+    let mut container = LayoutBox::new(BoxType::BlockNode, None);
+    let mut c_style = ComputedStyle::default();
+    c_style.width = Length::Px(500.0);
+    container.style = Some(c_style.into());
+    container.dimensions.content = Rect::new(0.0, 0.0, 500.0, 300.0);
+
+    let mut child = LayoutBox::new(BoxType::BlockNode, None);
+    let mut ch_style = ComputedStyle::default();
+    let parsed_len = Length::parse("calc(100% - 50px)").expect("should parse calc(100% - 50px)");
+    ch_style.width = parsed_len;
+    child.style = Some(ch_style.into());
+
+    container.children.push(child);
+
+    let mut float_ctx = FloatContext::new();
+    let cb = Dimensions::new(Rect::new(0.0, 0.0, 500.0, 300.0));
+    mango_layout::block_flow::layout_block(&mut container, &cb, &mut float_ctx);
+
+    assert_eq!(container.children[0].dimensions.content.width(), 450.0);
+}
