@@ -166,8 +166,9 @@ pub fn load_web_fonts(loader: &ResourceLoader, base_url: Option<&Url>, styleshee
     let mut remote_jobs: Vec<(usize, FontJob)> = Vec::new();
     for (job_seq, job) in jobs.into_iter().enumerate() {
         let face = &font_faces[job.face_idx];
-        if face.src_url.starts_with("data:") {
-            match decode_data_uri_font(&face.src_url) {
+        let trimmed_url = face.src_url.trim();
+        if trimmed_url.len() >= 5 && trimmed_url[..5].eq_ignore_ascii_case("data:") {
+            match decode_data_uri_font(trimmed_url) {
                 Ok(bytes) => {
                     fetched.insert(job_seq, bytes);
                 }
@@ -294,40 +295,114 @@ pub fn load_web_fonts(loader: &ResourceLoader, base_url: Option<&Url>, styleshee
     }
 }
 
-/// BUG-005 fix: Decode a `data:` URI into raw bytes.
-/// Supports both base64-encoded and plain text data URIs.
-/// Format: `data:[<mediatype>][;base64],<data>`
-fn decode_data_uri_font(data_uri: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    let rest = data_uri.strip_prefix("data:").ok_or("Not a data: URI")?;
-    if let Some(comma_pos) = rest.find(',') {
-        let metadata = &rest[..comma_pos];
-        let payload = &rest[comma_pos + 1..];
-        if metadata.contains(";base64") {
-            let decoded = base64_decode(payload.trim())?;
-            Ok(decoded)
-        } else {
-            // Plain text / percent-encoded
-            Ok(percent_encoding::percent_decode_str(payload).collect::<Vec<u8>>())
+/// Helper: finds the comma separating metadata and payload in a data: URI,
+/// ignoring any commas inside quoted parameter values (e.g., `charset="a,b"`).
+fn find_data_uri_comma(input: &str) -> Option<usize> {
+    let mut in_quotes = false;
+    let mut escaped = false;
+    for (i, b) in input.bytes().enumerate() {
+        if escaped {
+            escaped = false;
+            continue;
         }
+        if b == b'\\' && in_quotes {
+            escaped = true;
+            continue;
+        }
+        if b == b'"' {
+            in_quotes = !in_quotes;
+            continue;
+        }
+        if b == b',' && !in_quotes {
+            return Some(i);
+        }
+    }
+    None
+}
+
+/// Helper: checks whether the metadata portion of a data: URI specifies base64 encoding.
+fn is_base64_metadata(metadata: &str) -> bool {
+    let trimmed = metadata.trim();
+    if trimmed.eq_ignore_ascii_case("base64") {
+        return true;
+    }
+    let mut in_quotes = false;
+    let mut escaped = false;
+    let mut start = 0;
+    for (i, b) in metadata.bytes().enumerate() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if b == b'\\' && in_quotes {
+            escaped = true;
+            continue;
+        }
+        if b == b'"' {
+            in_quotes = !in_quotes;
+            continue;
+        }
+        if b == b';' && !in_quotes {
+            let param = metadata[start..i].trim();
+            if param.eq_ignore_ascii_case("base64") {
+                return true;
+            }
+            start = i + 1;
+        }
+    }
+    let param = metadata[start..].trim();
+    param.eq_ignore_ascii_case("base64")
+}
+
+/// BUG-005 fix: Decode a `data:` URI into raw bytes according to RFC 2397.
+/// Supports complex MIME types with quoted parameters, case-insensitive schemes,
+/// whitespace tolerance, unpadded & URL-safe base64, and percent-encoding.
+/// Format: `data:[<mediatype>][;base64],<data>`
+pub fn decode_data_uri_font(data_uri: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let trimmed = data_uri.trim();
+    let rest = if trimmed.len() >= 5 && trimmed[..5].eq_ignore_ascii_case("data:") {
+        &trimmed[5..]
     } else {
-        Err("Malformed data: URI — no comma separator".into())
+        return Err("Not a data: URI".into());
+    };
+
+    let Some(comma_pos) = find_data_uri_comma(rest) else {
+        return Err("Malformed data: URI — missing comma separator".into());
+    };
+
+    let metadata = &rest[..comma_pos];
+    let payload = &rest[comma_pos + 1..];
+
+    if is_base64_metadata(metadata) {
+        base64_decode(payload)
+    } else {
+        Ok(percent_encoding::percent_decode_str(payload).collect::<Vec<u8>>())
     }
 }
 
-/// Minimal base64 decoder (RFC 4648). Avoids adding a crate dependency.
+/// Robust base64 decoder (RFC 4648) supporting standard and URL-safe alphabets,
+/// whitespace filtering, percent-encoded padding/chars, and unpadded payloads.
 fn base64_decode(input: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     fn val(c: u8) -> Result<u8, Box<dyn std::error::Error>> {
         match c {
             b'A'..=b'Z' => Ok(c - b'A'),
             b'a'..=b'z' => Ok(c - b'a' + 26),
             b'0'..=b'9' => Ok(c - b'0' + 52),
-            b'+' => Ok(62),
-            b'/' => Ok(63),
+            b'+' | b'-' => Ok(62),
+            b'/' | b'_' => Ok(63),
             _ => Err(format!("Invalid base64 character: {}", c as char).into()),
         }
     }
 
-    let filtered: Vec<u8> = input
+    let decoded_input = if input.contains('%') {
+        percent_encoding::percent_decode_str(input)
+            .decode_utf8_lossy()
+            .into_owned()
+    } else {
+        input.to_string()
+    };
+
+    let filtered: Vec<u8> = decoded_input
         .bytes()
         .filter(|b| !b.is_ascii_whitespace() && *b != b'=')
         .collect();
@@ -335,6 +410,9 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
 
     let chunks = filtered.chunks(4);
     for chunk in chunks {
+        if chunk.is_empty() {
+            continue;
+        }
         let b0 = val(chunk[0])?;
         let b1 = if chunk.len() > 1 { val(chunk[1])? } else { 0 };
         let b2 = if chunk.len() > 2 { val(chunk[2])? } else { 0 };
@@ -342,10 +420,10 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
 
         out.push((b0 << 2) | (b1 >> 4));
         if chunk.len() > 2 {
-            out.push((b1 << 4) | (b2 >> 2));
+            out.push(((b1 & 0x0F) << 4) | (b2 >> 2));
         }
         if chunk.len() > 3 {
-            out.push((b2 << 6) | b3);
+            out.push(((b2 & 0x03) << 6) | b3);
         }
     }
 
@@ -533,5 +611,55 @@ mod tests {
         let plain_uri = "data:text/plain,Hello";
         let decoded3 = decode_data_uri_font(plain_uri).unwrap();
         assert_eq!(decoded3, b"Hello");
+    }
+
+    #[test]
+    fn test_decode_data_uri_complex_mime_and_rfc_compliance() {
+        // Complex MIME type with parameters
+        let uri = "data:application/font-woff;charset=utf-8;base64,SGVsbG8=";
+        assert_eq!(decode_data_uri_font(uri).unwrap(), b"Hello");
+
+        // Quoted parameter with embedded comma
+        let uri_quoted_comma = "data:text/plain;charset=\"utf-8,latin\";base64,SGVsbG8=";
+        assert_eq!(decode_data_uri_font(uri_quoted_comma).unwrap(), b"Hello");
+
+        // Case-insensitive scheme and parameter with whitespace around separator
+        let uri_case = "  DATA:font/woff2;  BASE64  ,SGVsbG8=  ";
+        assert_eq!(decode_data_uri_font(uri_case).unwrap(), b"Hello");
+
+        // Empty MIME type with base64
+        let uri_empty_mime = "data:;base64,SGVsbG8=";
+        assert_eq!(decode_data_uri_font(uri_empty_mime).unwrap(), b"Hello");
+
+        // No leading semicolon before base64
+        let uri_bare_b64 = "data:base64,SGVsbG8=";
+        assert_eq!(decode_data_uri_font(uri_bare_b64).unwrap(), b"Hello");
+
+        // Multiline / embedded whitespace in base64 payload (common in CSS @font-face)
+        let uri_multiline = "data:font/woff;base64,\r\n SG\nVs\r\nbG8= \t\n";
+        assert_eq!(decode_data_uri_font(uri_multiline).unwrap(), b"Hello");
+
+        // Unpadded base64 (missing trailing '=')
+        let uri_unpadded = "data:text/plain;base64,SGVsbG8";
+        assert_eq!(decode_data_uri_font(uri_unpadded).unwrap(), b"Hello");
+
+        // URL-safe base64 (- and _)
+        // Standard "+/==" is byte [251], URL-safe "-_==" is byte [251]
+        let uri_urlsafe = "data:application/octet-stream;base64,-_==";
+        assert_eq!(decode_data_uri_font(uri_urlsafe).unwrap(), vec![0xFB]);
+
+        // Percent-encoded characters in base64 payload
+        let uri_pct_b64 = "data:application/octet-stream;base64,%2B%2F%3D%3D";
+        assert_eq!(decode_data_uri_font(uri_pct_b64).unwrap(), vec![0xFB]);
+
+        // Empty data payload
+        let uri_empty = "data:,";
+        assert_eq!(decode_data_uri_font(uri_empty).unwrap(), Vec::<u8>::new());
+
+        // Missing comma separator should fail
+        assert!(decode_data_uri_font("data:text/plain;base64").is_err());
+
+        // Non-data URI prefix should fail
+        assert!(decode_data_uri_font("http://example.com/font.woff").is_err());
     }
 }
