@@ -10,6 +10,13 @@ use crate::damage::DamageRegion;
 use crate::display_list::DisplayList;
 use crate::painter::{paint, paint_damage};
 use crate::tile::TileGrid;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_LAYER_ID: AtomicU64 = AtomicU64::new(1);
+
+fn next_layer_id() -> u64 {
+    NEXT_LAYER_ID.fetch_add(1, Ordering::Relaxed)
+}
 
 /// Classification of a rendering layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,6 +46,8 @@ pub enum LayerPromotionReason {
 /// A discrete renderable layer in the browser window.
 #[derive(Debug, Clone)]
 pub struct RenderLayer {
+    /// Stable identity for compositor resource caches across vector reorderings.
+    pub id: u64,
     pub kind: LayerKind,
     pub bounds: Rect,
     pub scroll_offset: (f32, f32),
@@ -59,6 +68,7 @@ impl RenderLayer {
         let h = height.max(1);
         let num_pixels = (w * h) as usize;
         Self {
+            id: next_layer_id(),
             kind: LayerKind::Chrome,
             bounds: Rect::new(0.0, 0.0, w as f32, h as f32),
             scroll_offset: (0.0, 0.0),
@@ -81,6 +91,7 @@ impl RenderLayer {
         grid.update_content_size(w as f32, h as f32);
 
         Self {
+            id: next_layer_id(),
             kind: LayerKind::Page,
             bounds: Rect::new(0.0, 0.0, w as f32, h as f32),
             scroll_offset: (0.0, 0.0),
@@ -102,6 +113,7 @@ impl RenderLayer {
         let num_pixels = (w * h) as usize;
 
         Self {
+            id: next_layer_id(),
             kind: LayerKind::Overlay,
             bounds,
             scroll_offset: (0.0, 0.0),
@@ -123,6 +135,7 @@ impl RenderLayer {
         let num_pixels = (w * h) as usize;
 
         Self {
+            id: next_layer_id(),
             kind: LayerKind::Promoted(reason),
             bounds,
             scroll_offset: (0.0, 0.0),
@@ -169,9 +182,10 @@ impl RenderLayer {
     }
 
     /// Rasterizes any dirty regions in the layer.
-    pub fn rasterize_if_dirty(&mut self, bg_color: Color, current_frame: u64) {
+    pub fn rasterize_if_dirty(&mut self, bg_color: Color, current_frame: u64) -> bool {
         match self.kind {
             LayerKind::Page => {
+                let mut pending = false;
                 if let Some(grid) = &mut self.tile_grid {
                     let viewport = Rect::new(
                         self.scroll_offset.0,
@@ -179,20 +193,27 @@ impl RenderLayer {
                         self.bounds.width(),
                         self.bounds.height(),
                     );
-                    grid.ensure_tiles_rasterized(
+                    grid.ensure_tiles_rasterized_limited(
                         viewport,
                         &self.display_list,
                         bg_color,
                         current_frame,
+                        2,
                     );
                     grid.prune_unused_tiles(current_frame, 15);
+                    pending = grid.has_dirty_visible_tiles(viewport);
                 }
                 self.version = self.version.wrapping_add(1);
-                self.clear_damage();
+                if pending {
+                    self.is_dirty = true;
+                } else {
+                    self.clear_damage();
+                }
+                pending
             }
             LayerKind::Chrome | LayerKind::Overlay | LayerKind::Promoted(_) => {
                 if !self.is_dirty && self.damage.is_empty() {
-                    return;
+                    return false;
                 }
                 if let Some(pixels) = &mut self.pixels {
                     let w = self.bounds.width().max(1.0) as u32;
@@ -227,6 +248,7 @@ impl RenderLayer {
                 }
                 self.version = self.version.wrapping_add(1);
                 self.clear_damage();
+                false
             }
         }
     }
