@@ -628,3 +628,150 @@ pub(crate) fn box_blur_rect(
         }
     }
 }
+
+/// Color stop on a canvas gradient.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CanvasColorStop {
+    pub offset: f32,
+    pub color: Color,
+}
+
+/// Two-point radial gradient matching W3C Canvas 2D specification.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RadialGradient {
+    pub x0: f32,
+    pub y0: f32,
+    pub r0: f32,
+    pub x1: f32,
+    pub y1: f32,
+    pub r1: f32,
+    pub stops: Vec<CanvasColorStop>,
+}
+
+impl RadialGradient {
+    /// Creates a new two-point radial gradient from start circle (x0, y0, r0) to end circle (x1, y1, r1).
+    pub fn new(x0: f32, y0: f32, r0: f32, x1: f32, y1: f32, r1: f32) -> Self {
+        Self {
+            x0,
+            y0,
+            r0: r0.max(0.0),
+            x1,
+            y1,
+            r1: r1.max(0.0),
+            stops: Vec::new(),
+        }
+    }
+
+    /// Adds a color stop at the given normalized offset in `[0.0, 1.0]`.
+    pub fn add_color_stop(&mut self, offset: f32, color: Color) {
+        let offset = offset.clamp(0.0, 1.0);
+        self.stops.push(CanvasColorStop { offset, color });
+        self.stops.sort_by(|a, b| {
+            a.offset
+                .partial_cmp(&b.offset)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+    }
+
+    /// Evaluates the gradient color at user-space coordinates (x, y).
+    pub fn eval_at(&self, x: f32, y: f32) -> Option<Color> {
+        evaluate_radial_gradient(
+            self.x0,
+            self.y0,
+            self.r0,
+            self.x1,
+            self.y1,
+            self.r1,
+            &self.stops,
+            x,
+            y,
+        )
+    }
+}
+
+/// Interpolates two-point radial gradient color according to the W3C Canvas 2D specification.
+pub(crate) fn evaluate_radial_gradient(
+    x0: f32,
+    y0: f32,
+    r0: f32,
+    x1: f32,
+    y1: f32,
+    r1: f32,
+    stops: &[CanvasColorStop],
+    x: f32,
+    y: f32,
+) -> Option<Color> {
+    if stops.is_empty() {
+        return None;
+    }
+    let dx = x1 - x0;
+    let dy = y1 - y0;
+    let dr = r1 - r0;
+    let px = x - x0;
+    let py = y - y0;
+
+    let a = dx * dx + dy * dy - dr * dr;
+    let b = -(px * dx + py * dy + r0 * dr);
+    let c = px * px + py * py - r0 * r0;
+
+    let t = if a.abs() < 1e-6 {
+        if b.abs() < 1e-6 {
+            return None;
+        }
+        let t = -c / (2.0 * b);
+        if (r0 + t * dr) < 0.0 {
+            return None;
+        }
+        t
+    } else {
+        let disc = b * b - a * c;
+        if disc < 0.0 {
+            return None;
+        }
+        let sqrt_disc = disc.sqrt();
+        let t1 = (-b - sqrt_disc) / a;
+        let t2 = (-b + sqrt_disc) / a;
+
+        let r1_valid = (r0 + t1 * dr) >= 0.0;
+        let r2_valid = (r0 + t2 * dr) >= 0.0;
+
+        match (r1_valid, r2_valid) {
+            (true, true) => t1.max(t2),
+            (true, false) => t1,
+            (false, true) => t2,
+            (false, false) => return None,
+        }
+    };
+
+    Some(sample_color_stops(stops, t))
+}
+
+/// Samples a list of sorted color stops at normalized position parameter `t`.
+pub(crate) fn sample_color_stops(stops: &[CanvasColorStop], t: f32) -> Color {
+    if stops.is_empty() {
+        return Color::TRANSPARENT;
+    }
+    if stops.len() == 1 {
+        return stops[0].color;
+    }
+    let t = t.clamp(0.0, 1.0);
+    if t <= stops[0].offset {
+        return stops[0].color;
+    }
+    if t >= stops[stops.len() - 1].offset {
+        return stops[stops.len() - 1].color;
+    }
+    for window in stops.windows(2) {
+        let s0 = &window[0];
+        let s1 = &window[1];
+        if t >= s0.offset && t <= s1.offset {
+            let span = s1.offset - s0.offset;
+            if span <= 1e-6 {
+                return s1.color;
+            }
+            let factor = (t - s0.offset) / span;
+            return s0.color.lerp(s1.color, factor);
+        }
+    }
+    stops[stops.len() - 1].color
+}

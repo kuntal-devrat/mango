@@ -33,8 +33,9 @@ pub mod pdf;
 pub mod svg;
 
 pub use canvas::{
-    Canvas2D, CanvasState, clear_canvas_registry, get_canvas_dimensions, get_canvas_pixels,
-    remove_canvas, remove_canvases_for_document, resize_canvas, with_canvas_mut,
+    Canvas2D, CanvasColorStop, CanvasPaintStyle, CanvasState, RadialGradient,
+    clear_canvas_registry, get_canvas_dimensions, get_canvas_pixels, remove_canvas,
+    remove_canvases_for_document, resize_canvas, with_canvas_mut,
 };
 pub use compositor::SoftwareCompositor;
 pub use damage::{DamageRegion, MAX_DAMAGE_RECTS};

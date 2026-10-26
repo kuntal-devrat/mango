@@ -97,3 +97,85 @@ fn test_canvas_put_image_data_dirty_rect() {
     assert_eq!(out[0], 0);
     assert_eq!(out[3], 0);
 }
+
+#[test]
+fn test_canvas_radial_gradient_rendering() {
+    let mut canvas = Canvas2D::new(100, 100).expect("Canvas should create");
+    let mut grad = canvas.create_radial_gradient(50.0, 50.0, 0.0, 50.0, 50.0, 50.0);
+    grad.add_color_stop(0.0, Color::rgb(255, 0, 0)); // Center: red
+    grad.add_color_stop(0.5, Color::rgb(0, 255, 0)); // Mid: green
+    grad.add_color_stop(1.0, Color::rgb(0, 0, 255)); // Outer: blue
+
+    canvas.set_fill_radial_gradient(grad);
+    canvas.fill_rect(0.0, 0.0, 100.0, 100.0);
+
+    let data = canvas.get_image_data(0, 0, 100, 100);
+
+    // Center pixel (50, 50): radius ~ 0 -> Red
+    let center_idx = ((50 * 100 + 50) * 4) as usize;
+    assert!(
+        data[center_idx] > 200,
+        "Center should have dominant red channel, got {}",
+        data[center_idx]
+    );
+    assert!(
+        data[center_idx + 2] < 50,
+        "Center should have minimal blue, got {}",
+        data[center_idx + 2]
+    );
+
+    // Midpoint pixel (50, 75): radius 25 / 50 = 0.5 -> Green
+    let mid_idx = ((75 * 100 + 50) * 4) as usize;
+    assert!(
+        data[mid_idx + 1] > 200,
+        "Midpoint should have dominant green channel, got {}",
+        data[mid_idx + 1]
+    );
+
+    // Outer pixel (50, 98): radius 48 / 50 ~ 0.96 -> Blue
+    let outer_idx = ((98 * 100 + 50) * 4) as usize;
+    assert!(
+        data[outer_idx + 2] > 200,
+        "Outer pixel should have dominant blue channel, got {}",
+        data[outer_idx + 2]
+    );
+
+    // Corner pixel (0, 0): radius ~ 70.7 > 50 -> clamped to outer stop (Blue)
+    assert!(
+        data[2] > 200,
+        "Corner pixel beyond outer circle should clamp to outer stop (blue), got {}",
+        data[2]
+    );
+
+    // Verify non-zero interpolated pixel colors across entire buffer
+    let pixels = canvas.get_pixels();
+    assert_eq!(pixels.len(), 100 * 100);
+    assert!(pixels.iter().all(|&p| p != 0));
+}
+
+#[test]
+fn test_canvas_radial_gradient_path_and_stroke() {
+    let mut canvas = Canvas2D::new(100, 100).expect("Canvas should create");
+    let mut grad = canvas.create_radial_gradient(50.0, 50.0, 10.0, 50.0, 50.0, 40.0);
+    grad.add_color_stop(0.0, Color::rgb(255, 255, 0));
+    grad.add_color_stop(1.0, Color::rgb(255, 0, 255));
+
+    canvas.set_stroke_radial_gradient(grad);
+    canvas.set_line_width(4.0);
+    canvas.begin_path();
+    canvas.arc(50.0, 50.0, 30.0, 0.0, std::f32::consts::PI * 2.0, false);
+    canvas.stroke();
+
+    let data = canvas.get_image_data(0, 0, 100, 100);
+    // On the stroked circle: (50, 20) -> radius 30 from center
+    let stroke_idx = ((20 * 100 + 50) * 4) as usize;
+    assert!(
+        data[stroke_idx + 3] > 0,
+        "Stroked pixel alpha should be non-zero"
+    );
+    assert!(data[stroke_idx] > 0, "Stroked pixel red should be non-zero");
+
+    // Canvas center (50, 50) wasn't stroked, should remain transparent
+    let center_idx = ((50 * 100 + 50) * 4) as usize;
+    assert_eq!(data[center_idx + 3], 0);
+}

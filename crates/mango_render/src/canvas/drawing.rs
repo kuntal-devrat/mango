@@ -192,24 +192,44 @@ impl Canvas2D {
         let mut builder = PathBuilder::new();
         std::mem::swap(&mut self.current_path, &mut builder);
         if let Some(path) = builder.clone().finish() {
-            let alpha = (self.state.fill_color.a as f32 / 255.0) * self.state.global_alpha;
-            if alpha > 0.0 {
-                let mut paint = Paint::default();
-                if let Some(sc) = SkiaColor::from_rgba(
-                    self.state.fill_color.r as f32 / 255.0,
-                    self.state.fill_color.g as f32 / 255.0,
-                    self.state.fill_color.b as f32 / 255.0,
-                    alpha,
-                ) {
-                    paint.set_color(sc);
-                    paint.anti_alias = true;
-                    self.pixmap.fill_path(
-                        &path,
-                        &paint,
-                        FillRule::Winding,
-                        self.state.transform,
-                        None,
-                    );
+            match &self.state.fill_style {
+                super::state::CanvasPaintStyle::Color(color) => {
+                    let alpha = (color.a as f32 / 255.0) * self.state.global_alpha;
+                    if alpha > 0.0 {
+                        let mut paint = Paint::default();
+                        if let Some(sc) = SkiaColor::from_rgba(
+                            color.r as f32 / 255.0,
+                            color.g as f32 / 255.0,
+                            color.b as f32 / 255.0,
+                            alpha,
+                        ) {
+                            paint.set_color(sc);
+                            paint.anti_alias = true;
+                            self.pixmap.fill_path(
+                                &path,
+                                &paint,
+                                FillRule::Winding,
+                                self.state.transform,
+                                None,
+                            );
+                        }
+                    }
+                }
+                super::state::CanvasPaintStyle::RadialGradient(grad) => {
+                    let grad = grad.clone();
+                    if let Some(mut mask) = tiny_skia::Pixmap::new(self.width, self.height) {
+                        let mut paint = Paint::default();
+                        paint.set_color(SkiaColor::WHITE);
+                        paint.anti_alias = true;
+                        mask.fill_path(
+                            &path,
+                            &paint,
+                            FillRule::Winding,
+                            self.state.transform,
+                            None,
+                        );
+                        self.blend_radial_gradient_mask(&mask, &grad);
+                    }
                 }
             }
         }
@@ -221,26 +241,47 @@ impl Canvas2D {
         let mut builder = PathBuilder::new();
         std::mem::swap(&mut self.current_path, &mut builder);
         if let Some(path) = builder.clone().finish() {
-            let alpha = (self.state.stroke_color.a as f32 / 255.0) * self.state.global_alpha;
-            if alpha > 0.0 && self.state.line_width > 0.0 {
-                let mut paint = Paint::default();
-                if let Some(sc) = SkiaColor::from_rgba(
-                    self.state.stroke_color.r as f32 / 255.0,
-                    self.state.stroke_color.g as f32 / 255.0,
-                    self.state.stroke_color.b as f32 / 255.0,
-                    alpha,
-                ) {
-                    paint.set_color(sc);
-                    paint.anti_alias = true;
-                    let stroke = Stroke {
-                        width: self.state.line_width,
-                        line_cap: self.state.line_cap,
-                        line_join: self.state.line_join,
-                        miter_limit: self.state.miter_limit,
-                        ..Default::default()
-                    };
-                    self.pixmap
-                        .stroke_path(&path, &paint, &stroke, self.state.transform, None);
+            if self.state.line_width > 0.0 {
+                let stroke = Stroke {
+                    width: self.state.line_width,
+                    line_cap: self.state.line_cap,
+                    line_join: self.state.line_join,
+                    miter_limit: self.state.miter_limit,
+                    ..Default::default()
+                };
+                match &self.state.stroke_style {
+                    super::state::CanvasPaintStyle::Color(color) => {
+                        let alpha = (color.a as f32 / 255.0) * self.state.global_alpha;
+                        if alpha > 0.0 {
+                            let mut paint = Paint::default();
+                            if let Some(sc) = SkiaColor::from_rgba(
+                                color.r as f32 / 255.0,
+                                color.g as f32 / 255.0,
+                                color.b as f32 / 255.0,
+                                alpha,
+                            ) {
+                                paint.set_color(sc);
+                                paint.anti_alias = true;
+                                self.pixmap.stroke_path(
+                                    &path,
+                                    &paint,
+                                    &stroke,
+                                    self.state.transform,
+                                    None,
+                                );
+                            }
+                        }
+                    }
+                    super::state::CanvasPaintStyle::RadialGradient(grad) => {
+                        let grad = grad.clone();
+                        if let Some(mut mask) = tiny_skia::Pixmap::new(self.width, self.height) {
+                            let mut paint = Paint::default();
+                            paint.set_color(SkiaColor::WHITE);
+                            paint.anti_alias = true;
+                            mask.stroke_path(&path, &paint, &stroke, self.state.transform, None);
+                            self.blend_radial_gradient_mask(&mask, &grad);
+                        }
+                    }
                 }
             }
         }
@@ -255,19 +296,33 @@ impl Canvas2D {
             return;
         }
         if let Some(rect) = Rect::from_xywh(x, y, w, h) {
-            let alpha = (self.state.fill_color.a as f32 / 255.0) * self.state.global_alpha;
-            if alpha > 0.0 {
-                let mut paint = Paint::default();
-                if let Some(sc) = SkiaColor::from_rgba(
-                    self.state.fill_color.r as f32 / 255.0,
-                    self.state.fill_color.g as f32 / 255.0,
-                    self.state.fill_color.b as f32 / 255.0,
-                    alpha,
-                ) {
-                    paint.set_color(sc);
-                    paint.anti_alias = true;
-                    self.pixmap
-                        .fill_rect(rect, &paint, self.state.transform, None);
+            match &self.state.fill_style {
+                super::state::CanvasPaintStyle::Color(color) => {
+                    let alpha = (color.a as f32 / 255.0) * self.state.global_alpha;
+                    if alpha > 0.0 {
+                        let mut paint = Paint::default();
+                        if let Some(sc) = SkiaColor::from_rgba(
+                            color.r as f32 / 255.0,
+                            color.g as f32 / 255.0,
+                            color.b as f32 / 255.0,
+                            alpha,
+                        ) {
+                            paint.set_color(sc);
+                            paint.anti_alias = true;
+                            self.pixmap
+                                .fill_rect(rect, &paint, self.state.transform, None);
+                        }
+                    }
+                }
+                super::state::CanvasPaintStyle::RadialGradient(grad) => {
+                    let grad = grad.clone();
+                    if let Some(mut mask) = tiny_skia::Pixmap::new(self.width, self.height) {
+                        let mut paint = Paint::default();
+                        paint.set_color(SkiaColor::WHITE);
+                        paint.anti_alias = true;
+                        mask.fill_rect(rect, &paint, self.state.transform, None);
+                        self.blend_radial_gradient_mask(&mask, &grad);
+                    }
                 }
             }
         }
@@ -282,27 +337,115 @@ impl Canvas2D {
         if let Some(rect) = Rect::from_xywh(x, y, w, h) {
             pb.push_rect(rect);
             if let Some(path) = pb.finish() {
-                let alpha = (self.state.stroke_color.a as f32 / 255.0) * self.state.global_alpha;
-                if alpha > 0.0 && self.state.line_width > 0.0 {
-                    let mut paint = Paint::default();
-                    if let Some(sc) = SkiaColor::from_rgba(
-                        self.state.stroke_color.r as f32 / 255.0,
-                        self.state.stroke_color.g as f32 / 255.0,
-                        self.state.stroke_color.b as f32 / 255.0,
-                        alpha,
-                    ) {
-                        paint.set_color(sc);
-                        paint.anti_alias = true;
-                        let stroke = Stroke {
-                            width: self.state.line_width,
-                            line_cap: self.state.line_cap,
-                            line_join: self.state.line_join,
-                            miter_limit: self.state.miter_limit,
-                            ..Default::default()
-                        };
-                        self.pixmap
-                            .stroke_path(&path, &paint, &stroke, self.state.transform, None);
+                if self.state.line_width > 0.0 {
+                    let stroke = Stroke {
+                        width: self.state.line_width,
+                        line_cap: self.state.line_cap,
+                        line_join: self.state.line_join,
+                        miter_limit: self.state.miter_limit,
+                        ..Default::default()
+                    };
+                    match &self.state.stroke_style {
+                        super::state::CanvasPaintStyle::Color(color) => {
+                            let alpha = (color.a as f32 / 255.0) * self.state.global_alpha;
+                            if alpha > 0.0 {
+                                let mut paint = Paint::default();
+                                if let Some(sc) = SkiaColor::from_rgba(
+                                    color.r as f32 / 255.0,
+                                    color.g as f32 / 255.0,
+                                    color.b as f32 / 255.0,
+                                    alpha,
+                                ) {
+                                    paint.set_color(sc);
+                                    paint.anti_alias = true;
+                                    self.pixmap.stroke_path(
+                                        &path,
+                                        &paint,
+                                        &stroke,
+                                        self.state.transform,
+                                        None,
+                                    );
+                                }
+                            }
+                        }
+                        super::state::CanvasPaintStyle::RadialGradient(grad) => {
+                            let grad = grad.clone();
+                            if let Some(mut mask) = tiny_skia::Pixmap::new(self.width, self.height)
+                            {
+                                let mut paint = Paint::default();
+                                paint.set_color(SkiaColor::WHITE);
+                                paint.anti_alias = true;
+                                mask.stroke_path(
+                                    &path,
+                                    &paint,
+                                    &stroke,
+                                    self.state.transform,
+                                    None,
+                                );
+                                self.blend_radial_gradient_mask(&mask, &grad);
+                            }
+                        }
                     }
+                }
+            }
+        }
+    }
+
+    fn blend_radial_gradient_mask(
+        &mut self,
+        mask: &tiny_skia::Pixmap,
+        grad: &crate::painter::effects::RadialGradient,
+    ) {
+        if self.state.global_alpha <= 0.0 || grad.stops.is_empty() {
+            return;
+        }
+        let Some(inv) = self.state.transform.invert() else {
+            return;
+        };
+
+        let width = self.width;
+        let height = self.height;
+        let mask_data = mask.data();
+        let dst_data = self.pixmap.data_mut();
+
+        for y in 0..height {
+            let row_offset = (y * width) as usize;
+            for x in 0..width {
+                let idx = (row_offset + x as usize) * 4;
+                let mask_cov = mask_data[idx + 3];
+                if mask_cov == 0 {
+                    continue;
+                }
+                let mut pt = tiny_skia::Point::from_xy(x as f32 + 0.5, y as f32 + 0.5);
+                inv.map_point(&mut pt);
+
+                if let Some(color) = grad.eval_at(pt.x, pt.y) {
+                    let cov_f = (mask_cov as f32 / 255.0) * self.state.global_alpha;
+                    let effective_alpha = (color.a as f32 / 255.0) * cov_f;
+                    if effective_alpha <= 0.0 {
+                        continue;
+                    }
+                    let src_a = (effective_alpha * 255.0).round().clamp(0.0, 255.0) as u32;
+                    let src_r = ((color.r as f32 / 255.0) * effective_alpha * 255.0)
+                        .round()
+                        .clamp(0.0, 255.0) as u32;
+                    let src_g = ((color.g as f32 / 255.0) * effective_alpha * 255.0)
+                        .round()
+                        .clamp(0.0, 255.0) as u32;
+                    let src_b = ((color.b as f32 / 255.0) * effective_alpha * 255.0)
+                        .round()
+                        .clamp(0.0, 255.0) as u32;
+
+                    let dst_r = dst_data[idx] as u32;
+                    let dst_g = dst_data[idx + 1] as u32;
+                    let dst_b = dst_data[idx + 2] as u32;
+                    let dst_a = dst_data[idx + 3] as u32;
+
+                    let inv_a = 255 - src_a;
+                    dst_data[idx] = (src_r + (dst_r * inv_a + 127) / 255).min(255) as u8;
+                    dst_data[idx + 1] = (src_g + (dst_g * inv_a + 127) / 255).min(255) as u8;
+                    dst_data[idx + 2] = (src_b + (dst_b * inv_a + 127) / 255).min(255) as u8;
+                    dst_data[idx + 3] = (src_a + (dst_a * inv_a + 127) / 255).min(255) as u8;
                 }
             }
         }
