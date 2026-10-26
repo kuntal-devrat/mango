@@ -383,9 +383,16 @@
     }
 
     // ── 13. URL & URLSearchParams ─────────────────────────────────────────────
+    function safeDecode(val) {
+        try {
+            return decodeURIComponent(val.replace(/\+/g, ' '));
+        } catch (_) {
+            return val.replace(/\+/g, ' ');
+        }
+    }
+
     function URLSearchParams(init) {
         this._entries = [];
-        var self = this;
         if (init) {
             if (typeof init === 'string') {
                 var s = init.replace(/^\?/, '');
@@ -395,23 +402,25 @@
                         var pair = pairs[i];
                         var idx = pair.indexOf('=');
                         if (idx !== -1) {
-                            var k = decodeURIComponent(pair.substring(0, idx).replace(/\+/g, ' '));
-                            var v = decodeURIComponent(pair.substring(idx + 1).replace(/\+/g, ' '));
+                            var k = safeDecode(pair.substring(0, idx));
+                            var v = safeDecode(pair.substring(idx + 1));
                             this._entries.push([k, v]);
                         } else if (pair.length > 0) {
-                            var k = decodeURIComponent(pair.replace(/\+/g, ' '));
+                            var k = safeDecode(pair);
                             this._entries.push([k, '']);
                         }
                     }
                 }
-            } else if (init instanceof URLSearchParams || (init._entries && Array.isArray(init._entries))) {
-                init.forEach(function(v, k) { self._entries.push([String(k), String(v)]); });
-            } else if (Array.isArray(init)) {
-                for (var i = 0; i < init.length; i++) {
-                    var item = init[i];
-                    if (item && item.length >= 2) {
-                        this._entries.push([String(item[0]), String(item[1])]);
+            } else if (typeof init[Symbol.iterator] === 'function') {
+                for (var pair of init) {
+                    if (!pair || typeof pair[Symbol.iterator] !== 'function') {
+                        throw new TypeError("Each pair in iterable must be an iterable");
                     }
+                    var item = Array.from(pair);
+                    if (item.length !== 2) {
+                        throw new TypeError("Each pair must contain exactly 2 elements, found " + item.length);
+                    }
+                    this._entries.push([String(item[0]), String(item[1])]);
                 }
             } else if (typeof init === 'object') {
                 var keys = Object.keys(init);
@@ -423,6 +432,7 @@
         }
     }
     URLSearchParams.prototype = {
+        constructor: URLSearchParams,
         append: function(name, value) {
             this._entries.push([String(name), String(value)]);
             if (this._url) this._url._syncFromSearchParams();
@@ -499,41 +509,21 @@
                 cb.call(thisArg, e[1], e[0], this);
             }
         },
-        keys: function() {
-            var i = 0, self = this;
-            var it = {
-                next: function() {
-                    if (i < self._entries.length) return { value: self._entries[i++][0], done: false };
-                    return { value: undefined, done: true };
-                }
-            };
-            it[Symbol.iterator] = function() { return this; };
-            return it;
+        *keys() {
+            for (var i = 0; i < this._entries.length; i++) {
+                yield this._entries[i][0];
+            }
         },
-        values: function() {
-            var i = 0, self = this;
-            var it = {
-                next: function() {
-                    if (i < self._entries.length) return { value: self._entries[i++][1], done: false };
-                    return { value: undefined, done: true };
-                }
-            };
-            it[Symbol.iterator] = function() { return this; };
-            return it;
+        *values() {
+            for (var i = 0; i < this._entries.length; i++) {
+                yield this._entries[i][1];
+            }
         },
-        entries: function() {
-            var i = 0, self = this;
-            var it = {
-                next: function() {
-                    if (i < self._entries.length) {
-                        var e = self._entries[i++];
-                        return { value: [e[0], e[1]], done: false };
-                    }
-                    return { value: undefined, done: true };
-                }
-            };
-            it[Symbol.iterator] = function() { return this; };
-            return it;
+        *entries() {
+            for (var i = 0; i < this._entries.length; i++) {
+                var e = this._entries[i];
+                yield [e[0], e[1]];
+            }
         },
         toString: function() {
             var parts = [];
@@ -545,6 +535,7 @@
         }
     };
     URLSearchParams.prototype[Symbol.iterator] = URLSearchParams.prototype.entries;
+    URLSearchParams.prototype[Symbol.toStringTag] = 'URLSearchParams';
     Object.defineProperty(URLSearchParams.prototype, 'size', {
         get: function() { return this._entries.length; }
     });
