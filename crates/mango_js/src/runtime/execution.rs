@@ -222,7 +222,11 @@ impl JsRuntime {
         self.execute_script_with_name_and_timeout(
             "<script>",
             source,
-            std::time::Duration::from_millis(250),
+            // Keep the general-purpose API compatible with CPU-heavy but
+            // finite scripts (for example DOM churn and hydration work).
+            // Browser navigation and event-loop entry points use explicit,
+            // shorter budgets where latency must be tightly bounded.
+            std::time::Duration::from_millis(1500),
         )
     }
 

@@ -19,20 +19,31 @@ impl BrowserChrome {
     /// multi-tab results cannot monopolize the window thread. Epochs are
     /// per-tab, so a result for tab A remains valid while tab B navigates.
     pub fn tick_navigation(&mut self) -> bool {
-        match self.nav_actor.try_recv() {
-            Ok(res) => {
-                self.persist_cookies();
-                self.process_nav_result(res)
-            }
-            Err(std::sync::mpsc::TryRecvError::Empty) => false,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                for tab in &mut self.tabs {
-                    tab.loading = false;
+        const MAX_RESULTS_PER_TICK: usize = 4;
+        let mut applied_any = false;
+        let mut received_any = false;
+
+        for _ in 0..MAX_RESULTS_PER_TICK {
+            match self.nav_actor.try_recv() {
+                Ok(res) => {
+                    received_any = true;
+                    applied_any |= self.process_nav_result(res);
                 }
-                self.is_loading = false;
-                false
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    for tab in &mut self.tabs {
+                        tab.loading = false;
+                    }
+                    self.is_loading = false;
+                    break;
+                }
             }
         }
+
+        if received_any {
+            self.persist_cookies();
+        }
+        applied_any
     }
 
     /// Applies one navigation result if it is still current for its tab.
