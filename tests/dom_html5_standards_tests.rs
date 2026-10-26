@@ -421,3 +421,86 @@ fn test_visual_validation_bubble_subsystem() {
     let commands = bubble.render();
     assert!(commands.len() >= 5);
 }
+
+#[test]
+fn test_details_summary_interactive_layout_and_dom() {
+    let html = r#"<!DOCTYPE html><html><body><details id="det"><summary id="sum">Summary Title</summary><p id="content">Hidden Body</p></details></body></html>"#;
+    let doc = parse_html(html);
+    let mut rt = JsRuntime::new(doc, 800.0, 600.0);
+
+    // Initial state: details is closed (no open attribute)
+    let (layout1, _) = mango_layout::layout_document_with_scroll_xy(
+        &rt.document_ref(),
+        &[],
+        mango_core::Size::new(800.0, 600.0),
+        0.0,
+        0.0,
+    );
+
+    fn find_details_box(b: &mango_layout::LayoutBox) -> Option<&mango_layout::LayoutBox> {
+        if b.tag_name.as_deref() == Some("details") {
+            return Some(b);
+        }
+        for c in &b.children {
+            if let Some(found) = find_details_box(c) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    let det_box1 = find_details_box(&layout1).expect("Details box must exist in layout");
+    assert_eq!(
+        det_box1.children.len(),
+        1,
+        "Closed details should only layout its summary child"
+    );
+
+    // Toggle open via JS / DOM property
+    let script = r#"
+        var det = document.getElementById("det");
+        if (det.open !== false) throw new Error("Expected det.open to be false initially");
+        det.open = true;
+        if (!det.hasAttribute("open")) throw new Error("Expected open attribute after setting det.open = true");
+        if (det.open !== true) throw new Error("Expected det.open to be true");
+    "#;
+    rt.execute_script(script).expect("Script execution failed");
+
+    let (layout2, _) = mango_layout::layout_document_with_scroll_xy(
+        &rt.document_ref(),
+        &[],
+        mango_core::Size::new(800.0, 600.0),
+        0.0,
+        0.0,
+    );
+    let det_box2 = find_details_box(&layout2).expect("Details box must exist in layout");
+    assert_eq!(
+        det_box2.children.len(),
+        2,
+        "Open details should layout both summary and content children"
+    );
+
+    // Toggle back to closed
+    let script_close = r#"
+        var det = document.getElementById("det");
+        det.open = false;
+        if (det.hasAttribute("open")) throw new Error("Expected open attribute removed");
+        if (det.open !== false) throw new Error("Expected det.open to be false");
+    "#;
+    rt.execute_script(script_close)
+        .expect("Script close failed");
+
+    let (layout3, _) = mango_layout::layout_document_with_scroll_xy(
+        &rt.document_ref(),
+        &[],
+        mango_core::Size::new(800.0, 600.0),
+        0.0,
+        0.0,
+    );
+    let det_box3 = find_details_box(&layout3).expect("Details box must exist in layout");
+    assert_eq!(
+        det_box3.children.len(),
+        1,
+        "Closed details should once again omit non-summary children"
+    );
+}

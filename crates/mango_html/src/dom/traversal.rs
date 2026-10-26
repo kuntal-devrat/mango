@@ -230,6 +230,36 @@ impl Document {
         None
     }
 
+    /// Finds the closest ancestor of `start` that satisfies the given predicate.
+    pub fn find_ancestor<F>(&self, start: NodeId, predicate: F) -> Option<NodeId>
+    where
+        F: Fn(&Node) -> bool,
+    {
+        let mut curr = self.get(start).and_then(|n| n.parent);
+        while let Some(nid) = curr {
+            if let Some(node) = self.get(nid) {
+                if predicate(node) {
+                    return Some(nid);
+                }
+                curr = node.parent;
+            } else {
+                break;
+            }
+        }
+        None
+    }
+
+    /// Returns the `<details>` ancestor element for a given `<summary>` node, if any.
+    pub fn find_details_for_summary(&self, summary_id: NodeId) -> Option<NodeId> {
+        self.find_ancestor(summary_id, |node| {
+            if let NodeData::Element(el) = &node.data {
+                el.is_details()
+            } else {
+                false
+            }
+        })
+    }
+
     /// Generates a visual debug tree representation of the DOM.
     pub fn dump_tree(&self, root: NodeId) -> String {
         let mut out = String::new();
