@@ -113,6 +113,25 @@ const PROBE: &str = r#"
   t('URL parse', function(){ return new URL('https://a.test/p?q=1').host === 'a.test'; });
   t('URLSearchParams get', function(){ return new URLSearchParams('a=1').get('a')==='1'; });
   t('URLSearchParams append', function(){ var u=new URLSearchParams(); u.append('a','1'); return u.getAll('a').length===1; });
+  t('URLSearchParams keys and sort', function(){
+      var u = new URLSearchParams("b=2&a=1");
+      var k1 = Array.from(u.keys());
+      if (k1.length !== 2 || k1[0] !== 'b' || k1[1] !== 'a') return false;
+      u.sort();
+      var k2 = Array.from(u.keys());
+      if (k2.length !== 2 || k2[0] !== 'a' || k2[1] !== 'b') return false;
+      return true;
+  });
+  t('URLSearchParams entries, values, Symbol.iterator', function(){
+      var u = new URLSearchParams("a=1&b=2");
+      var entries = Array.from(u.entries());
+      var values = Array.from(u.values());
+      var iterEntries = Array.from(u);
+      if (entries.length !== 2 || entries[0][0] !== 'a' || entries[0][1] !== '1') return false;
+      if (values.length !== 2 || values[0] !== '1' || values[1] !== '2') return false;
+      if (iterEntries.length !== 2 || iterEntries[1][0] !== 'b' || iterEntries[1][1] !== '2') return false;
+      return true;
+  });
 
   // ---------- Storage / history / location ----------
   t('localStorage setItem', function(){ localStorage.setItem('k','v'); return localStorage.getItem('k')==='v'; });

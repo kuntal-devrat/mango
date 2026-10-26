@@ -329,6 +329,7 @@
         }
     }
     FormData.prototype = {
+        constructor: FormData,
         append: function(k, v, filename) {
             var val = v;
             if (filename !== undefined && !(val instanceof File)) {
@@ -389,41 +390,21 @@
                 cb.call(thisArg, e[1], e[0], this);
             }
         },
-        keys: function() {
-            var i = 0, self = this;
-            var it = {
-                next: function() {
-                    if (i < self._entries.length) return { value: self._entries[i++][0], done: false };
-                    return { value: undefined, done: true };
-                }
-            };
-            it[Symbol.iterator] = function() { return this; };
-            return it;
+        *keys() {
+            for (var i = 0; i < this._entries.length; i++) {
+                yield this._entries[i][0];
+            }
         },
-        values: function() {
-            var i = 0, self = this;
-            var it = {
-                next: function() {
-                    if (i < self._entries.length) return { value: self._entries[i++][1], done: false };
-                    return { value: undefined, done: true };
-                }
-            };
-            it[Symbol.iterator] = function() { return this; };
-            return it;
+        *values() {
+            for (var i = 0; i < this._entries.length; i++) {
+                yield this._entries[i][1];
+            }
         },
-        entries: function() {
-            var i = 0, self = this;
-            var it = {
-                next: function() {
-                    if (i < self._entries.length) {
-                        var e = self._entries[i++];
-                        return { value: [e[0], e[1]], done: false };
-                    }
-                    return { value: undefined, done: true };
-                }
-            };
-            it[Symbol.iterator] = function() { return this; };
-            return it;
+        *entries() {
+            for (var i = 0; i < this._entries.length; i++) {
+                var e = this._entries[i];
+                yield [e[0], e[1]];
+            }
         },
         serializeUrlEncoded: function() {
             var pairs = [];
@@ -474,6 +455,7 @@
         }
     };
     FormData.prototype[Symbol.iterator] = FormData.prototype.entries;
+    FormData.prototype[Symbol.toStringTag] = 'FormData';
     globalThis.FormData = FormData;
 
     // ── 19. Blob / File / FileReader ──────────────────────────────────────────

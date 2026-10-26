@@ -78,6 +78,48 @@ fn test_web_apis() {
         var sortedKeys = Array.from(params.keys());
         if (sortedKeys[0] !== "a") throw new Error("params.sort failed");
 
+        // Full spec iterables, mutation, and constructor testing
+        var testParams = new URLSearchParams("b=2&a=1");
+        var initialKeys = Array.from(testParams.keys());
+        if (initialKeys.length !== 2 || initialKeys[0] !== "b" || initialKeys[1] !== "a") {
+            throw new Error("initialKeys mismatch: " + JSON.stringify(initialKeys));
+        }
+        testParams.sort();
+        var afterSortKeys = Array.from(testParams.keys());
+        if (afterSortKeys.length !== 2 || afterSortKeys[0] !== "a" || afterSortKeys[1] !== "b") {
+            throw new Error("afterSortKeys mismatch: " + JSON.stringify(afterSortKeys));
+        }
+        var values = Array.from(testParams.values());
+        if (values.length !== 2 || values[0] !== "1" || values[1] !== "2") {
+            throw new Error("values mismatch: " + JSON.stringify(values));
+        }
+        var entries = Array.from(testParams.entries());
+        if (entries.length !== 2 || entries[0][0] !== "a" || entries[0][1] !== "1" || entries[1][0] !== "b" || entries[1][1] !== "2") {
+            throw new Error("entries mismatch: " + JSON.stringify(entries));
+        }
+        var spreadEntries = Array.from(testParams);
+        if (spreadEntries.length !== 2 || spreadEntries[0][0] !== "a" || spreadEntries[1][0] !== "b") {
+            throw new Error("spreadEntries mismatch: " + JSON.stringify(spreadEntries));
+        }
+        if (testParams.size !== 2) throw new Error("testParams.size mismatch: " + testParams.size);
+
+        // Sequence and record constructor init
+        var fromSeq = new URLSearchParams([["k1", "v1"], ["k2", "v2"]]);
+        if (fromSeq.get("k1") !== "v1" || fromSeq.get("k2") !== "v2") throw new Error("fromSeq failed");
+        var fromRecord = new URLSearchParams({ p1: "100", p2: "200" });
+        if (fromRecord.get("p1") !== "100" || fromRecord.get("p2") !== "200") throw new Error("fromRecord failed");
+        var fromCopy = new URLSearchParams(testParams);
+        if (fromCopy.get("a") !== "1" || fromCopy.get("b") !== "2") throw new Error("fromCopy failed");
+
+        // FormData iterators and toUrlSearchParams
+        var fd = new FormData();
+        fd.append("x", "10");
+        fd.append("y", "20");
+        var fdKeys = Array.from(fd.keys());
+        if (fdKeys.length !== 2 || fdKeys[0] !== "x" || fdKeys[1] !== "y") throw new Error("fdKeys failed");
+        var fdFromUsp = new URLSearchParams(fd);
+        if (fdFromUsp.get("x") !== "10" || fdFromUsp.get("y") !== "20") throw new Error("fdFromUsp failed");
+
         // URL constructor and properties
         var url = new URL("https://example.com:8080/path/test?q=search&lang=en#heading");
         if (url.protocol !== "https:") throw new Error("url.protocol mismatch: " + url.protocol);
