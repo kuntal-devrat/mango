@@ -8,6 +8,8 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
+const MAX_RETAINED_TERMINAL_EVENTS: usize = 2048;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ResourceId(pub u64);
 
@@ -36,7 +38,6 @@ pub enum ResourceState {
     Discovered,
     Queued,
     Fetching,
-    Ready,
     Executing,
     Completed,
     Cancelled,
@@ -54,6 +55,13 @@ pub enum RejectReason {
     InvalidUrl,
     NetworkFailure,
     DecodeFailure,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionAdmission {
+    Ready,
+    Wait,
+    Reject(RejectReason),
 }
 
 #[derive(Debug, Clone)]
@@ -75,8 +83,10 @@ pub struct DocumentResourceBudget {
     pub cpu_total: Duration,
     /// V8 heap pressure threshold sampled after script execution.
     pub js_heap_bytes: usize,
-    /// Decoded pixel memory target used by the image cache.
-    pub decoded_image_bytes: usize,
+    /// Maximum number of image requests admitted from the backlog per event-loop turn.
+    pub image_requests_per_turn: usize,
+    /// Maximum number of admitted image batches that may be in flight.
+    pub max_image_batches_in_flight: usize,
 }
 
 impl Default for DocumentResourceBudget {
@@ -85,7 +95,8 @@ impl Default for DocumentResourceBudget {
             cpu_slice: Duration::from_millis(8),
             cpu_total: Duration::from_millis(50),
             js_heap_bytes: 512 * 1024 * 1024,
-            decoded_image_bytes: 24 * 1024 * 1024,
+            image_requests_per_turn: 4,
+            max_image_batches_in_flight: 4,
         }
     }
 }
@@ -125,7 +136,7 @@ pub struct DocumentResourceScheduler {
     current_js_heap: usize,
     report: ResourceReport,
     records: HashMap<ResourceId, ResourceRecord>,
-    low_priority: VecDeque<ResourceId>,
+    terminal_order: VecDeque<ResourceId>,
 }
 
 impl Default for DocumentResourceScheduler {
@@ -148,7 +159,7 @@ impl DocumentResourceScheduler {
             current_js_heap: 0,
             report: ResourceReport::default(),
             records: HashMap::new(),
-            low_priority: VecDeque::new(),
+            terminal_order: VecDeque::new(),
         }
     }
 
@@ -165,7 +176,7 @@ impl DocumentResourceScheduler {
             ..ResourceReport::default()
         };
         self.records.clear();
-        self.low_priority.clear();
+        self.terminal_order.clear();
     }
 
     pub fn set_visible(&mut self, visible: bool) {
@@ -208,109 +219,169 @@ impl DocumentResourceScheduler {
         };
         self.records.insert(id, ResourceRecord { event });
         self.report.discovered += 1;
-        if priority >= ResourcePriority::Async {
-            self.low_priority.push_back(id);
-        }
         id
     }
 
-    pub fn transition(&mut self, id: ResourceId, state: ResourceState) {
-        if let Some(record) = self.records.get_mut(&id) {
-            record.event.state = state;
-            match state {
-                ResourceState::Queued => self.report.queued += 1,
-                ResourceState::Fetching => self.report.fetching += 1,
-                ResourceState::Completed => self.report.completed += 1,
-                ResourceState::Failed => self.report.failed += 1,
-                ResourceState::Cancelled => self.report.cancelled += 1,
-                ResourceState::Rejected => self.report.rejected += 1,
-                _ => {}
+    fn is_terminal(state: ResourceState) -> bool {
+        matches!(
+            state,
+            ResourceState::Completed
+                | ResourceState::Failed
+                | ResourceState::Cancelled
+                | ResourceState::Rejected
+        )
+    }
+
+    fn transition_allowed(from: ResourceState, to: ResourceState) -> bool {
+        use ResourceState::*;
+        matches!(
+            (from, to),
+            (
+                Discovered,
+                Queued | Completed | Failed | Cancelled | Rejected
+            ) | (
+                Queued,
+                Fetching | Executing | Completed | Failed | Cancelled | Rejected
+            ) | (Fetching, Completed | Failed | Cancelled | Rejected)
+                | (Executing, Completed | Failed | Cancelled | Rejected)
+        )
+    }
+
+    /// Applies one legal lifecycle transition. Repeated and invalid transitions
+    /// leave both the event and aggregate counters unchanged.
+    pub fn transition(&mut self, id: ResourceId, state: ResourceState) -> bool {
+        let Some(record) = self.records.get_mut(&id) else {
+            return false;
+        };
+        let previous = record.event.state;
+        if !Self::transition_allowed(previous, state) {
+            return false;
+        }
+        record.event.state = state;
+        match state {
+            ResourceState::Queued => self.report.queued += 1,
+            ResourceState::Fetching => self.report.fetching += 1,
+            ResourceState::Completed => self.report.completed += 1,
+            ResourceState::Failed => self.report.failed += 1,
+            ResourceState::Cancelled => self.report.cancelled += 1,
+            ResourceState::Rejected => self.report.rejected += 1,
+            _ => {}
+        }
+        if Self::is_terminal(state) {
+            self.terminal_order.push_back(id);
+            while self.terminal_order.len() > MAX_RETAINED_TERMINAL_EVENTS {
+                if let Some(expired_id) = self.terminal_order.pop_front() {
+                    if self
+                        .records
+                        .get(&expired_id)
+                        .is_some_and(|record| Self::is_terminal(record.event.state))
+                    {
+                        self.records.remove(&expired_id);
+                    }
+                }
             }
+        }
+        true
+    }
+
+    fn finish_with_reason(
+        &mut self,
+        id: ResourceId,
+        state: ResourceState,
+        reason: RejectReason,
+    ) -> bool {
+        if self.transition(id, state) {
+            if let Some(record) = self.records.get_mut(&id) {
+                record.event.reason = Some(reason);
+            }
+            *self.report.rejection_reasons.entry(reason).or_default() += 1;
+            true
+        } else {
+            false
         }
     }
 
-    pub fn reject(&mut self, id: ResourceId, reason: RejectReason) {
-        if let Some(record) = self.records.get_mut(&id) {
-            record.event.reason = Some(reason);
-            record.event.state = ResourceState::Rejected;
-            self.report.rejected += 1;
-            *self.report.rejection_reasons.entry(reason).or_default() += 1;
-        }
+    pub fn reject(&mut self, id: ResourceId, reason: RejectReason) -> bool {
+        self.finish_with_reason(id, ResourceState::Rejected, reason)
     }
 
     /// Completes one resource as failed and retains the reason on its record.
     /// Handlers report outcomes; the scheduler owns resource lifecycle state.
-    pub fn fail(&mut self, id: ResourceId, reason: RejectReason) {
-        if let Some(record) = self.records.get_mut(&id) {
-            if matches!(
-                record.event.state,
-                ResourceState::Completed
-                    | ResourceState::Failed
-                    | ResourceState::Cancelled
-                    | ResourceState::Rejected
-            ) {
-                return;
-            }
-            record.event.reason = Some(reason);
-            record.event.state = ResourceState::Failed;
-            self.report.failed += 1;
-            *self.report.rejection_reasons.entry(reason).or_default() += 1;
+    pub fn fail(&mut self, id: ResourceId, reason: RejectReason) -> bool {
+        self.fail_with_bytes(id, reason, 0)
+    }
+
+    pub fn fail_with_bytes(&mut self, id: ResourceId, reason: RejectReason, bytes: usize) -> bool {
+        if !self.finish_with_reason(id, ResourceState::Failed, reason) {
+            return false;
         }
+        self.record_bytes(id, bytes);
+        true
+    }
+
+    pub fn complete(&mut self, id: ResourceId, bytes: usize) -> bool {
+        if !self.transition(id, ResourceState::Completed) {
+            return false;
+        }
+        self.record_bytes(id, bytes);
+        true
     }
 
     pub fn cancel_generation(&mut self, reason: RejectReason) {
         let ids: Vec<_> = self
             .records
             .iter()
-            .filter_map(|(id, record)| {
-                (!matches!(
-                    record.event.state,
-                    ResourceState::Completed
-                        | ResourceState::Failed
-                        | ResourceState::Cancelled
-                        | ResourceState::Rejected
-                ))
-                .then_some(*id)
-            })
+            .filter_map(|(id, record)| (!Self::is_terminal(record.event.state)).then_some(*id))
             .collect();
         for id in ids {
-            if let Some(record) = self.records.get_mut(&id) {
-                record.event.state = ResourceState::Cancelled;
-                record.event.reason = Some(reason);
-                self.report.cancelled += 1;
-                *self.report.rejection_reasons.entry(reason).or_default() += 1;
+            self.cancel_resource(id, reason);
+        }
+    }
+
+    pub fn cancel_resource(&mut self, id: ResourceId, reason: RejectReason) -> bool {
+        self.finish_with_reason(id, ResourceState::Cancelled, reason)
+    }
+
+    /// Central admission policy for script execution. Temporary pressure keeps
+    /// the resource queued; permanent memory pressure rejects it explicitly.
+    pub fn execution_admission(&self, id: ResourceId) -> ExecutionAdmission {
+        let Some(record) = self.records.get(&id) else {
+            return ExecutionAdmission::Reject(RejectReason::Unsupported);
+        };
+        if !matches!(record.event.state, ResourceState::Queued) {
+            return ExecutionAdmission::Reject(RejectReason::Unsupported);
+        }
+        self.admission_for_priority(record.event.priority)
+    }
+
+    fn admission_for_priority(&self, priority: ResourcePriority) -> ExecutionAdmission {
+        if priority != ResourcePriority::Blocking {
+            if !self.visible && priority >= ResourcePriority::Async {
+                return ExecutionAdmission::Wait;
+            }
+            if self.turn_started.elapsed() > self.budget.cpu_slice
+                || self.cpu_window_used >= self.budget.cpu_total
+            {
+                return ExecutionAdmission::Wait;
+            }
+            if self.current_js_heap >= self.budget.js_heap_bytes {
+                return ExecutionAdmission::Reject(RejectReason::MemoryPressure);
             }
         }
+        ExecutionAdmission::Ready
     }
 
-    /// Blocking work is always eligible. Non-blocking work is throttled when
-    /// hidden or when the current turn/rolling CPU budget is exhausted.
+    /// Compatibility query for callers without a resource ID. New work should
+    /// use `execution_admission` so queue state and policy are checked together.
     pub fn allow_execution(&self, priority: ResourcePriority) -> bool {
-        if !self.visible && priority >= ResourcePriority::Async {
-            return false;
-        }
-        if priority != ResourcePriority::Blocking
-            && (self.turn_started.elapsed() > self.budget.cpu_slice
-                || self.cpu_window_used >= self.budget.cpu_total)
-        {
-            return false;
-        }
-        self.execution_block_reason(priority).is_none()
+        self.admission_for_priority(priority) == ExecutionAdmission::Ready
     }
 
-    /// Returns a permanent rejection reason. CPU slice exhaustion is
-    /// temporary, so it blocks admission without rejecting queued work.
     pub fn execution_block_reason(&self, priority: ResourcePriority) -> Option<RejectReason> {
-        if priority == ResourcePriority::Blocking {
-            return None;
+        match self.admission_for_priority(priority) {
+            ExecutionAdmission::Reject(reason) => Some(reason),
+            ExecutionAdmission::Ready | ExecutionAdmission::Wait => None,
         }
-        if !self.visible && priority >= ResourcePriority::Async {
-            return None;
-        }
-        if self.current_js_heap >= self.budget.js_heap_bytes {
-            return Some(RejectReason::MemoryPressure);
-        }
-        None
     }
 
     pub fn record_script_cpu(&mut self, elapsed: Duration) {
@@ -319,71 +390,23 @@ impl DocumentResourceScheduler {
         self.report.script_cpu = self.total_cpu;
     }
 
-    pub fn record_bytes(&mut self, id: ResourceId, bytes: usize) {
+    fn record_bytes(&mut self, id: ResourceId, bytes: usize) {
         if let Some(record) = self.records.get_mut(&id) {
+            let additional = bytes.saturating_sub(record.event.bytes);
             record.event.bytes = bytes;
-        }
-        self.report.bytes_fetched = self.report.bytes_fetched.saturating_add(bytes);
-    }
-
-    pub fn finish_url(
-        &mut self,
-        url: &str,
-        state: ResourceState,
-        reason: Option<RejectReason>,
-        bytes: usize,
-    ) {
-        let ids: Vec<_> = self
-            .records
-            .iter()
-            .filter_map(|(id, record)| {
-                (record.event.url == url
-                    && !matches!(
-                        record.event.state,
-                        ResourceState::Completed
-                            | ResourceState::Failed
-                            | ResourceState::Cancelled
-                            | ResourceState::Rejected
-                    ))
-                .then_some(*id)
-            })
-            .collect();
-        for id in ids {
-            self.record_bytes(id, bytes);
-            if let Some(reason) = reason {
-                self.reject(id, reason);
-            } else {
-                self.transition(id, state);
-            }
+            self.report.bytes_fetched = self.report.bytes_fetched.saturating_add(additional);
         }
     }
 
-    pub fn set_priority_url(&mut self, url: &str, priority: ResourcePriority) {
-        for record in self.records.values_mut() {
-            if record.event.url == url
-                && !matches!(
-                    record.event.state,
-                    ResourceState::Completed
-                        | ResourceState::Failed
-                        | ResourceState::Cancelled
-                        | ResourceState::Rejected
-                )
-            {
-                record.event.priority = priority;
-            }
+    pub fn set_priority(&mut self, id: ResourceId, priority: ResourcePriority) -> bool {
+        let Some(record) = self.records.get_mut(&id) else {
+            return false;
+        };
+        if Self::is_terminal(record.event.state) {
+            return false;
         }
-    }
-
-    pub fn claim_url(&mut self, url: &str) -> Option<ResourceId> {
-        let id = self.records.iter().find_map(|(id, record)| {
-            (record.event.url == url && record.event.state == ResourceState::Queued).then_some(*id)
-        })?;
-        if let Some(record) = self.records.get_mut(&id) {
-            // Ready is a lightweight reservation state. It prevents duplicate
-            // inline URLs from claiming the same scheduler record.
-            record.event.state = ResourceState::Ready;
-        }
-        Some(id)
+        record.event.priority = priority;
+        true
     }
 
     pub fn record_js_heap(&mut self, bytes: usize) {

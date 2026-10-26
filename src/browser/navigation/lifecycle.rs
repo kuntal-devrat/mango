@@ -119,6 +119,15 @@ impl BrowserChrome {
                     self.address_focused = false;
                     true
                 } else if let Some(tab) = self.tabs.get_mut(tab_id) {
+                    if let Some(mut old) = tab.contents.take() {
+                        if let Some(doc) = &old.cached_document {
+                            mango_render::remove_canvases_for_document(doc.id());
+                        }
+                        if let Some(rt) = &old.js_runtime {
+                            mango_render::remove_canvases_for_document(rt.document_ref().id());
+                        }
+                        old.cancel_pending_work();
+                    }
                     tab.url = target.clone();
                     tab.title = format!("Error: {message}");
                     if push_history {
@@ -136,6 +145,11 @@ impl BrowserChrome {
                         page_display_list: DisplayList::new(),
                         display_list_cache: mango_layout::display_list::DisplayListCache::new(),
                         image_rx: None,
+                        pending_image_fetches: Vec::new(),
+                        pending_image_resources: HashMap::new(),
+                        image_fetch_base: None,
+                        image_epoch: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                        pending_scripts: std::collections::VecDeque::new(),
                         resource_scheduler:
                             crate::browser::resource_scheduler::DocumentResourceScheduler::default(),
                         has_active_animations: false,
@@ -171,13 +185,14 @@ impl BrowserChrome {
         // Replacing a background tab's contents drops its document without
         // going through navigation cleanup; release any canvas backing stores
         // owned by the old document first.
-        if let Some(old) = tab.contents.take() {
+        if let Some(mut old) = tab.contents.take() {
             if let Some(doc) = &old.cached_document {
                 mango_render::remove_canvases_for_document(doc.id());
             }
             if let Some(rt) = &old.js_runtime {
                 mango_render::remove_canvases_for_document(rt.document_ref().id());
             }
+            old.cancel_pending_work();
         }
         tab.contents = Some(crate::tab::TabWebContents {
             current_html: prep.html,
@@ -191,6 +206,11 @@ impl BrowserChrome {
             page_display_list: DisplayList::new(),
             display_list_cache: mango_layout::display_list::DisplayListCache::new(),
             image_rx: None,
+            pending_image_fetches: Vec::new(),
+            pending_image_resources: HashMap::new(),
+            image_fetch_base: None,
+            image_epoch: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            pending_scripts: std::collections::VecDeque::new(),
             resource_scheduler:
                 crate::browser::resource_scheduler::DocumentResourceScheduler::default(),
             has_active_animations: false,

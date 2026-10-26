@@ -83,13 +83,12 @@ impl BrowserChrome {
         skip_embedded_sheets_and_fonts: bool,
         preloaded_scripts: Option<Vec<ScriptToRun>>,
     ) {
+        // Drop runnable script work before invalidating the scheduler records.
+        self.pending_scripts.clear();
         self.resource_scheduler.cancel_generation(
             crate::browser::resource_scheduler::RejectReason::SupersededNavigation,
         );
-        let generation = self
-            .image_epoch
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-            + 1;
+        let generation = self.cancel_pending_images();
         self.resource_scheduler.begin_document(generation);
         self.style_index_cache = None;
         self.style_index_version = u64::MAX;
@@ -281,168 +280,34 @@ impl BrowserChrome {
             s
         };
 
-        for script in &scripts {
-            let kind = if script.is_module() {
-                crate::browser::resource_scheduler::ResourceKind::Module
-            } else {
-                crate::browser::resource_scheduler::ResourceKind::Script
-            };
-            let priority = if script.is_defer() {
-                crate::browser::resource_scheduler::ResourcePriority::Defer
-            } else if script.is_async() {
-                crate::browser::resource_scheduler::ResourcePriority::Async
-            } else {
-                crate::browser::resource_scheduler::ResourcePriority::Blocking
-            };
-            let url = match script {
-                ScriptToRun::Inline { .. } => "inline://document".to_string(),
-                ScriptToRun::External { src, .. } | ScriptToRun::Preloaded { src, .. } => {
-                    src.clone()
-                }
-            };
-            let id = self.resource_scheduler.discover(kind, priority, url);
-            self.resource_scheduler.transition(
-                id,
-                crate::browser::resource_scheduler::ResourceState::Queued,
-            );
-        }
-
         // Separate scripts into sync, async, and defer per HTML spec (§4.12.1)
         let mut sync_scripts = Vec::new();
         let mut async_scripts = Vec::new();
         let mut defer_scripts = Vec::new();
 
-        for s in scripts {
-            if s.is_defer() {
-                defer_scripts.push(s);
-            } else if s.is_async() {
-                async_scripts.push(s);
+        for script in scripts {
+            let scheduled = self.schedule_script(script);
+            if scheduled.script.is_defer() {
+                defer_scripts.push(scheduled);
+            } else if scheduled.script.is_async() {
+                async_scripts.push(scheduled);
             } else {
-                sync_scripts.push(s);
+                sync_scripts.push(scheduled);
             }
         }
-
-        let mut external_count = 0;
-        // Non-blocking external scripts on the UI thread: serve from the
-        // memory cache only. Uncached remote scripts were already preloaded on
-        // the background pipeline (`prepare_document_pipeline`); blocking the
-        // Non-blocking external scripts on the UI thread: serve from the
-        // memory cache only. Uncached remote scripts were already preloaded on
-        // the background pipeline (`prepare_document_pipeline`); blocking the
-        // UI on a network fetch here would freeze the page.
-        let script_timeout = |code_len: usize| -> std::time::Duration {
-            // Provide at least 1.5s for normal scripts, plus ~100ms per 10KB for large bundles, capped at 3.0s
-            let extra_ms = (code_len / 10_000) as u64 * 100;
-            std::time::Duration::from_millis(1500 + extra_ms)
-                .min(std::time::Duration::from_millis(3000))
-        };
-        let mut run_script =
-            |s: ScriptToRun, rt: &mut mango_js::JsRuntime, ext_cnt: &mut usize| match s {
-                ScriptToRun::Inline { code, is_module } => {
-                    let to = script_timeout(code.len());
-                    let res = if is_module {
-                        rt.execute_module_with_timeout(&code, to)
-                    } else {
-                        rt.execute_script_with_timeout(&code, to)
-                    };
-                    if let Err(e) = res {
-                        log::warn!("Inline script error: {e}");
-                    }
-                    self.resource_scheduler.finish_url(
-                        "inline://document",
-                        crate::browser::resource_scheduler::ResourceState::Completed,
-                        None,
-                        code.len(),
-                    );
-                }
-                ScriptToRun::Preloaded {
-                    code,
-                    src,
-                    is_module,
-                    ..
-                } => {
-                    *ext_cnt += 1;
-                    let to = script_timeout(code.len());
-                    let script_name = self
-                        .base_url
-                        .as_ref()
-                        .and_then(|b| b.resolve(&src).ok())
-                        .map(|u| u.to_string())
-                        .unwrap_or_else(|| src.clone());
-                    let res = if is_module {
-                        rt.execute_module_with_name_and_timeout(&script_name, &code, to)
-                    } else {
-                        rt.execute_script_with_name_and_timeout(&script_name, &code, to)
-                    };
-                    if let Err(e) = res {
-                        log::warn!("Preloaded script error ({src}): {e}");
-                    }
-                    self.resource_scheduler.finish_url(
-                        &src,
-                        crate::browser::resource_scheduler::ResourceState::Completed,
-                        None,
-                        code.len(),
-                    );
-                }
-                ScriptToRun::External { src, is_module, .. } => {
-                    let Some(ref base) = self.base_url else {
-                        return;
-                    };
-                    let Ok(resolved) = base.resolve(&src) else {
-                        return;
-                    };
-                    let key = resolved.as_str();
-                    let script_code = if let Some(cached) = self.loader.cache().get(&key) {
-                        Some(String::from_utf8_lossy(&cached.body).into_owned())
-                    } else {
-                        log::warn!("Resource failed: external script unavailable in cache: {src}");
-                        self.devtools.log(
-                            crate::devtools::ConsoleLevel::Error,
-                            format!("Resource failed: external script unavailable in cache: {src}"),
-                        );
-                        self.resource_scheduler.finish_url(
-                            &src,
-                            crate::browser::resource_scheduler::ResourceState::Failed,
-                            Some(crate::browser::resource_scheduler::RejectReason::NetworkFailure),
-                            0,
-                        );
-                        None
-                    };
-                    if let Some(code) = script_code {
-                        *ext_cnt += 1;
-                        let to = script_timeout(code.len());
-                        let res = if is_module {
-                            rt.execute_module_with_name_and_timeout(&key, &code, to)
-                        } else {
-                            rt.execute_script_with_name_and_timeout(&key, &code, to)
-                        };
-                        if let Err(e) = res {
-                            log::warn!("External script error ({src}): {e}");
-                        }
-                        self.resource_scheduler.finish_url(
-                            &src,
-                            crate::browser::resource_scheduler::ResourceState::Completed,
-                            None,
-                            code.len(),
-                        );
-                    }
-                }
-            };
-
-        self.pending_scripts.clear();
 
         if self.async_navigation {
             // Interactive UI mode: Queue ALL scripts for non-blocking incremental execution in tick_js.
             // This guarantees the UI thread renders the initial visual frame and flushes Wayland
             // events/pings IMMEDIATELY (<16ms) without locking up the OS event loop.
-            for s in sync_scripts {
-                self.enqueue_pending_script(s);
+            for script in sync_scripts {
+                self.enqueue_scheduled_script(script);
             }
-            for s in defer_scripts {
-                self.enqueue_pending_script(s);
+            for script in defer_scripts {
+                self.enqueue_scheduled_script(script);
             }
-            for s in async_scripts {
-                self.enqueue_pending_script(s);
+            for script in async_scripts {
+                self.enqueue_scheduled_script(script);
             }
             for js_code in ext_js {
                 self.enqueue_pending_script(ScriptToRun::Inline {
@@ -452,18 +317,21 @@ impl BrowserChrome {
             }
         } else {
             // Synchronous / test mode: execute synchronous scripts inline
-            for s in sync_scripts {
-                run_script(s, &mut js_rt, &mut external_count);
+            for script in sync_scripts {
+                self.execute_script_resource(script, &mut js_rt);
             }
-            for s in defer_scripts {
-                self.enqueue_pending_script(s);
+            for script in defer_scripts {
+                self.enqueue_scheduled_script(script);
             }
-            for s in async_scripts {
-                self.enqueue_pending_script(s);
+            for script in async_scripts {
+                self.enqueue_scheduled_script(script);
             }
             for js_code in ext_js {
-                let to = script_timeout(js_code.len());
-                let _ = js_rt.execute_script_with_timeout(&js_code, to);
+                let script = self.schedule_script(ScriptToRun::Inline {
+                    code: js_code,
+                    is_module: false,
+                });
+                self.execute_script_resource(script, &mut js_rt);
             }
             // Dispatch DOMContentLoaded and window load if no scripts pending
             if self.pending_scripts.is_empty() {

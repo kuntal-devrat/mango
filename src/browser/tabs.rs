@@ -44,6 +44,12 @@ impl BrowserChrome {
         self.style_index_version = u64::MAX;
         self.style_index_viewport = (0, 0);
         if let Some(tab) = self.tabs.get_mut(self.active_tab_idx) {
+            if let Some(mut old_contents) = tab.contents.take() {
+                if let Some(doc) = &old_contents.cached_document {
+                    mango_render::remove_canvases_for_document(doc.id());
+                }
+                old_contents.cancel_pending_work();
+            }
             tab.url = self.address_text.clone();
             tab.title = self.page_title.clone();
             tab.scroll_y = self.scroll_y;
@@ -66,6 +72,14 @@ impl BrowserChrome {
                     mango_layout::display_list::DisplayListCache::new(),
                 ),
                 image_rx: self.image_rx.take(),
+                pending_image_fetches: std::mem::take(&mut self.pending_image_fetches),
+                pending_image_resources: std::mem::take(&mut self.pending_image_resources),
+                image_fetch_base: self.image_fetch_base.take(),
+                image_epoch: std::mem::replace(
+                    &mut self.image_epoch,
+                    std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                ),
+                pending_scripts: std::mem::take(&mut self.pending_scripts),
                 resource_scheduler: std::mem::take(&mut self.resource_scheduler),
                 has_active_animations: self.anim_state.is_animating(),
                 canvas_bg: self.canvas_bg,
@@ -99,6 +113,11 @@ impl BrowserChrome {
                 self.page_display_list = contents.page_display_list;
                 self.display_list_cache = std::sync::Mutex::new(contents.display_list_cache);
                 self.image_rx = contents.image_rx;
+                self.pending_image_fetches = contents.pending_image_fetches;
+                self.pending_image_resources = contents.pending_image_resources;
+                self.image_fetch_base = contents.image_fetch_base;
+                self.image_epoch = contents.image_epoch;
+                self.pending_scripts = contents.pending_scripts;
                 self.resource_scheduler = contents.resource_scheduler;
                 self.resource_scheduler.set_visible(true);
                 self.canvas_bg = contents.canvas_bg;
@@ -162,10 +181,11 @@ impl BrowserChrome {
         }
 
         let closing_active = self.active_tab_idx == idx;
-        if let Some(contents) = self.tabs.get(idx).and_then(|t| t.contents.as_ref())
-            && let Some(doc) = &contents.cached_document
-        {
-            mango_render::remove_canvases_for_document(doc.id());
+        if let Some(contents) = self.tabs.get_mut(idx).and_then(|tab| tab.contents.as_mut()) {
+            if let Some(doc) = &contents.cached_document {
+                mango_render::remove_canvases_for_document(doc.id());
+            }
+            contents.cancel_pending_work();
         }
         if closing_active {
             if let Some(doc) = &self.cached_document {
@@ -187,7 +207,11 @@ impl BrowserChrome {
                 .clear();
             self.cached_stylesheets.clear();
             self.style_snapshot.clear();
-            self.image_rx = None;
+            self.cancel_pending_images();
+            self.pending_scripts.clear();
+            self.resource_scheduler.cancel_generation(
+                crate::browser::resource_scheduler::RejectReason::SupersededNavigation,
+            );
         }
         // Navigation results carry tab indices. Removing a tab shifts every
         // later index, so abandon in-flight navigations for shifted tabs and

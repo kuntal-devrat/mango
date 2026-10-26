@@ -30,10 +30,32 @@ pub struct TabWebContents {
     pub page_display_list: mango_render::display_list::DisplayList,
     pub display_list_cache: mango_layout::display_list::DisplayListCache,
     pub image_rx: Option<std::sync::mpsc::Receiver<crate::browser::images::ImageFetchResult>>,
+    pub pending_image_fetches: Vec<String>,
+    pub pending_image_resources:
+        std::collections::HashMap<String, crate::browser::resource_scheduler::ResourceId>,
+    pub image_fetch_base: Option<mango_net::Url>,
+    pub image_epoch: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    pub pending_scripts: std::collections::VecDeque<crate::browser::types::ScheduledScript>,
     pub resource_scheduler: crate::browser::resource_scheduler::DocumentResourceScheduler,
     pub has_active_animations: bool,
     pub canvas_bg: mango_core::Color,
     pub engine: Option<mango_engine::Engine>,
+}
+
+impl TabWebContents {
+    /// Invalidates background work before this frozen document is discarded.
+    pub fn cancel_pending_work(&mut self) {
+        self.image_epoch
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.image_rx = None;
+        self.pending_image_fetches.clear();
+        self.pending_image_resources.clear();
+        self.image_fetch_base = None;
+        self.pending_scripts.clear();
+        self.resource_scheduler.cancel_generation(
+            crate::browser::resource_scheduler::RejectReason::SupersededNavigation,
+        );
+    }
 }
 
 /// A single browser tab with navigation history and isolated web contents.

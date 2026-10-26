@@ -87,42 +87,25 @@ impl BrowserChrome {
         if !self.async_layout.is_active()
             && let Some(scheduled) = self.pending_scripts.pop_front()
         {
-            let priority = if scheduled.script.is_defer() {
-                crate::browser::resource_scheduler::ResourcePriority::Defer
-            } else if scheduled.script.is_async() {
-                crate::browser::resource_scheduler::ResourcePriority::Async
-            } else {
-                crate::browser::resource_scheduler::ResourcePriority::Blocking
-            };
-            if !self.resource_scheduler.allow_execution(priority) {
-                if let Some(reason) = self.resource_scheduler.execution_block_reason(priority) {
+            match self
+                .resource_scheduler
+                .execution_admission(scheduled.resource_id)
+            {
+                crate::browser::resource_scheduler::ExecutionAdmission::Ready => {
+                    self.execute_pending_script(scheduled);
+                }
+                crate::browser::resource_scheduler::ExecutionAdmission::Wait => {
+                    self.pending_scripts.push_front(scheduled);
+                    return false;
+                }
+                crate::browser::resource_scheduler::ExecutionAdmission::Reject(reason) => {
                     self.resource_scheduler
                         .reject(scheduled.resource_id, reason);
                     self.devtools.log(
                         crate::devtools::ConsoleLevel::Warn,
-                        format!(
-                            "Resource rejected: script; reason={reason:?}; priority={priority:?}"
-                        ),
+                        format!("Resource rejected: script; reason={reason:?}"),
                     );
-                } else {
-                    self.pending_scripts.push_front(scheduled);
                 }
-                return false;
-            }
-            self.resource_scheduler.transition(
-                scheduled.resource_id,
-                crate::browser::resource_scheduler::ResourceState::Executing,
-            );
-            let started = std::time::Instant::now();
-            let outcome = self.execute_pending_script(scheduled.script);
-            self.resource_scheduler.record_script_cpu(started.elapsed());
-            if let Some(reason) = outcome {
-                self.resource_scheduler.fail(scheduled.resource_id, reason);
-            } else {
-                self.resource_scheduler.transition(
-                    scheduled.resource_id,
-                    crate::browser::resource_scheduler::ResourceState::Completed,
-                );
             }
             if self.pending_scripts.is_empty() {
                 if let Some(ref mut rt) = self.js_runtime {
