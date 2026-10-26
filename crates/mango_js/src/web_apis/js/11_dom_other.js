@@ -124,6 +124,9 @@
             }
         }
         if (changed && !suppressEvent) {
+            if (typeof globalThis._scrollTo === 'function') {
+                try { globalThis._scrollTo(newX, newY, false); } catch(e) {}
+            }
             if (typeof globalThis._dispatchInternalEvent === 'function') {
                 try { globalThis._dispatchInternalEvent(-1, 'scroll', { bubbles: false, cancelable: false, eventType: 'ui' }); } catch(e) {}
             } else if (typeof globalThis.dispatchEvent === 'function') {
@@ -157,6 +160,9 @@
     });
 
     function _animateWinScroll(targetX, targetY) {
+        if (typeof globalThis._scrollTo === 'function') {
+            try { globalThis._scrollTo(targetX, targetY, true); } catch(e) {}
+        }
         var startX = _winScrollX;
         var startY = _winScrollY;
         var startTime = Date.now();

@@ -231,3 +231,38 @@ pub fn op_mango_elements_from_point(state: &mut OpState, x: f32, y: f32) -> Vec<
 
 #[op2(fast)]
 pub fn op_mango_set_focus_state(_state: &mut OpState, _node_id: u32, _focused: bool) {}
+
+#[op2(fast)]
+pub fn op_mango_scroll_into_view(state: &mut OpState, node_id: u32, smooth: bool) {
+    ensure_layout_up_to_date(state);
+    let nid = node_id_from_js(node_id);
+    let raw = nid.raw();
+    let mut target_x = 0.0f32;
+    let mut target_y = 0.0f32;
+    if let Some(bounds) = state.try_borrow::<LayoutBounds>()
+        && let Some(&rect) = bounds.borrow().get(&raw)
+    {
+        target_x = rect[0];
+        target_y = rect[1];
+    }
+    if let Some(pending_scroll) = state.try_borrow::<crate::web_apis::SharedPendingScroll>() {
+        *pending_scroll.borrow_mut() = Some(crate::web_apis::PendingScroll {
+            target_node: Some(nid),
+            x: target_x,
+            y: target_y,
+            smooth,
+        });
+    }
+}
+
+#[op2(fast)]
+pub fn op_mango_scroll_to(state: &mut OpState, x: f32, y: f32, smooth: bool) {
+    if let Some(pending_scroll) = state.try_borrow::<crate::web_apis::SharedPendingScroll>() {
+        *pending_scroll.borrow_mut() = Some(crate::web_apis::PendingScroll {
+            target_node: None,
+            x,
+            y,
+            smooth,
+        });
+    }
+}

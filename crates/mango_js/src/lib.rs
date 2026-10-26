@@ -32,5 +32,6 @@ pub mod worker;
 pub use broadcast_channel::BroadcastChannelHub;
 pub use runtime::JsRuntime;
 pub use shared_worker::SharedWorkerHub;
+pub use web_apis::{PendingScroll, SharedPendingScroll};
 pub use web_locks::WebLocksEngine;
 pub use worker::WorkerManager;

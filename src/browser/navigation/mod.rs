@@ -6,11 +6,15 @@
 //! - `history`: History traversal (back/forward), URL navigation, and HTML document loading.
 //! - `lifecycle`: Navigation actor polling, progress ticking, and prepared document application.
 
+pub mod anchor;
 pub mod history;
 pub mod lifecycle;
 pub mod pipeline;
 pub mod resources;
+pub mod scripts;
 pub mod traversal;
+
+pub use anchor::*;
 
 pub use pipeline::{
     prepare_document_pipeline, prepare_document_pipeline_cancellable,
