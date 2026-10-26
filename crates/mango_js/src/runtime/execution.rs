@@ -300,6 +300,8 @@ impl JsRuntime {
                     source.len(),
                     heap / (1024 * 1024)
                 );
+                deno_core::v8::scope!(scope, self.runtime.v8_isolate());
+                scope.perform_microtask_checkpoint();
                 Ok(())
             }
             Ok(Err(e)) => {
@@ -498,7 +500,9 @@ impl JsRuntime {
         let isolate_handle = self.runtime.v8_isolate().thread_safe_handle();
         let watchdog = ExecutionWatchdog::new(
             isolate_handle,
-            std::time::Duration::from_millis(20),
+            // Finalization callbacks can be numerous after a large DOM churn
+            // cycle; allow a bounded cleanup slice without starving input.
+            std::time::Duration::from_millis(250),
             "mango-job-queue-watchdog",
         );
         {
@@ -525,7 +529,7 @@ impl JsRuntime {
             }
         }
         if watchdog.finish() {
-            log::warn!("JavaScript job queue exceeded its 20ms budget");
+            log::warn!("JavaScript job queue exceeded its 250ms budget");
         }
     }
 
