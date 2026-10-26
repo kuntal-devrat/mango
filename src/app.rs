@@ -267,11 +267,7 @@ impl ApplicationHandler for MangoApp {
             event_loop.set_control_flow(ControlFlow::WaitUntil(
                 Instant::now() + Duration::from_millis(4),
             ));
-        } else if any_animating || any_smooth_scroll {
-            event_loop.set_control_flow(ControlFlow::WaitUntil(
-                Instant::now() + Duration::from_millis(16),
-            ));
-        } else if any_background_work {
+        } else if any_animating || any_smooth_scroll || any_background_work {
             event_loop.set_control_flow(ControlFlow::WaitUntil(
                 Instant::now() + Duration::from_millis(16),
             ));
