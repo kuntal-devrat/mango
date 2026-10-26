@@ -604,4 +604,28 @@ mod tests {
         let commands = bubble.render();
         assert!(!commands.is_empty());
     }
+
+    #[test]
+    fn test_fmt_number() {
+        // Integers
+        assert_eq!(fmt_number(0.0), "0");
+        assert_eq!(fmt_number(1.0), "1");
+        assert_eq!(fmt_number(-5.0), "-5");
+
+        // Small fractions rounding to integer
+        assert_eq!(fmt_number(1.0000001), "1");
+
+        // Exact floats
+        assert_eq!(fmt_number(1.5), "1.5");
+        assert_eq!(fmt_number(3.24159), "3.24159");
+
+        // Floats getting rounded because of the {:.6} precision
+        // Note: 1.2345678 gets rounded to 1.234568
+        assert_eq!(fmt_number(1.2345678), "1.234568");
+
+        // Non-finite numbers
+        assert_eq!(fmt_number(f32::INFINITY), "inf");
+        assert_eq!(fmt_number(f32::NEG_INFINITY), "-inf");
+        assert_eq!(fmt_number(f32::NAN), "NaN");
+    }
 }
