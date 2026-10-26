@@ -158,6 +158,32 @@ impl ElementData {
         self.attributes
             .retain(|(k, _)| !k.eq_ignore_ascii_case(name));
     }
+
+    /// Returns `true` if this element is `<details>`.
+    pub fn is_details(&self) -> bool {
+        self.tag_name.eq_ignore_ascii_case("details")
+    }
+
+    /// Returns `true` if this element is `<summary>`.
+    pub fn is_summary(&self) -> bool {
+        self.tag_name.eq_ignore_ascii_case("summary")
+    }
+
+    /// Returns `true` if this element has the `open` attribute.
+    pub fn is_open(&self) -> bool {
+        self.get_attribute("open").is_some()
+    }
+
+    /// Toggles the `open` attribute on this element, returning the new open state.
+    pub fn toggle_open(&mut self) -> bool {
+        if self.is_open() {
+            self.remove_attribute("open");
+            false
+        } else {
+            self.set_attribute("open", "");
+            true
+        }
+    }
 }
 
 /// Rendering mode determined by DOCTYPE parsing per WHATWG HTML §13.2.6.4.

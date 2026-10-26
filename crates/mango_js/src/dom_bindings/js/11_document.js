@@ -626,12 +626,40 @@
             }
         };
     }
+    if (globalThis.HTMLDetailsElement && !globalThis.HTMLDetailsElement.prototype.hasOwnProperty('open')) {
+        Object.defineProperty(globalThis.HTMLDetailsElement.prototype, 'open', {
+            get: function() {
+                return this.hasAttribute('open');
+            },
+            set: function(val) {
+                if (val) {
+                    this.setAttribute('open', '');
+                } else {
+                    this.removeAttribute('open');
+                }
+            },
+            configurable: true,
+            enumerable: true
+        });
+    }
+
     if (typeof _wrapElement === 'function') {
         var _baseWrapElementForScroll = _wrapElement;
         function _scrollAwareWrapElement(nodeId) {
             var el = _baseWrapElementForScroll(nodeId);
             if (!el || el._hasScrollHook) return el;
             el._hasScrollHook = true;
+            if (el.tagName && el.tagName.toLowerCase() === 'details' && !('open' in el)) {
+                Object.defineProperty(el, 'open', {
+                    get: function() { return this.hasAttribute('open'); },
+                    set: function(val) {
+                        if (val) this.setAttribute('open', '');
+                        else this.removeAttribute('open');
+                    },
+                    configurable: true,
+                    enumerable: true
+                });
+            }
             var origScrollIntoView = el.scrollIntoView;
             el.scrollIntoView = function(options) {
                 if (typeof origScrollIntoView === 'function') {

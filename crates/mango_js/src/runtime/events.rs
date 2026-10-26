@@ -201,6 +201,15 @@ impl JsRuntime {
         self.dispatch_event(Some(node_id), "reset", dict)
     }
 
+    /// Dispatches a `toggle` event to a details element when its disclosure state changes.
+    pub fn dispatch_toggle_event(
+        &mut self,
+        node_id: mango_html::dom::NodeId,
+    ) -> Result<bool, String> {
+        let dict = r#"{"bubbles":false,"cancelable":false}"#;
+        self.dispatch_event(Some(node_id), "toggle", dict)
+    }
+
     /// Dispatches the `DOMContentLoaded` event on `document`.
     pub fn dispatch_dom_content_loaded(&mut self) -> Result<bool, String> {
         let _ = self.execute_script(

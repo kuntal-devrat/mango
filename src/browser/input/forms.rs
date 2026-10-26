@@ -488,27 +488,11 @@ impl BrowserChrome {
             }
             "summary" => {
                 let doc = self.active_document();
-                let mut curr = doc.get(node_id).and_then(|n| n.parent);
-                let mut details_node = None;
-                while let Some(nid) = curr {
-                    if let Some(node) = doc.get(nid) {
-                        if let NodeData::Element(el) = &node.data
-                            && el.tag_name.eq_ignore_ascii_case("details")
-                        {
-                            details_node = Some(nid);
-                            break;
-                        }
-                        curr = node.parent;
-                    } else {
-                        break;
-                    }
-                }
-
-                if let Some(det_id) = details_node {
+                if let Some(det_id) = doc.find_details_for_summary(node_id) {
                     let is_open = if let Some(det_node) = doc.get(det_id)
                         && let NodeData::Element(el) = &det_node.data
                     {
-                        el.get_attribute("open").is_some()
+                        el.is_open()
                     } else {
                         false
                     };
@@ -521,6 +505,7 @@ impl BrowserChrome {
                             rt.set_node_attribute(det_id, "open", "");
                             self.status_text = "Expanded details".to_string();
                         }
+                        let _ = rt.dispatch_toggle_event(det_id);
                     }
                     self.relayout();
                 }
