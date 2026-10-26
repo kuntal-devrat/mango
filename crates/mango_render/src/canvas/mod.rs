@@ -10,9 +10,10 @@ pub mod text;
 #[cfg(test)]
 mod tests;
 
+pub use crate::painter::effects::{CanvasColorStop, RadialGradient};
 pub use context::Canvas2D;
 pub use registry::{
     clear_canvas_registry, get_canvas_dimensions, get_canvas_pixels, remove_canvas,
     remove_canvases_for_document, resize_canvas, with_canvas_mut,
 };
-pub use state::CanvasState;
+pub use state::{CanvasPaintStyle, CanvasState};

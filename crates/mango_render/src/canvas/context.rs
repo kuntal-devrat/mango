@@ -128,6 +128,7 @@ impl Canvas2D {
 
     pub fn set_fill_style(&mut self, color: Color) {
         self.state.fill_color = color;
+        self.state.fill_style = super::state::CanvasPaintStyle::Color(color);
     }
 
     pub fn stroke_style(&self) -> Color {
@@ -140,6 +141,41 @@ impl Canvas2D {
 
     pub fn set_stroke_style(&mut self, color: Color) {
         self.state.stroke_color = color;
+        self.state.stroke_style = super::state::CanvasPaintStyle::Color(color);
+    }
+
+    pub fn fill_paint_style(&self) -> &super::state::CanvasPaintStyle {
+        &self.state.fill_style
+    }
+
+    pub fn stroke_paint_style(&self) -> &super::state::CanvasPaintStyle {
+        &self.state.stroke_style
+    }
+
+    pub fn create_radial_gradient(
+        &self,
+        x0: f32,
+        y0: f32,
+        r0: f32,
+        x1: f32,
+        y1: f32,
+        r1: f32,
+    ) -> crate::painter::effects::RadialGradient {
+        crate::painter::effects::RadialGradient::new(x0, y0, r0, x1, y1, r1)
+    }
+
+    pub fn set_fill_radial_gradient(&mut self, grad: crate::painter::effects::RadialGradient) {
+        if let Some(stop) = grad.stops.first() {
+            self.state.fill_color = stop.color;
+        }
+        self.state.fill_style = super::state::CanvasPaintStyle::RadialGradient(grad);
+    }
+
+    pub fn set_stroke_radial_gradient(&mut self, grad: crate::painter::effects::RadialGradient) {
+        if let Some(stop) = grad.stops.first() {
+            self.state.stroke_color = stop.color;
+        }
+        self.state.stroke_style = super::state::CanvasPaintStyle::RadialGradient(grad);
     }
 
     pub fn line_width(&self) -> f32 {

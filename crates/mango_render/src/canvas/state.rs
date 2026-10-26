@@ -4,6 +4,20 @@ use mango_core::Color;
 use tiny_skia::{LineCap, LineJoin, Transform};
 
 use crate::font::{FontFamily, FontStyle, FontWeight, font_manager};
+use crate::painter::effects::RadialGradient;
+
+/// Paint style for canvas fill and stroke operations.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CanvasPaintStyle {
+    Color(Color),
+    RadialGradient(RadialGradient),
+}
+
+impl Default for CanvasPaintStyle {
+    fn default() -> Self {
+        Self::Color(Color::BLACK)
+    }
+}
 
 /// Drawing state saved and restored on the canvas state stack.
 #[derive(Debug, Clone)]
@@ -11,6 +25,8 @@ pub struct CanvasState {
     pub transform: Transform,
     pub fill_color: Color,
     pub stroke_color: Color,
+    pub fill_style: CanvasPaintStyle,
+    pub stroke_style: CanvasPaintStyle,
     pub line_width: f32,
     pub line_cap: LineCap,
     pub line_join: LineJoin,
@@ -31,6 +47,8 @@ impl Default for CanvasState {
             transform: Transform::identity(),
             fill_color: Color::BLACK,
             stroke_color: Color::BLACK,
+            fill_style: CanvasPaintStyle::Color(Color::BLACK),
+            stroke_style: CanvasPaintStyle::Color(Color::BLACK),
             line_width: 1.0,
             line_cap: LineCap::Butt,
             line_join: LineJoin::Miter,
