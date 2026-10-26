@@ -125,6 +125,65 @@ fn test_select_dropdown_open_and_select() {
 }
 
 #[test]
+fn test_select_option_nested_inline_elements() {
+    let mut browser = BrowserChrome::new(800, 600);
+    let html = r#"
+        <html>
+        <body style="margin: 0; padding: 20px;">
+            <select id="styled_select">
+                <option><span>Text <b>bold</b></span></option>
+                <option value="explicit_val"><span>Label <i>italic</i></span></option>
+                <option><div><span>Outer <em>middle <b>deep bold</b></em> end</span></div></option>
+            </select>
+        </body>
+        </html>
+    "#;
+    browser.load_html(
+        html.to_string(),
+        "http://localhost/test_select_nested".to_string(),
+    );
+
+    // Click select element to open dropdown
+    browser.handle_mouse_move(30.0, HEADER_HEIGHT + 30.0);
+    browser.handle_mouse_click(MouseButton::Left, KeyState::Pressed);
+
+    assert!(
+        browser.select_dropdown.is_some(),
+        "Clicking select must open select_dropdown"
+    );
+    let dropdown = browser.select_dropdown.as_ref().unwrap();
+    assert_eq!(dropdown.options.len(), 3);
+
+    // Option 1 has no value attribute, so its value must equal its full recursive text content
+    assert_eq!(dropdown.options[0].text, "Text bold");
+    assert_eq!(dropdown.options[0].value, "Text bold");
+
+    // Option 2 has explicit value attribute "explicit_val", while text is "Label italic"
+    assert_eq!(dropdown.options[1].text, "Label italic");
+    assert_eq!(dropdown.options[1].value, "explicit_val");
+
+    // Option 3 has deeply nested tags, with no value attribute
+    assert_eq!(dropdown.options[2].text, "Outer middle deep bold end");
+    assert_eq!(dropdown.options[2].value, "Outer middle deep bold end");
+
+    let sel_id = {
+        let doc = browser.js_runtime.as_ref().unwrap().document_ref();
+        super::super::forms::find_element_by_id(&doc, "styled_select").expect("select exists")
+    };
+
+    // Click the first option (which has nested elements and no value attribute)
+    let opt_y = dropdown.y + 4.0;
+    browser.handle_mouse_move(dropdown.x + 10.0, opt_y);
+    browser.handle_mouse_click(MouseButton::Left, KeyState::Pressed);
+
+    assert_eq!(browser.status_text, "Selected: Text bold");
+    assert_eq!(
+        attr(&browser, sel_id, "value").as_deref(),
+        Some("Text bold")
+    );
+}
+
+#[test]
 fn test_details_summary_toggle() {
     let mut browser = BrowserChrome::new(800, 600);
     let html = r#"
