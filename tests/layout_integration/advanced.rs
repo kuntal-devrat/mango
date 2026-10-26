@@ -488,3 +488,105 @@ fn test_flex_column_cross_axis_auto_margins_and_max_width() {
         "header should be horizontally centered at x = (1000 - 600) / 2 = 200px"
     );
 }
+
+#[test]
+fn test_sticky_positioning_scroll_containment_reftest() {
+    let html = r#"
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body { margin: 0; padding: 0; }
+                .top-spacer { height: 100px; background-color: #ffffff; }
+                .container { height: 600px; background-color: #f0f0f0; }
+                .sticky-header {
+                    position: sticky;
+                    top: 0px;
+                    height: 50px;
+                    background-color: #ff0000;
+                }
+                .content { height: 550px; }
+            </style>
+        </head>
+        <body>
+            <div class="top-spacer"></div>
+            <div class="container">
+                <div class="sticky-header">Sticky Header</div>
+                <div class="content"></div>
+            </div>
+            <div style="height: 1000px;"></div>
+        </body>
+        </html>
+    "#;
+
+    let doc = parse_html(html);
+    let viewport = Size::new(800.0, 600.0);
+    let (root_box, _) = layout_document(&doc, &[], viewport);
+
+    // 1. At scroll_y = 0: header is in-flow at y = 100px.
+    let dl_unscrolled = mango_layout::display_list::build_display_list_with_scroll(&root_box, 0.0);
+    let header_rect_0 = dl_unscrolled
+        .iter()
+        .find_map(|cmd| match cmd {
+            DisplayCommand::FillRect { rect, color }
+                if *color == mango_core::Color::rgb(255, 0, 0) =>
+            {
+                Some(*rect)
+            }
+            _ => None,
+        })
+        .expect("sticky header rect found at scroll 0");
+    assert_eq!(
+        header_rect_0.y(),
+        100.0,
+        "header should stay in-flow before reaching scroll threshold"
+    );
+
+    // 2. At scroll_y = 150: page scrolled past 100px threshold.
+    // Sticky offset moves the header to stay at viewport top (scrollport y = 150px in root coordinates).
+    let dl_scrolled = mango_layout::display_list::build_display_list_with_scroll(&root_box, 150.0);
+    let header_rect_150 = dl_scrolled
+        .iter()
+        .find_map(|cmd| match cmd {
+            DisplayCommand::FillRect { rect, color }
+                if *color == mango_core::Color::rgb(255, 0, 0) =>
+            {
+                Some(*rect)
+            }
+            _ => None,
+        })
+        .expect("sticky header rect found at scroll 150");
+    assert_eq!(
+        header_rect_150.y(),
+        150.0,
+        "sticky header should be pinned to viewport top (y = scroll_y)"
+    );
+
+    // 3. At scroll_y = 800: scrolled past the containing block (container ends at y = 100 + 600 = 700px).
+    // Sticky header cannot escape containing block: max target = 700 - 50 = 650px.
+    let dl_clamped = mango_layout::display_list::build_display_list_with_scroll(&root_box, 800.0);
+    let header_rect_800 = dl_clamped
+        .iter()
+        .find_map(|cmd| match cmd {
+            DisplayCommand::FillRect { rect, color }
+                if *color == mango_core::Color::rgb(255, 0, 0) =>
+            {
+                Some(*rect)
+            }
+            _ => None,
+        })
+        .expect("sticky header rect found at scroll 800");
+    assert_eq!(
+        header_rect_800.y(),
+        650.0,
+        "sticky header must be clamped within containing block bounds"
+    );
+
+    // 4. Verify rasterization / visual paint at scroll_y = 150
+    let mut pixels = vec![0u32; (800 * 600) as usize];
+    mango_render::paint(&dl_scrolled, &mut pixels, 800, 600);
+    assert!(
+        !pixels.iter().all(|&b| b == 0),
+        "pixels buffer should be rasterized"
+    );
+}
