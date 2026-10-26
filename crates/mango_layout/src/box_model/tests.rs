@@ -266,6 +266,32 @@ fn test_resolve_replaced_size_algorithm() {
         resolve_replaced_size(None, None, Some(640.0), Some(480.0), None, (300.0, 150.0)),
         (640.0, 480.0)
     );
+
+    // Width specified (300px), height auto with CSS aspect ratio 16:9
+    assert_eq!(
+        resolve_replaced_size(
+            Some(300.0),
+            None,
+            None,
+            None,
+            Some(16.0 / 9.0),
+            (300.0, 150.0)
+        ),
+        (300.0, 168.75)
+    );
+
+    // Height specified (168.75px), width auto with CSS aspect ratio 16:9
+    assert_eq!(
+        resolve_replaced_size(
+            None,
+            Some(168.75),
+            None,
+            None,
+            Some(16.0 / 9.0),
+            (300.0, 150.0)
+        ),
+        (300.0, 168.75)
+    );
 }
 
 #[test]

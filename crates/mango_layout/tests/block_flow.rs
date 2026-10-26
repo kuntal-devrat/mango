@@ -328,3 +328,37 @@ fn test_writing_mode_vertical_text_layout() {
     );
     assert!(total_h_lr > 0.0);
 }
+
+#[test]
+fn test_block_aspect_ratio_derives_height() {
+    let mut div = LayoutBox::new(BoxType::BlockNode, None);
+    let mut style = ComputedStyle::default();
+    style.width = Length::Px(300.0);
+    style.height = Length::Auto;
+    style.aspect_ratio = Some(16.0 / 9.0);
+    div.style = Some(style.into());
+
+    let mut float_ctx = FloatContext::new();
+    let cb = Dimensions::new(Rect::new(0.0, 0.0, 800.0, 600.0));
+    mango_layout::block_flow::layout_block(&mut div, &cb, &mut float_ctx);
+
+    assert_eq!(div.dimensions.content.width(), 300.0);
+    assert_eq!(div.dimensions.content.height(), 168.75);
+}
+
+#[test]
+fn test_block_aspect_ratio_derives_width() {
+    let mut div = LayoutBox::new(BoxType::BlockNode, None);
+    let mut style = ComputedStyle::default();
+    style.width = Length::Auto;
+    style.height = Length::Px(168.75);
+    style.aspect_ratio = Some(16.0 / 9.0);
+    div.style = Some(style.into());
+
+    let mut float_ctx = FloatContext::new();
+    let cb = Dimensions::new(Rect::new(0.0, 0.0, 800.0, 600.0));
+    mango_layout::block_flow::layout_block(&mut div, &cb, &mut float_ctx);
+
+    assert_eq!(div.dimensions.content.width(), 300.0);
+    assert_eq!(div.dimensions.content.height(), 168.75);
+}
