@@ -102,10 +102,12 @@ impl JsRuntime {
     }
 
     /// Returns a clone of the current DOM document.
-    /// Used by the browser to re-layout after JS modifications.
     ///
-    /// **BUG-007 note**: This clones the entire Document (O(n) nodes).
-    /// Prefer [`document_ref()`] when you only need read access.
+    /// Prefer [`document_ref()`] when you only need read access to avoid an O(N) deep clone.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Prefer document_ref() for read-only access or document_ref().clone() if ownership is strictly required"
+    )]
     pub fn document_snapshot(&self) -> Document {
         self.document.borrow().clone()
     }

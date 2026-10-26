@@ -41,7 +41,7 @@ fn test_timers_set_timeout() {
     let changed = rt.tick();
     assert!(changed);
 
-    let updated_doc = rt.document_snapshot();
+    let updated_doc = rt.document_ref();
     let root = updated_doc.root();
     let div = updated_doc.find_element_by_tag(root, "div").unwrap();
     assert_eq!(updated_doc.text_content(div), "1");

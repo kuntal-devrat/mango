@@ -16,7 +16,7 @@ fn test_dom_get_element_and_modify_text() {
     assert!(rt.execute_script(script).is_ok());
     assert!(rt.is_dom_dirty());
 
-    let updated_doc = rt.document_snapshot();
+    let updated_doc = rt.document_ref();
     let root = updated_doc.root();
     let h1_node = updated_doc.find_element_by_tag(root, "h1").unwrap();
     assert_eq!(updated_doc.text_content(h1_node), "New Dynamic Title!");
@@ -38,7 +38,7 @@ fn test_dom_create_element_and_append() {
     assert!(rt.execute_script(script).is_ok());
     assert!(rt.is_dom_dirty());
 
-    let updated_doc = rt.document_snapshot();
+    let updated_doc = rt.document_ref();
     let root = updated_doc.root();
     let p_node = updated_doc.find_element_by_tag(root, "p").unwrap();
     assert_eq!(updated_doc.text_content(p_node), "Inserted Paragraph");
@@ -704,4 +704,38 @@ fn test_detached_nodes_are_recycled_after_gc() {
         slots_after_second <= slots_after_gc + 32,
         "arena grew across GC cycles instead of reusing freed slots: first={first_slots} after_gc={slots_after_gc} second={slots_after_second}"
     );
+}
+
+#[test]
+fn test_document_ref_avoids_cloning() {
+    let doc = parse_html(r#"<html><body><div id="target">Initial</div></body></html>"#);
+    let mut rt = JsRuntime::new(doc, 800.0, 600.0);
+
+    // Initial read via document_ref without deep clone
+    {
+        let doc_ref = rt.document_ref();
+        let root = doc_ref.root();
+        let target = doc_ref.find_element_by_id(root, "target").unwrap();
+        assert_eq!(doc_ref.text_content(target), "Initial");
+    }
+
+    // Mutate DOM through JS runtime
+    rt.execute_script("document.getElementById('target').textContent = 'Updated';")
+        .unwrap();
+
+    // Verify document_ref reflects change directly
+    {
+        let doc_ref = rt.document_ref();
+        let root = doc_ref.root();
+        let target = doc_ref.find_element_by_id(root, "target").unwrap();
+        assert_eq!(doc_ref.text_content(target), "Updated");
+    }
+
+    // Verify deprecated document_snapshot compatibility
+    #[allow(deprecated)]
+    let snapshot = rt.document_snapshot();
+    let snap_target = snapshot
+        .find_element_by_id(snapshot.root(), "target")
+        .unwrap();
+    assert_eq!(snapshot.text_content(snap_target), "Updated");
 }
