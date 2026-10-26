@@ -9,8 +9,7 @@ use mango_net::Url;
 use mango_render::display_list::DisplayList;
 
 use super::super::BrowserChrome;
-use super::super::forms::find_element_by_id;
-use super::super::types::{ScheduledScript, ScriptToRun};
+use super::super::types::ScriptToRun;
 use super::super::welcome::{preprocess_wikipedia_appearance_html, resolve_navigation_input};
 use super::pipeline::{collect_scripts, load_imported_stylesheets_parallel};
 use super::resources::{extract_title, load_web_fonts_async};
@@ -18,37 +17,6 @@ use crate::chrome_ui::*;
 use crate::navigation::*;
 
 impl BrowserChrome {
-    fn enqueue_pending_script(&mut self, script: ScriptToRun) {
-        let kind = if script.is_module() {
-            crate::browser::resource_scheduler::ResourceKind::Module
-        } else {
-            crate::browser::resource_scheduler::ResourceKind::Script
-        };
-        let priority = if script.is_defer() {
-            crate::browser::resource_scheduler::ResourcePriority::Defer
-        } else if script.is_async() {
-            crate::browser::resource_scheduler::ResourcePriority::Async
-        } else {
-            crate::browser::resource_scheduler::ResourcePriority::Blocking
-        };
-        let url = match &script {
-            ScriptToRun::Inline { .. } => "inline://document".to_string(),
-            ScriptToRun::External { src, .. } | ScriptToRun::Preloaded { src, .. } => src.clone(),
-        };
-        let resource_id = self.resource_scheduler.claim_url(&url).unwrap_or_else(|| {
-            let id = self.resource_scheduler.discover(kind, priority, url);
-            self.resource_scheduler.transition(
-                id,
-                crate::browser::resource_scheduler::ResourceState::Queued,
-            );
-            id
-        });
-        self.pending_scripts.push_back(ScheduledScript {
-            script,
-            resource_id,
-        });
-    }
-
     /// Navigates the browser to the specified URL or input string.
     pub fn navigate(&mut self, url: &str) {
         self.address_text = url.to_string();
@@ -504,12 +472,6 @@ impl BrowserChrome {
             }
         }
 
-        if let Some(alert_msg) = js_rt.take_status_text() {
-            self.status_text = alert_msg;
-        }
-
-        let redirect_url = js_rt.take_pending_navigation();
-
         self.js_runtime = Some(js_rt);
 
         // ── Autofocus on interactive form control if specified ──
@@ -568,114 +530,20 @@ impl BrowserChrome {
             self.relayout();
         }
 
-        // If a script requested navigation (e.g. window.location.href = ...), follow it
-        if let Some(redirect) = redirect_url
-            && redirect != url
-        {
-            self.navigate(&redirect);
-        }
+        self.drain_js_effects();
 
-        // If a script requested opening a window/tab (window.open)
-        if let Some(open_req) = self
-            .js_runtime
-            .as_mut()
-            .and_then(|rt| rt.take_pending_open_window())
+        // If initial URL has an in-page anchor fragment, scroll to it
+        if let Ok(parsed) = Url::parse(&url)
+            && let Some(ref frag) = parsed.fragment
         {
-            let nav_url = if let Some(base) = &self.base_url {
-                base.resolve(&open_req.url)
-                    .map(|u| u.to_string())
-                    .unwrap_or(open_req.url)
-            } else {
-                open_req.url
-            };
-            self.new_tab_and_navigate(&nav_url);
-        }
-    }
-
-    /// Executes a single pending deferred/async script with a watchdog timeout.
-    pub(crate) fn execute_pending_script(&mut self, s: ScriptToRun) {
-        let Some(ref mut rt) = self.js_runtime else {
-            return;
-        };
-        let script_timeout = |code_len: usize| -> std::time::Duration {
-            let extra_ms = (code_len / 10_000) as u64 * 100;
-            std::time::Duration::from_millis(1500 + extra_ms)
-                .min(std::time::Duration::from_millis(3000))
-        };
-        match s {
-            ScriptToRun::Inline { code, is_module } => {
-                let to = script_timeout(code.len());
-                let res = if is_module {
-                    rt.execute_module_with_timeout(&code, to)
-                } else {
-                    rt.execute_script_with_timeout(&code, to)
-                };
-                if let Err(e) = res {
-                    log::warn!("Pending inline script error: {e}");
-                }
+            let frag_str = frag.clone();
+            if let Some(ref mut doc) = self.cached_document {
+                doc.set_target_id(Some(frag_str.clone()));
             }
-            ScriptToRun::Preloaded {
-                code,
-                src,
-                is_module,
-                ..
-            } => {
-                let to = script_timeout(code.len());
-                let script_name = self
-                    .base_url
-                    .as_ref()
-                    .and_then(|b| b.resolve(&src).ok())
-                    .map(|u| u.to_string())
-                    .unwrap_or_else(|| src.clone());
-                let res = if is_module {
-                    rt.execute_module_with_name_and_timeout(&script_name, &code, to)
-                } else {
-                    rt.execute_script_with_name_and_timeout(&script_name, &code, to)
-                };
-                if let Err(e) = res {
-                    log::warn!("Pending preloaded script error ({src}): {e}");
-                }
+            if let Some(ref mut rt) = self.js_runtime {
+                rt.set_target_id(Some(frag_str.clone()));
             }
-            ScriptToRun::External { src, is_module, .. } => {
-                let Some(ref base) = self.base_url else {
-                    return;
-                };
-                let Ok(resolved) = base.resolve(&src) else {
-                    return;
-                };
-                let key = resolved.as_str();
-                let script_code = if let Some(cached) = self.loader.cache().get(&key) {
-                    Some(String::from_utf8_lossy(&cached.body).into_owned())
-                } else {
-                    log::warn!(
-                        "Resource failed: pending external script unavailable in cache: {src}"
-                    );
-                    self.devtools.log(
-                        crate::devtools::ConsoleLevel::Error,
-                        format!(
-                            "Resource failed: pending external script unavailable in cache: {src}"
-                        ),
-                    );
-                    self.resource_scheduler.finish_url(
-                        &src,
-                        crate::browser::resource_scheduler::ResourceState::Failed,
-                        Some(crate::browser::resource_scheduler::RejectReason::NetworkFailure),
-                        0,
-                    );
-                    None
-                };
-                if let Some(code) = script_code {
-                    let to = script_timeout(code.len());
-                    let res = if is_module {
-                        rt.execute_module_with_name_and_timeout(&key, &code, to)
-                    } else {
-                        rt.execute_script_with_name_and_timeout(&key, &code, to)
-                    };
-                    if let Err(e) = res {
-                        log::warn!("Pending external script error ({src}): {e}");
-                    }
-                }
-            }
+            self.scroll_to_anchor_fragment(&frag_str);
         }
     }
 
@@ -686,12 +554,26 @@ impl BrowserChrome {
         let mut input = self.address_text.trim().to_string();
         log::info!("Navigate to: {}", input);
 
-        if input.starts_with('#')
-            && let Some(base) = &self.base_url
-            && let Ok(resolved) = base.resolve(&input)
-        {
-            input = resolved.to_string();
-            self.address_text = input.clone();
+        if input.starts_with('#') {
+            if let Some(base) = &self.base_url
+                && let Ok(resolved) = base.resolve(&input)
+            {
+                input = resolved.to_string();
+                self.address_text = input.clone();
+            } else {
+                let current_url = self
+                    .tabs
+                    .get(self.active_tab_idx)
+                    .map(|t| t.url.clone())
+                    .unwrap_or_else(|| "http://localhost/".to_string());
+                if let Ok(base) = Url::parse(&current_url)
+                    && let Ok(resolved) = base.resolve(&input)
+                {
+                    self.base_url = Some(base);
+                    input = resolved.to_string();
+                    self.address_text = input.clone();
+                }
+            }
         }
 
         if is_special_or_local_page(&input) {
@@ -771,18 +653,8 @@ impl BrowserChrome {
                 if let Some(ref mut rt) = self.js_runtime {
                     rt.set_target_id(Some(frag_str.clone()));
                 }
-                let doc = self.active_document();
-                if let Some(node_id) = find_element_by_id(&doc, &frag_str)
-                    && let Some(root) = &self.root_box
-                    && let Some(lbox) = root.find_box_for_node(node_id)
-                {
-                    let target_y = lbox.dimensions.content.y();
-                    let max_s = self.max_scroll();
-                    self.scroll_y = target_y.clamp(0.0, max_s);
-                    if let Some(tab) = self.tabs.get_mut(self.active_tab_idx) {
-                        tab.scroll_y = self.scroll_y;
-                    }
-                }
+                self.relayout();
+                self.scroll_to_anchor_fragment(&frag_str);
             } else {
                 if let Some(ref mut doc) = self.cached_document {
                     doc.set_target_id(None);
@@ -790,8 +662,9 @@ impl BrowserChrome {
                 if let Some(ref mut rt) = self.js_runtime {
                     rt.set_target_id(None);
                 }
+                self.relayout();
+                self.scroll_to_y(0.0, false);
             }
-            self.relayout();
             return;
         }
 

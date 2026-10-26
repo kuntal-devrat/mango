@@ -25,6 +25,18 @@ pub struct PendingWindowOpen {
 /// Shared pending window open request.
 pub type SharedPendingOpenWindow = Rc<RefCell<Option<PendingWindowOpen>>>;
 
+/// Represents a pending scroll request triggered by `scrollIntoView()` or `window.scrollTo()`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PendingScroll {
+    pub target_node: Option<mango_html::dom::NodeId>,
+    pub x: f32,
+    pub y: f32,
+    pub smooth: bool,
+}
+
+/// Shared pending scroll request.
+pub type SharedPendingScroll = Rc<RefCell<Option<PendingScroll>>>;
+
 /// Thread-safe localStorage store. Keyed by string; values are UTF-8 strings.
 /// `Arc<Mutex<_>>` so the browser can persist it to disk after each page unload.
 pub type SharedLocalStorage = Arc<Mutex<HashMap<String, String>>>;

@@ -133,6 +133,20 @@ impl JsRuntime {
         self.pending_open.borrow_mut().take()
     }
 
+    /// Takes any pending scroll request triggered by `scrollIntoView()` or `window.scrollTo()`.
+    pub fn take_pending_scroll(&mut self) -> Option<web_apis::PendingScroll> {
+        self.pending_scroll.borrow_mut().take()
+    }
+
+    /// Updates the window scroll coordinates in the JavaScript runtime.
+    pub fn set_window_scroll(&mut self, x: f32, y: f32) {
+        let code = format!(
+            "if (typeof _setWinScroll === 'function') _setWinScroll({}, {}, true);",
+            x, y
+        );
+        let _ = self.execute_script(&code);
+    }
+
     /// Sets an attribute on a node by NodeId and marks DOM as dirty.
     pub fn set_node_attribute(
         &mut self,

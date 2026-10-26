@@ -610,4 +610,42 @@
     }
     globalThis._getIframeContentDocument = _getIframeContentDocument;
 
+    // In-page anchor jumping and element scrollIntoView integration
+    if (typeof _scrollIntoView === 'function') {
+        globalThis._scrollIntoView = _scrollIntoView;
+    }
+    if (globalThis.Element && globalThis.Element.prototype) {
+        var _domElemScrollIntoView = globalThis.Element.prototype.scrollIntoView;
+        globalThis.Element.prototype.scrollIntoView = function(options) {
+            if (typeof _domElemScrollIntoView === 'function') {
+                _domElemScrollIntoView.call(this, options);
+            }
+            if (this._nodeId && typeof _scrollIntoView === 'function') {
+                var smooth = (typeof options === 'object' && options !== null && options.behavior === 'smooth');
+                _scrollIntoView(this._nodeId, smooth);
+            }
+        };
+    }
+    if (typeof _wrapElement === 'function') {
+        var _baseWrapElementForScroll = _wrapElement;
+        function _scrollAwareWrapElement(nodeId) {
+            var el = _baseWrapElementForScroll(nodeId);
+            if (!el || el._hasScrollHook) return el;
+            el._hasScrollHook = true;
+            var origScrollIntoView = el.scrollIntoView;
+            el.scrollIntoView = function(options) {
+                if (typeof origScrollIntoView === 'function') {
+                    origScrollIntoView.call(this, options);
+                }
+                if (this._nodeId && typeof _scrollIntoView === 'function') {
+                    var smooth = (typeof options === 'object' && options !== null && options.behavior === 'smooth');
+                    _scrollIntoView(this._nodeId, smooth);
+                }
+            };
+            return el;
+        }
+        _wrapElement = _scrollAwareWrapElement;
+        try { globalThis._mangoWrap = _scrollAwareWrapElement; globalThis._wrapElement = _scrollAwareWrapElement; } catch(e) {}
+    }
+
 

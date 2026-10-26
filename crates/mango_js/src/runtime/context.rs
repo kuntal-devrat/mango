@@ -91,6 +91,7 @@ pub struct JsRuntime {
     pub(crate) status_text: SharedStatusText,
     pub(crate) pending_nav: web_apis::SharedPendingNav,
     pub(crate) pending_open: web_apis::SharedPendingOpenWindow,
+    pub(crate) pending_scroll: web_apis::SharedPendingScroll,
     /// Shared localStorage backing store — the browser may persist this to disk.
     pub local_storage: SharedLocalStorage,
     /// Shared sessionStorage backing store — tab-scoped, in-memory.
@@ -262,6 +263,7 @@ impl JsRuntime {
         let status_text: SharedStatusText = Rc::new(RefCell::new(String::new()));
         let pending_nav: web_apis::SharedPendingNav = Rc::new(RefCell::new(None));
         let pending_open: web_apis::SharedPendingOpenWindow = Rc::new(RefCell::new(None));
+        let pending_scroll: web_apis::SharedPendingScroll = Rc::new(RefCell::new(None));
         let layout_bounds: dom_bindings::LayoutBounds =
             Rc::new(RefCell::new(std::collections::HashMap::new()));
         let layout_callback: dom_bindings::LayoutCallback = Rc::new(RefCell::new(None));
@@ -308,6 +310,7 @@ impl JsRuntime {
             state.put(status_text.clone());
             state.put(pending_nav.clone());
             state.put(pending_open.clone());
+            state.put(pending_scroll.clone());
             state.put(crate::ops::web::OpLocalStorage(local_storage.clone()));
             state.put(crate::ops::web::OpSessionStorage(session_storage.clone()));
             state.put(layout_bounds.clone());
@@ -357,6 +360,7 @@ impl JsRuntime {
             status_text,
             pending_nav,
             pending_open,
+            pending_scroll,
             local_storage,
             session_storage,
             layout_bounds,

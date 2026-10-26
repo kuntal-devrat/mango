@@ -129,9 +129,6 @@ impl BrowserChrome {
         let mutated = if let Some(ref mut rt) = self.js_runtime {
             let mutated = rt.tick();
             self.resource_scheduler.record_js_heap(rt.heap_size_bytes());
-            if let Some(alert_msg) = rt.take_status_text() {
-                self.status_text = alert_msg;
-            }
             for msg in rt.take_console_messages() {
                 let lvl = match msg.level {
                     mango_js::console::ConsoleLevel::Log => crate::devtools::ConsoleLevel::Log,
@@ -141,25 +138,12 @@ impl BrowserChrome {
                 };
                 self.devtools.log(lvl, msg.text);
             }
-            if let Some(redirect) = rt.take_pending_navigation() {
-                self.navigate(&redirect);
-                return true;
-            }
-            if let Some(open_req) = rt.take_pending_open_window() {
-                let nav_url = if let Some(base) = &self.base_url {
-                    base.resolve(&open_req.url)
-                        .map(|u| u.to_string())
-                        .unwrap_or(open_req.url)
-                } else {
-                    open_req.url
-                };
-                self.new_tab_and_navigate(&nav_url);
-                return true;
-            }
             mutated
         } else {
             return false;
         };
+
+        self.drain_js_effects();
 
         if mutated && self.root_box.is_some() {
             self.layout_pending = true;

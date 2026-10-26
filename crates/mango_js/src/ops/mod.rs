@@ -122,6 +122,8 @@ extension!(
         dom::op_mango_element_from_point,
         dom::op_mango_elements_from_point,
         dom::op_mango_set_focus_state,
+        dom::op_mango_scroll_into_view,
+        dom::op_mango_scroll_to,
         dom::op_mango_get_computed_style,
         dom::op_mango_css_parse_declaration,
         dom::op_mango_css_supports,
@@ -280,6 +282,8 @@ pub const PRELUDE_JS: &str = r##"
     globalThis._getDocumentElements = (tag) => ops.op_mango_get_document_elements(String(tag));
     globalThis._setFocusState = (id, f) => ops.op_mango_set_focus_state(Number(id), !!f);
     globalThis._getElementRect = (id) => ops.op_mango_get_element_rect(Number(id));
+    globalThis._scrollIntoView = (id, smooth) => ops.op_mango_scroll_into_view(Number(id), !!smooth);
+    globalThis._scrollTo = (x, y, smooth) => ops.op_mango_scroll_to(Number(x), Number(y), !!smooth);
     globalThis._getComputedStyle = (id) => ops.op_mango_get_computed_style(Number(id));
     globalThis._parseCssDeclaration = (p, v) => ops.op_mango_css_parse_declaration(String(p), String(v));
     globalThis._cssSupports = (p, v) => ops.op_mango_css_supports(String(p), v != null ? String(v) : null);
