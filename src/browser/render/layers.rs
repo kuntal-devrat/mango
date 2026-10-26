@@ -54,10 +54,11 @@ impl BrowserChrome {
         self.layer_tree
             .chrome_layer
             .rasterize_if_dirty(Color::TRANSPARENT, self.frame_counter);
-        let raster_pending = self
-            .layer_tree
-            .page_layer
-            .rasterize_if_dirty(self.canvas_bg, self.frame_counter);
+        let raster_pending = self.layer_tree.page_layer.rasterize_if_dirty_limited(
+            self.canvas_bg,
+            self.frame_counter,
+            2,
+        );
 
         // 4. Stale tile eviction
         if let Some(grid) = &mut self.layer_tree.page_layer.tile_grid {
