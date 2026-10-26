@@ -565,6 +565,50 @@ mod tests {
     }
 
     #[test]
+    fn test_picker_size() {
+        // Color
+        let (w, h) = picker_size(&PickerKind::Color);
+        assert_eq!(
+            w,
+            PICKER_SWATCH_PAD * 2.0
+                + PICKER_SWATCH_COLS as f32 * PICKER_SWATCH_CELL
+                + (PICKER_SWATCH_COLS - 1) as f32 * PICKER_SWATCH_GAP
+        );
+        assert_eq!(
+            h,
+            PICKER_SWATCH_PAD * 2.0
+                + PICKER_SWATCH_ROWS as f32 * PICKER_SWATCH_CELL
+                + (PICKER_SWATCH_ROWS - 1) as f32 * PICKER_SWATCH_GAP
+        );
+
+        // Date
+        let (w, h) = picker_size(&PickerKind::Date {
+            year: 2026,
+            month: 3,
+        });
+        assert_eq!(w, 210.0);
+        assert_eq!(h, 186.0);
+
+        // Time
+        let (w, h) = picker_size(&PickerKind::Time {
+            hour: 14,
+            minute: 30,
+            minute_step: 1,
+        });
+        assert_eq!(w, 150.0);
+        assert_eq!(h, 140.0);
+
+        // File
+        let (w, h) = picker_size(&PickerKind::File {
+            dir: PathBuf::from("/tmp"),
+            entries: vec![],
+            offset: 0,
+        });
+        assert_eq!(w, 300.0);
+        assert_eq!(h, 250.0);
+    }
+
+    #[test]
     fn test_picker_dimensions_and_swatch_hit() {
         let kind = PickerKind::Color;
         let (w, h) = picker_size(&kind);
