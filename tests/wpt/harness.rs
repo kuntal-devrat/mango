@@ -316,7 +316,7 @@ fn publish_layout_bounds(
     viewport: (f32, f32),
     styles: &[&mango_css::parser::Stylesheet],
 ) {
-    let doc = rt.document_snapshot();
+    let doc = rt.document_ref();
     let (root, _) = mango_layout::layout_document_with_scroll_xy(
         &doc,
         styles,

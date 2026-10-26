@@ -53,7 +53,7 @@ fn test_js_dom_manipulation_get_element() {
     assert_eq!(logs[0].text, "Initial heading: Original Title");
 
     // Verify modified DOM snapshot
-    let updated_doc = rt.document_snapshot();
+    let updated_doc = rt.document_ref();
     let root = updated_doc.root();
     let h1_node = updated_doc.find_element_by_tag(root, "h1").unwrap();
     assert_eq!(
@@ -85,7 +85,7 @@ fn test_js_dom_create_element_and_attributes() {
     assert!(rt.execute_script(script).is_ok());
     assert!(rt.is_dom_dirty());
 
-    let updated_doc = rt.document_snapshot();
+    let updated_doc = rt.document_ref();
     let root = updated_doc.root();
     let ul = updated_doc.find_element_by_tag(root, "ul").unwrap();
     let children: Vec<_> = updated_doc.children(ul).collect();
@@ -145,9 +145,11 @@ fn test_js_set_timeout_execution() {
     assert!(rt.has_pending_timers());
 
     // Before timer expires, status is still idle
-    let before = rt.document_snapshot();
-    let div = before.find_element_by_tag(before.root(), "div").unwrap();
-    assert_eq!(before.text_content(div), "idle");
+    {
+        let before = rt.document_ref();
+        let div = before.find_element_by_tag(before.root(), "div").unwrap();
+        assert_eq!(before.text_content(div), "idle");
+    }
 
     // Sleep to let timer expire
     std::thread::sleep(std::time::Duration::from_millis(30));
@@ -155,7 +157,7 @@ fn test_js_set_timeout_execution() {
     assert!(fired);
 
     // After timer expires, status is updated to done
-    let after = rt.document_snapshot();
+    let after = rt.document_ref();
     let div_after = after.find_element_by_tag(after.root(), "div").unwrap();
     assert_eq!(after.text_content(div_after), "done");
 }
@@ -359,7 +361,7 @@ fn test_js_innerhtml_and_outerhtml_setters() {
     "#;
     assert!(rt.execute_script(script).is_ok());
 
-    let updated = rt.document_snapshot();
+    let updated = rt.document_ref();
     let root = updated.root();
     let div = updated.find_element_by_id(root, "root").unwrap();
     assert_eq!(updated.children(div).count(), 1, "one <ul> child");

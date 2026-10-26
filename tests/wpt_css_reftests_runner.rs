@@ -237,29 +237,36 @@ fn preload_document_images(doc: &Document, base_dir: Option<&Path>) {
 }
 
 /// Preloads local iframe sources referenced in `<iframe src="...">` tags into JS `__subresourceMap`.
-fn preload_document_iframes(doc: &Document, base_dir: Option<&Path>, rt: &mut mango_js::JsRuntime) {
-    let mut stack = vec![doc.root()];
-    while let Some(node_id) = stack.pop() {
-        if let Some(node) = doc.get(node_id) {
-            if let NodeData::Element(ref elem) = node.data
-                && elem.tag_name.eq_ignore_ascii_case("iframe")
-                && let Some(src) = elem.get_attribute("src")
-            {
-                let trimmed = src.trim();
-                if let Some(path) = resolve_script_path(trimmed, base_dir)
-                    && let Ok(source) = fs::read_to_string(&path)
+fn preload_document_iframes(rt: &mut mango_js::JsRuntime, base_dir: Option<&Path>) {
+    let mut subresources = Vec::new();
+    {
+        let doc = rt.document_ref();
+        let mut stack = vec![doc.root()];
+        while let Some(node_id) = stack.pop() {
+            if let Some(node) = doc.get(node_id) {
+                if let NodeData::Element(ref elem) = node.data
+                    && elem.tag_name.eq_ignore_ascii_case("iframe")
+                    && let Some(src) = elem.get_attribute("src")
                 {
-                    let script = format!(
-                        "globalThis.__registerSubresource({:?}, {:?});",
-                        trimmed, source
-                    );
-                    let _ = rt.execute_script(&script);
+                    let trimmed = src.trim();
+                    if let Some(path) = resolve_script_path(trimmed, base_dir)
+                        && let Ok(source) = fs::read_to_string(&path)
+                    {
+                        subresources.push((trimmed.to_string(), source));
+                    }
                 }
+                let mut kids: Vec<NodeId> = doc.children(node_id).map(|c| c.id).collect();
+                kids.reverse();
+                stack.extend(kids);
             }
-            let mut kids: Vec<NodeId> = doc.children(node_id).map(|c| c.id).collect();
-            kids.reverse();
-            stack.extend(kids);
         }
+    }
+    for (trimmed, source) in subresources {
+        let script = format!(
+            "globalThis.__registerSubresource({:?}, {:?});",
+            trimmed, source
+        );
+        let _ = rt.execute_script(&script);
     }
 }
 
@@ -286,7 +293,7 @@ fn refresh_layout_bounds(
     scroll_y: f32,
     styles: &[&mango_css::parser::Stylesheet],
 ) {
-    let doc = rt.document_snapshot();
+    let doc = rt.document_ref();
     let (root, _) = layout_document_with_scroll_xy(
         &doc,
         styles,
@@ -314,7 +321,7 @@ fn render_html_to_buffer(html: &str, base_dir: Option<&Path>) -> Vec<u32> {
         collect_scripts_in_order(&doc, doc.root(), &mut scripts);
         let mut rt = mango_js::JsRuntime::new(doc, VIEWPORT_WIDTH as f32, VIEWPORT_HEIGHT as f32);
         let _ = rt.execute_script("window.createIndicatorForStickyElements = function() {};");
-        preload_document_iframes(&rt.document_snapshot(), base_dir, &mut rt);
+        preload_document_iframes(&mut rt, base_dir);
         let style_refs: Vec<&mango_css::parser::Stylesheet> = sheets.iter().collect();
 
         // Browsers have layout available to scripts as they run. Publish an
@@ -359,7 +366,7 @@ fn render_html_to_buffer(html: &str, base_dir: Option<&Path>) -> Vec<u32> {
             }
         "#);
         (scroll_x, scroll_y) = read_window_scroll(&mut rt);
-        doc = rt.document_snapshot();
+        doc = rt.document_ref().clone();
     }
     let style_refs: Vec<&mango_css::parser::Stylesheet> = sheets.iter().collect();
     let (_, dl) = layout_document_with_scroll_xy(

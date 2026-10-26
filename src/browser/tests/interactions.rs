@@ -202,28 +202,33 @@ fn test_details_summary_toggle() {
     browser.handle_mouse_move(30.0, HEADER_HEIGHT + 25.0);
     browser.handle_mouse_click(MouseButton::Left, KeyState::Pressed);
 
-    let doc = browser.js_runtime.as_ref().unwrap().document_snapshot();
-    let details_id = find_element_by_id(&doc, "my-details").unwrap();
-    let el = match &doc.get(details_id).unwrap().data {
-        NodeData::Element(e) => e.clone(),
-        _ => panic!("Expected element"),
-    };
-    assert!(
-        el.get_attribute("open").is_some(),
-        "Clicking summary must open details"
-    );
+    let details_id;
+    {
+        let doc = browser.js_runtime.as_ref().unwrap().document_ref();
+        details_id = find_element_by_id(&doc, "my-details").unwrap();
+        let el = match &doc.get(details_id).unwrap().data {
+            NodeData::Element(e) => e.clone(),
+            _ => panic!("Expected element"),
+        };
+        assert!(
+            el.get_attribute("open").is_some(),
+            "Clicking summary must open details"
+        );
+    }
 
     // Click summary again to collapse
     browser.handle_mouse_click(MouseButton::Left, KeyState::Pressed);
-    let doc2 = browser.js_runtime.as_ref().unwrap().document_snapshot();
-    let el2 = match &doc2.get(details_id).unwrap().data {
-        NodeData::Element(e) => e.clone(),
-        _ => panic!("Expected element"),
-    };
-    assert!(
-        el2.get_attribute("open").is_none(),
-        "Clicking summary again must close details"
-    );
+    {
+        let doc2 = browser.js_runtime.as_ref().unwrap().document_ref();
+        let el2 = match &doc2.get(details_id).unwrap().data {
+            NodeData::Element(e) => e.clone(),
+            _ => panic!("Expected element"),
+        };
+        assert!(
+            el2.get_attribute("open").is_none(),
+            "Clicking summary again must close details"
+        );
+    }
 }
 
 #[test]
@@ -239,27 +244,32 @@ fn test_label_for_checkbox_toggle() {
         "#;
     browser.load_html(html.to_string(), "test:label".to_string());
 
-    let doc = browser.js_runtime.as_ref().unwrap().document_snapshot();
-    let cb_id = find_element_by_id(&doc, "vector-dropdown-checkbox").unwrap();
-    let is_checked = match &doc.get(cb_id).unwrap().data {
-        NodeData::Element(e) => e.get_attribute("checked").is_some(),
-        _ => false,
-    };
-    assert!(!is_checked, "Initially unchecked");
+    let cb_id;
+    {
+        let doc = browser.js_runtime.as_ref().unwrap().document_ref();
+        cb_id = find_element_by_id(&doc, "vector-dropdown-checkbox").unwrap();
+        let is_checked = match &doc.get(cb_id).unwrap().data {
+            NodeData::Element(e) => e.get_attribute("checked").is_some(),
+            _ => false,
+        };
+        assert!(!is_checked, "Initially unchecked");
+    }
 
     // Click label
     browser.handle_mouse_move(45.0, HEADER_HEIGHT + 25.0);
     browser.handle_mouse_click(MouseButton::Left, KeyState::Pressed);
 
-    let doc2 = browser.js_runtime.as_ref().unwrap().document_snapshot();
-    let is_checked2 = match &doc2.get(cb_id).unwrap().data {
-        NodeData::Element(e) => e.get_attribute("checked").is_some(),
-        _ => false,
-    };
-    assert!(
-        is_checked2,
-        "Clicking label must toggle checkbox to checked"
-    );
+    {
+        let doc2 = browser.js_runtime.as_ref().unwrap().document_ref();
+        let is_checked2 = match &doc2.get(cb_id).unwrap().data {
+            NodeData::Element(e) => e.get_attribute("checked").is_some(),
+            _ => false,
+        };
+        assert!(
+            is_checked2,
+            "Clicking label must toggle checkbox to checked"
+        );
+    }
 }
 
 #[test]
@@ -310,7 +320,7 @@ fn test_text_input_cursor_navigation_and_insert() {
         modifiers: mango_platform::input::Modifiers::default(),
     });
 
-    let doc = browser.js_runtime.as_ref().unwrap().document_snapshot();
+    let doc = browser.js_runtime.as_ref().unwrap().document_ref();
     let input_id = find_element_by_id(&doc, "q").unwrap();
     let val = match &doc.get(input_id).unwrap().data {
         NodeData::Element(e) => e.get_attribute("value").unwrap_or("").to_string(),
@@ -345,29 +355,34 @@ fn test_video_and_audio_browser_interaction() {
     // 2. Left click play button -> toggles playing
     browser.handle_mouse_click(MouseButton::Left, KeyState::Pressed);
     assert_eq!(browser.status_text, "Video playing");
-    let doc = browser.js_runtime.as_ref().unwrap().document_snapshot();
-    let vid_id = find_element_by_id(&doc, "player").unwrap();
-    let is_playing = match &doc.get(vid_id).unwrap().data {
-        NodeData::Element(e) => e.get_attribute("data-mango-playing") == Some("true"),
-        _ => false,
-    };
-    assert!(
-        is_playing,
-        "Clicking play button should set data-mango-playing to true"
-    );
+    let vid_id;
+    {
+        let doc = browser.js_runtime.as_ref().unwrap().document_ref();
+        vid_id = find_element_by_id(&doc, "player").unwrap();
+        let is_playing = match &doc.get(vid_id).unwrap().data {
+            NodeData::Element(e) => e.get_attribute("data-mango-playing") == Some("true"),
+            _ => false,
+        };
+        assert!(
+            is_playing,
+            "Clicking play button should set data-mango-playing to true"
+        );
+    }
 
     // 3. Left click play button again -> toggles paused
     browser.handle_mouse_click(MouseButton::Left, KeyState::Pressed);
     assert_eq!(browser.status_text, "Video paused");
-    let doc2 = browser.js_runtime.as_ref().unwrap().document_snapshot();
-    let is_paused = match &doc2.get(vid_id).unwrap().data {
-        NodeData::Element(e) => e.get_attribute("data-mango-playing") == Some("false"),
-        _ => false,
-    };
-    assert!(
-        is_paused,
-        "Clicking play button again should set data-mango-playing to false"
-    );
+    {
+        let doc2 = browser.js_runtime.as_ref().unwrap().document_ref();
+        let is_paused = match &doc2.get(vid_id).unwrap().data {
+            NodeData::Element(e) => e.get_attribute("data-mango-playing") == Some("false"),
+            _ => false,
+        };
+        assert!(
+            is_paused,
+            "Clicking play button again should set data-mango-playing to false"
+        );
+    }
 
     // 4. Right click -> opens context menu with Play and Mute actions
     browser.handle_mouse_move(50.0, HEADER_HEIGHT + 50.0);
@@ -394,15 +409,17 @@ fn test_video_and_audio_browser_interaction() {
     browser.handle_mouse_move(menu.x + 20.0, item_y);
     browser.handle_mouse_click(MouseButton::Left, KeyState::Pressed);
     assert_eq!(browser.status_text, "Media muted");
-    let doc3 = browser.js_runtime.as_ref().unwrap().document_snapshot();
-    let is_muted = match &doc3.get(vid_id).unwrap().data {
-        NodeData::Element(e) => e.get_attribute("data-mango-muted") == Some("true"),
-        _ => false,
-    };
-    assert!(
-        is_muted,
-        "Activating Mute from context menu should set data-mango-muted to true"
-    );
+    {
+        let doc3 = browser.js_runtime.as_ref().unwrap().document_ref();
+        let is_muted = match &doc3.get(vid_id).unwrap().data {
+            NodeData::Element(e) => e.get_attribute("data-mango-muted") == Some("true"),
+            _ => false,
+        };
+        assert!(
+            is_muted,
+            "Activating Mute from context menu should set data-mango-muted to true"
+        );
+    }
 }
 
 #[test]
