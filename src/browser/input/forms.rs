@@ -64,108 +64,52 @@ impl BrowserChrome {
                 };
             }
             "radio" => {
-                // BUG-004 fix: Uncheck all sibling radio buttons with the same name
+                // BUG-004 fix: Uncheck all sibling radio buttons with the same name and form owner
                 self.fire_dom_event(node_id, "click");
+                let mut radio_name = self
+                    .js_runtime
+                    .as_ref()
+                    .and_then(|rt| rt.get_node_attribute(node_id, "name"))
+                    .unwrap_or_default();
+
+                if radio_name.is_empty()
+                    && let Some(ref doc) = self.cached_document
+                    && let Some(node) = doc.get(node_id)
+                    && let NodeData::Element(el) = &node.data
+                    && let Some(name) = el.get_attribute("name")
+                {
+                    radio_name = name.to_string();
+                }
+
                 if let Some(ref mut rt) = self.js_runtime {
-                    let radio_name = rt.get_node_attribute(node_id, "name").unwrap_or_default();
                     if !radio_name.is_empty() {
                         let radios_to_uncheck = {
                             let doc = rt.document_ref();
-                            let form_root = {
-                                let mut curr = Some(node_id);
-                                let mut found_form = None;
-                                while let Some(nid) = curr {
-                                    if let Some(node) = doc.get(nid) {
-                                        if let NodeData::Element(el) = &node.data
-                                            && el.tag_name.eq_ignore_ascii_case("form")
-                                        {
-                                            found_form = Some(nid);
-                                            break;
-                                        }
-                                        curr = node.parent;
-                                    } else {
-                                        break;
-                                    }
-                                }
-                                found_form.unwrap_or(doc.root())
-                            };
-                            let mut radios = Vec::new();
-                            let mut stack = vec![form_root];
-                            while let Some(nid) = stack.pop() {
-                                if let Some(node) = doc.get(nid) {
-                                    if let NodeData::Element(el) = &node.data
-                                        && el.tag_name.eq_ignore_ascii_case("input")
-                                        && el
-                                            .get_attribute("type")
-                                            .map(|t| t.eq_ignore_ascii_case("radio"))
-                                            .unwrap_or(false)
-                                        && el
-                                            .get_attribute("name")
-                                            .map(|n| n == radio_name)
-                                            .unwrap_or(false)
-                                        && nid != node_id
-                                    {
-                                        radios.push(nid);
-                                    }
-                                    let mut child = node.first_child;
-                                    while let Some(cid) = child {
-                                        stack.push(cid);
-                                        if let Some(cnode) = doc.get(cid) {
-                                            child = cnode.next_sibling;
-                                        } else {
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                            radios
+                            find_sibling_radios_to_uncheck(&doc, node_id, &radio_name)
                         };
-                        // Uncheck all siblings
                         for rid in radios_to_uncheck {
                             rt.remove_node_attribute(rid, "checked");
                         }
                     }
-                    // Check the clicked radio
                     rt.set_node_attribute(node_id, "checked", "true");
                 }
+
                 if let Some(ref mut doc) = self.cached_document {
-                    let radio_name = self
-                        .js_runtime
-                        .as_ref()
-                        .and_then(|rt| rt.get_node_attribute(node_id, "name"))
-                        .unwrap_or_default();
                     if !radio_name.is_empty() {
-                        let mut stack = vec![doc.root()];
-                        while let Some(nid) = stack.pop() {
-                            if let Some(node) = doc.get_mut(nid) {
-                                if let NodeData::Element(ref mut el) = node.data
-                                    && el.tag_name.eq_ignore_ascii_case("input")
-                                    && el
-                                        .get_attribute("type")
-                                        .map(|t| t.eq_ignore_ascii_case("radio"))
-                                        .unwrap_or(false)
-                                    && el
-                                        .get_attribute("name")
-                                        .map(|n| n == radio_name)
-                                        .unwrap_or(false)
-                                {
-                                    if nid == node_id {
-                                        el.set_attribute("checked", "true");
-                                    } else {
-                                        el.remove_attribute("checked");
-                                    }
-                                }
-                                let mut child = node.first_child;
-                                while let Some(cid) = child {
-                                    stack.push(cid);
-                                    if let Some(cnode) = doc.get(cid) {
-                                        child = cnode.next_sibling;
-                                    } else {
-                                        break;
-                                    }
-                                }
+                        let radios_to_uncheck =
+                            find_sibling_radios_to_uncheck(doc, node_id, &radio_name);
+                        for rid in radios_to_uncheck {
+                            if let Some(node) = doc.get_mut(rid)
+                                && let NodeData::Element(ref mut el) = node.data
+                            {
+                                el.remove_attribute("checked");
                             }
                         }
+                    }
+                    if let Some(node) = doc.get_mut(node_id)
+                        && let NodeData::Element(ref mut el) = node.data
+                    {
+                        el.set_attribute("checked", "true");
                     }
                 }
                 let (radio_name, radio_val) = if let Some(ref rt) = self.js_runtime {
@@ -574,4 +518,83 @@ impl BrowserChrome {
             }
         }
     }
+}
+
+/// Returns the form owner of a node, according to the HTML specification.
+/// A form control's form owner is either the `<form>` whose id matches its `form` attribute,
+/// or its nearest ancestor `<form>` element. If neither exists, returns None (document-wide scope).
+pub(crate) fn find_form_owner(doc: &mango_html::dom::Document, node_id: NodeId) -> Option<NodeId> {
+    // 1. Explicit form attribute pointing to a <form id="...">
+    if let Some(node) = doc.get(node_id)
+        && let NodeData::Element(el) = &node.data
+        && let Some(form_attr) = el.get_attribute("form")
+        && !form_attr.is_empty()
+    {
+        if let Some(form_id) = find_element_by_id(doc, form_attr) {
+            if let Some(fnode) = doc.get(form_id)
+                && let NodeData::Element(fel) = &fnode.data
+                && fel.tag_name.eq_ignore_ascii_case("form")
+            {
+                return Some(form_id);
+            }
+        }
+    }
+
+    // 2. Nearest ancestor <form>
+    let mut curr = doc.get(node_id).and_then(|n| n.parent);
+    while let Some(nid) = curr {
+        if let Some(node) = doc.get(nid) {
+            if let NodeData::Element(el) = &node.data
+                && el.tag_name.eq_ignore_ascii_case("form")
+            {
+                return Some(nid);
+            }
+            curr = node.parent;
+        } else {
+            break;
+        }
+    }
+    None
+}
+
+/// Finds all sibling radio button nodes in the same radio button group as `target_node_id`.
+/// Per HTML standard, two radio buttons belong to the same group if they share the same
+/// name and the same form owner (or both have no form owner).
+pub(crate) fn find_sibling_radios_to_uncheck(
+    doc: &mango_html::dom::Document,
+    target_node_id: NodeId,
+    radio_name: &str,
+) -> Vec<NodeId> {
+    let target_owner = find_form_owner(doc, target_node_id);
+    let mut radios = Vec::new();
+    let mut stack = vec![doc.root()];
+    while let Some(nid) = stack.pop() {
+        if let Some(node) = doc.get(nid) {
+            if nid != target_node_id
+                && let NodeData::Element(el) = &node.data
+                && el.tag_name.eq_ignore_ascii_case("input")
+                && el
+                    .get_attribute("type")
+                    .map(|t| t.eq_ignore_ascii_case("radio"))
+                    .unwrap_or(false)
+                && el
+                    .get_attribute("name")
+                    .map(|n| n == radio_name)
+                    .unwrap_or(false)
+                && find_form_owner(doc, nid) == target_owner
+            {
+                radios.push(nid);
+            }
+            let mut child = node.first_child;
+            while let Some(cid) = child {
+                stack.push(cid);
+                if let Some(cnode) = doc.get(cid) {
+                    child = cnode.next_sibling;
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+    radios
 }

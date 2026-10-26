@@ -22,5 +22,6 @@ pub(super) fn hit_control(browser: &BrowserChrome, x: f32, y: f32) -> mango_layo
 
 mod anchor_and_scroll;
 mod core;
+mod forms_radio;
 mod interactions;
 mod pickers_lifecycle;
