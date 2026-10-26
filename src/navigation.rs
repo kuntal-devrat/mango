@@ -234,6 +234,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_html_escape() {
+        assert_eq!(html_escape(""), "");
+        assert_eq!(html_escape("hello"), "hello");
+        assert_eq!(html_escape("&"), "&amp;");
+        assert_eq!(html_escape("<"), "&lt;");
+        assert_eq!(html_escape(">"), "&gt;");
+        assert_eq!(html_escape("\""), "&quot;");
+        assert_eq!(html_escape("'"), "&#39;");
+        assert_eq!(
+            html_escape("<script>alert('xss & more');</script>"),
+            "&lt;script&gt;alert(&#39;xss &amp; more&#39;);&lt;/script&gt;"
+        );
+    }
+
+    #[test]
     fn test_url_encoding() {
         assert_eq!(url_encode("hello world"), "hello+world");
         assert_eq!(url_encode("rust & web"), "rust+%26+web");
