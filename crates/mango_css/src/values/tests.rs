@@ -313,3 +313,15 @@ fn test_relative_color_syntax_and_wide_gamut() {
     assert_eq!(TextWrap::parse("nowrap"), Some(TextWrap::Nowrap));
     assert_eq!(TextWrap::parse("wrap"), Some(TextWrap::Wrap));
 }
+
+#[test]
+fn test_mixed_unit_calc_resolution() {
+    let len = Length::parse("calc(100% - 20px)").expect("parse calc(100% - 20px)");
+    assert_eq!(len.to_px(16.0, 16.0, 500.0), 480.0);
+
+    let len2 = Length::parse("calc(50% + 10px)").expect("parse calc(50% + 10px)");
+    assert_eq!(len2.to_px(16.0, 16.0, 500.0), 260.0);
+
+    let len3 = Length::parse("calc(100% - 50px)").expect("parse calc(100% - 50px)");
+    assert_eq!(len3.to_px(16.0, 16.0, 500.0), 450.0);
+}
