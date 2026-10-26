@@ -238,6 +238,26 @@ impl DocumentResourceScheduler {
         }
     }
 
+    /// Completes one resource as failed and retains the reason on its record.
+    /// Handlers report outcomes; the scheduler owns resource lifecycle state.
+    pub fn fail(&mut self, id: ResourceId, reason: RejectReason) {
+        if let Some(record) = self.records.get_mut(&id) {
+            if matches!(
+                record.event.state,
+                ResourceState::Completed
+                    | ResourceState::Failed
+                    | ResourceState::Cancelled
+                    | ResourceState::Rejected
+            ) {
+                return;
+            }
+            record.event.reason = Some(reason);
+            record.event.state = ResourceState::Failed;
+            self.report.failed += 1;
+            *self.report.rejection_reasons.entry(reason).or_default() += 1;
+        }
+    }
+
     pub fn cancel_generation(&mut self, reason: RejectReason) {
         let ids: Vec<_> = self
             .records
