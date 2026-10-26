@@ -183,6 +183,17 @@ impl RenderLayer {
 
     /// Rasterizes any dirty regions in the layer.
     pub fn rasterize_if_dirty(&mut self, bg_color: Color, current_frame: u64) -> bool {
+        self.rasterize_if_dirty_limited(bg_color, current_frame, usize::MAX)
+    }
+
+    /// Rasterizes at most `max_page_tiles` page tiles for incremental window
+    /// frames. The general `rasterize_if_dirty` API remains a complete pass.
+    pub fn rasterize_if_dirty_limited(
+        &mut self,
+        bg_color: Color,
+        current_frame: u64,
+        max_page_tiles: usize,
+    ) -> bool {
         match self.kind {
             LayerKind::Page => {
                 let mut pending = false;
@@ -198,7 +209,7 @@ impl RenderLayer {
                         &self.display_list,
                         bg_color,
                         current_frame,
-                        2,
+                        max_page_tiles,
                     );
                     grid.prune_unused_tiles(current_frame, 15);
                     pending = grid.has_dirty_visible_tiles(viewport);
