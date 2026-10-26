@@ -108,12 +108,16 @@ impl BrowserChrome {
                 crate::browser::resource_scheduler::ResourceState::Executing,
             );
             let started = std::time::Instant::now();
-            self.execute_pending_script(scheduled.script);
+            let outcome = self.execute_pending_script(scheduled.script);
             self.resource_scheduler.record_script_cpu(started.elapsed());
-            self.resource_scheduler.transition(
-                scheduled.resource_id,
-                crate::browser::resource_scheduler::ResourceState::Completed,
-            );
+            if let Some(reason) = outcome {
+                self.resource_scheduler.fail(scheduled.resource_id, reason);
+            } else {
+                self.resource_scheduler.transition(
+                    scheduled.resource_id,
+                    crate::browser::resource_scheduler::ResourceState::Completed,
+                );
+            }
             if self.pending_scripts.is_empty() {
                 if let Some(ref mut rt) = self.js_runtime {
                     let _ = rt.dispatch_dom_content_loaded();

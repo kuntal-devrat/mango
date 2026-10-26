@@ -592,9 +592,14 @@ impl BrowserChrome {
     }
 
     /// Executes a single pending deferred/async script with a watchdog timeout.
-    pub(crate) fn execute_pending_script(&mut self, s: ScriptToRun) {
+    pub(crate) fn execute_pending_script(
+        &mut self,
+        s: ScriptToRun,
+    ) -> Option<crate::browser::resource_scheduler::RejectReason> {
+        use crate::browser::resource_scheduler::RejectReason;
+
         let Some(ref mut rt) = self.js_runtime else {
-            return;
+            return Some(RejectReason::Unsupported);
         };
         let script_timeout = |code_len: usize| -> std::time::Duration {
             let extra_ms = (code_len / 10_000) as u64 * 50;
@@ -612,6 +617,7 @@ impl BrowserChrome {
                 if let Err(e) = res {
                     log::warn!("Pending inline script error: {e}");
                 }
+                None
             }
             ScriptToRun::Preloaded {
                 code,
@@ -634,13 +640,14 @@ impl BrowserChrome {
                 if let Err(e) = res {
                     log::warn!("Pending preloaded script error ({src}): {e}");
                 }
+                None
             }
             ScriptToRun::External { src, is_module, .. } => {
                 let Some(ref base) = self.base_url else {
-                    return;
+                    return Some(RejectReason::InvalidUrl);
                 };
                 let Ok(resolved) = base.resolve(&src) else {
-                    return;
+                    return Some(RejectReason::InvalidUrl);
                 };
                 let key = resolved.as_str();
                 let script_code = if let Some(cached) = self.loader.cache().get(&key) {
@@ -655,12 +662,6 @@ impl BrowserChrome {
                             "Resource failed: pending external script unavailable in cache: {src}"
                         ),
                     );
-                    self.resource_scheduler.finish_url(
-                        &src,
-                        crate::browser::resource_scheduler::ResourceState::Failed,
-                        Some(crate::browser::resource_scheduler::RejectReason::NetworkFailure),
-                        0,
-                    );
                     None
                 };
                 if let Some(code) = script_code {
@@ -673,6 +674,9 @@ impl BrowserChrome {
                     if let Err(e) = res {
                         log::warn!("Pending external script error ({src}): {e}");
                     }
+                    None
+                } else {
+                    Some(RejectReason::NetworkFailure)
                 }
             }
         }
