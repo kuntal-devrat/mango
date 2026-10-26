@@ -1,6 +1,6 @@
 //! In-memory resource cache for HTTP responses (HTML, CSS, images).
 //!
-//! Provides a 50MB byte-limited LRU memory cache with conditional ETag /
+//! Provides a 20MB byte-limited LRU memory cache with conditional ETag /
 //! If-Modified-Since revalidation support.
 
 use std::collections::HashMap;
@@ -93,7 +93,7 @@ impl Default for ResourceCache {
 }
 
 impl ResourceCache {
-    /// Creates a new resource cache with standard 50MB and 1000-entry defaults.
+    /// Creates a new resource cache with standard 20MB and 1000-entry defaults.
     pub fn new() -> Self {
         Self::with_limits(DEFAULT_MAX_CACHE_BYTES, MAX_CACHE_ENTRIES)
     }

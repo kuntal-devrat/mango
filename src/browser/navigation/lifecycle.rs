@@ -15,38 +15,24 @@ impl BrowserChrome {
     /// Polls background navigation. Returns true if any applied result changed
     /// visible state (the page or the tab strip).
     ///
-    /// Every drained result is considered. Epochs are per-tab, so a result for
-    /// tab A is still valid while tab B has a newer navigation in flight.
+    /// At most one result is applied per turn so a burst of progressive or
+    /// multi-tab results cannot monopolize the window thread. Epochs are
+    /// per-tab, so a result for tab A remains valid while tab B navigates.
     pub fn tick_navigation(&mut self) -> bool {
-        let mut applied_any = false;
-        let mut received_any = false;
-        let mut disconnected = false;
-        loop {
-            match self.nav_actor.try_recv() {
-                Ok(res) => {
-                    received_any = true;
-                    applied_any |= self.process_nav_result(res);
+        match self.nav_actor.try_recv() {
+            Ok(res) => {
+                self.persist_cookies();
+                self.process_nav_result(res)
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => false,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                for tab in &mut self.tabs {
+                    tab.loading = false;
                 }
-                Err(std::sync::mpsc::TryRecvError::Empty) => break,
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    disconnected = true;
-                    break;
-                }
+                self.is_loading = false;
+                false
             }
         }
-        if disconnected {
-            for tab in &mut self.tabs {
-                tab.loading = false;
-            }
-            self.is_loading = false;
-        }
-        if received_any {
-            self.persist_cookies();
-        }
-        if applied_any {
-            crate::trim_memory();
-        }
-        applied_any
     }
 
     /// Applies one navigation result if it is still current for its tab.
@@ -76,6 +62,12 @@ impl BrowserChrome {
                 epoch,
             } => {
                 if !self.nav_actor.is_current(tab_id, epoch) {
+                    return false;
+                }
+                // Progressive preparation can finish after the final response
+                // result because it runs independently from the network reader.
+                // Never let a late partial snapshot overwrite a completed page.
+                if !self.tabs.get(tab_id).is_some_and(|tab| tab.loading) {
                     return false;
                 }
                 if tab_id == self.active_tab_idx {

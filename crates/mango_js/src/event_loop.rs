@@ -26,6 +26,7 @@ pub struct EventLoop {
     timers: HashMap<TimerId, Timer>,
     next_id: TimerId,
     tasks: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    prefer_tasks: bool,
 }
 
 /// Maximum number of concurrent active timers allowed to prevent DoS attacks.
@@ -39,6 +40,7 @@ impl EventLoop {
             timers: HashMap::new(),
             next_id: 1,
             tasks: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            prefer_tasks: true,
         }
     }
 
@@ -175,39 +177,67 @@ impl EventLoop {
     /// monopolize the browser thread by making thousands of timers due at
     /// once; unprocessed timers remain scheduled for the next frame.
     pub fn drain_due_limited(&mut self, limit: usize) -> Vec<String> {
-        let mut scripts = Vec::new();
+        if limit == 0 {
+            return Vec::new();
+        }
+        let now = Instant::now();
+        let has_tasks = self.tasks.lock().is_ok_and(|q| !q.is_empty());
+        let has_due_timers = self
+            .timers
+            .values()
+            .any(|timer| !timer.cancelled && timer.fire_at <= now);
+        let task_first = match (has_tasks, has_due_timers) {
+            (true, true) => {
+                let first = self.prefer_tasks;
+                self.prefer_tasks = !self.prefer_tasks;
+                first
+            }
+            (true, false) => true,
+            (false, true) => false,
+            (false, false) => return Vec::new(),
+        };
 
-        // Drain background tasks (e.g. async fetch resolutions)
+        let mut scripts = Vec::with_capacity(limit);
+        if task_first {
+            self.take_tasks(limit, &mut scripts);
+            self.take_due_timers(now, limit.saturating_sub(scripts.len()), &mut scripts);
+        } else {
+            self.take_due_timers(now, limit, &mut scripts);
+            self.take_tasks(limit.saturating_sub(scripts.len()), &mut scripts);
+        }
+        scripts
+    }
+
+    fn take_tasks(&self, limit: usize, scripts: &mut Vec<String>) {
+        if limit == 0 {
+            return;
+        }
         if let Ok(mut q) = self.tasks.lock() {
             let take = q.len().min(limit);
             scripts.extend(q.drain(..take));
         }
+    }
 
-        let now = Instant::now();
-
-        // Collect expired timer IDs
-        let expired: Vec<TimerId> = self
+    fn take_due_timers(&mut self, now: Instant, limit: usize, scripts: &mut Vec<String>) {
+        if limit == 0 {
+            return;
+        }
+        // Deterministic ordering for equal/overdue deadlines: earlier deadline
+        // first, then registration ID. HashMap iteration order is unspecified.
+        let mut expired: Vec<(Instant, TimerId)> = self
             .timers
             .iter()
-            .filter(|(_, t)| !t.cancelled && t.fire_at <= now)
-            .map(|(id, _)| *id)
+            .filter(|(_, timer)| !timer.cancelled && timer.fire_at <= now)
+            .map(|(id, timer)| (timer.fire_at, *id))
             .collect();
+        expired.sort_unstable();
 
-        for id in expired
-            .into_iter()
-            .take(limit.saturating_sub(scripts.len()))
-        {
-            let (source, interval) = {
-                let timer = match self.timers.get(&id) {
-                    Some(t) if !t.cancelled => t,
-                    _ => continue,
-                };
-                (timer.callback_source.clone(), timer.interval)
+        for (_, id) in expired.into_iter().take(limit) {
+            let (source, interval) = match self.timers.get(&id) {
+                Some(timer) if !timer.cancelled => (timer.callback_source.clone(), timer.interval),
+                _ => continue,
             };
-
             scripts.push(source);
-
-            // Reschedule intervals, remove timeouts
             match interval {
                 Some(period) => {
                     if let Some(timer) = self.timers.get_mut(&id) {
@@ -219,19 +249,28 @@ impl EventLoop {
                 }
             }
         }
-
-        // Clean up cancelled timers
-        self.timers.retain(|_, t| !t.cancelled);
-
-        scripts
+        self.timers.retain(|_, timer| !timer.cancelled);
     }
 
     /// Evaluates due tasks and timers on deno_core::JsRuntime.
     /// Returns `true` if any timer or task fired.
     pub fn tick_deno(&mut self, runtime: &mut deno_core::JsRuntime) -> bool {
-        let scripts = self.drain_due();
+        // This compatibility entry point must obey the same callback ceiling
+        // as the normal runtime tick; never drain an unbounded task backlog.
+        const MAX_CALLBACKS_PER_TICK: usize = 1;
+        let scripts = self.drain_due_limited(MAX_CALLBACKS_PER_TICK);
         let mut fired = false;
         for s in scripts {
+            // This legacy path executes directly on the caller's runtime, so
+            // enforce a per-callback ceiling as well as the batch ceiling.
+            let isolate = runtime.v8_isolate().thread_safe_handle();
+            let (tx, rx) = std::sync::mpsc::channel();
+            let watchdog_isolate = isolate.clone();
+            let watchdog = std::thread::spawn(move || {
+                if rx.recv_timeout(Duration::from_millis(20)).is_err() {
+                    watchdog_isolate.terminate_execution();
+                }
+            });
             match runtime.execute_script("<event_loop>", s) {
                 Ok(_) => {
                     fired = true;
@@ -240,6 +279,9 @@ impl EventLoop {
                     log::warn!("EventLoop task execution error: {e}");
                 }
             }
+            let _ = tx.send(());
+            let _ = watchdog.join();
+            isolate.cancel_terminate_execution();
         }
         fired
     }

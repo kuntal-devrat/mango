@@ -9,7 +9,7 @@ use crate::chrome_ui::*;
 impl BrowserChrome {
     /// Updates the layer tree with the latest chrome and page display lists,
     /// driving incremental tile rasterization and damage repair.
-    pub fn update_layers(&mut self, (width, height): (u32, u32)) {
+    pub fn update_layers(&mut self, (width, height): (u32, u32)) -> bool {
         if self.width != width || self.height != height {
             self.resize(width, height);
         }
@@ -54,7 +54,8 @@ impl BrowserChrome {
         self.layer_tree
             .chrome_layer
             .rasterize_if_dirty(Color::TRANSPARENT, self.frame_counter);
-        self.layer_tree
+        let raster_pending = self
+            .layer_tree
             .page_layer
             .rasterize_if_dirty(self.canvas_bg, self.frame_counter);
 
@@ -62,6 +63,7 @@ impl BrowserChrome {
         if let Some(grid) = &mut self.layer_tree.page_layer.tile_grid {
             grid.prune_unused_tiles(self.frame_counter, 300);
         }
+        raster_pending
     }
 
     /// Marks a specific rectangle in the page content area as damaged.

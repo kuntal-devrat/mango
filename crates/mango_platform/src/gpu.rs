@@ -7,12 +7,18 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::{Mutex, OnceLock};
 
 use bytemuck::{Pod, Zeroable};
 use mango_core::{Color, Rect};
 use mango_render::layer::LayerTree;
 use mango_render::tile::TileCoord;
 use winit::window::Window;
+
+// Surface uploads happen serially on the event thread. Reuse one high-water
+// staging allocation across textures instead of allocating a full RGBA Vec for
+// every tile and every dirty frame.
+static PIXEL_UPLOAD_BUFFER: OnceLock<Mutex<Vec<u8>>> = OnceLock::new();
 
 /// Vertex structure kept for backwards compatibility and geometry definitions.
 #[repr(C)]
@@ -91,12 +97,18 @@ impl GpuTexture {
         pixels: &[u32],
         is_opaque: bool,
     ) -> Result<(), String> {
-        if pixels.is_empty() || self.width == 0 || self.height == 0 {
-            return Ok(());
+        if self.width == 0 || self.height == 0 {
+            return Err("cannot upload a zero-sized GPU texture".to_string());
+        }
+        if pixels.is_empty() {
+            return Err("cannot upload an empty GPU texture buffer".to_string());
         }
         let expected_len = (self.width as usize) * (self.height as usize);
         if pixels.len() < expected_len {
-            return Ok(());
+            return Err(format!(
+                "GPU texture pixel buffer is too short: expected {expected_len}, got {}",
+                pixels.len()
+            ));
         }
 
         let is_bgra = matches!(
@@ -104,10 +116,20 @@ impl GpuTexture {
             lgpu::TextureFormat::Bgra8Unorm | lgpu::TextureFormat::Bgra8Srgb
         );
 
-        let mut bytes = vec![0u8; expected_len * 4];
+        let mut bytes = PIXEL_UPLOAD_BUFFER
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .map_err(|_| "GPU upload staging buffer poisoned".to_string())?;
+        bytes.resize(expected_len * 4, 0);
         if is_opaque {
             // For page tiles: every pixel is 100% opaque.
-            for (chunk, &px) in bytes.chunks_exact_mut(4).zip(pixels.iter()) {
+            for (chunk, &px) in bytes
+                .as_mut_slice()
+                .as_chunks_mut::<4>()
+                .0
+                .iter_mut()
+                .zip(pixels.iter())
+            {
                 if is_bgra {
                     chunk[0] = (px & 0xFF) as u8;
                     chunk[1] = ((px >> 8) & 0xFF) as u8;
@@ -122,7 +144,13 @@ impl GpuTexture {
             }
         } else {
             // For chrome UI, overlay, and promoted layers:
-            for (chunk, &px) in bytes.chunks_exact_mut(4).zip(pixels.iter()) {
+            for (chunk, &px) in bytes
+                .as_mut_slice()
+                .as_chunks_mut::<4>()
+                .0
+                .iter_mut()
+                .zip(pixels.iter())
+            {
                 let a = ((px >> 24) & 0xFF) as u8;
                 let alpha = if a != 0 {
                     a
@@ -157,10 +185,11 @@ impl GpuTexture {
 /// The hardware-accelerated GPU compositor powered by `lgpu`.
 pub struct GpuCompositor {
     tile_textures: HashMap<TileCoord, GpuTexture>,
-    promoted_textures: HashMap<usize, GpuTexture>,
+    promoted_textures: HashMap<u64, GpuTexture>,
     chrome_texture: Option<GpuTexture>,
     overlay_texture: Option<GpuTexture>,
     frame_texture: Option<GpuTexture>,
+    frame_pixels: Vec<u32>,
     pipeline: lgpu::GraphicsPipeline,
     sampler: lgpu::Sampler,
     surface: lgpu::Surface,
@@ -179,6 +208,7 @@ impl Drop for GpuCompositor {
         self.chrome_texture = None;
         self.overlay_texture = None;
         self.frame_texture = None;
+        self.frame_pixels.clear();
     }
 }
 
@@ -198,32 +228,40 @@ impl GpuCompositor {
             return Err("No compatible GPU adapter found".to_string());
         }
 
-        // Prioritize discrete GPU, then integrated GPU, then virtual GPU, over software fallback
-        let adapter = adapters
-            .iter()
-            .find(|a| a.info().device_type == lgpu::DeviceType::DiscreteGpu)
-            .or_else(|| {
-                adapters
-                    .iter()
-                    .find(|a| a.info().device_type == lgpu::DeviceType::IntegratedGpu)
-            })
-            .or_else(|| {
-                adapters
-                    .iter()
-                    .find(|a| a.info().device_type == lgpu::DeviceType::VirtualGpu)
-            })
-            .unwrap_or(&adapters[0]);
-        let info = adapter.info();
-        log::info!(
-            "lgpu device selected: {} ({:?}) via {:?}",
-            info.name,
-            info.device_type,
-            info.backend
-        );
-
-        let (device, queue) = adapter
-            .request_device(&instance)
-            .map_err(|e| format!("Failed to request lgpu device: {e}"))?;
+        // Prefer hardware adapters, but try every candidate in rank order.
+        // A discrete adapter can be present yet unavailable to this process;
+        // that should not prevent an integrated/virtual adapter from working.
+        let mut candidates: Vec<_> = adapters.iter().collect();
+        candidates.sort_by_key(|adapter| match adapter.info().device_type {
+            lgpu::DeviceType::DiscreteGpu => 0,
+            lgpu::DeviceType::IntegratedGpu => 1,
+            lgpu::DeviceType::VirtualGpu => 2,
+            _ => 3,
+        });
+        let mut selected_device = None;
+        let mut adapter_errors = Vec::new();
+        for adapter in candidates {
+            let info = adapter.info();
+            match adapter.request_device(&instance) {
+                Ok((device, queue)) => {
+                    log::info!(
+                        "lgpu device selected: {} ({:?}) via {:?}",
+                        info.name,
+                        info.device_type,
+                        info.backend
+                    );
+                    selected_device = Some((device, queue));
+                    break;
+                }
+                Err(error) => adapter_errors.push(format!("{}: {error}", info.name)),
+            }
+        }
+        let (device, queue) = selected_device.ok_or_else(|| {
+            format!(
+                "Failed to create a device from available adapters: {}",
+                adapter_errors.join("; ")
+            )
+        })?;
 
         let mut surface = instance
             .create_surface(&*window)
@@ -303,6 +341,7 @@ impl GpuCompositor {
             chrome_texture: None,
             overlay_texture: None,
             frame_texture: None,
+            frame_pixels: Vec::new(),
             width,
             height,
         })
@@ -332,16 +371,16 @@ impl GpuCompositor {
 
         let frame = match self.surface.get_current_texture() {
             Ok(f) => f,
-            Err(_) => {
+            Err(first_error) => {
                 if let Err(e) = self.surface.configure(&self.device, &self.config) {
-                    log::warn!("Surface reconfigure failed during frame acquire: {e}");
-                    return Ok(());
+                    return Err(format!(
+                        "Surface acquire failed ({first_error}); reconfigure failed: {e}"
+                    ));
                 }
                 match self.surface.get_current_texture() {
                     Ok(f) => f,
                     Err(e) => {
-                        log::warn!("lgpu get_current_texture failed: {e}");
-                        return Ok(());
+                        return Err(format!("Surface acquire failed after reconfigure: {e}"));
                     }
                 }
             }
@@ -451,12 +490,18 @@ impl GpuCompositor {
 
         // 2. Prepare Promoted Layers (e.g. will-change: transform / fixed positioning)
         let tf = self.texture_format;
-        for (idx, layer) in layers.promoted_layers.iter().enumerate() {
+        let active_promoted: std::collections::HashSet<u64> = layers
+            .promoted_layers
+            .iter()
+            .map(|layer| layer.id)
+            .collect();
+        self.promoted_textures
+            .retain(|id, _| active_promoted.contains(id));
+        for layer in &layers.promoted_layers {
             if let Some(pixels) = &layer.pixels {
                 let lw = layer.bounds.width().max(1.0) as u32;
                 let lh = layer.bounds.height().max(1.0) as u32;
-
-                let gpu_tex = match self.promoted_textures.entry(idx) {
+                let gpu_tex = match self.promoted_textures.entry(layer.id) {
                     std::collections::hash_map::Entry::Occupied(entry) => {
                         let tex = entry.into_mut();
                         if tex.width != lw || tex.height != lh {
@@ -662,7 +707,7 @@ impl GpuCompositor {
             let err_str = e.to_string();
             log::warn!("Swapchain submit_surface error, reconfiguring surface: {err_str}");
             let _ = self.surface.configure(&self.device, &self.config);
-            return Ok(());
+            return Err(format!("Swapchain submit_surface failed: {err_str}"));
         }
 
         Ok(())
@@ -682,30 +727,39 @@ impl GpuCompositor {
 
         let frame = match self.surface.get_current_texture() {
             Ok(f) => f,
-            Err(_) => {
+            Err(first_error) => {
                 if let Err(e) = self.surface.configure(&self.device, &self.config) {
-                    log::warn!("Surface reconfigure failed during frame acquire: {e}");
-                    return Ok(());
+                    return Err(format!(
+                        "Surface acquire failed ({first_error}); reconfigure failed: {e}"
+                    ));
                 }
                 match self.surface.get_current_texture() {
                     Ok(f) => f,
                     Err(e) => {
-                        log::warn!("lgpu get_current_texture failed: {e}");
-                        return Ok(());
+                        return Err(format!("Surface acquire failed after reconfigure: {e}"));
                     }
                 }
             }
         };
 
-        let mut pixels = vec![bg_color.to_rgb_u32(); (w * h) as usize];
-        mango_render::painter::paint(dl, &mut pixels, w, h);
+        self.frame_pixels.resize((w as usize) * (h as usize), 0);
+        self.frame_pixels.fill(bg_color.to_rgb_u32());
+        mango_render::painter::paint(dl, &mut self.frame_pixels, w, h);
 
         let tf = self.texture_format;
         if let Some(tex) = &mut self.frame_texture {
             if tex.width != w || tex.height != h {
-                *tex = GpuTexture::new(&self.device, &self.queue, tf, w, h, &pixels, true)?;
+                *tex = GpuTexture::new(
+                    &self.device,
+                    &self.queue,
+                    tf,
+                    w,
+                    h,
+                    &self.frame_pixels,
+                    true,
+                )?;
             } else {
-                tex.upload_pixels(&self.queue, tf, &pixels, true)?;
+                tex.upload_pixels(&self.queue, tf, &self.frame_pixels, true)?;
             }
         } else {
             self.frame_texture = Some(GpuTexture::new(
@@ -714,7 +768,7 @@ impl GpuCompositor {
                 tf,
                 w,
                 h,
-                &pixels,
+                &self.frame_pixels,
                 true,
             )?);
         }
@@ -764,7 +818,7 @@ impl GpuCompositor {
             let err_str = e.to_string();
             log::warn!("Swapchain submit_surface error, reconfiguring surface: {err_str}");
             let _ = self.surface.configure(&self.device, &self.config);
-            return Ok(());
+            return Err(format!("Swapchain submit_surface failed: {err_str}"));
         }
 
         Ok(())

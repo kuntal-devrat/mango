@@ -453,7 +453,9 @@ impl Engine {
                 .invalidate_and_update(style_tree, &self.document, &author_refs);
 
             // 2. Regenerate Layout Snapshot
-            let snapshot = LayoutSnapshot::from_styled_tree(style_tree, self.viewport);
+            let maps = mango_layout::collect_image_maps(&self.document);
+            let snapshot =
+                LayoutSnapshot::from_styled_tree_with_maps(style_tree, Some(&maps), self.viewport);
             let new_dl = if self.scroll_y == 0.0 {
                 snapshot.display_list().clone()
             } else {

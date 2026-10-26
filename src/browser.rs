@@ -92,6 +92,8 @@ pub struct BrowserChrome {
     /// DOM/style changes requested during a JS turn. The UI loop flushes this
     /// once after script and animation work instead of relayouting per callback.
     pub(crate) layout_pending: bool,
+    /// Coalesced asynchronous layout pipeline used by the desktop UI thread.
+    pub(crate) async_layout: render::layout::AsyncLayoutCoordinator,
     /// HTTP and resource loader.
     pub(crate) loader: ResourceLoader,
     /// Vertical scroll offset in the content area (f32 for rendering/layout interoperability).
@@ -245,6 +247,7 @@ impl BrowserChrome {
             style_index_version: u64::MAX,
             style_index_viewport: (0, 0),
             layout_pending: false,
+            async_layout: render::layout::AsyncLayoutCoordinator::new(),
             scroll_y: 0.0,
             scroll_y_f64: 0.0,
             config: Config::new(),

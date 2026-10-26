@@ -363,10 +363,9 @@ impl BrowserChrome {
         // the background pipeline (`prepare_document_pipeline`); blocking the
         // UI on a network fetch here would freeze the page.
         let script_timeout = |code_len: usize| -> std::time::Duration {
-            // Provide at least 1.5s for normal scripts, plus ~100ms per 10KB for large bundles, capped at 3.0s
-            let extra_ms = (code_len / 10_000) as u64 * 100;
-            std::time::Duration::from_millis(1500 + extra_ms)
-                .min(std::time::Duration::from_millis(3000))
+            let extra_ms = (code_len / 10_000) as u64 * 50;
+            std::time::Duration::from_millis(250 + extra_ms)
+                .min(std::time::Duration::from_millis(500))
         };
         let mut run_script =
             |s: ScriptToRun, rt: &mut mango_js::JsRuntime, ext_cnt: &mut usize| match s {
@@ -598,9 +597,9 @@ impl BrowserChrome {
             return;
         };
         let script_timeout = |code_len: usize| -> std::time::Duration {
-            let extra_ms = (code_len / 10_000) as u64 * 100;
-            std::time::Duration::from_millis(1500 + extra_ms)
-                .min(std::time::Duration::from_millis(3000))
+            let extra_ms = (code_len / 10_000) as u64 * 50;
+            std::time::Duration::from_millis(100 + extra_ms)
+                .min(std::time::Duration::from_millis(250))
         };
         match s {
             ScriptToRun::Inline { code, is_module } => {

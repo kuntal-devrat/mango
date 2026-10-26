@@ -78,7 +78,9 @@ impl BrowserChrome {
         }
 
         // 2. Incremental deferred/async script execution (1 script per tick to prevent UI thread lockup)
-        if let Some(scheduled) = self.pending_scripts.pop_front() {
+        if !self.async_layout.is_active()
+            && let Some(scheduled) = self.pending_scripts.pop_front()
+        {
             let priority = if scheduled.script.is_defer() {
                 crate::browser::resource_scheduler::ResourcePriority::Defer
             } else if scheduled.script.is_async() {
@@ -174,6 +176,13 @@ impl BrowserChrome {
                 .js_runtime
                 .as_ref()
                 .is_some_and(|rt| rt.has_pending_timers())
+    }
+
+    /// Returns when queued deferred scripts can resume after CPU throttling.
+    pub fn pending_script_resume_deadline(&self) -> Option<std::time::Instant> {
+        (!self.pending_scripts.is_empty())
+            .then(|| self.resource_scheduler.cpu_resume_deadline())
+            .flatten()
     }
 
     /// Returns the earliest deadline when a JavaScript timer needs execution.

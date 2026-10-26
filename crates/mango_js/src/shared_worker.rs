@@ -58,6 +58,12 @@ pub struct SharedWorkerHandle {
 pub struct SharedWorkerHub {
     workers: Arc<Mutex<HashMap<SharedWorkerKey, SharedWorkerHandle>>>,
     port_to_key: Arc<Mutex<HashMap<u64, SharedWorkerKey>>>,
+    controls: Arc<Mutex<HashMap<SharedWorkerKey, Arc<SharedWorkerControl>>>>,
+}
+
+struct SharedWorkerControl {
+    running: Arc<AtomicBool>,
+    isolate: Mutex<Option<deno_core::v8::IsolateHandle>>,
 }
 
 impl SharedWorkerHub {
@@ -65,6 +71,7 @@ impl SharedWorkerHub {
         Self {
             workers: Arc::new(Mutex::new(HashMap::new())),
             port_to_key: Arc::new(Mutex::new(HashMap::new())),
+            controls: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -103,11 +110,27 @@ impl SharedWorkerHub {
         let target_script = key.script_url.clone();
         let origin = key.origin.clone();
         let name = key.name.clone();
+        let control = Arc::new(SharedWorkerControl {
+            running: Arc::new(AtomicBool::new(true)),
+            isolate: Mutex::new(None),
+        });
+        if let Ok(mut controls) = self.controls.lock() {
+            controls.insert(worker_key.clone(), control.clone());
+        }
+        let worker_control = control;
 
         let thread_handle = thread::Builder::new()
             .name(format!("mango-shared-worker-{}", key.name))
             .spawn(move || {
-                run_shared_worker_thread(name, target_script, origin, rx, blobs, task_queue);
+                run_shared_worker_thread(
+                    name,
+                    target_script,
+                    origin,
+                    rx,
+                    blobs,
+                    task_queue,
+                    worker_control,
+                );
             })
             .ok();
 
@@ -161,24 +184,46 @@ impl SharedWorkerHub {
             let _ = handle.tx.send(SharedWorkerInboundMsg::ClosePort(port_id));
             handle.ports.retain(|&p| p != port_id);
             if handle.ports.is_empty() {
-                // If all ports closed, shut down worker
-                let _ = handle.tx.send(SharedWorkerInboundMsg::Terminate);
-                if let Some(th) = handle.thread.take() {
-                    let _ = th.join();
+                // Remove under the map lock, then interrupt outside it. A
+                // worker may be running arbitrary page code and must never
+                // make the caller (often the UI thread) wait in join().
+                if let Some(mut handle) = workers.remove(&key) {
+                    let control = self
+                        .controls
+                        .lock()
+                        .ok()
+                        .and_then(|mut map| map.remove(&key));
+                    if let Some(control) = control {
+                        stop_shared_worker(&control);
+                    }
+                    let _ = handle.tx.send(SharedWorkerInboundMsg::Terminate);
+                    handle.thread.take();
                 }
-                workers.remove(&key);
             }
         }
     }
 
     /// Shuts down all active shared workers immediately.
     pub fn terminate_all(&self) {
-        if let Ok(mut workers) = self.workers.lock() {
-            for (_, mut handle) in workers.drain() {
-                let _ = handle.tx.send(SharedWorkerInboundMsg::Terminate);
-                if let Some(th) = handle.thread.take() {
-                    let _ = th.join();
+        let workers = self
+            .workers
+            .lock()
+            .map(|mut workers| workers.drain().collect::<Vec<_>>());
+        if let Ok(workers) = workers {
+            let controls = self
+                .controls
+                .lock()
+                .map(|mut controls| std::mem::take(&mut *controls))
+                .unwrap_or_default();
+            if let Ok(mut ports) = self.port_to_key.lock() {
+                ports.clear();
+            }
+            for (key, mut handle) in workers {
+                if let Some(control) = controls.get(&key) {
+                    stop_shared_worker(control);
                 }
+                let _ = handle.tx.send(SharedWorkerInboundMsg::Terminate);
+                handle.thread.take();
             }
         }
     }
@@ -255,6 +300,7 @@ fn run_shared_worker_thread(
     rx: Receiver<SharedWorkerInboundMsg>,
     blobs: Arc<Mutex<HashMap<String, String>>>,
     main_tasks: Arc<Mutex<Vec<String>>>,
+    control: Arc<SharedWorkerControl>,
 ) {
     let tokio_rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -262,19 +308,20 @@ fn run_shared_worker_thread(
         .ok();
     let _guard = tokio_rt.as_ref().map(|r| r.enter());
 
-    let is_running = Arc::new(AtomicBool::new(true));
-
     let mut runtime = deno_core::JsRuntime::new(deno_core::RuntimeOptions {
         extensions: vec![mango_shared_worker_runtime::init()],
         ..Default::default()
     });
+    if let Ok(mut isolate) = control.isolate.lock() {
+        *isolate = Some(runtime.v8_isolate().thread_safe_handle());
+    }
 
     runtime.op_state().borrow_mut().put(SharedWorkerState {
         _name: name.clone(),
         base_url: base_url.clone(),
         blobs: blobs.clone(),
         main_tasks: main_tasks.clone(),
-        is_running: is_running.clone(),
+        is_running: control.running.clone(),
     });
 
     // Install SharedWorkerGlobalScope shim
@@ -366,16 +413,21 @@ fn run_shared_worker_thread(
         name
     );
 
+    if !control.running.load(Ordering::Acquire) {
+        return;
+    }
     let _ = runtime.execute_script("<shared-worker-init>", init_shim);
 
     // Fetch and execute the worker script
     let script_source = crate::worker::resolve_script_content(&script_url, &base_url, &blobs)
         .unwrap_or_else(|e| format!("console.error('Failed to load shared worker: {}');", e));
 
-    let _ = runtime.execute_script(script_url, script_source);
+    if control.running.load(Ordering::Acquire) {
+        let _ = runtime.execute_script(script_url, script_source);
+    }
 
     // Event pump
-    while is_running.load(Ordering::Relaxed) {
+    while control.running.load(Ordering::Acquire) {
         match rx.recv_timeout(std::time::Duration::from_millis(5)) {
             Ok(SharedWorkerInboundMsg::ConnectPort(port_id)) => {
                 let code = format!("globalThis._mangoConnectPort({});", port_id);
@@ -400,8 +452,20 @@ fn run_shared_worker_thread(
         }
 
         // Run pending async jobs
-        let _ =
-            pollster::block_on(runtime.run_event_loop(deno_core::PollEventLoopOptions::default()));
+        if control.running.load(Ordering::Acquire) {
+            let _ = pollster::block_on(
+                runtime.run_event_loop(deno_core::PollEventLoopOptions::default()),
+            );
+        }
+    }
+}
+
+fn stop_shared_worker(control: &SharedWorkerControl) {
+    control.running.store(false, Ordering::Release);
+    if let Ok(isolate) = control.isolate.lock()
+        && let Some(isolate) = isolate.as_ref()
+    {
+        isolate.terminate_execution();
     }
 }
 

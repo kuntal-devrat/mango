@@ -356,7 +356,10 @@ pub fn collect_image_sources(doc: &Document, node_id: NodeId, sources: &mut Vec<
     if let Some(node) = doc.get(node_id)
         && let NodeData::Element(elem) = &node.data
     {
-        // 1. If <img>, check src, srcset, data-src
+        // 1. If <img>, fetch only `src` and lazy-loading `data-src` resources.
+        // Responsive candidates are currently not wired into image painting,
+        // so prefetching them here would consume bandwidth without rendering
+        // them and can duplicate the fallback `src` request.
         if elem.tag_name.eq_ignore_ascii_case("img") {
             if let Some(src) = elem.get_attribute("src") {
                 let trimmed = src.trim();
@@ -364,34 +367,8 @@ pub fn collect_image_sources(doc: &Document, node_id: NodeId, sources: &mut Vec<
                     sources.push(trimmed.to_string());
                 }
             }
-            if let Some(srcset) = elem.get_attribute("srcset") {
-                for candidate in srcset.split(',') {
-                    let url = candidate.split_whitespace().next().unwrap_or("");
-                    if !url.is_empty() && !url.starts_with("data:") {
-                        sources.push(url.to_string());
-                    }
-                }
-            }
             if let Some(data_src) = elem.get_attribute("data-src") {
                 let trimmed = data_src.trim();
-                if !trimmed.is_empty() && !trimmed.starts_with("data:") {
-                    sources.push(trimmed.to_string());
-                }
-            }
-        }
-
-        // 1b. If <source> (e.g. inside <picture>), collect srcset URLs for prefetching
-        if elem.tag_name.eq_ignore_ascii_case("source") {
-            if let Some(srcset) = elem.get_attribute("srcset") {
-                for candidate in srcset.split(',') {
-                    let url = candidate.split_whitespace().next().unwrap_or("");
-                    if !url.is_empty() && !url.starts_with("data:") {
-                        sources.push(url.to_string());
-                    }
-                }
-            }
-            if let Some(src) = elem.get_attribute("src") {
-                let trimmed = src.trim();
                 if !trimmed.is_empty() && !trimmed.starts_with("data:") {
                     sources.push(trimmed.to_string());
                 }
