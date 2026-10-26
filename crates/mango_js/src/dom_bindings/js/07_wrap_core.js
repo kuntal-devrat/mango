@@ -441,6 +441,25 @@
                 this.setAttribute("data-mango-checked", val ? "true" : "false");
                 if (val) this.setAttribute("checked", "");
                 else this.removeAttribute("checked");
+                if (val && (this.type || this.getAttribute("type") || "").toLowerCase() === "radio") {
+                    var rname = this.name || this.getAttribute("name");
+                    if (rname) {
+                        var formOwner = this.form || (this.closest && this.closest("form"));
+                        var root = this.ownerDocument || globalThis.document;
+                        if (root && root.querySelectorAll) {
+                            var candidates = root.querySelectorAll('input[type="radio"], input[type="RADIO"]');
+                            for (var i = 0; i < candidates.length; i++) {
+                                var c = candidates[i];
+                                if (c !== this && (c.name || c.getAttribute("name")) === rname) {
+                                    var cOwner = c.form || (c.closest && c.closest("form"));
+                                    if (cOwner === formOwner) {
+                                        c.checked = false;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 this.dispatchEvent({ type: 'change' });
             },
             get indeterminate() { return this.getAttribute("data-mango-indeterminate") === "true"; },
