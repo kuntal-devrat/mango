@@ -11,7 +11,25 @@
             _nodeId: nodeId,
             _listeners: {},
             get innerText() { return this.textContent; },
-            set innerText(val) { this.textContent = val; },
+            set innerText(val) {
+                var str = String(val == null ? '' : val);
+                if (str.indexOf('\n') === -1 && str.indexOf('\r') === -1) {
+                    this.textContent = str;
+                } else {
+                    while (this.firstChild) {
+                        this.removeChild(this.firstChild);
+                    }
+                    var lines = str.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+                    for (var i = 0; i < lines.length; i++) {
+                        if (lines[i].length > 0) {
+                            this.appendChild(document.createTextNode(lines[i]));
+                        }
+                        if (i < lines.length - 1) {
+                            this.appendChild(document.createElement('br'));
+                        }
+                    }
+                }
+            },
             get textContent() {
                 return (typeof _defaultGetTextContent === 'function') ? _defaultGetTextContent(this) : (typeof globalThis !== 'undefined' && globalThis._defaultGetTextContent ? globalThis._defaultGetTextContent(this) : '');
             },
@@ -96,12 +114,22 @@
             },
             get namespaceURI() {
                 if (this._namespaceURI !== undefined) return this._namespaceURI;
-                var cur = this;
-                while (cur && cur.nodeType === 1) {
-                    var t = (cur._tagName || (cur._nodeId !== undefined ? _getTagName(cur._nodeId) : '') || '').toLowerCase();
-                    if (t === 'svg' || t === 'use' || t === 'g' || t === 'path' || t === 'circle' || t === 'rect' || t === 'line' || t === 'polygon' || t === 'polyline' || t === 'ellipse' || t === 'text' || t === 'defs' || t === 'marker' || t === 'pattern' || t === 'mask' || t === 'clippath') return 'http://www.w3.org/2000/svg';
-                    if (t === 'math' || t === 'mrow' || t === 'mi' || t === 'mo' || t === 'mn' || t === 'ms' || t === 'mspace' || t === 'mtext') return 'http://www.w3.org/1998/Math/MathML';
-                    cur = cur._parentNode || cur.parentNode;
+                if (this._nodeId !== undefined && typeof _getParentNode === 'function') {
+                    var currId = this._nodeId;
+                    while (currId > 0) {
+                        var t = (_getTagName(currId) || '').toLowerCase();
+                        if (t === 'svg' || t === 'use' || t === 'g' || t === 'path' || t === 'circle' || t === 'rect' || t === 'line' || t === 'polygon' || t === 'polyline' || t === 'ellipse' || t === 'text' || t === 'defs' || t === 'marker' || t === 'pattern' || t === 'mask' || t === 'clippath') return 'http://www.w3.org/2000/svg';
+                        if (t === 'math' || t === 'mrow' || t === 'mi' || t === 'mo' || t === 'mn' || t === 'ms' || t === 'mspace' || t === 'mtext') return 'http://www.w3.org/1998/Math/MathML';
+                        currId = _getParentNode(currId);
+                    }
+                } else {
+                    var cur = this;
+                    while (cur && cur.nodeType === 1) {
+                        var t = (cur._tagName || '').toLowerCase();
+                        if (t === 'svg' || t === 'use' || t === 'g' || t === 'path' || t === 'circle' || t === 'rect' || t === 'line' || t === 'polygon' || t === 'polyline' || t === 'ellipse' || t === 'text' || t === 'defs' || t === 'marker' || t === 'pattern' || t === 'mask' || t === 'clippath') return 'http://www.w3.org/2000/svg';
+                        if (t === 'math' || t === 'mrow' || t === 'mi' || t === 'mo' || t === 'mn' || t === 'ms' || t === 'mspace' || t === 'mtext') return 'http://www.w3.org/1998/Math/MathML';
+                        cur = cur._parentNode || null;
+                    }
                 }
                 var doc = this.ownerDocument || (typeof document !== 'undefined' ? document : null);
                 if (doc && doc._isXml && doc.contentType !== 'application/xhtml+xml') return null;

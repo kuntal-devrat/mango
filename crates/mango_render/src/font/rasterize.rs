@@ -221,8 +221,19 @@ impl FontManager {
         let cx2 = ((clip.x() + clip.width()) as i32).min(buf_width as i32);
         let cy2 = ((clip.y() + clip.height()) as i32).min(buf_height as i32);
 
-        for ch in text.chars() {
+        let shaped_text;
+        let text_to_draw = if text.chars().any(super::shaping::is_complex_char) {
+            shaped_text = super::shaping::shape_complex_script(text);
+            &shaped_text
+        } else {
+            text
+        };
+
+        for ch in text_to_draw.chars() {
             if ch == '\n' {
+                continue;
+            }
+            if super::emoji::is_zero_width_or_format(ch) {
                 continue;
             }
 
@@ -412,8 +423,19 @@ impl FontManager {
         let cx2 = ((clip.x() + clip.width()) as i32).min(buf_width as i32);
         let cy2 = ((clip.y() + clip.height()) as i32).min(buf_height as i32);
 
-        for ch in text.chars() {
+        let shaped_text;
+        let text_to_draw = if text.chars().any(super::shaping::is_complex_char) {
+            shaped_text = super::shaping::shape_complex_script(text);
+            &shaped_text
+        } else {
+            text
+        };
+
+        for ch in text_to_draw.chars() {
             if ch == '\n' {
+                continue;
+            }
+            if super::emoji::is_zero_width_or_format(ch) {
                 continue;
             }
 

@@ -109,6 +109,13 @@ pub fn compute_auto_column_widths(
     let mut col_explicit_widths = vec![None::<f32>; num_cols];
     let mut intrinsic_memo = std::collections::HashMap::new();
 
+    let is_auto_table_width = table_box
+        .style
+        .as_ref()
+        .map(|s| s.width == mango_css::values::Length::Auto)
+        .unwrap_or(true)
+        && table_box.get_attribute("width").is_none();
+
     // Seed with <col> specs
     for i in 0..num_cols {
         if let Some(w) = col_specs.get(i).copied().flatten() {
@@ -126,7 +133,8 @@ pub fn compute_auto_column_widths(
             } else {
                 &table_box.children[cell_ref.row_idx].children[cell_ref.cell_idx]
             };
-            let (c_min, c_max, c_exp) = cell_intrinsic_metrics(cell, table_w, &mut intrinsic_memo);
+            let (c_min, c_max, c_exp) =
+                cell_intrinsic_metrics(cell, table_w, &mut intrinsic_memo, is_auto_table_width);
             let c_idx = cell_ref.start_col;
             col_min_widths[c_idx] = col_min_widths[c_idx].max(c_min);
             col_max_widths[c_idx] = col_max_widths[c_idx].max(c_max);
@@ -145,7 +153,8 @@ pub fn compute_auto_column_widths(
             } else {
                 &table_box.children[cell_ref.row_idx].children[cell_ref.cell_idx]
             };
-            let (c_min, c_max, _) = cell_intrinsic_metrics(cell, table_w, &mut intrinsic_memo);
+            let (c_min, c_max, _) =
+                cell_intrinsic_metrics(cell, table_w, &mut intrinsic_memo, is_auto_table_width);
             let c_idx = cell_ref.start_col;
             let actual_span = cell_ref.col_span;
             let internal_spacing = (actual_span - 1) as f32 * border_spacing;
@@ -181,34 +190,24 @@ pub fn compute_auto_column_widths(
 
     let sum_min: f32 = col_min_widths.iter().sum();
     let sum_max: f32 = col_max_widths.iter().sum();
-    let mut col_widths = vec![0.0f32; num_cols];
-
-    if available_w <= sum_min {
-        for i in 0..num_cols {
-            col_widths[i] = col_min_widths[i];
-        }
+    let col_widths = if available_w <= sum_min {
+        col_min_widths.clone()
     } else if available_w <= sum_max {
         let extra = available_w - sum_min;
         let diff_sum = (sum_max - sum_min).max(1.0);
+        let mut w = vec![0.0f32; num_cols];
         for i in 0..num_cols {
             let col_diff = (col_max_widths[i] - col_min_widths[i]).max(0.0);
-            col_widths[i] = (col_min_widths[i] + extra * (col_diff / diff_sum)).max(1.0);
+            w[i] = (col_min_widths[i] + extra * (col_diff / diff_sum)).max(1.0);
         }
+        w
     } else {
         // CSS 2.1 §17.5.2: If width: auto and no explicit HTML width, table does not expand beyond max-width
-        let is_auto_table_width = table_box
-            .style
-            .as_ref()
-            .map(|s| s.width == mango_css::values::Length::Auto)
-            .unwrap_or(true)
-            && table_box.get_attribute("width").is_none();
-
         if is_auto_table_width {
-            for i in 0..num_cols {
-                col_widths[i] = col_max_widths[i];
-            }
+            col_max_widths.clone()
         } else {
             let surplus = available_w - sum_max;
+            let mut w = vec![0.0f32; num_cols];
             let num_auto = col_explicit_widths.iter().filter(|w| w.is_none()).count();
             if num_auto > 0 {
                 let auto_max_sum: f32 = col_max_widths
@@ -224,23 +223,23 @@ pub fn compute_auto_column_widths(
                         } else {
                             1.0 / num_auto as f32
                         };
-                        col_widths[i] = (col_max_widths[i] + surplus * share).max(1.0);
+                        w[i] = (col_max_widths[i] + surplus * share).max(1.0);
                     } else {
-                        col_widths[i] = col_max_widths[i].max(1.0);
+                        w[i] = col_max_widths[i].max(1.0);
                     }
                 }
             } else if sum_max > 0.0 {
                 for i in 0..num_cols {
-                    col_widths[i] =
-                        (col_max_widths[i] + surplus * (col_max_widths[i] / sum_max)).max(1.0);
+                    w[i] = (col_max_widths[i] + surplus * (col_max_widths[i] / sum_max)).max(1.0);
                 }
             } else {
                 let eq = (available_w / num_cols as f32).max(1.0);
                 for i in 0..num_cols {
-                    col_widths[i] = eq;
+                    w[i] = eq;
                 }
             }
+            w
         }
-    }
+    };
     col_widths
 }

@@ -141,6 +141,7 @@ pub enum CssPropertyId {
     // ── Flexbox ──
     FlexDirection,
     FlexWrap,
+    FlexLineCount,
     JustifyContent,
     JustifyItems,
     JustifySelf,
@@ -173,6 +174,7 @@ pub enum CssPropertyId {
     WebkitBackdropFilter,
     MixBlendMode,
     BackgroundBlendMode,
+    Clip,
     ClipPath,
     WebkitClipPath,
     MaskMode,

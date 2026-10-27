@@ -137,8 +137,30 @@ pub(crate) fn apply_layout_property(style: &mut ComputedStyle, prop: &str, val: 
                 "nowrap" => style.flex_wrap = FlexWrap::NoWrap,
                 "wrap" => style.flex_wrap = FlexWrap::Wrap,
                 "wrap-reverse" => style.flex_wrap = FlexWrap::WrapReverse,
+                "balance" => style.flex_wrap = FlexWrap::Balance,
+                "wrap-reverse balance" => style.flex_wrap = FlexWrap::WrapReverseBalance,
                 _ => {}
             },
+            _ => {}
+        },
+        "flex-line-count" => match val {
+            Value::Number(n) => {
+                let count = n.round() as i64;
+                if count >= 1 {
+                    style.flex_line_count = Some(count as u32);
+                }
+            }
+            Value::Length(len) => {
+                let px = len.to_px(style.font_size, style.root_font_size, 0.0);
+                if px.is_nan() {
+                    style.flex_line_count = Some(1);
+                } else {
+                    let count = px.round() as i64;
+                    if count >= 1 {
+                        style.flex_line_count = Some(count as u32);
+                    }
+                }
+            }
             _ => {}
         },
         "justify-content" => match val {
@@ -149,6 +171,10 @@ pub(crate) fn apply_layout_property(style: &mut ComputedStyle, prop: &str, val: 
                 "center" => style.justify_content = JustifyContent::Center,
                 "flex-start" => style.justify_content = JustifyContent::FlexStart,
                 "flex-end" => style.justify_content = JustifyContent::FlexEnd,
+                "start" => style.justify_content = JustifyContent::Start,
+                "end" => style.justify_content = JustifyContent::End,
+                "left" => style.justify_content = JustifyContent::Left,
+                "right" => style.justify_content = JustifyContent::Right,
                 "space-between" => style.justify_content = JustifyContent::SpaceBetween,
                 "space-around" => style.justify_content = JustifyContent::SpaceAround,
                 "space-evenly" => style.justify_content = JustifyContent::SpaceEvenly,
@@ -321,6 +347,8 @@ pub(crate) fn apply_layout_property(style: &mut ComputedStyle, prop: &str, val: 
                     JustifyContent::SpaceBetween => AlignContent::SpaceBetween,
                     JustifyContent::SpaceAround => AlignContent::SpaceAround,
                     JustifyContent::SpaceEvenly => AlignContent::SpaceEvenly,
+                    JustifyContent::Start | JustifyContent::Left => AlignContent::FlexStart,
+                    JustifyContent::End | JustifyContent::Right => AlignContent::FlexEnd,
                 };
             }
             Value::AlignItems(ai) => {

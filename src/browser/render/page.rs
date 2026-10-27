@@ -410,6 +410,32 @@ impl BrowserChrome {
             dl.push(cmd);
         }
 
+        // Append Scrollbar overlay commands if active
+        if let Some((bounds, s_dl)) = self.build_scrollbar_display_list((width, height)) {
+            for mut cmd in s_dl.into_iter() {
+                match &mut cmd {
+                    DisplayCommand::FillRect { rect, .. } => {
+                        *rect = Rect::new(
+                            rect.x() + bounds.x(),
+                            rect.y() + bounds.y(),
+                            rect.width(),
+                            rect.height(),
+                        );
+                    }
+                    DisplayCommand::FillRoundedRect { rect, .. } => {
+                        *rect = Rect::new(
+                            rect.x() + bounds.x(),
+                            rect.y() + bounds.y(),
+                            rect.width(),
+                            rect.height(),
+                        );
+                    }
+                    _ => {}
+                }
+                dl.push(cmd);
+            }
+        }
+
         dl
     }
 }

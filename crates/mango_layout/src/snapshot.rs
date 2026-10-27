@@ -157,41 +157,7 @@ impl LayoutSnapshot {
 
     /// Performs hit-testing against the frozen layout tree, returning the deepest hit DOM node.
     pub fn hit_test(&self, point: Point) -> Option<NodeId> {
-        fn hit_test_box(b: &LayoutBox, p: Point) -> Option<NodeId> {
-            if !b.is_visible() {
-                return None;
-            }
-            let border_box = b.dimensions.border_box();
-            if !border_box.contains(p) {
-                return None;
-            }
-            if b.is_scroll_container() {
-                if b.dimensions.padding_box().contains(p) {
-                    for child in b.children.iter().rev() {
-                        let child_pt = if child
-                            .style
-                            .as_ref()
-                            .is_some_and(|s| s.position == mango_css::values::Position::Fixed)
-                        {
-                            p
-                        } else {
-                            Point::new(p.x + b.scroll_offset_x, p.y + b.scroll_offset_y)
-                        };
-                        if let Some(hit) = hit_test_box(child, child_pt) {
-                            return Some(hit);
-                        }
-                    }
-                }
-            } else {
-                for child in b.children.iter().rev() {
-                    if let Some(hit) = hit_test_box(child, p) {
-                        return Some(hit);
-                    }
-                }
-            }
-            b.node_id
-        }
-        hit_test_box(&self.root_box, point)
+        self.root_box.hit_test(point)
     }
 
     /// Performs hit-testing taking into account a viewport vertical scroll offset.

@@ -92,6 +92,8 @@ pub struct BrowserChrome {
     /// DOM/style changes requested during a JS turn. The UI loop flushes this
     /// once after script and animation work instead of relayouting per callback.
     pub(crate) layout_pending: bool,
+    /// Coalesced asynchronous layout pipeline used by the desktop UI thread.
+    pub(crate) async_layout: render::layout::AsyncLayoutCoordinator,
     /// HTTP and resource loader.
     pub(crate) loader: ResourceLoader,
     /// Vertical scroll offset in the content area (f32 for rendering/layout interoperability).
@@ -195,6 +197,10 @@ pub struct BrowserChrome {
     pub zoom_level: f32,
     /// Fullscreen mode toggle (F11).
     pub is_fullscreen: bool,
+    /// Dedicated actor handle for concurrent out-of-process renderer execution.
+    pub(crate) renderer_actor: Option<crate::renderer_actor::RendererActorHandle>,
+    /// Generation counter guarding out-of-process frames.
+    pub(crate) renderer_generation: u64,
 }
 
 impl BrowserChrome {
@@ -245,6 +251,7 @@ impl BrowserChrome {
             style_index_version: u64::MAX,
             style_index_viewport: (0, 0),
             layout_pending: false,
+            async_layout: render::layout::AsyncLayoutCoordinator::new(),
             scroll_y: 0.0,
             scroll_y_f64: 0.0,
             config: Config::new(),
@@ -297,6 +304,8 @@ impl BrowserChrome {
             find_in_page: FindInPage::default(),
             zoom_level: 1.0,
             is_fullscreen: false,
+            renderer_actor: None,
+            renderer_generation: 1,
         };
 
         mark_ui_thread();
@@ -414,6 +423,72 @@ impl BrowserChrome {
         } else {
             Err("No JS runtime".to_string())
         }
+    }
+
+    /// Polls and drains asynchronous messages from the isolated Out-of-Process Renderer.
+    /// Returns true if any applied frame changed visible presentation.
+    pub fn tick_renderer(&mut self) -> bool {
+        let Some(ref mut renderer) = self.renderer_actor else {
+            return false;
+        };
+        let mut messages = Vec::new();
+        while let Ok(msg) = renderer.result_rx.try_recv() {
+            messages.push(msg);
+        }
+        let mut updated = false;
+        for msg in messages {
+            match msg {
+                crate::renderer_actor::RendererResult::FrameReady(frame) => {
+                    if frame.generation >= self.renderer_generation {
+                        self.page_display_list = frame.display_list;
+                        self.cached_scrollable_height = frame.scrollable_height;
+                        self.canvas_bg = frame.canvas_bg;
+                        if let Some(title) = frame.title {
+                            self.page_title = title.clone();
+                            if let Some(tab) = self.tabs.get_mut(self.active_tab_idx) {
+                                tab.set_title(title);
+                            }
+                        }
+                        if let Some(root) = frame.root_box {
+                            self.root_box = Some(root);
+                        }
+                        if let Some(doc) = frame.doc_mirror {
+                            self.cached_document = Some(doc);
+                        }
+                        self.style_snapshot = frame.style_snapshot;
+                        self.page_dirty = true;
+                        updated = true;
+                    }
+                }
+                crate::renderer_actor::RendererResult::OpenWindow { url, features: _ } => {
+                    let nav_url = if let Some(base) = &self.base_url {
+                        base.resolve(&url).map(|u| u.to_string()).unwrap_or(url)
+                    } else {
+                        url
+                    };
+                    self.new_tab_and_navigate(&nav_url);
+                    updated = true;
+                }
+                crate::renderer_actor::RendererResult::TitleChanged(title) => {
+                    self.page_title = title.clone();
+                    if let Some(tab) = self.tabs.get_mut(self.active_tab_idx) {
+                        tab.set_title(title);
+                    }
+                    updated = true;
+                }
+                crate::renderer_actor::RendererResult::ConsoleMessage { level, text } => {
+                    self.devtools.log(level, text);
+                }
+                crate::renderer_actor::RendererResult::NavigationRequested { url } => {
+                    self.navigate(&url);
+                    updated = true;
+                }
+                crate::renderer_actor::RendererResult::Error { message } => {
+                    log::warn!("Isolated renderer warning: {message}");
+                }
+            }
+        }
+        updated
     }
 }
 

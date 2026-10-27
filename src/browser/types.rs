@@ -107,10 +107,12 @@ impl std::ops::Deref for DocumentView<'_> {
 #[derive(Debug, Clone)]
 pub enum ScriptToRun {
     Inline {
+        node_id: Option<mango_html::NodeId>,
         code: String,
         is_module: bool,
     },
     External {
+        node_id: Option<mango_html::NodeId>,
         src: String,
         is_defer: bool,
         is_async: bool,
@@ -118,6 +120,7 @@ pub enum ScriptToRun {
         nonce: Option<String>,
     },
     Preloaded {
+        node_id: Option<mango_html::NodeId>,
         src: String,
         code: String,
         is_defer: bool,
@@ -134,6 +137,23 @@ pub struct ScheduledScript {
 }
 
 impl ScriptToRun {
+    pub fn node_id(&self) -> Option<mango_html::NodeId> {
+        match self {
+            ScriptToRun::Inline { node_id, .. }
+            | ScriptToRun::External { node_id, .. }
+            | ScriptToRun::Preloaded { node_id, .. } => *node_id,
+        }
+    }
+
+    pub fn src(&self) -> Option<&str> {
+        match self {
+            ScriptToRun::External { src, .. } | ScriptToRun::Preloaded { src, .. } => {
+                Some(src.as_str())
+            }
+            ScriptToRun::Inline { .. } => None,
+        }
+    }
+
     pub fn is_defer(&self) -> bool {
         match self {
             ScriptToRun::External {

@@ -1,7 +1,7 @@
 //! Document preamble insertion modes: Initial, BeforeHtml, BeforeHead, InHead, AfterHead.
 
 use crate::dom::QuirksMode;
-use crate::elements::{is_escapable_raw_text_element, is_raw_text_element, is_void_element};
+use crate::elements::{is_escapable_raw_text_element, is_raw_text_element};
 use crate::tokenizer::Token;
 use crate::tree_builder::types::{FormattingEntry, InsertionMode, TreeBuilder};
 
@@ -131,7 +131,7 @@ impl<'a> TreeBuilder<'a> {
             }
             Token::StartTag {
                 name, attributes, ..
-            } if is_void_element(&name) => {
+            } if matches!(name.as_str(), "meta" | "link" | "base" | "basefont" | "bgsound") => {
                 self.insert_element(&name, attributes);
             }
             Token::StartTag { name, .. } if name == "head" => {}

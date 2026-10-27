@@ -42,14 +42,19 @@ pub use damage::{DamageRegion, MAX_DAMAGE_RECTS};
 pub use display_list::{BorderWidths, DiffOp, DisplayCommand, DisplayList, DisplayListDiff};
 pub use font::{
     FontFamily, FontManager, FontStyle, FontWeight, TextDecoration, bump_web_font_epoch,
-    decode_font_bytes, font_manager, prune_web_fonts, web_font_epoch,
+    decode_font_bytes, font_manager, is_arabic_char, is_complex_char, is_devanagari_char,
+    is_thai_char, prune_web_fonts, segment_thai_syllables, shape_arabic, shape_complex_script,
+    shape_devanagari, shape_thai, web_font_epoch,
 };
 pub use image_decode::{
     DecodedImage, cache_image, decode_data_uri, decode_image_bytes, get_cached_image,
     prune_image_caches,
 };
 pub use layer::{LayerKind, LayerTree, RenderLayer};
-pub use painter::{paint, paint_damage, paint_with_clip};
+pub use painter::{
+    invert_matrix, is_inside_rounded_rect, is_point_inside_clip_path, paint, paint_damage,
+    paint_with_clip,
+};
 pub use pdf::{PageSize, PdfOptions, print_to_pdf, render_to_pdf};
 pub use svg::{
     SvgSymbol, clear_global_svg_symbols, get_global_svg_symbol, get_svg_intrinsic_dimensions,

@@ -137,6 +137,7 @@ pub fn build_display_list_with_scroll_xy(
         None,
         skip_html_bg,
         skip_body_bg,
+        true,
     );
     list
 }
@@ -158,6 +159,7 @@ pub(crate) fn render_layout_box(
     sticky_cb: Option<StickyContainingBlock>,
     skip_html_bg: bool,
     skip_body_bg: bool,
+    is_stacking_context: bool,
 ) {
     let s_ref = box_node.style.as_ref();
 
@@ -214,7 +216,53 @@ pub(crate) fn render_layout_box(
     let push_filter = s_ref.is_some_and(|st| !st.filter.is_empty());
     let push_backdrop = s_ref.is_some_and(|st| !st.backdrop_filter.is_empty());
 
+    let mut pushed_clip_cmd = false;
     if let Some(st) = s_ref {
+        if st.clip != mango_css::values::ClipRect::Auto
+            && matches!(
+                st.position,
+                mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
+            )
+        {
+            if let mango_css::values::ClipRect::Rect { top, right, bottom, left } = st.clip {
+                let fs = st.font_size;
+                let rfs = st.root_font_size;
+                let bw = elem_rect.width();
+                let bh = elem_rect.height();
+                let top_px = match top {
+                    mango_css::values::Length::Auto => 0.0,
+                    l => l.to_px_with_viewport(fs, rfs, bh, bh),
+                };
+                let left_px = match left {
+                    mango_css::values::Length::Auto => 0.0,
+                    l => l.to_px_with_viewport(fs, rfs, bw, bw),
+                };
+                let bottom_px = match bottom {
+                    mango_css::values::Length::Auto => bh,
+                    l => l.to_px_with_viewport(fs, rfs, bh, bh),
+                };
+                let right_px = match right {
+                    mango_css::values::Length::Auto => bw,
+                    l => l.to_px_with_viewport(fs, rfs, bw, bw),
+                };
+                let w = (right_px - left_px).max(0.0);
+                let h = (bottom_px - top_px).max(0.0);
+                let clip_r = Rect::new(elem_rect.x() + left_px, elem_rect.y() + top_px, w, h);
+                list.push(DisplayCommand::PushClip { rect: clip_r });
+                pushed_clip_cmd = true;
+                if w <= 0.001 || h <= 0.001 {
+                    list.push(DisplayCommand::PopClip);
+                    if transform_matrix.is_some() {
+                        list.push(DisplayCommand::PopTransform);
+                    }
+                    if push_blend {
+                        list.push(DisplayCommand::PopBlendMode);
+                    }
+                    return;
+                }
+            }
+        }
+
         if push_clip_path {
             list.push(DisplayCommand::PushClipPath {
                 clip_path: Box::new(st.clip_path.clone()),
@@ -252,6 +300,7 @@ pub(crate) fn render_layout_box(
         sticky_cb,
         skip_html_bg,
         skip_body_bg,
+        is_stacking_context,
     );
 
     if push_backdrop {
@@ -262,6 +311,9 @@ pub(crate) fn render_layout_box(
     }
     if push_clip_path {
         list.push(DisplayCommand::PopClipPath);
+    }
+    if pushed_clip_cmd {
+        list.push(DisplayCommand::PopClip);
     }
     if transform_matrix.is_some() {
         list.push(DisplayCommand::PopTransform);
@@ -286,6 +338,7 @@ fn render_layout_box_inner(
     sticky_cb: Option<StickyContainingBlock>,
     skip_html_bg: bool,
     skip_body_bg: bool,
+    is_stacking_context: bool,
 ) {
     let style = box_node.style.as_deref();
     let is_visible = style.is_none_or(|s| s.is_visible());
@@ -449,5 +502,6 @@ fn render_layout_box_inner(
         current_sticky_cb,
         skip_html_bg,
         skip_body_bg,
+        is_stacking_context,
     );
 }

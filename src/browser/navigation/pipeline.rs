@@ -154,7 +154,7 @@ fn prepare_document_pipeline_internal(
 
     let mut raw_scripts = Vec::new();
     collect_scripts(&doc, doc.root(), &mut raw_scripts);
-    const SCRIPT_FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+    const SCRIPT_FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
     let mut to_fetch: Vec<(usize, String, Option<String>)> = Vec::new();
     if !is_progressive {
         for (idx, s) in raw_scripts.iter().enumerate() {
@@ -215,13 +215,49 @@ fn prepare_document_pipeline_internal(
         }
     }
 
+    // Prefetch transitive ES module imports for any fetched modules
+    if !should_cancel() {
+        for (idx, res) in fetched_scripts.iter() {
+            if let Ok(code) = res {
+                if let Some(s) = raw_scripts.get(*idx) {
+                    if s.is_module() {
+                        let module_base = if let Some(src) = s.src() {
+                            final_url.resolve(src).unwrap_or_else(|_| final_url.clone())
+                        } else {
+                            final_url.clone()
+                        };
+                        for import_path in scan_es_module_imports(code) {
+                            if let Ok(resolved) = module_base.resolve(&import_path) {
+                                let key = resolved.as_str();
+                                if loader.cache().get(&key).is_none() {
+                                    let _ = loader.fetch_script_with_nonce(
+                                        &module_base,
+                                        &import_path,
+                                        None,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     let mut preloaded_scripts = Vec::with_capacity(raw_scripts.len());
     for (idx, s) in raw_scripts.into_iter().enumerate() {
         match s {
-            ScriptToRun::Inline { code, is_module } => {
-                preloaded_scripts.push(ScriptToRun::Inline { code, is_module })
-            }
+            ScriptToRun::Inline {
+                node_id,
+                code,
+                is_module,
+            } => preloaded_scripts.push(ScriptToRun::Inline {
+                node_id,
+                code,
+                is_module,
+            }),
             ScriptToRun::External {
+                node_id,
                 src,
                 is_defer,
                 is_async,
@@ -230,6 +266,7 @@ fn prepare_document_pipeline_internal(
             } => {
                 if let Some(Ok(code)) = fetched_scripts.remove(&idx) {
                     preloaded_scripts.push(ScriptToRun::Preloaded {
+                        node_id,
                         src,
                         code,
                         is_defer,
@@ -239,6 +276,7 @@ fn prepare_document_pipeline_internal(
                     });
                 } else {
                     preloaded_scripts.push(ScriptToRun::External {
+                        node_id,
                         src,
                         is_defer,
                         is_async,
@@ -248,6 +286,7 @@ fn prepare_document_pipeline_internal(
                 }
             }
             ScriptToRun::Preloaded {
+                node_id,
                 src,
                 code,
                 is_defer,
@@ -256,6 +295,7 @@ fn prepare_document_pipeline_internal(
                 nonce,
             } => {
                 preloaded_scripts.push(ScriptToRun::Preloaded {
+                    node_id,
                     src,
                     code,
                     is_defer,
@@ -336,6 +376,7 @@ pub(crate) fn collect_scripts(doc: &Document, root_id: NodeId, scripts: &mut Vec
                 let trimmed = src.trim();
                 if !trimmed.is_empty() {
                     scripts.push(ScriptToRun::External {
+                        node_id: Some(node_id),
                         src: trimmed.to_string(),
                         is_defer,
                         is_async,
@@ -346,7 +387,11 @@ pub(crate) fn collect_scripts(doc: &Document, root_id: NodeId, scripts: &mut Vec
             } else {
                 let code = doc.text_content(node_id);
                 if !code.trim().is_empty() {
-                    scripts.push(ScriptToRun::Inline { code, is_module });
+                    scripts.push(ScriptToRun::Inline {
+                        node_id: Some(node_id),
+                        code,
+                        is_module,
+                    });
                 }
             }
         }
@@ -648,4 +693,39 @@ fn load_imported_stylesheets_parallel_cancellable(
             }
         }
     }
+}
+
+fn scan_es_module_imports(source: &str) -> Vec<String> {
+    let mut imports = Vec::new();
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("import") || trimmed.starts_with("export") {
+            if let Some(pos) = trimmed.find("from") {
+                let rest = trimmed[pos + 4..].trim();
+                if let Some(q) = rest.chars().next() {
+                    if q == '\'' || q == '"' {
+                        if let Some(end) = rest[1..].find(q) {
+                            let path = &rest[1..1 + end];
+                            if !path.is_empty() {
+                                imports.push(path.to_string());
+                            }
+                        }
+                    }
+                }
+            } else if trimmed.starts_with("import") {
+                let rest = trimmed[6..].trim();
+                if let Some(q) = rest.chars().next() {
+                    if q == '\'' || q == '"' {
+                        if let Some(end) = rest[1..].find(q) {
+                            let path = &rest[1..1 + end];
+                            if !path.is_empty() {
+                                imports.push(path.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    imports
 }

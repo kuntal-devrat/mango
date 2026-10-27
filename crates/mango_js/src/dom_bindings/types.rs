@@ -16,7 +16,38 @@ pub type DomDirtyFlag = Rc<RefCell<bool>>;
 /// The browser refreshes this after every layout so that JS measurement APIs
 /// (`getBoundingClientRect`, `offsetWidth`, `elementFromPoint`) return real values
 /// without `mango_js` depending on `mango_layout`.
-pub type LayoutBounds = Rc<RefCell<std::collections::HashMap<u32, [f32; 4]>>>;
+#[derive(Clone, Default)]
+pub struct LayoutBounds(pub Rc<RefCell<std::collections::HashMap<u32, [f32; 4]>>>);
+
+impl LayoutBounds {
+    pub fn new() -> Self {
+        Self(Rc::new(RefCell::new(std::collections::HashMap::new())))
+    }
+}
+
+impl std::ops::Deref for LayoutBounds {
+    type Target = RefCell<std::collections::HashMap<u32, [f32; 4]>>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+/// Stores node used margins `[top, right, bottom, left]` keyed by DOM `NodeId::raw()`.
+#[derive(Clone, Default)]
+pub struct LayoutMargins(pub Rc<RefCell<std::collections::HashMap<u32, [f32; 4]>>>);
+
+impl LayoutMargins {
+    pub fn new() -> Self {
+        Self(Rc::new(RefCell::new(std::collections::HashMap::new())))
+    }
+}
+
+impl std::ops::Deref for LayoutMargins {
+    type Target = RefCell<std::collections::HashMap<u32, [f32; 4]>>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 /// Optional layout provider callback invoked on demand when layout is dirty and
 /// a measurement API (`getBoundingClientRect`, `offsetWidth`, etc.) is accessed.

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use mango_core::Point;
+use mango_core::{Point, Rect};
 use mango_css::values::{TextAlign, WritingMode};
 
 use crate::box_model::BoxType;
@@ -28,12 +28,22 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
     let text_align = container
         .style
         .as_ref()
-        .map(|s| {
-            if s.direction == mango_css::values::Direction::Rtl && s.text_align == TextAlign::Left {
-                TextAlign::Right
-            } else {
-                s.text_align
+        .map(|s| match s.text_align {
+            TextAlign::Start => {
+                if s.direction == mango_css::values::Direction::Rtl {
+                    TextAlign::Right
+                } else {
+                    TextAlign::Left
+                }
             }
+            TextAlign::End => {
+                if s.direction == mango_css::values::Direction::Rtl {
+                    TextAlign::Left
+                } else {
+                    TextAlign::Right
+                }
+            }
+            other => other,
         })
         .unwrap_or(TextAlign::Left);
 
@@ -134,6 +144,11 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
     };
 
     // Collect all inline atoms from children (no synthetic spaces between TextNodes)
+    let initial_bidi_override = container.style.as_ref().and_then(|s| match s.unicode_bidi {
+        mango_css::values::UnicodeBidi::BidiOverride
+        | mango_css::values::UnicodeBidi::IsolateOverride => Some(s.unicode_bidi),
+        _ => None,
+    });
     let mut atoms: Vec<InlineAtom> = Vec::new();
     if let Some(source_children) = container.raw_children.as_deref() {
         for child in source_children {
@@ -144,6 +159,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
                 child.link_frame.as_deref(),
                 layout_width,
                 container_height,
+                initial_bidi_override,
             );
         }
     }
@@ -353,7 +369,13 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
                 true,
                 block_start_x,
             );
-            current_y += line_h.max(atom.height);
+            let step_h = line_h.max(atom.height);
+            let mut br_box = LayoutBox::new(BoxType::InlineNode, Some(atom.style.clone()));
+            br_box.node_id = atom.owner_inline_id;
+            br_box.tag_name = Some("br".to_string());
+            br_box.dimensions.content = Rect::new(line_x, current_y, 0.0, step_h);
+            positioned_boxes.push(br_box);
+            current_y += step_h;
             is_first_line = false;
             line_atoms.clear();
             line_width = 0.0;

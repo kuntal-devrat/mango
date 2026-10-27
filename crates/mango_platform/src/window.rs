@@ -81,14 +81,18 @@ impl PixelBuffer {
     }
 }
 
-/// Unified presentation surface that manages either hardware GPU compositing via `lgpu`
+/// Unified presentation surface that manages either hardware GPU compositing via `wgpu`
 /// or high-speed software compositing via `softbuffer`.
 pub enum WindowSurface {
-    Gpu(Box<crate::gpu::GpuCompositor>),
+    Gpu {
+        compositor: Box<crate::gpu::GpuCompositor>,
+        window: Arc<Window>,
+    },
     Software {
         pixel_buffer: PixelBuffer,
         compositor: mango_render::SoftwareCompositor,
     },
+    Transitioning,
 }
 
 impl WindowSurface {
@@ -97,8 +101,11 @@ impl WindowSurface {
     pub fn new(window: Arc<Window>) -> Self {
         match crate::gpu::GpuCompositor::new(window.clone()) {
             Ok(gpu) => {
-                log::info!("Hardware GPU Compositor active (lgpu) 🚀");
-                Self::Gpu(Box::new(gpu))
+                log::info!("Hardware GPU Compositor active (wgpu) 🚀");
+                Self::Gpu {
+                    compositor: Box::new(gpu),
+                    window,
+                }
             }
             Err(err) => {
                 log::info!(
@@ -118,22 +125,24 @@ impl WindowSurface {
     /// Resizes the surface when the window changes size.
     pub fn resize(&mut self, width: u32, height: u32) {
         match self {
-            Self::Gpu(gpu) => gpu.resize(width, height),
+            Self::Gpu { compositor, .. } => compositor.resize(width, height),
             Self::Software { pixel_buffer, .. } => pixel_buffer.resize(width, height),
+            Self::Transitioning => {}
         }
     }
 
     /// Returns the current surface dimensions in pixels.
     pub fn size(&self) -> (u32, u32) {
         match self {
-            Self::Gpu(gpu) => (gpu.width, gpu.height),
+            Self::Gpu { compositor, .. } => (compositor.width, compositor.height),
             Self::Software { pixel_buffer, .. } => pixel_buffer.size(),
+            Self::Transitioning => (0, 0),
         }
     }
 
     /// Returns `true` if this surface is backed by a hardware GPU device.
     pub fn is_gpu(&self) -> bool {
-        matches!(self, Self::Gpu(_))
+        matches!(self, Self::Gpu { .. })
     }
 
     /// Composites the entire layer tree and presents the frame.
@@ -143,7 +152,27 @@ impl WindowSurface {
         bg_color: Color,
     ) -> Result<(), String> {
         match self {
-            Self::Gpu(gpu) => gpu.render(layers, bg_color),
+            Self::Gpu { compositor, window } => {
+                if let Err(err) = compositor.render(layers, bg_color) {
+                    log::warn!("GPU compositor failed; switching to software presentation: {err}");
+                    let win = window.clone();
+                    // Explicitly drop GPU compositor and its swapchain/surface first
+                    // before softbuffer acquires the native window surface.
+                    let old_state = std::mem::replace(self, Self::Transitioning);
+                    drop(old_state);
+                    let mut pixel_buffer = PixelBuffer::new(win);
+                    let comp = mango_render::SoftwareCompositor::new();
+                    pixel_buffer.draw(|buffer, w, h| {
+                        comp.composite(layers, buffer, w, h, bg_color);
+                    });
+                    *self = Self::Software {
+                        pixel_buffer,
+                        compositor: comp,
+                    };
+                    return Ok(());
+                }
+                Ok(())
+            }
             Self::Software {
                 pixel_buffer,
                 compositor,
@@ -153,6 +182,7 @@ impl WindowSurface {
                 });
                 Ok(())
             }
+            Self::Transitioning => Ok(()),
         }
     }
 
@@ -163,7 +193,26 @@ impl WindowSurface {
         bg_color: Color,
     ) -> Result<(), String> {
         match self {
-            Self::Gpu(gpu) => gpu.render_display_list(dl, bg_color),
+            Self::Gpu { compositor, window } => {
+                if let Err(err) = compositor.render_display_list(dl, bg_color) {
+                    log::warn!("GPU presentation failed; switching to software presentation: {err}");
+                    let win = window.clone();
+                    // Explicitly drop GPU compositor and its swapchain/surface first
+                    let old_state = std::mem::replace(self, Self::Transitioning);
+                    drop(old_state);
+                    let mut pixel_buffer = PixelBuffer::new(win);
+                    pixel_buffer.draw(|buffer, w, h| {
+                        buffer.fill(bg_color.to_rgb_u32());
+                        mango_render::painter::paint(dl, buffer, w, h);
+                    });
+                    *self = Self::Software {
+                        pixel_buffer,
+                        compositor: mango_render::SoftwareCompositor::new(),
+                    };
+                    return Ok(());
+                }
+                Ok(())
+            }
             Self::Software { pixel_buffer, .. } => {
                 pixel_buffer.draw(|buffer, w, h| {
                     buffer.fill(bg_color.to_rgb_u32());
@@ -171,6 +220,7 @@ impl WindowSurface {
                 });
                 Ok(())
             }
+            Self::Transitioning => Ok(()),
         }
     }
 }

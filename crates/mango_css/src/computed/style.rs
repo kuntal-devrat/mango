@@ -9,7 +9,8 @@ use crate::values::{
     AlignContent, AlignItems, AlignSelf, Animation, Appearance, BackgroundAttachment,
     BackgroundClip, BackgroundLayer, BackgroundRepeat, BackgroundSize, BlendMode, BorderCollapse,
     BorderImage, BorderStyle, BoxShadow, BoxSizing, BreakInside, CaptionSide, Clear, ClipPath,
-    ColumnSpan, Contain, ContainerType, ContentItem, ContentVisibility, CounterAction, Cursor,
+    ClipRect, ColumnSpan, Contain, ContainerType, ContentItem, ContentVisibility, CounterAction,
+    Cursor,
     Direction, Display, FilterFunction, FlexDirection, FlexWrap, Float, FontDisplay,
     FontFeatureSettings, FontStyle, FontVariationSettings, FontWeight, Gradient, GridAutoFlow,
     GridPlacement, GridTrackSize, Hyphens, Isolation, JustifyContent, JustifyItems, JustifySelf,
@@ -121,6 +122,7 @@ pub struct ComputedStyle {
     // Flexbox properties
     pub flex_direction: FlexDirection,
     pub flex_wrap: FlexWrap,
+    pub flex_line_count: Option<u32>,
     pub justify_content: JustifyContent,
     pub justify_items: JustifyItems,
     pub justify_self: JustifySelf,
@@ -232,6 +234,8 @@ pub struct ComputedStyle {
     pub background_blend_mode: BlendMode,
     /// CSS `clip-path` property.
     pub clip_path: ClipPath,
+    /// CSS 2.1 `clip` property.
+    pub clip: ClipRect,
     /// CSS `mask-mode` property.
     pub mask_mode: MaskMode,
     /// CSS `transform-style` is not yet tracked; presence of `will-change` is captured here.
@@ -414,7 +418,7 @@ impl Default for ComputedStyle {
             font_style: FontStyle::Normal,
             font_family: "serif".to_string(),
             line_height: None,
-            text_align: TextAlign::Left,
+            text_align: TextAlign::Start,
             text_decoration: TextDecoration::None,
             text_decoration_style: TextDecorationStyle::Solid,
             text_decoration_color: None,
@@ -467,6 +471,7 @@ impl Default for ComputedStyle {
 
             flex_direction: FlexDirection::Row,
             flex_wrap: FlexWrap::NoWrap,
+            flex_line_count: None,
             justify_content: JustifyContent::Normal,
             justify_items: JustifyItems::Stretch,
             justify_self: JustifySelf::Auto,
@@ -559,6 +564,7 @@ impl Default for ComputedStyle {
             mix_blend_mode: BlendMode::Normal,
             background_blend_mode: BlendMode::Normal,
             clip_path: ClipPath::None,
+            clip: ClipRect::Auto,
             mask_mode: MaskMode::MatchSource,
             will_change: false,
             will_change_properties: Vec::new(),

@@ -775,3 +775,11 @@ fn test_declarative_shadow_dom_parsing() {
         .expect("slotted-desc in light DOM");
     assert_eq!(doc.text_content(desc), "Light DOM slotted content");
 }
+
+#[test]
+fn test_parse_trailing_open_tag_eof() {
+    // Verifies that a trailing open tag delimiter '<' at EOF does not cause an infinite loop in the tokenizer.
+    let doc = parse_html("<li class=\"foo\"><");
+    let root = doc.root();
+    assert!(doc.find_element_by_tag(root, "li").is_some());
+}

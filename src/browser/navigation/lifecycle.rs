@@ -15,13 +15,14 @@ impl BrowserChrome {
     /// Polls background navigation. Returns true if any applied result changed
     /// visible state (the page or the tab strip).
     ///
-    /// Every drained result is considered. Epochs are per-tab, so a result for
-    /// tab A is still valid while tab B has a newer navigation in flight.
+    /// At most one result is applied per turn so a burst of progressive or
+    /// multi-tab results cannot monopolize the window thread. Epochs are
+    /// per-tab, so a result for tab A remains valid while tab B navigates.
     pub fn tick_navigation(&mut self) -> bool {
         let mut applied_any = false;
         let mut received_any = false;
         let mut disconnected = false;
-        loop {
+        for _ in 0..8 {
             match self.nav_actor.try_recv() {
                 Ok(res) => {
                     received_any = true;
@@ -42,9 +43,6 @@ impl BrowserChrome {
         }
         if received_any {
             self.persist_cookies();
-        }
-        if applied_any {
-            crate::trim_memory();
         }
         applied_any
     }
@@ -76,6 +74,12 @@ impl BrowserChrome {
                 epoch,
             } => {
                 if !self.nav_actor.is_current(tab_id, epoch) {
+                    return false;
+                }
+                // Progressive preparation can finish after the final response
+                // result because it runs independently from the network reader.
+                // Never let a late partial snapshot overwrite a completed page.
+                if !self.tabs.get(tab_id).is_some_and(|tab| tab.loading) {
                     return false;
                 }
                 if tab_id == self.active_tab_idx {
@@ -138,6 +142,7 @@ impl BrowserChrome {
                         has_active_animations: false,
                         canvas_bg: mango_core::Color::WHITE,
                         engine: None,
+                        renderer_actor: None,
                     });
                     false
                 } else {
@@ -193,6 +198,7 @@ impl BrowserChrome {
             has_active_animations: false,
             canvas_bg: mango_core::Color::WHITE,
             engine: None,
+            renderer_actor: None,
         });
     }
 
@@ -250,7 +256,7 @@ impl BrowserChrome {
     pub fn apply_prepared_document(&mut self, prep: PreparedDocument, push_history: bool) {
         let final_url = prep.url.clone();
         self.base_url = Some(final_url.clone());
-        self.cached_stylesheets = prep.cached_stylesheets;
+        self.cached_stylesheets = prep.cached_stylesheets.clone();
         self.layer_tree.clear_page_tiles();
         self.display_list_cache.lock().unwrap().clear();
         self.page_display_list = DisplayList::new();
@@ -279,6 +285,37 @@ impl BrowserChrome {
             crate::devtools::ConsoleLevel::Info,
             format!("Navigated to {}", final_url),
         );
+        if self.async_navigation {
+            let next_gen = self.renderer_generation.wrapping_add(1);
+            self.renderer_generation = next_gen;
+            let vp_width = self.content_width();
+            let vp_height = self.content_height();
+            let session_storage = self
+                .tabs
+                .get(self.active_tab_idx)
+                .map(|t| t.session_storage.clone())
+                .unwrap_or_else(|| std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())));
+
+            let payload = crate::renderer_actor::LoadDocumentPayload {
+                url: final_url.to_string(),
+                doc: prep.doc.clone(),
+                html: prep.html.clone(),
+                stylesheets: prep.cached_stylesheets.clone(),
+                preloaded_scripts: prep.preloaded_scripts.clone(),
+                viewport_width: vp_width,
+                viewport_height: vp_height,
+                base_url: Some(final_url.clone()),
+                generation: next_gen,
+                local_storage: self.local_storage.clone(),
+                session_storage,
+                cookie_jar: self.cookie_jar.clone(),
+                cache: Some(self.loader.cache_arc()),
+            };
+            let renderer = self.renderer_actor.get_or_insert_with(|| {
+                crate::renderer_actor::RendererActorHandle::spawn(100 + self.active_tab_idx as u32)
+            });
+            renderer.load_document(payload);
+        }
         self.load_document_internal_with_scripts(
             prep.doc,
             prep.html,

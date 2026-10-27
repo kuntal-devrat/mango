@@ -34,6 +34,7 @@ pub struct TabWebContents {
     pub has_active_animations: bool,
     pub canvas_bg: mango_core::Color,
     pub engine: Option<mango_engine::Engine>,
+    pub renderer_actor: Option<crate::renderer_actor::RendererActorHandle>,
 }
 
 /// A single browser tab with navigation history and isolated web contents.

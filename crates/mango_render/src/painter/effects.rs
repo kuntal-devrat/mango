@@ -25,7 +25,7 @@ pub(crate) fn snapshot_rect(
     pixels
 }
 
-pub(crate) fn is_point_inside_clip_path(
+pub fn is_point_inside_clip_path(
     clip_path: &mango_css::values::ClipPath,
     bounds: &Rect,
     px: f32,

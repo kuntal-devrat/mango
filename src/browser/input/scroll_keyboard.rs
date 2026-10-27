@@ -74,6 +74,42 @@ impl BrowserChrome {
         }
     }
 
+    /// Handles mouse wheel scrolling with cubic ease-out physics and nested container dispatch.
+    pub fn handle_wheel_scroll_smooth(&mut self, delta_x: f32, delta_y: f32) {
+        let scroll_step_y = -delta_y * 100.0;
+        let scroll_step_x = -delta_x * 100.0;
+
+        let content_y = HEADER_HEIGHT + 1.0;
+        let mouse_doc_x = self.mouse_x;
+        let mouse_doc_y = (self.mouse_y - content_y).max(0.0) + self.scroll_y;
+
+        // Try nested scrolling on scrollable containers under the cursor
+        let (_unconsumed_x, unconsumed_y) = if let Some(root) = &mut self.root_box {
+            let rem =
+                root.dispatch_nested_scroll(mouse_doc_x, mouse_doc_y, scroll_step_x, scroll_step_y);
+            if (rem.0 - scroll_step_x).abs() > 0.001 || (rem.1 - scroll_step_y).abs() > 0.001 {
+                self.display_list_cache.lock().unwrap().clear();
+            }
+            rem
+        } else {
+            (scroll_step_x, scroll_step_y)
+        };
+
+        if unconsumed_y.abs() > 0.001 {
+            let max = self.max_scroll() as f64;
+            if max > 0.0 {
+                let current_target = self
+                    .smooth_scroll
+                    .as_ref()
+                    .filter(|s| s.active)
+                    .map(|s| s.target_y)
+                    .unwrap_or(self.scroll_y_f64);
+                let new_target = (current_target + unconsumed_y as f64).clamp(0.0, max);
+                self.scroll_smooth_to_f64(new_target, Some(std::time::Duration::from_millis(180)));
+            }
+        }
+    }
+
     /// Handles keyboard events.
     pub fn handle_key_event(&mut self, event: &KeyEvent) {
         // F12 or Ctrl+Shift+I toggles DevTools

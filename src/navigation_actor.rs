@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, TryRecvError, channel};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -26,6 +26,26 @@ use mango_net::{ResourceLoader, Url};
 pub const NAV_WORKER_COUNT: usize = 4;
 /// Per-navigation fetch timeout applied inside the pipeline stages.
 pub const NAV_FETCH_TIMEOUT: Duration = Duration::from_secs(60);
+
+static PROGRESSIVE_PREP_POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+
+fn progressive_prep_pool() -> &'static rayon::ThreadPool {
+    PROGRESSIVE_PREP_POOL.get_or_init(|| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(2)
+            .thread_name(|i| format!("mango-progressive-prep-{i}"))
+            .stack_size(16 * 1024 * 1024)
+            .build()
+            .expect("failed to initialize progressive preparation pool")
+    })
+}
+
+fn contains_ascii_case_insensitive(haystack: &[u8], needle: &[u8]) -> bool {
+    !needle.is_empty()
+        && haystack
+            .windows(needle.len())
+            .any(|window| window.eq_ignore_ascii_case(needle))
+}
 
 /// Commands sent from the UI thread to the Navigation Actor.
 #[derive(Debug)]
@@ -253,6 +273,8 @@ impl NavigationActorHandle {
                             let loader = loader.clone();
                             let url = url.clone();
                             move || {
+                                let mut boundary_tail = Vec::new();
+                                let mut paint_boundary_seen = false;
                                 loader.fetch_document_streaming(&url, move |chunk| {
                                     if !cancel_flag_cb.is_current(tab_id, epoch) {
                                         return false;
@@ -262,40 +284,77 @@ impl NavigationActorHandle {
                                         .expect("inc_parser lock")
                                         .feed_bytes(chunk);
 
-                                    // First Contentful Paint: check if <head> completed or <body> started
-                                    if !early_fcp_cb.swap(true, Ordering::SeqCst) {
-                                        let accumulated = {
+                                    // Take one cheap source snapshot when the
+                                    // first paint boundary arrives. Parsing and
+                                    // resource preparation run on a separate
+                                    // bounded pool so the network reader can
+                                    // continue consuming response chunks.
+                                    if !early_fcp_cb.load(Ordering::Relaxed) {
+                                        if !paint_boundary_seen {
+                                            let mut scan = Vec::with_capacity(
+                                                boundary_tail.len() + chunk.len(),
+                                            );
+                                            scan.extend_from_slice(&boundary_tail);
+                                            scan.extend_from_slice(chunk);
+                                            paint_boundary_seen =
+                                                contains_ascii_case_insensitive(&scan, b"</head>")
+                                                    || contains_ascii_case_insensitive(
+                                                        &scan,
+                                                        b"<body",
+                                                    );
+                                            if !paint_boundary_seen {
+                                                let keep = scan.len().min(6);
+                                                boundary_tail.clear();
+                                                boundary_tail.extend_from_slice(
+                                                    &scan[scan.len() - keep..],
+                                                );
+                                            }
+                                        }
+                                        let snapshot = {
                                             let guard =
                                                 inc_parser_cb.lock().expect("inc_parser lock");
-                                            guard.accumulated_html().to_ascii_lowercase()
-                                        };
-                                        if accumulated.len() >= 512
-                                            && (accumulated.contains("</head>")
-                                                || accumulated.contains("<body"))
-                                        {
-                                            let partial_doc = inc_parser_cb
-                                                .lock()
-                                                .expect("inc_parser lock")
-                                                .current_document();
-                                            let prep =
-                                                crate::browser::prepare_document_pipeline_from_doc(
-                                                    &loader_cb,
-                                                    partial_doc,
-                                                    url_cb.clone(),
-                                                    &|| !cancel_flag_cb.is_current(tab_id, epoch),
-                                                );
-                                            if cancel_flag_cb.is_current(tab_id, epoch) {
-                                                let _ = result_tx_cb.send(
-                                                    NavResult::ProgressiveReady {
-                                                        tab_id,
-                                                        prep,
-                                                        epoch,
-                                                    },
-                                                );
-                                                mango_core::wake_event_loop();
+                                            let source = guard.accumulated_html().as_bytes();
+                                            if source.len() < 512 || !paint_boundary_seen {
+                                                None
+                                            } else {
+                                                Some(guard.snapshot_html())
                                             }
-                                        } else {
-                                            early_fcp_cb.store(false, Ordering::SeqCst);
+                                        };
+                                        if let Some(snapshot) = snapshot
+                                            && early_fcp_cb
+                                                .compare_exchange(
+                                                    false,
+                                                    true,
+                                                    Ordering::AcqRel,
+                                                    Ordering::Relaxed,
+                                                )
+                                                .is_ok()
+                                        {
+                                            let loader = loader_cb.clone();
+                                            let page_url = url_cb.clone();
+                                            let result_tx = result_tx_cb.clone();
+                                            let cancel_flag = cancel_flag_cb.clone();
+                                            progressive_prep_pool().spawn(move || {
+                                                let partial_doc =
+                                                    mango_html::parse_html(&snapshot);
+                                                let prep =
+                                                    crate::browser::prepare_document_pipeline_from_doc(
+                                                        &loader,
+                                                        partial_doc,
+                                                        page_url,
+                                                        &|| !cancel_flag.is_current(tab_id, epoch),
+                                                    );
+                                                if cancel_flag.is_current(tab_id, epoch) {
+                                                    let _ = result_tx.send(
+                                                        NavResult::ProgressiveReady {
+                                                            tab_id,
+                                                            prep,
+                                                            epoch,
+                                                        },
+                                                    );
+                                                    mango_core::wake_event_loop();
+                                                }
+                                            });
                                         }
                                     }
 
@@ -383,6 +442,7 @@ impl NavigationActorHandle {
                                 &should_cancel,
                             );
                             if epochs.is_current(tab_id, epoch) {
+                                eprintln!("[DEBUG NAV] sending NavResult::DocumentReady!");
                                 let _ = result_tx.send(NavResult::DocumentReady {
                                     tab_id,
                                     prep,

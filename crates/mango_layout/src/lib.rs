@@ -150,6 +150,20 @@ pub fn collect_box_rects(root: &LayoutBox, out: &mut std::collections::HashMap<u
     }
 }
 
+/// Collects the used margins [top, right, bottom, left] of every box backed by a DOM node.
+pub fn collect_box_margins(root: &LayoutBox, out: &mut std::collections::HashMap<u32, [f32; 4]>) {
+    if let Some(node_id) = root.node_id {
+        let m = &root.dimensions.margin;
+        out.insert(
+            node_id.raw(),
+            [m.top, m.right, m.bottom, m.left],
+        );
+    }
+    for child in &root.children {
+        collect_box_margins(child, out);
+    }
+}
+
 /// Fully lays out an HTML DOM [`Document`], applying author stylesheets and inline styles,
 /// constrained by the given viewport size, and produces both the final [`LayoutBox`] tree
 /// and paint-ready [`DisplayList`].

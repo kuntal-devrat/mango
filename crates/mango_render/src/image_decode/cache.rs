@@ -104,21 +104,21 @@ impl<K: std::hash::Hash + Eq + Clone> BoundedImageStore<K> {
     }
 }
 
-// 24MB budget for decoded images
+// 64MB budget for decoded images
 static DECODED_IMAGE_CACHE: std::sync::OnceLock<RwLock<BoundedImageStore<String>>> =
     std::sync::OnceLock::new();
 static DECODE_IN_FLIGHT: std::sync::OnceLock<RwLock<HashSet<String>>> = std::sync::OnceLock::new();
 
-// 12MB budget for scaled image variants
+// 32MB budget for scaled image variants
 static SCALED_IMAGE_CACHE: std::sync::OnceLock<RwLock<BoundedImageStore<(String, u32, u32)>>> =
     std::sync::OnceLock::new();
 
 fn global_image_cache() -> &'static RwLock<BoundedImageStore<String>> {
-    DECODED_IMAGE_CACHE.get_or_init(|| RwLock::new(BoundedImageStore::new(24 * 1024 * 1024)))
+    DECODED_IMAGE_CACHE.get_or_init(|| RwLock::new(BoundedImageStore::new(64 * 1024 * 1024)))
 }
 
 fn global_scaled_cache() -> &'static RwLock<BoundedImageStore<(String, u32, u32)>> {
-    SCALED_IMAGE_CACHE.get_or_init(|| RwLock::new(BoundedImageStore::new(12 * 1024 * 1024)))
+    SCALED_IMAGE_CACHE.get_or_init(|| RwLock::new(BoundedImageStore::new(32 * 1024 * 1024)))
 }
 
 fn in_flight_set() -> &'static RwLock<HashSet<String>> {

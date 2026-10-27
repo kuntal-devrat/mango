@@ -78,20 +78,36 @@ impl LayoutBox {
                     || s.direction == mango_css::values::Direction::Rtl
             });
 
+            let is_rel_pos = child
+                .style
+                .as_ref()
+                .is_some_and(|s| s.position == mango_css::values::Position::Relative);
+            let is_in_flow = !is_absolute && !is_fixed;
+            let (pad_end_x, pad_end_y) = if is_in_flow && !is_rel_pos {
+                let px = if is_rtl_x {
+                    self.dimensions.padding.left
+                } else {
+                    self.dimensions.padding.right
+                };
+                (px, self.dimensions.padding.bottom)
+            } else {
+                (0.0, 0.0)
+            };
+
             let bb = child.dimensions.border_box();
             let mb = child.dimensions.margin_box();
             if is_rtl_x {
                 max_x = max_x
-                    .max(pad_box.right() - bb.left())
-                    .max(pad_box.right() - mb.left());
+                    .max(pad_box.right() - bb.left() + pad_end_x)
+                    .max(pad_box.right() - mb.left() + pad_end_x);
             } else {
                 max_x = max_x
-                    .max(bb.right() - pad_origin_x)
-                    .max(mb.right() - pad_origin_x);
+                    .max(bb.right() - pad_origin_x + pad_end_x)
+                    .max(mb.right() - pad_origin_x + pad_end_x);
             }
             max_y = max_y
-                .max(bb.bottom() - pad_origin_y)
-                .max(mb.bottom() - pad_origin_y);
+                .max(bb.bottom() - pad_origin_y + pad_end_y)
+                .max(mb.bottom() - pad_origin_y + pad_end_y);
 
             // If child has visible overflow, its overflowing contents expand this container's scroll extent
             let clips = child.is_scroll_container()
@@ -103,8 +119,8 @@ impl LayoutBox {
                 let (c_ext_x, c_ext_y) = child.scrollable_extent();
                 let child_pad_x = child.dimensions.padding_box().x();
                 let child_pad_y = child.dimensions.padding_box().y();
-                max_x = max_x.max((child_pad_x + c_ext_x) - pad_origin_x);
-                max_y = max_y.max((child_pad_y + c_ext_y) - pad_origin_y);
+                max_x = max_x.max((child_pad_x + c_ext_x) - pad_origin_x + pad_end_x);
+                max_y = max_y.max((child_pad_y + c_ext_y) - pad_origin_y + pad_end_y);
             }
         }
         (max_x, max_y)

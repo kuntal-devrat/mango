@@ -77,7 +77,7 @@ impl LayoutBox {
     pub fn is_visible(&self) -> bool {
         self.style
             .as_ref()
-            .is_none_or(|s| s.visibility != mango_css::values::Visibility::Hidden)
+            .is_none_or(|s| s.visibility == mango_css::values::Visibility::Visible)
     }
 
     /// Returns the intrinsic size `(width, height)` of this box if it is a replaced or media element.

@@ -229,12 +229,6 @@ pub fn build_box_tree_with_maps(
         collect_child_boxes_with_maps(child, &mut raw_children, maps);
     }
 
-    // CSS 2.1 §9.2.1.1: If an inline element contains in-flow block-level children,
-    // it cannot establish a pure inline context; promote it to a block container.
-    if root_box.box_type == BoxType::InlineNode && raw_children.iter().any(|c| c.is_in_flow_block())
-    {
-        root_box.box_type = BoxType::BlockNode;
-    }
 
     let is_flex = styled_node.style.display == Display::Flex
         || styled_node.style.display == Display::InlineFlex;
@@ -290,7 +284,7 @@ pub fn build_box_tree_with_maps(
         root_box.children = items;
     } else if is_table_context {
         // Filter out whitespace-only text nodes between table rows, cells, and colgroups
-        root_box.children = raw_children
+        let filtered: Vec<LayoutBox> = raw_children
             .into_iter()
             .filter(|c| {
                 if let Some(t) = c.text() {
@@ -300,7 +294,91 @@ pub fn build_box_tree_with_maps(
                 }
             })
             .collect();
-    } else if root_box.is_block() {
+
+        let is_table_root = styled_node.style.display == Display::Table
+            || styled_node.tag_name.as_deref() == Some("table");
+
+        if is_table_root {
+            // Apply CSS 2.1 §17.2.1 Anonymous table objects
+            let is_table_part = |c: &LayoutBox| -> bool {
+                let disp = c.style.as_ref().map(|s| s.display);
+                matches!(
+                    disp,
+                    Some(Display::TableRow)
+                        | Some(Display::TableRowGroup)
+                        | Some(Display::TableHeaderGroup)
+                        | Some(Display::TableFooterGroup)
+                        | Some(Display::TableCaption)
+                        | Some(Display::TableColumn)
+                        | Some(Display::TableColumnGroup)
+                ) || matches!(
+                    c.tag_name.as_deref(),
+                    Some("tr")
+                        | Some("tbody")
+                        | Some("thead")
+                        | Some("tfoot")
+                        | Some("caption")
+                        | Some("col")
+                        | Some("colgroup")
+                )
+            };
+
+            let has_non_table_children = filtered.iter().any(|c| !is_table_part(c));
+            if has_non_table_children {
+                let mut fixed_children = Vec::new();
+                let mut non_table_seq = Vec::new();
+
+                let flush_non_table = |seq: &mut Vec<LayoutBox>, out: &mut Vec<LayoutBox>| {
+                    if seq.is_empty() {
+                        return;
+                    }
+                    // If items are table cells without a row, wrap in anonymous row
+                    let all_cells = seq.iter().all(|c| {
+                        c.style.as_ref().map(|s| s.display) == Some(Display::TableCell)
+                            || c.tag_name.as_deref() == Some("td")
+                            || c.tag_name.as_deref() == Some("th")
+                    });
+                    if all_cells {
+                        let mut anon_row_style = (*styled_node.style).clone();
+                        anon_row_style.display = Display::TableRow;
+                        let mut anon_row =
+                            LayoutBox::new_anonymous_block(Some(anon_row_style.into()));
+                        anon_row.children = std::mem::take(seq);
+                        out.push(anon_row);
+                    } else {
+                        // Non-table content: wrap in anonymous table cell, then anonymous table row
+                        let mut anon_cell_style = (*styled_node.style).clone();
+                        anon_cell_style.display = Display::TableCell;
+                        let mut anon_cell =
+                            LayoutBox::new_anonymous_block(Some(anon_cell_style.into()));
+                        anon_cell.children = std::mem::take(seq);
+
+                        let mut anon_row_style = (*styled_node.style).clone();
+                        anon_row_style.display = Display::TableRow;
+                        let mut anon_row =
+                            LayoutBox::new_anonymous_block(Some(anon_row_style.into()));
+                        anon_row.children.push(anon_cell);
+                        out.push(anon_row);
+                    }
+                };
+
+                for child in filtered {
+                    if is_table_part(&child) {
+                        flush_non_table(&mut non_table_seq, &mut fixed_children);
+                        fixed_children.push(child);
+                    } else {
+                        non_table_seq.push(child);
+                    }
+                }
+                flush_non_table(&mut non_table_seq, &mut fixed_children);
+                root_box.children = fixed_children;
+            } else {
+                root_box.children = filtered;
+            }
+        } else {
+            root_box.children = filtered;
+        }
+    } else if root_box.is_block() || root_box.box_type == BoxType::InlineBlock {
         // Apply CSS 2.1 §9.2.1.1: If block container has mixed block and inline children,
         // wrap contiguous sequences of inline children into anonymous block boxes.
         let has_blocks = raw_children.iter().any(|c| c.is_in_flow_block());
@@ -319,11 +397,14 @@ pub fn build_box_tree_with_maps(
 
             for child in raw_children {
                 if child.is_out_of_flow() {
-                    if let Some(ref mut anon) = current_anonymous {
-                        anon.children.push(child);
-                    } else {
-                        final_children.push(child);
+                    if let Some(anon) = current_anonymous.take() {
+                        let is_all_whitespace = anon.children.is_empty()
+                            || anon.children.iter().all(is_ignorable_whitespace_box);
+                        if !is_all_whitespace {
+                            final_children.push(anon);
+                        }
                     }
+                    final_children.push(child);
                 } else if child.is_inline() {
                     let anon = current_anonymous.get_or_insert_with(|| {
                         LayoutBox::new_anonymous_block(Some(styled_node.style.clone()))

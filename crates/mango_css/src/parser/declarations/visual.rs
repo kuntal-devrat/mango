@@ -4,7 +4,7 @@ use crate::parser::declarations::value::parse_value_from_tokens;
 use crate::tokenizer::Token;
 use crate::values::{
     BackgroundAttachment, BackgroundClip, BlendMode, BorderImage, BorderImageRepeat, ClipPath,
-    FilterFunction, Isolation, Length, MaskComposite, MaskMode, TextShadow, Value,
+    ClipRect, FilterFunction, Isolation, Length, MaskComposite, MaskMode, TextShadow, Value,
 };
 
 /// Tries to parse `text-shadow: offset-x offset-y blur? color?` from token slice,
@@ -217,6 +217,61 @@ pub fn try_parse_filter_list(tokens: &[Token]) -> Option<Value> {
         return None;
     }
     Some(Value::Filter(funcs))
+}
+
+/// Tries to parse CSS 2.1 `clip: auto | rect(<top>, <right>, <bottom>, <left>)`.
+pub fn try_parse_clip(tokens: &[Token]) -> Option<Value> {
+    let text: String = tokens.iter().map(token_to_string).collect();
+    let trimmed = text.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if lower == "auto" {
+        return Some(Value::Clip(ClipRect::Auto));
+    }
+    if lower.starts_with("rect(") && lower.ends_with(')') {
+        let inner = trimmed[5..trimmed.len() - 1].trim();
+        // Coordinates can be separated by commas or whitespace per CSS 2.1 syntax
+        let parts: Vec<&str> = if inner.contains(',') {
+            inner.split(',').map(str::trim).collect()
+        } else {
+            inner.split_whitespace().collect()
+        };
+        if parts.len() == 4 {
+            let parse_coord = |s: &str| -> Option<Length> {
+                let s = s.trim();
+                if s.eq_ignore_ascii_case("auto") {
+                    Some(Length::Auto)
+                } else if let Some(px) = s.strip_suffix("px") {
+                    px.parse().ok().map(Length::Px)
+                } else if let Some(em) = s.strip_suffix("em") {
+                    em.parse().ok().map(Length::Em)
+                } else if let Some(rem) = s.strip_suffix("rem") {
+                    rem.parse().ok().map(Length::Rem)
+                } else if let Some(pct) = s.strip_suffix('%') {
+                    pct.parse().ok().map(Length::Percent)
+                } else if s == "0" {
+                    Some(Length::Px(0.0))
+                } else if let Ok(n) = s.parse::<f32>() {
+                    Some(Length::Px(n))
+                } else {
+                    None
+                }
+            };
+            if let (Some(top), Some(right), Some(bottom), Some(left)) = (
+                parse_coord(parts[0]),
+                parse_coord(parts[1]),
+                parse_coord(parts[2]),
+                parse_coord(parts[3]),
+            ) {
+                return Some(Value::Clip(ClipRect::Rect {
+                    top,
+                    right,
+                    bottom,
+                    left,
+                }));
+            }
+        }
+    }
+    None
 }
 
 /// Tries to parse `clip-path` (e.g. `none`, `url(...)`, `circle(...)`, `ellipse(...)`, `inset(...)`, `polygon(...)`).

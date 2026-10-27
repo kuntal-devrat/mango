@@ -71,7 +71,7 @@ pub struct ResourceEvent {
 pub struct DocumentResourceBudget {
     /// CPU time available to non-blocking resource work in one event-loop turn.
     pub cpu_slice: Duration,
-    /// Emergency cumulative CPU allowance for one document.
+    /// Maximum non-blocking script CPU per rolling one-second window.
     pub cpu_total: Duration,
     /// V8 heap pressure threshold sampled after script execution.
     pub js_heap_bytes: usize,
@@ -83,7 +83,7 @@ impl Default for DocumentResourceBudget {
     fn default() -> Self {
         Self {
             cpu_slice: Duration::from_millis(8),
-            cpu_total: Duration::from_secs(30),
+            cpu_total: Duration::from_millis(50),
             js_heap_bytes: 512 * 1024 * 1024,
             decoded_image_bytes: 24 * 1024 * 1024,
         }
@@ -120,6 +120,9 @@ pub struct DocumentResourceScheduler {
     visible: bool,
     turn_started: Instant,
     total_cpu: Duration,
+    cpu_window_started: Instant,
+    cpu_window_used: Duration,
+    current_js_heap: usize,
     report: ResourceReport,
     records: HashMap<ResourceId, ResourceRecord>,
     low_priority: VecDeque<ResourceId>,
@@ -140,6 +143,9 @@ impl DocumentResourceScheduler {
             visible: true,
             turn_started: Instant::now(),
             total_cpu: Duration::ZERO,
+            cpu_window_started: Instant::now(),
+            cpu_window_used: Duration::ZERO,
+            current_js_heap: 0,
             report: ResourceReport::default(),
             records: HashMap::new(),
             low_priority: VecDeque::new(),
@@ -151,6 +157,9 @@ impl DocumentResourceScheduler {
         self.next_id = 1;
         self.turn_started = Instant::now();
         self.total_cpu = Duration::ZERO;
+        self.cpu_window_started = Instant::now();
+        self.cpu_window_used = Duration::ZERO;
+        self.current_js_heap = 0;
         self.report = ResourceReport {
             generation,
             ..ResourceReport::default()
@@ -165,6 +174,19 @@ impl DocumentResourceScheduler {
 
     pub fn begin_turn(&mut self) {
         self.turn_started = Instant::now();
+        // A CPU budget is a throttle, not a permanent resource rejection.
+        // Refill the allowance after a quiet window so deferred work can
+        // resume after sustained page activity.
+        if self.cpu_window_started.elapsed() >= Duration::from_secs(1) {
+            self.cpu_window_started = Instant::now();
+            self.cpu_window_used = Duration::ZERO;
+        }
+    }
+
+    /// Earliest time throttled non-blocking script work may resume.
+    pub fn cpu_resume_deadline(&self) -> Option<Instant> {
+        (self.cpu_window_used >= self.budget.cpu_total)
+            .then_some(self.cpu_window_started + Duration::from_secs(1))
     }
 
     pub fn discover(
@@ -242,17 +264,22 @@ impl DocumentResourceScheduler {
     }
 
     /// Blocking work is always eligible. Non-blocking work is throttled when
-    /// hidden or when the current turn/total CPU budget is exhausted.
+    /// hidden or when the current turn/rolling CPU budget is exhausted.
     pub fn allow_execution(&self, priority: ResourcePriority) -> bool {
         if !self.visible && priority >= ResourcePriority::Async {
+            return false;
+        }
+        if priority != ResourcePriority::Blocking
+            && (self.turn_started.elapsed() > self.budget.cpu_slice
+                || self.cpu_window_used >= self.budget.cpu_total)
+        {
             return false;
         }
         self.execution_block_reason(priority).is_none()
     }
 
-    /// Returns a permanent budget reason, if execution should be rejected.
-    /// Hidden-tab throttling intentionally returns `None`, because that work
-    /// remains queued and can resume when the tab becomes visible.
+    /// Returns a permanent rejection reason. CPU slice exhaustion is
+    /// temporary, so it blocks admission without rejecting queued work.
     pub fn execution_block_reason(&self, priority: ResourcePriority) -> Option<RejectReason> {
         if priority == ResourcePriority::Blocking {
             return None;
@@ -260,16 +287,15 @@ impl DocumentResourceScheduler {
         if !self.visible && priority >= ResourcePriority::Async {
             return None;
         }
-        if self.report.peak_js_heap >= self.budget.js_heap_bytes {
+        if self.current_js_heap >= self.budget.js_heap_bytes {
             return Some(RejectReason::MemoryPressure);
         }
-        (self.turn_started.elapsed() > self.budget.cpu_slice
-            || self.total_cpu > self.budget.cpu_total)
-            .then_some(RejectReason::CpuBudget)
+        None
     }
 
     pub fn record_script_cpu(&mut self, elapsed: Duration) {
         self.total_cpu = self.total_cpu.saturating_add(elapsed);
+        self.cpu_window_used = self.cpu_window_used.saturating_add(elapsed);
         self.report.script_cpu = self.total_cpu;
     }
 
@@ -341,6 +367,7 @@ impl DocumentResourceScheduler {
     }
 
     pub fn record_js_heap(&mut self, bytes: usize) {
+        self.current_js_heap = bytes;
         self.report.peak_js_heap = self.report.peak_js_heap.max(bytes);
     }
 

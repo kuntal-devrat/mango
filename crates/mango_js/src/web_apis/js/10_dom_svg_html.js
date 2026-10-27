@@ -460,6 +460,66 @@
         configurable: true
     });
 
+    // HTMLScriptElement prototype surface
+    if (globalThis.HTMLScriptElement && globalThis.HTMLScriptElement.prototype) {
+        Object.defineProperty(globalThis.HTMLScriptElement.prototype, 'src', {
+            get: function() {
+                var val = this.getAttribute ? this.getAttribute('src') : null;
+                if (val === null || val === undefined || val === '') return '';
+                try {
+                    var base = (typeof document !== 'undefined' && document.baseURI) ? document.baseURI : ((globalThis.location && globalThis.location.href) ? globalThis.location.href : 'about:blank');
+                    return new URL(val, base).href;
+                } catch(e) {
+                    return String(val);
+                }
+            },
+            set: function(v) { if (this.setAttribute) this.setAttribute('src', String(v)); },
+            configurable: true
+        });
+        Object.defineProperty(globalThis.HTMLScriptElement.prototype, 'type', {
+            get: function() { return this.getAttribute ? (this.getAttribute('type') || '') : ''; },
+            set: function(v) { if (this.setAttribute) this.setAttribute('type', String(v)); },
+            configurable: true
+        });
+        Object.defineProperty(globalThis.HTMLScriptElement.prototype, 'async', {
+            get: function() { return this.hasAttribute ? this.hasAttribute('async') : false; },
+            set: function(v) {
+                if (v) { if (this.setAttribute) this.setAttribute('async', ''); }
+                else { if (this.removeAttribute) this.removeAttribute('async'); }
+            },
+            configurable: true
+        });
+        Object.defineProperty(globalThis.HTMLScriptElement.prototype, 'defer', {
+            get: function() { return this.hasAttribute ? this.hasAttribute('defer') : false; },
+            set: function(v) {
+                if (v) { if (this.setAttribute) this.setAttribute('defer', ''); }
+                else { if (this.removeAttribute) this.removeAttribute('defer'); }
+            },
+            configurable: true
+        });
+        Object.defineProperty(globalThis.HTMLScriptElement.prototype, 'noModule', {
+            get: function() { return this.hasAttribute ? this.hasAttribute('nomodule') : false; },
+            set: function(v) {
+                if (v) { if (this.setAttribute) this.setAttribute('nomodule', ''); }
+                else { if (this.removeAttribute) this.removeAttribute('nomodule'); }
+            },
+            configurable: true
+        });
+        Object.defineProperty(globalThis.HTMLScriptElement.prototype, 'crossOrigin', {
+            get: function() { return this.getAttribute ? this.getAttribute('crossorigin') : null; },
+            set: function(v) {
+                if (v === null || v === undefined) { if (this.removeAttribute) this.removeAttribute('crossorigin'); }
+                else if (this.setAttribute) { this.setAttribute('crossorigin', String(v)); }
+            },
+            configurable: true
+        });
+        Object.defineProperty(globalThis.HTMLScriptElement.prototype, 'text', {
+            get: function() { return this.textContent || ''; },
+            set: function(v) { this.textContent = String(v == null ? '' : v); },
+            configurable: true
+        });
+    }
+
     globalThis.HTMLMediaElement = function() {};
     globalThis.HTMLMediaElement.prototype = Object.create(globalThis.HTMLElement.prototype);
     globalThis.HTMLMediaElement.NETWORK_EMPTY    = 0;

@@ -666,9 +666,20 @@ impl FontManager {
         let is_synth_bold = weight == FontWeight::Bold;
         let px_size = font_size.max(1.0);
 
+        let shaped_text;
+        let text_to_measure = if text.chars().any(super::shaping::is_complex_char) {
+            shaped_text = super::shaping::shape_complex_script(text);
+            &shaped_text
+        } else {
+            text
+        };
+
         let mut total_width = 0.0f32;
-        for ch in text.chars() {
+        for ch in text_to_measure.chars() {
             if ch == '\n' {
+                continue;
+            }
+            if super::emoji::is_zero_width_or_format(ch) {
                 continue;
             }
             if is_emoji_char(ch) {
@@ -715,6 +726,9 @@ impl FontManager {
         weight: FontWeight,
         family: FontFamily,
     ) -> f32 {
+        if super::emoji::is_zero_width_or_format(ch) {
+            return 0.0;
+        }
         if is_emoji_char(ch) {
             return font_size.max(1.0);
         }

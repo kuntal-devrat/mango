@@ -694,6 +694,26 @@
     globalThis.__setCurrentScript = function(nodeOrId) {
         _currentScriptNode = (nodeOrId && typeof nodeOrId === 'number') ? _wrapElement(nodeOrId) : (nodeOrId || null);
     };
+    globalThis.__setCurrentScriptUrl = function(url) {
+        if (!url) {
+            _currentScriptNode = null;
+            return;
+        }
+        if (typeof document !== 'undefined' && document.querySelectorAll) {
+            var scripts = document.querySelectorAll('script');
+            for (var i = 0; i < scripts.length; i++) {
+                var s = scripts[i];
+                if (s.src === url || (s.getAttribute && s.getAttribute('src') === url)) {
+                    _currentScriptNode = s;
+                    return;
+                }
+            }
+        }
+        var fallback = (typeof document !== 'undefined' && document.createElement) ? document.createElement('script') : {};
+        if (fallback.setAttribute) fallback.setAttribute('src', url);
+        fallback.src = url;
+        _currentScriptNode = fallback;
+    };
     Object.defineProperty(document, 'currentScript', {
         get: function() { return _currentScriptNode; },
         configurable: true

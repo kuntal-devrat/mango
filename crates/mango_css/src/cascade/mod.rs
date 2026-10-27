@@ -20,6 +20,7 @@ pub use media::{
 pub use resolver::{
     find_container_size_for_node, resolve_cascade, resolve_cascade_with_index,
     resolve_cascade_with_shadow_and_part_index_details,
+    resolve_cascade_with_shadow_and_part_indexes_and_parent_details,
     resolve_cascade_with_shadow_and_part_indexes_details, resolve_cascade_with_shadow_index,
     resolve_cascade_with_shadow_index_details, resolve_pseudo_element_cascade,
     resolve_pseudo_element_cascade_with_index, resolve_pseudo_element_cascade_with_shadow_index,

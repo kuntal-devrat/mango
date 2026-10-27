@@ -25,6 +25,8 @@ pub struct Tokenizer<'a> {
 
 impl<'a> Tokenizer<'a> {
     pub fn new(input: &'a str) -> Self {
+        // WHATWG HTML § 13.2.3.4: Any U+FEFF at the start of input stream must be discarded
+        let input = input.strip_prefix('\u{feff}').unwrap_or(input);
         let mut chars = input.chars();
         let current_char = chars.next();
         Self {
@@ -164,6 +166,7 @@ impl<'a> Tokenizer<'a> {
                         return Token::Character('<');
                     }
                     None => {
+                        self.state = State::Data;
                         return Token::Character('<');
                     }
                 },

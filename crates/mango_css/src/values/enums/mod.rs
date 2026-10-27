@@ -7,7 +7,7 @@ pub mod typography;
 
 pub use effects::{
     BackgroundAttachment, BackgroundClip, BackgroundLayer, BackgroundRepeat, BackgroundSize,
-    BlendMode, BorderImage, BorderImageRepeat, BorderStyle, BoxShadow, ClipPath, FilterFunction,
+    BlendMode, BorderImage, BorderImageRepeat, BorderStyle, BoxShadow, ClipPath, ClipRect, FilterFunction,
     Isolation, MaskComposite, MaskMode, ObjectFit, TextShadow,
 };
 pub use layout::{

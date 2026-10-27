@@ -722,6 +722,14 @@ pub(crate) fn apply_colors_bg_property(
             }
             _ => {}
         },
+        "clip" => match val {
+            Value::Clip(cr) => style.clip = *cr,
+            Value::Keyword(k) if k.eq_ignore_ascii_case("auto") => {
+                style.clip = crate::values::ClipRect::Auto;
+            }
+            _ => {}
+        },
+
         "clip-path" | "-webkit-clip-path" => match val {
             Value::ClipPath(cp) => style.clip_path = cp.clone(),
             Value::Keyword(k) if k.eq_ignore_ascii_case("none") => {

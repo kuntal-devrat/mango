@@ -334,6 +334,19 @@ pub enum MaskMode {
     Luminance,
 }
 
+/// CSS 2.1 `clip` property per CSS 2.1 § 11.1.2.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum ClipRect {
+    #[default]
+    Auto,
+    Rect {
+        top: Length,
+        right: Length,
+        bottom: Length,
+        left: Length,
+    },
+}
+
 impl MaskMode {
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim().to_ascii_lowercase().as_str() {

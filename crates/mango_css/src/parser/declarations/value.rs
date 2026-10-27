@@ -324,6 +324,7 @@ pub fn parse_single_value(token: &Token) -> Option<Value> {
                 "nowrap" => return Some(Value::FlexWrap(FlexWrap::NoWrap)),
                 "wrap" => return Some(Value::FlexWrap(FlexWrap::Wrap)),
                 "wrap-reverse" => return Some(Value::FlexWrap(FlexWrap::WrapReverse)),
+                "balance" => return Some(Value::FlexWrap(FlexWrap::Balance)),
                 _ => {}
             }
 
@@ -331,6 +332,10 @@ pub fn parse_single_value(token: &Token) -> Option<Value> {
             match lower.as_str() {
                 "flex-start" => return Some(Value::JustifyContent(JustifyContent::FlexStart)),
                 "flex-end" => return Some(Value::JustifyContent(JustifyContent::FlexEnd)),
+                "start" => return Some(Value::JustifyContent(JustifyContent::Start)),
+                "end" => return Some(Value::JustifyContent(JustifyContent::End)),
+                "left" => return Some(Value::JustifyContent(JustifyContent::Left)),
+                "right" => return Some(Value::JustifyContent(JustifyContent::Right)),
                 "space-between" => {
                     return Some(Value::JustifyContent(JustifyContent::SpaceBetween));
                 }

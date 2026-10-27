@@ -1,5 +1,7 @@
 use mango_core::{EdgeSizes, Point};
-use mango_css::values::{BoxSizing, Direction, Display, FlexDirection, FlexWrap, Length, Position};
+use mango_css::values::{
+    BoxSizing, Direction, Display, FlexDirection, Length, Position, WritingMode,
+};
 
 use crate::block_flow::layout_positioned_children_with_cb;
 use crate::box_tree::LayoutBox;
@@ -119,10 +121,16 @@ pub fn layout_flex(
             | Length::Content
     );
 
-    let is_row = matches!(
+    let is_vertical_wm = style.writing_mode.is_vertical();
+    let is_flex_dir_row = matches!(
         style.flex_direction,
         FlexDirection::Row | FlexDirection::RowReverse
     );
+    let is_row = if is_vertical_wm {
+        !is_flex_dir_row
+    } else {
+        is_flex_dir_row
+    };
 
     let is_pos = matches!(style.position, Position::Absolute | Position::Fixed);
     let is_pos_stretched_h = is_pos
@@ -186,11 +194,13 @@ pub fn layout_flex(
         (0.0, 0.0)
     };
 
+    let is_floating = style.float != mango_css::values::Float::None;
     let is_pos_stretched_w = is_pos
         && style.left != Length::Auto
         && style.right != Length::Auto
         && container.dimensions.content.size.width > 0.0;
     let is_pre_resolved_width = is_pos_stretched_w
+        || (is_floating && container.dimensions.content.size.width > 0.0)
         || (!is_inline_flex
             && is_width_auto
             && container.dimensions.content.size.width > 0.0
@@ -346,6 +356,44 @@ pub fn layout_flex(
         content_height
     };
 
+    let mut eff_content_height = content_height;
+    if style.min_height != Length::Auto {
+        let min_h = style.min_height.to_px_with_viewport(
+            font_size,
+            root_font_size,
+            container_height,
+            container_height,
+        );
+        let min_content_h = if style.box_sizing == BoxSizing::BorderBox {
+            (min_h - total_non_content_v).max(0.0)
+        } else {
+            min_h
+        };
+        eff_content_height = eff_content_height.max(min_content_h);
+    }
+    if style.max_height != Length::Auto {
+        let max_h = style.max_height.to_px_with_viewport(
+            font_size,
+            root_font_size,
+            container_height,
+            container_height,
+        );
+        let max_content_h = if style.box_sizing == BoxSizing::BorderBox {
+            (max_h - total_non_content_v).max(0.0)
+        } else {
+            max_h
+        };
+        if eff_content_height > 0.0 {
+            eff_content_height = eff_content_height.min(max_content_h);
+        }
+    }
+
+    let container_height = if eff_content_height > 0.0 {
+        eff_content_height
+    } else {
+        container_height
+    };
+
     // Position container in parent
     let is_pos = container
         .style
@@ -405,20 +453,49 @@ pub fn layout_flex(
     }
 
     // 2. Identify flex direction and axes
-    // In a horizontal-tb RTL flex container, the main-start edge is the
-    // physical right edge.  This is equivalent to reversing the row's
-    // placement direction, while preserving the DOM order of the items.
-    let is_reverse = matches!(
-        style.flex_direction,
-        FlexDirection::RowReverse | FlexDirection::ColumnReverse
-    ) ^ (is_row && style.direction == Direction::Rtl);
-    let is_wrap = style.flex_wrap != FlexWrap::NoWrap;
-    let is_wrap_reverse = style.flex_wrap == FlexWrap::WrapReverse;
+    let is_reverse = if is_row {
+        if is_vertical_wm {
+            if matches!(
+                style.writing_mode,
+                WritingMode::VerticalRl | WritingMode::SidewaysRl
+            ) {
+                style.flex_direction != FlexDirection::ColumnReverse
+            } else {
+                style.flex_direction == FlexDirection::ColumnReverse
+            }
+        } else {
+            (style.flex_direction == FlexDirection::RowReverse)
+                ^ (style.direction == Direction::Rtl)
+        }
+    } else if is_vertical_wm {
+        if style.writing_mode == WritingMode::SidewaysLr {
+            (style.flex_direction == FlexDirection::RowReverse)
+                ^ (style.direction != Direction::Rtl)
+        } else {
+            (style.flex_direction == FlexDirection::RowReverse)
+                ^ (style.direction == Direction::Rtl)
+        }
+    } else {
+        style.flex_direction == FlexDirection::ColumnReverse
+    };
+    let is_wrap = style.flex_wrap.is_wrap();
+    let is_wrap_reverse = style.flex_wrap.is_reverse();
 
     // 3. Sort children by `order` (stable sort)
-    container
-        .children
-        .sort_by_key(|c| c.style.as_ref().map(|s| s.order).unwrap_or(0));
+    // CSS Flexible Box Module Level 1 § 4.1: The `order` property does not apply to
+    // absolutely-positioned children of a flex container; they are treated as having order: 0.
+    container.children.sort_by_key(|c| {
+        let is_oof = c
+            .style
+            .as_ref()
+            .map(|s| matches!(s.position, Position::Absolute | Position::Fixed))
+            .unwrap_or(false);
+        if is_oof {
+            0
+        } else {
+            c.style.as_ref().map(|s| s.order).unwrap_or(0)
+        }
+    });
 
     // 4. Measure hypothetical main and cross sizes of each in-flow item
     let mut item_metrics =
@@ -489,7 +566,10 @@ pub fn layout_flex(
         f32::INFINITY
     };
 
-    let sum_hypothetical: f32 = item_metrics.iter().map(|m| m.base_main).sum();
+    let sum_hypothetical: f32 = item_metrics
+        .iter()
+        .map(|m| m.base_main.clamp(m.min_main, m.max_main))
+        .sum();
     let is_container_main_definite = if is_row {
         true
     } else {
@@ -518,7 +598,7 @@ pub fn layout_flex(
 
     let lines = build_flex_lines(
         &item_metrics,
-        is_wrap,
+        &style,
         is_container_main_definite,
         container_main_size,
         main_gap,
@@ -540,13 +620,81 @@ pub fn layout_flex(
 
     // Pre-calculate line cross sizes for align-content distribution
     let container_cross_size = if is_row {
-        if content_height > 0.0 {
-            content_height
+        if eff_content_height > 0.0 {
+            eff_content_height
         } else {
             0.0
         }
+    } else if is_vertical_wm && is_width_auto {
+        0.0
     } else {
         content_width
+    };
+
+    let (min_cross_size, max_cross_size) = if is_row {
+        let min_c = if style.min_height != Length::Auto {
+            let min_h = style.min_height.to_px_with_viewport(
+                font_size,
+                root_font_size,
+                container_height,
+                container_height,
+            );
+            if style.box_sizing == BoxSizing::BorderBox {
+                (min_h - total_non_content_v).max(0.0)
+            } else {
+                min_h
+            }
+        } else {
+            0.0
+        };
+        let max_c = if style.max_height != Length::Auto {
+            let max_h = style.max_height.to_px_with_viewport(
+                font_size,
+                root_font_size,
+                container_height,
+                container_height,
+            );
+            if style.box_sizing == BoxSizing::BorderBox {
+                (max_h - total_non_content_v).max(0.0)
+            } else {
+                max_h
+            }
+        } else {
+            f32::INFINITY
+        };
+        (min_c, max_c)
+    } else {
+        let min_c = if style.min_width != Length::Auto {
+            let min_w = style.min_width.to_px_with_viewport(
+                font_size,
+                root_font_size,
+                container_width,
+                container_height,
+            );
+            if style.box_sizing == BoxSizing::BorderBox {
+                (min_w - total_non_content_h).max(0.0)
+            } else {
+                min_w
+            }
+        } else {
+            0.0
+        };
+        let max_c = if style.max_width != Length::Auto {
+            let max_w = style.max_width.to_px_with_viewport(
+                font_size,
+                root_font_size,
+                container_width,
+                container_height,
+            );
+            if style.box_sizing == BoxSizing::BorderBox {
+                (max_w - total_non_content_h).max(0.0)
+            } else {
+                max_w
+            }
+        } else {
+            f32::INFINITY
+        };
+        (min_c, max_c)
     };
 
     let cross_gap = resolve_flex_cross_gap(&style, is_row, container_cross_size, container_height);
@@ -559,6 +707,8 @@ pub fn layout_flex(
         is_row,
         is_wrap,
         container_cross_size,
+        min_cross_size,
+        max_cross_size,
     );
 
     let (cross_cursor, line_spacing) = compute_align_content_spacing(
@@ -572,6 +722,32 @@ pub fn layout_flex(
     let cross_start_offset = cross_cursor;
     let mut normal_cross_cursor = cross_start_offset;
 
+    let effective_container_main = if is_row {
+        container_main_size
+    } else if is_container_main_definite {
+        container_main_size
+    } else {
+        let max_line_main: f32 = lines
+            .iter()
+            .map(|l| {
+                let total_item_main: f32 = l
+                    .iter()
+                    .map(|&idx| {
+                        let m = &item_metrics[idx];
+                        m.final_main + m.pad_main + m.border_main + m.margin_main
+                    })
+                    .sum();
+                let gaps = if l.len() > 1 {
+                    (l.len() - 1) as f32 * main_gap
+                } else {
+                    0.0
+                };
+                total_item_main + gaps
+            })
+            .fold(0.0f32, f32::max);
+        max_line_main.max(min_main_size).min(max_main_size)
+    };
+
     for (line_idx, line) in lines.iter().enumerate() {
         let (main_cursor, item_spacing) = compute_justify_content_spacing(
             line,
@@ -579,14 +755,35 @@ pub fn layout_flex(
             container,
             &style,
             is_row,
+            is_reverse,
             is_container_main_definite,
-            container_main_size,
+            effective_container_main,
             main_gap,
         );
 
         let line_cross_size = line_cross_sizes[line_idx];
 
-        let line_cross_cursor = if is_wrap_reverse {
+        let cross_is_reversed_progression = if is_row {
+            if style.writing_mode == WritingMode::SidewaysLr {
+                style.direction != Direction::Rtl
+            } else {
+                is_vertical_wm && style.direction == Direction::Rtl
+            }
+        } else {
+            matches!(
+                style.writing_mode,
+                WritingMode::VerticalRl | WritingMode::SidewaysRl
+            ) || (style.writing_mode == WritingMode::HorizontalTb
+                && style.direction == Direction::Rtl)
+        };
+
+        let is_cross_reverse_lines = if cross_is_reversed_progression {
+            !is_wrap_reverse
+        } else {
+            is_wrap_reverse
+        };
+
+        let line_cross_cursor = if is_cross_reverse_lines {
             let after_lines_size: f32 = line_cross_sizes[line_idx + 1..].iter().sum();
             let after_lines_count = line_cross_sizes.len() - 1 - line_idx;
             cross_start_offset + after_lines_size + after_lines_count as f32 * line_spacing
@@ -604,7 +801,7 @@ pub fn layout_flex(
             is_container_main_definite,
             container_x,
             container_y,
-            container_main_size,
+            container_main_size: effective_container_main,
             container_height,
             content_width,
             line_cross_size,
@@ -615,6 +812,15 @@ pub fn layout_flex(
         });
 
         normal_cross_cursor += line_cross_size + line_spacing;
+    }
+
+    if is_vertical_wm && is_width_auto {
+        let final_w = if is_row {
+            effective_container_main
+        } else {
+            (normal_cross_cursor - cross_gap).max(0.0)
+        };
+        container.dimensions.content.size.width = final_w;
     }
 
     // 7. Calculate container final height
@@ -636,6 +842,14 @@ pub fn layout_flex(
         border_bottom,
     });
 
+    // Apply relative positioning offsets for flex items (CSS Flexbox §4.1)
+    let container_dims = container.dimensions;
+    for child in &mut container.children {
+        if child.style.as_ref().map(|s| s.position) == Some(Position::Relative) {
+            crate::block_flow::apply_relative_offset(child, &container_dims);
+        }
+    }
+
     // 8. Calculate static positions for out-of-flow positioned children (CSS Flexbox §4.1)
     calculate_abspos_static_positions(
         container,
@@ -650,4 +864,49 @@ pub fn layout_flex(
 
     // 9. Lay out out-of-flow positioned children
     layout_positioned_children_with_cb(container, containing_block, float_ctx);
+
+    // Initial scroll position for reverse flow directions (CSS Flexbox §5.1 & CSS Overflow 3 §2.2)
+    if container.is_scroll_container()
+        && container.scroll_offset_x == 0.0
+        && container.scroll_offset_y == 0.0
+    {
+        let (max_x, max_y) = container.max_scroll();
+        let is_rtl = style.direction == Direction::Rtl;
+        match style.writing_mode {
+            WritingMode::HorizontalTb => {
+                match style.flex_direction {
+                    FlexDirection::RowReverse => {
+                        container.scroll_offset_x = if is_rtl { -max_x } else { max_x };
+                    }
+                    FlexDirection::ColumnReverse => {
+                        container.scroll_offset_y = max_y;
+                    }
+                    _ => {}
+                }
+            }
+            WritingMode::VerticalRl => {
+                match style.flex_direction {
+                    FlexDirection::RowReverse => {
+                        container.scroll_offset_y = if is_rtl { -max_y } else { max_y };
+                    }
+                    FlexDirection::ColumnReverse => {
+                        container.scroll_offset_x = -max_x;
+                    }
+                    _ => {}
+                }
+            }
+            WritingMode::VerticalLr | WritingMode::SidewaysLr => {
+                match style.flex_direction {
+                    FlexDirection::RowReverse => {
+                        container.scroll_offset_y = if is_rtl { -max_y } else { max_y };
+                    }
+                    FlexDirection::ColumnReverse => {
+                        container.scroll_offset_x = max_x;
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
 }

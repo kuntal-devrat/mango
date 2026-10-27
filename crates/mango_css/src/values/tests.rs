@@ -207,7 +207,7 @@ fn test_colors_and_gradients() {
         stops: vec![
             ColorStop {
                 color: Color::BLACK,
-                position: Some(0.0),
+                position: Some(crate::values::StopPosition::Fraction(0.0)),
                 end_position: None,
                 is_current_color: true,
                 var_name: None,

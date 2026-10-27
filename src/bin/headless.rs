@@ -327,6 +327,13 @@ fn main() {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
+    // Allow pending background web fonts to finish loading and reflow
+    let font_deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while browser.has_pending_font_fetches() && std::time::Instant::now() < font_deadline {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let _ = browser.flush_pending_layout();
+    }
+
     // Drain pending images until the bounded settling deadline.  This avoids
     // the old arbitrary batch-count truncation while still guaranteeing that
     // a broken server cannot hold headless rendering forever.

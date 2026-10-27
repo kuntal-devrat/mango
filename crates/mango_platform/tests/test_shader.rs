@@ -1,67 +1,107 @@
 #[test]
-fn test_compile_wgsl_to_spirv() {
+fn test_compile_wgsl_shader() {
     let wgsl = include_str!("../src/shaders/compositor.wgsl");
 
-    let module = match naga::front::wgsl::parse_str(wgsl) {
-        Ok(m) => m,
+    let instance = wgpu::Instance::default();
+    let adapter = match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        compatible_surface: None,
+        force_fallback_adapter: false,
+        apply_limit_buckets: false,
+    })) {
+        Ok(a) => a,
         Err(e) => {
-            panic!("Parse error: {:?}", e);
+            println!("Skipping GPU test (no adapter available): {e:?}");
+            return;
         }
     };
 
-    let caps = naga::valid::Capabilities::all();
-    let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), caps)
-        .validate(&module)
-        .expect("validation error");
+    let (device, _queue) = match pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())) {
+        Ok(d) => d,
+        Err(e) => {
+            println!("Skipping GPU test (request_device failed): {e:?}");
+            return;
+        }
+    };
 
-    let options = naga::back::spv::Options {
-        lang_version: (1, 3),
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Mango Compositor Shader Test"),
+        source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+    });
+
+    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Mango Texture BindGroup Layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Mango Compositor Pipeline Layout"),
+        bind_group_layouts: &[Some(&bind_group_layout)],
         ..Default::default()
-    };
-    let spv =
-        naga::back::spv::write_vec(&module, &info, &options, None).expect("spv generation error");
+    });
 
-    println!("SPIR-V word count: {}", spv.len());
-    assert!(!spv.is_empty());
+    let _pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Mango Compositor Pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            buffers: &[Some(wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<mango_platform::QuadVertex>() as wgpu::BufferAddress,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &[
+                    wgpu::VertexAttribute {
+                        offset: 0,
+                        shader_location: 0,
+                        format: wgpu::VertexFormat::Float32x2,
+                    },
+                    wgpu::VertexAttribute {
+                        offset: 8,
+                        shader_location: 1,
+                        format: wgpu::VertexFormat::Float32x2,
+                    },
+                    wgpu::VertexAttribute {
+                        offset: 16,
+                        shader_location: 2,
+                        format: wgpu::VertexFormat::Float32,
+                    },
+                ],
+            })],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::Bgra8Unorm,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    });
 
-    let instance = match lgpu::Instance::new() {
-        Ok(inst) => inst,
-        Err(e) => {
-            println!(
-                "Skipping GPU device creation (no Vulkan driver found in CI): {:?}",
-                e
-            );
-            return;
-        }
-    };
-    let adapters = match instance.enumerate_adapters() {
-        Ok(ad) => ad,
-        Err(e) => {
-            println!(
-                "Skipping GPU device creation (enumerate_adapters failed): {:?}",
-                e
-            );
-            return;
-        }
-    };
-    if !adapters.is_empty() {
-        let (device, _queue) = adapters[0].request_device(&instance).expect("device");
-        let shader = device.create_shader_spirv(&spv).expect("shader");
-        let desc = lgpu::GraphicsPipelineDesc {
-            label: Some("Mango Compositor Pipeline"),
-            vs_entry: "vs_main",
-            fs_entry: "fs_main",
-            color_format: lgpu::TextureFormat::Bgra8Unorm,
-            depth_format: None,
-            depth_test: false,
-            depth_write: false,
-            sample_count: 1,
-            primitive: lgpu::PrimitiveState::default(),
-            blend: Some(lgpu::BlendState::ALPHA_BLENDING),
-        };
-        let _pipeline = device
-            .create_graphics_pipeline_with_desc(&shader, &desc)
-            .expect("pipeline");
-        println!("Successfully created lgpu graphics pipeline with ALPHA_BLENDING on real GPU!");
-    }
+    println!("Successfully validated WGSL compositor shader with wgpu!");
 }

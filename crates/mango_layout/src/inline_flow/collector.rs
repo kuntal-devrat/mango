@@ -22,6 +22,7 @@ pub(crate) fn collect_inline_atoms(
     link_frame: Option<&str>,
     container_width: f32,
     container_height: f32,
+    active_bidi_override: Option<mango_css::values::UnicodeBidi>,
 ) {
     collect_inline_atoms_internal(
         box_node,
@@ -32,6 +33,7 @@ pub(crate) fn collect_inline_atoms(
         container_height,
         None,
         None,
+        active_bidi_override,
     );
 }
 
@@ -44,6 +46,7 @@ fn collect_inline_atoms_internal(
     container_height: f32,
     owner_inline_id: Option<mango_html::dom::NodeId>,
     positioned_inline_style: Option<&Arc<ComputedStyle>>,
+    active_bidi_override: Option<mango_css::values::UnicodeBidi>,
 ) {
     let (next_owner_id, next_pos_style) = if box_node.box_type == BoxType::InlineNode
         && box_node
@@ -65,6 +68,15 @@ fn collect_inline_atoms_internal(
         .clone()
         .unwrap_or_else(|| Arc::new(ComputedStyle::default()));
 
+    let current_bidi_override = match style.unicode_bidi {
+        mango_css::values::UnicodeBidi::BidiOverride
+        | mango_css::values::UnicodeBidi::IsolateOverride => Some(style.unicode_bidi),
+        mango_css::values::UnicodeBidi::Isolate
+        | mango_css::values::UnicodeBidi::Plaintext => None,
+        mango_css::values::UnicodeBidi::Normal
+        | mango_css::values::UnicodeBidi::Embed => active_bidi_override,
+    };
+
     if let Some(pos_style) = next_pos_style {
         if matches!(box_node.box_type, BoxType::TextNode(_)) {
             let mut merged = (*style).clone();
@@ -74,6 +86,21 @@ fn collect_inline_atoms_internal(
             merged.left = pos_style.left;
             merged.right = pos_style.right;
             merged.z_index = pos_style.z_index;
+            if let Some(bidi_override) = current_bidi_override {
+                merged.unicode_bidi = bidi_override;
+            }
+            style = Arc::new(merged);
+        } else if let Some(bidi_override) = current_bidi_override {
+            if style.unicode_bidi != bidi_override {
+                let mut merged = (*style).clone();
+                merged.unicode_bidi = bidi_override;
+                style = Arc::new(merged);
+            }
+        }
+    } else if let Some(bidi_override) = current_bidi_override {
+        if style.unicode_bidi != bidi_override {
+            let mut merged = (*style).clone();
+            merged.unicode_bidi = bidi_override;
             style = Arc::new(merged);
         }
     }
@@ -143,11 +170,9 @@ fn collect_inline_atoms_internal(
             let transformed_text = style.text_transform.apply(raw_text);
             let shaped_text = if transformed_text
                 .chars()
-                .any(crate::shaping::is_devanagari_char)
+                .any(crate::shaping::is_complex_char)
             {
-                crate::shaping::shape_devanagari(&transformed_text)
-            } else if transformed_text.chars().any(crate::shaping::is_thai_char) {
-                crate::shaping::shape_thai(&transformed_text)
+                crate::shaping::shape_complex_script(&transformed_text)
             } else {
                 transformed_text
             };
@@ -485,6 +510,7 @@ fn collect_inline_atoms_internal(
                     container_height,
                     next_owner_id,
                     next_pos_style,
+                    current_bidi_override,
                 );
             }
 

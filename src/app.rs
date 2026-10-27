@@ -22,6 +22,7 @@ pub struct WindowState {
     pub surface: WindowSurface,
     pub browser: BrowserChrome,
     pub window: Arc<Window>,
+    pending_resize: Option<(u32, u32)>,
 }
 
 impl WindowState {
@@ -34,6 +35,7 @@ impl WindowState {
             surface,
             browser,
             window,
+            pending_resize: None,
         }
     }
 
@@ -46,12 +48,17 @@ impl WindowState {
     pub fn redraw(&mut self) {
         let size = self.surface.size();
         if self.surface.is_gpu() {
-            self.browser.update_layers(size);
+            let raster_pending = self.browser.update_layers(size);
             if let Err(err) = self
                 .surface
                 .composite_and_present(&self.browser.layer_tree, self.browser.canvas_bg())
             {
                 log::warn!("GPU composite error: {err}");
+            }
+            if raster_pending {
+                // Continue bounded tile raster work across separate event-loop
+                // turns so input and window events can run between batches.
+                self.window.request_redraw();
             }
         } else {
             let dl = self.browser.build_display_list(size);
@@ -137,24 +144,59 @@ impl ApplicationHandler for MangoApp {
         let mut any_animating = false;
         let mut any_pending_scripts = false;
         let mut any_smooth_scroll = false;
+        let mut any_background_work = false;
         let mut earliest_timer_deadline: Option<Instant> = None;
+        let mut earliest_script_resume: Option<Instant> = None;
         let mut windows_to_open: Vec<String> = Vec::new();
 
         for state in self.windows.values_mut() {
             let mut needs_redraw = false;
+
+            if let Some((width, height)) = state.pending_resize.take() {
+                state.surface.resize(width, height);
+                state.browser.resize(width, height);
+                needs_redraw = true;
+            }
+
+            if state.browser.tick_async_layout() {
+                needs_redraw = true;
+            }
 
             // Check for completed background navigation. Always poll: a
             // background tab may finish while the active tab is idle.
             if state.browser.tick_navigation() {
                 needs_redraw = true;
             }
+            if state.browser.has_pending_navigation() {
+                any_background_work = true;
+            }
+            if state.browser.has_pending_layout() {
+                any_background_work = true;
+            }
+
+            // Drain asynchronous messages from the isolated Out-of-Process Renderer
+            if state.browser.tick_renderer() {
+                needs_redraw = true;
+            }
+            if state
+                .browser
+                .renderer_actor
+                .as_ref()
+                .is_some_and(|r| r.is_busy())
+            {
+                any_background_work = true;
+            }
 
             // Tick JS event loop (setTimeout/setInterval, and deferred/async scripts)
-            let had_scripts = state.browser.has_pending_scripts();
-            if state.browser.has_pending_timers() || state.browser.is_loading() || had_scripts {
-                let mutated = state.browser.tick_js();
-                if mutated || had_scripts {
-                    needs_redraw = true;
+            // only when isolated renderer actor is not active (sync test mode)
+            if state.browser.renderer_actor.is_none() {
+                let had_scripts =
+                    state.browser.has_pending_scripts() && !state.browser.has_pending_layout();
+                if state.browser.has_pending_timers() || state.browser.is_loading() || had_scripts {
+                    let mutated = state.browser.tick_js();
+                    if mutated || had_scripts {
+                        needs_redraw = true;
+                    }
                 }
             }
 
@@ -200,8 +242,17 @@ impl ApplicationHandler for MangoApp {
             if state.browser.is_animating() {
                 any_animating = true;
             }
-            if state.browser.has_pending_scripts() {
+            if state.browser.has_pending_scripts() && !state.browser.has_pending_layout() {
                 any_pending_scripts = true;
+            }
+            if let Some(deadline) = state.browser.pending_script_resume_deadline() {
+                earliest_script_resume =
+                    Some(earliest_script_resume.map_or(deadline, |prev| prev.min(deadline)));
+            }
+            if state.browser.has_pending_image_fetches()
+                || state.browser.has_pending_font_fetches()
+            {
+                any_background_work = true;
             }
             if state.browser.smooth_scroll.is_some() {
                 any_smooth_scroll = true;
@@ -224,12 +275,13 @@ impl ApplicationHandler for MangoApp {
             self.create_new_window(event_loop, Some(&url));
         }
 
-        // Event loop control flow pacing:
-        // 1. If deferred/async scripts are queued, yield briefly (4ms) to pump OS/Wayland events, answer pings, and redraw between scripts.
-        // 2. If animations, active page loading, or image decoding are running, poll at ~60 FPS (16ms).
-        // 3. Otherwise, if JS timers or tasks are pending, sleep until the earliest deadline (clamped to at most 1000ms).
-        // 4. Otherwise, enter true idle sleep (ControlFlow::Wait) to consume 0% CPU.
-        if any_pending_scripts {
+        // Keep script work incremental, but let the OS process events between
+        // scripts. Network and image workers wake this loop through the event
+        // loop proxy; a short bounded poll while they are active also lets us
+        // advance their queues without waking continuously.
+        let script_work_runnable = any_pending_scripts
+            && earliest_script_resume.is_none_or(|deadline| deadline <= Instant::now());
+        if script_work_runnable {
             event_loop.set_control_flow(ControlFlow::WaitUntil(
                 Instant::now() + Duration::from_millis(4),
             ));
@@ -237,29 +289,32 @@ impl ApplicationHandler for MangoApp {
             event_loop.set_control_flow(ControlFlow::WaitUntil(
                 Instant::now() + Duration::from_millis(16),
             ));
-        } else if let Some(deadline) = earliest_timer_deadline {
+        } else if any_background_work {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                Instant::now() + Duration::from_millis(16),
+            ));
+        } else if let Some(deadline) = earliest_timer_deadline
+            .into_iter()
+            .chain(earliest_script_resume)
+            .min()
+        {
             let now = Instant::now();
             if deadline <= now {
                 event_loop.set_control_flow(ControlFlow::WaitUntil(now));
             } else {
-                let delay = (deadline - now).min(Duration::from_millis(100));
-                event_loop.set_control_flow(ControlFlow::WaitUntil(now + delay));
+                event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
             }
         } else {
-            // Clamp idle sleep to at most 100ms.
-            // This guarantees Wayland xdg_wm_base pings are promptly serviced and
-            // eliminates deadlock when background tasks complete.
-            event_loop.set_control_flow(ControlFlow::WaitUntil(
-                Instant::now() + Duration::from_millis(100),
-            ));
+            // All asynchronous producers use the proxy waker; the platform
+            // event loop itself remains responsible for servicing window-system
+            // traffic while idle.
+            event_loop.set_control_flow(ControlFlow::Wait);
         }
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, _event: ()) {
-        // Woken up by a background worker, network fetch, or timer completion
-        for state in self.windows.values() {
-            state.window.request_redraw();
-        }
+        // about_to_wait drains the result queues and requests redraw only for
+        // windows whose visible state actually changed.
     }
 
     fn window_event(
@@ -285,9 +340,10 @@ impl ApplicationHandler for MangoApp {
                     return;
                 }
                 if let Some(state) = self.windows.get_mut(&window_id) {
-                    state.surface.resize(size.width, size.height);
-                    state.browser.resize(size.width, size.height);
-                    state.window.request_redraw();
+                    // Window systems can emit a burst of resize events while
+                    // dragging. Keep only the latest dimensions and rebuild
+                    // layout/surfaces once at the next event-loop boundary.
+                    state.pending_resize = Some((size.width, size.height));
                 }
             }
 
@@ -312,13 +368,17 @@ impl ApplicationHandler for MangoApp {
                     // Keep winit's sign convention: positive delta scrolls
                     // towards the top/left of the document. Negating here was
                     // the source of the inverted-wheel report.
-                    let (dx, dy) = match delta {
-                        MouseScrollDelta::LineDelta(x, y) => (x, y),
-                        MouseScrollDelta::PixelDelta(pos) => {
-                            ((pos.x / 20.0) as f32, (pos.y / 20.0) as f32)
+                    match delta {
+                        MouseScrollDelta::LineDelta(x, y) => {
+                            state.browser.handle_wheel_scroll_smooth(x, y);
                         }
-                    };
-                    state.browser.handle_scroll_2d(dx, dy);
+                        MouseScrollDelta::PixelDelta(pos) => {
+                            state.browser.handle_wheel_scroll_smooth(
+                                (pos.x / 40.0) as f32,
+                                (pos.y / 40.0) as f32,
+                            );
+                        }
+                    }
                     state.window.request_redraw();
                 }
             }

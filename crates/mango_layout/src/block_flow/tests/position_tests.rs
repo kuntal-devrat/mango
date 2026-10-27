@@ -273,9 +273,14 @@ fn test_bfc_root_auto_height_encloses_floats() {
 
 #[test]
 fn test_rtl_overconstrained_underflow_absorbs_left_margin() {
-    // G1: Over-constrained blocks in direction: rtl absorb underflow into margin-left
+    // G1: Over-constrained blocks in direction: rtl absorb underflow into margin-left per CSS 2.1 §10.3.3
     let mut root = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+    let mut root_style = ComputedStyle::default();
+    root_style.direction = Direction::Rtl;
+    root.style = Some(root_style.into());
+
     let mut containing_block = Dimensions::default();
+    containing_block.direction = Direction::Rtl;
     containing_block.content = Rect::new(0.0, 0.0, 500.0, 500.0);
 
     let mut block = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);

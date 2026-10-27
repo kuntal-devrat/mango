@@ -98,6 +98,8 @@ pub struct JsRuntime {
     pub session_storage: web_apis::SharedSessionStorage,
     /// Layout geometry published by the browser for measurement APIs.
     pub(crate) layout_bounds: dom_bindings::LayoutBounds,
+    /// Layout margins published by the browser for getComputedStyle.
+    pub(crate) layout_margins: dom_bindings::LayoutMargins,
     /// On-demand layout provider callback invoked when measurement APIs query dirty DOM.
     pub(crate) layout_callback: dom_bindings::LayoutCallback,
     /// Shared cookie jar backing `document.cookie` — owned by the browser so
@@ -264,8 +266,8 @@ impl JsRuntime {
         let pending_nav: web_apis::SharedPendingNav = Rc::new(RefCell::new(None));
         let pending_open: web_apis::SharedPendingOpenWindow = Rc::new(RefCell::new(None));
         let pending_scroll: web_apis::SharedPendingScroll = Rc::new(RefCell::new(None));
-        let layout_bounds: dom_bindings::LayoutBounds =
-            Rc::new(RefCell::new(std::collections::HashMap::new()));
+        let layout_bounds = dom_bindings::LayoutBounds::new();
+        let layout_margins = dom_bindings::LayoutMargins::new();
         let layout_callback: dom_bindings::LayoutCallback = Rc::new(RefCell::new(None));
         let worker_manager = crate::worker::WorkerManager::new();
         let ws_manager = mango_net::WebSocketManager::new();
@@ -314,6 +316,7 @@ impl JsRuntime {
             state.put(crate::ops::web::OpLocalStorage(local_storage.clone()));
             state.put(crate::ops::web::OpSessionStorage(session_storage.clone()));
             state.put(layout_bounds.clone());
+            state.put(layout_margins.clone());
             state.put(layout_callback.clone());
             state.put(cookie_jar.clone());
             state.put(worker_manager.clone());
@@ -364,6 +367,7 @@ impl JsRuntime {
             local_storage,
             session_storage,
             layout_bounds,
+            layout_margins,
             layout_callback,
             cookie_jar,
             hovered_nodes: std::collections::HashSet::new(),

@@ -548,7 +548,14 @@ pub fn interpolate_gradient(a: &Gradient, b: &Gradient, t: f32) -> Option<Gradie
         .map(|(sa, sb)| crate::values::ColorStop {
             color: interpolate_color(sa.color, sb.color, t),
             position: match (sa.position, sb.position) {
-                (Some(x), Some(y)) => Some(lerp(x, y, t)),
+                (
+                    Some(crate::values::StopPosition::Fraction(x)),
+                    Some(crate::values::StopPosition::Fraction(y)),
+                ) => Some(crate::values::StopPosition::Fraction(lerp(x, y, t))),
+                (
+                    Some(crate::values::StopPosition::Px(x)),
+                    Some(crate::values::StopPosition::Px(y)),
+                ) => Some(crate::values::StopPosition::Px(lerp(x, y, t))),
                 (x, y) => {
                     if t < 0.5 {
                         x

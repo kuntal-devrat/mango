@@ -13,6 +13,8 @@ pub fn compute_line_cross_sizes(
     is_row: bool,
     is_wrap: bool,
     container_cross_size: f32,
+    min_cross_size: f32,
+    max_cross_size: f32,
 ) -> (Vec<f32>, Vec<f32>) {
     let mut line_cross_sizes: Vec<f32> = Vec::with_capacity(lines.len());
     let mut line_baseline_ascents: Vec<f32> = Vec::with_capacity(lines.len());
@@ -53,12 +55,17 @@ pub fn compute_line_cross_sizes(
             }
         }
 
-        let l_cross = if has_baseline {
+        let mut l_cross = if !is_wrap && container_cross_size > 0.0 {
+            container_cross_size
+        } else if has_baseline {
             max_non_baseline_cross.max(max_ascent + max_descent)
         } else {
             max_non_baseline_cross
+        };
+
+        if !is_wrap {
+            l_cross = l_cross.max(min_cross_size).min(max_cross_size);
         }
-        .max(if !is_wrap { container_cross_size } else { 0.0 });
 
         line_cross_sizes.push(l_cross);
         line_baseline_ascents.push(if has_baseline { max_ascent } else { 0.0 });
@@ -131,13 +138,18 @@ pub fn compute_justify_content_spacing(
     container: &mut LayoutBox,
     style: &ComputedStyle,
     is_row: bool,
+    is_reverse: bool,
     is_container_main_definite: bool,
     container_main_size: f32,
     main_gap: f32,
 ) -> (f32, f32) {
-    let line_item_count = line.len();
-    let total_gaps = if line_item_count > 1 {
-        (line_item_count - 1) as f32 * main_gap
+    let _line_item_count = line.len();
+    let non_collapsed_count = line
+        .iter()
+        .filter(|&&idx| !item_metrics[idx].is_collapsed)
+        .count();
+    let total_gaps = if non_collapsed_count > 1 {
+        (non_collapsed_count - 1) as f32 * main_gap
     } else {
         0.0
     };
@@ -205,26 +217,86 @@ pub fn compute_justify_content_spacing(
             JustifyContent::Normal | JustifyContent::FlexStart => (0.0, main_gap),
             JustifyContent::FlexEnd => (remaining_free, main_gap),
             JustifyContent::Center => (remaining_free / 2.0, main_gap),
+            JustifyContent::Start => {
+                let is_dir_reverse = matches!(
+                    style.flex_direction,
+                    mango_css::values::FlexDirection::RowReverse
+                        | mango_css::values::FlexDirection::ColumnReverse
+                );
+                let off = if is_dir_reverse { remaining_free } else { 0.0 };
+                (off, main_gap)
+            }
+            JustifyContent::End => {
+                let is_dir_reverse = matches!(
+                    style.flex_direction,
+                    mango_css::values::FlexDirection::RowReverse
+                        | mango_css::values::FlexDirection::ColumnReverse
+                );
+                let off = if is_dir_reverse { 0.0 } else { remaining_free };
+                (off, main_gap)
+            }
+            JustifyContent::Left => {
+                let off = if is_row {
+                    if is_reverse {
+                        remaining_free
+                    } else {
+                        0.0
+                    }
+                } else {
+                    let is_dir_reverse = matches!(
+                        style.flex_direction,
+                        mango_css::values::FlexDirection::RowReverse
+                            | mango_css::values::FlexDirection::ColumnReverse
+                    );
+                    if is_dir_reverse {
+                        remaining_free
+                    } else {
+                        0.0
+                    }
+                };
+                (off, main_gap)
+            }
+            JustifyContent::Right => {
+                let off = if is_row {
+                    if is_reverse {
+                        0.0
+                    } else {
+                        remaining_free
+                    }
+                } else {
+                    let is_dir_reverse = matches!(
+                        style.flex_direction,
+                        mango_css::values::FlexDirection::RowReverse
+                            | mango_css::values::FlexDirection::ColumnReverse
+                    );
+                    if is_dir_reverse {
+                        remaining_free
+                    } else {
+                        0.0
+                    }
+                };
+                (off, main_gap)
+            }
             JustifyContent::SpaceBetween => {
-                if line_item_count > 1 {
+                if non_collapsed_count > 1 {
                     (
                         0.0,
-                        main_gap + remaining_free / (line_item_count - 1) as f32,
+                        main_gap + remaining_free / (non_collapsed_count - 1) as f32,
                     )
                 } else {
                     (0.0, main_gap)
                 }
             }
             JustifyContent::SpaceAround => {
-                if line_item_count > 0 {
-                    let per_item = remaining_free / line_item_count as f32;
+                if non_collapsed_count > 0 {
+                    let per_item = remaining_free / non_collapsed_count as f32;
                     (per_item / 2.0, main_gap + per_item)
                 } else {
                     (0.0, main_gap)
                 }
             }
             JustifyContent::SpaceEvenly => {
-                let spacing = (remaining_free + total_gaps) / (line_item_count + 1) as f32;
+                let spacing = (remaining_free + total_gaps) / (non_collapsed_count + 1) as f32;
                 (spacing, spacing)
             }
         }

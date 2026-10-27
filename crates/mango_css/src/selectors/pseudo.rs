@@ -107,10 +107,18 @@ pub(crate) fn matches_pseudo_class(
                 false
             }
         }
-        "link" | "any-link" => {
-            el.tag_name.eq_ignore_ascii_case("a") && el.get_attribute("href").is_some()
+        "any-link" => {
+            (el.tag_name.eq_ignore_ascii_case("a") || el.tag_name.eq_ignore_ascii_case("area"))
+                && el.get_attribute("href").is_some()
         }
-        "visited" => false,
+        "link" => {
+            (el.tag_name.eq_ignore_ascii_case("a") || el.tag_name.eq_ignore_ascii_case("area"))
+                && el.get_attribute("href").map(|h| !h.is_empty()).unwrap_or(false)
+        }
+        "visited" => {
+            (el.tag_name.eq_ignore_ascii_case("a") || el.tag_name.eq_ignore_ascii_case("area"))
+                && el.get_attribute("href") == Some("")
+        }
         "root" => el.tag_name.eq_ignore_ascii_case("html"),
         "scope" => {
             if let Some(scope_id) = current_scope_root() {

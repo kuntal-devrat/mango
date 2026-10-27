@@ -46,6 +46,11 @@ pub struct Tile {
 impl Tile {
     /// Creates a new uninitialized tile for the given grid coordinate.
     pub fn new(coord: TileCoord, tile_size: u32) -> Self {
+        Self::new_with_bg(coord, tile_size, Color::WHITE)
+    }
+
+    /// Creates a new tile initialized with the given background color.
+    pub fn new_with_bg(coord: TileCoord, tile_size: u32, bg_color: Color) -> Self {
         let x = (coord.col * tile_size) as f32;
         let y = (coord.row * tile_size) as f32;
         let w = tile_size as f32;
@@ -57,7 +62,7 @@ impl Tile {
             rect: Rect::new(x, y, w, h),
             width: tile_size,
             height: tile_size,
-            pixels: vec![0; num_pixels],
+            pixels: vec![bg_color.to_rgb_u32(); num_pixels],
             dirty: true,
             version: 0,
             last_used_frame: 0,
@@ -235,27 +240,69 @@ impl TileGrid {
         bg_color: Color,
         current_frame: u64,
     ) {
+        self.ensure_tiles_rasterized_limited(
+            viewport,
+            display_list,
+            bg_color,
+            current_frame,
+            usize::MAX,
+        );
+    }
+
+    /// Rasterizes at most `max_tiles` dirty visible tiles, prioritizing tiles
+    /// nearest the viewport origin. Remaining tiles stay dirty and can be
+    /// processed by a later frame without monopolizing the window thread.
+    pub fn ensure_tiles_rasterized_limited(
+        &mut self,
+        viewport: Rect,
+        display_list: &DisplayList,
+        bg_color: Color,
+        current_frame: u64,
+        max_tiles: usize,
+    ) {
         use rayon::prelude::*;
 
-        let visible_coords = self.visible_tile_coords(viewport, 1);
+        let viewport_coords = self.visible_tile_coords(viewport, 0);
+        let expanded_coords = self.visible_tile_coords(viewport, 1);
         let tile_size = self.tile_size;
 
-        for &coord in &visible_coords {
+        for &coord in &expanded_coords {
             let tile = self
                 .tiles
                 .entry(coord)
-                .or_insert_with(|| Tile::new(coord, tile_size));
+                .or_insert_with(|| Tile::new_with_bg(coord, tile_size, bg_color));
 
             tile.last_used_frame = current_frame;
         }
 
         let visible_set: std::collections::HashSet<TileCoord> =
-            visible_coords.into_iter().collect();
+            expanded_coords.iter().copied().collect();
 
+        let mut selected_dirty = std::collections::HashSet::new();
+        // Prioritize on-screen viewport tiles first
+        for coord in &viewport_coords {
+            if selected_dirty.len() >= max_tiles {
+                break;
+            }
+            if self.tiles.get(coord).is_some_and(|tile| tile.dirty) {
+                selected_dirty.insert(*coord);
+            }
+        }
+        // Then off-screen pre-roll tiles within the remaining budget
+        if selected_dirty.len() < max_tiles {
+            for coord in &expanded_coords {
+                if selected_dirty.len() >= max_tiles {
+                    break;
+                }
+                if self.tiles.get(coord).is_some_and(|tile| tile.dirty) {
+                    selected_dirty.insert(*coord);
+                }
+            }
+        }
         let mut dirty_tiles: Vec<&mut Tile> = self
             .tiles
             .iter_mut()
-            .filter(|(coord, tile)| visible_set.contains(coord) && tile.dirty)
+            .filter(|(coord, tile)| selected_dirty.contains(coord) && tile.dirty)
             .map(|(_, tile)| tile)
             .collect();
 
@@ -284,6 +331,14 @@ impl TileGrid {
                 }
             }
         }
+    }
+
+    /// Returns whether any tile intersecting the expanded visible area still
+    /// needs rasterization.
+    pub fn has_dirty_visible_tiles(&self, viewport: Rect) -> bool {
+        self.visible_tile_coords(viewport, 1)
+            .iter()
+            .any(|coord| self.tiles.get(coord).is_some_and(|tile| tile.dirty))
     }
 
     /// Evicts tiles that have not been visible for `max_idle_frames` to keep RAM usage low.

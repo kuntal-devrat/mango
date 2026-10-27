@@ -32,6 +32,19 @@ fn font_fetch_pool() -> &'static rayon::ThreadPool {
             .expect("failed to initialize font fetch pool")
     })
 }
+static PENDING_WEB_FONT_LOADS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// Returns true if background web font fetches or decodes are in flight.
+pub fn has_pending_font_fetches() -> bool {
+    PENDING_WEB_FONT_LOADS.load(std::sync::atomic::Ordering::Relaxed) > 0
+}
+
+/// Returns the number of active background web font fetch tasks.
+pub fn pending_font_fetch_count() -> usize {
+    PENDING_WEB_FONT_LOADS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Non-blocking font registration for the UI thread: returns immediately and
 /// fetches + registers web fonts on a detached background thread.
 ///
@@ -43,7 +56,15 @@ pub(crate) fn load_web_fonts_async(
     base_url: Option<Url>,
     stylesheets: Vec<Stylesheet>,
 ) {
+    PENDING_WEB_FONT_LOADS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     font_load_pool().spawn(move || {
+        struct FontLoadDropGuard;
+        impl Drop for FontLoadDropGuard {
+            fn drop(&mut self) {
+                PENDING_WEB_FONT_LOADS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let _guard = FontLoadDropGuard;
         load_web_fonts(&loader, base_url.as_ref(), &stylesheets);
     });
 }
@@ -434,7 +455,10 @@ pub fn collect_image_sources(doc: &Document, node_id: NodeId, sources: &mut Vec<
     if let Some(node) = doc.get(node_id)
         && let NodeData::Element(elem) = &node.data
     {
-        // 1. If <img>, check src, srcset, data-src
+        // 1. If <img>, fetch only `src` and lazy-loading `data-src` resources.
+        // Responsive candidates are currently not wired into image painting,
+        // so prefetching them here would consume bandwidth without rendering
+        // them and can duplicate the fallback `src` request.
         if elem.tag_name.eq_ignore_ascii_case("img") {
             if let Some(src) = elem.get_attribute("src") {
                 let trimmed = src.trim();
@@ -442,34 +466,8 @@ pub fn collect_image_sources(doc: &Document, node_id: NodeId, sources: &mut Vec<
                     sources.push(trimmed.to_string());
                 }
             }
-            if let Some(srcset) = elem.get_attribute("srcset") {
-                for candidate in srcset.split(',') {
-                    let url = candidate.split_whitespace().next().unwrap_or("");
-                    if !url.is_empty() && !url.starts_with("data:") {
-                        sources.push(url.to_string());
-                    }
-                }
-            }
             if let Some(data_src) = elem.get_attribute("data-src") {
                 let trimmed = data_src.trim();
-                if !trimmed.is_empty() && !trimmed.starts_with("data:") {
-                    sources.push(trimmed.to_string());
-                }
-            }
-        }
-
-        // 1b. If <source> (e.g. inside <picture>), collect srcset URLs for prefetching
-        if elem.tag_name.eq_ignore_ascii_case("source") {
-            if let Some(srcset) = elem.get_attribute("srcset") {
-                for candidate in srcset.split(',') {
-                    let url = candidate.split_whitespace().next().unwrap_or("");
-                    if !url.is_empty() && !url.starts_with("data:") {
-                        sources.push(url.to_string());
-                    }
-                }
-            }
-            if let Some(src) = elem.get_attribute("src") {
-                let trimmed = src.trim();
                 if !trimmed.is_empty() && !trimmed.starts_with("data:") {
                     sources.push(trimmed.to_string());
                 }

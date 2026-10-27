@@ -54,7 +54,7 @@ pub(crate) fn apply_matrix(m: [f32; 6], x: f32, y: f32) -> (f32, f32) {
 }
 
 /// Computes the inverse of an affine matrix, or `None` when it is singular.
-pub(crate) fn invert_matrix(m: [f32; 6]) -> Option<[f32; 6]> {
+pub fn invert_matrix(m: [f32; 6]) -> Option<[f32; 6]> {
     let det = m[0] * m[3] - m[1] * m[2];
     if det.abs() < 1e-6 {
         return None;

@@ -28,6 +28,12 @@ impl JsRuntime {
         *self.layout_bounds.borrow_mut() = bounds;
     }
 
+    /// Publishes layout margins (DOM node id → `[top, right, bottom, left]`) so that
+    /// `getComputedStyle()` returns the used margin lengths in px.
+    pub fn set_layout_margins(&self, margins: std::collections::HashMap<u32, [f32; 4]>) {
+        *self.layout_margins.borrow_mut() = margins;
+    }
+
     /// Sets an on-demand layout provider callback that is invoked automatically
     /// when measurement APIs query geometry while the DOM/style tree is dirty.
     pub fn set_layout_callback<F>(&self, cb: F)

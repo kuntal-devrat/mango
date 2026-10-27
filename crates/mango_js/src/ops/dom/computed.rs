@@ -4,7 +4,7 @@ use deno_core::{OpState, op2};
 use mango_html::dom::{NodeData, NodeId, node_id_from_js};
 
 use super::computed_format::*;
-use crate::dom_bindings::{LayoutBounds, SharedDocument};
+use crate::dom_bindings::{LayoutBounds, LayoutMargins, SharedDocument};
 
 #[op2]
 #[serde]
@@ -388,31 +388,30 @@ pub fn op_mango_get_computed_style(
     };
     map.insert("box-sizing".to_string(), bs_str.to_string());
 
-    // Margins
-    let mt = format_css_length(
-        &style.margin_top,
-        style.font_size,
-        style.root_font_size,
-        cb_w,
-    );
-    let mr = format_css_length(
-        &style.margin_right,
-        style.font_size,
-        style.root_font_size,
-        cb_w,
-    );
-    let mb = format_css_length(
-        &style.margin_bottom,
-        style.font_size,
-        style.root_font_size,
-        cb_w,
-    );
-    let ml = format_css_length(
-        &style.margin_left,
-        style.font_size,
-        style.root_font_size,
-        cb_w,
-    );
+    // Margins (CSSOM § 5.1 resolved value for laid-out boxes is the used pixel value)
+    let used_margins = state
+        .try_borrow::<LayoutMargins>()
+        .and_then(|m| m.borrow().get(&nid.raw()).copied());
+    let (used_mt, used_mr, used_mb, used_ml) = match used_margins {
+        Some([t, r, b, l]) => (Some(t), Some(r), Some(b), Some(l)),
+        None => (None, None, None, None),
+    };
+    let format_margin = |specified: &mango_css::values::Length, used: Option<f32>, cb_w: Option<f32>| -> String {
+        if let Some(u) = used {
+            let rounded = (u * 1000.0).round() / 1000.0;
+            if (rounded - rounded.round()).abs() < 1e-4 {
+                format!("{:.0}px", rounded.round())
+            } else {
+                format!("{rounded}px")
+            }
+        } else {
+            format_css_length(specified, style.font_size, style.root_font_size, cb_w)
+        }
+    };
+    let mt = format_margin(&style.margin_top, used_mt, cb_w);
+    let mr = format_margin(&style.margin_right, used_mr, cb_w);
+    let mb = format_margin(&style.margin_bottom, used_mb, cb_w);
+    let ml = format_margin(&style.margin_left, used_ml, cb_w);
     map.insert("margin-top".to_string(), mt.clone());
     map.insert("margin-right".to_string(), mr.clone());
     map.insert("margin-bottom".to_string(), mb.clone());
@@ -543,6 +542,8 @@ pub fn op_mango_get_computed_style(
         mango_css::values::FlexWrap::NoWrap => "nowrap",
         mango_css::values::FlexWrap::Wrap => "wrap",
         mango_css::values::FlexWrap::WrapReverse => "wrap-reverse",
+        mango_css::values::FlexWrap::Balance => "balance",
+        mango_css::values::FlexWrap::WrapReverseBalance => "wrap-reverse balance",
     };
     map.insert("flex-wrap".to_string(), fw_str.to_string());
 
@@ -626,7 +627,11 @@ pub fn op_mango_get_computed_style(
     let flex_flow_shorthand = format!("{fd_str} {fw_str}");
     map.insert("flex-flow".to_string(), flex_flow_shorthand);
 
-    map.insert("flex-line-count".to_string(), "1".to_string());
+    let flc_str = style
+        .flex_line_count
+        .map(|c| c.to_string())
+        .unwrap_or_else(|| "1".to_string());
+    map.insert("flex-line-count".to_string(), flc_str);
     map.insert("order".to_string(), style.order.to_string());
 
     let jc_str = match style.justify_content {
@@ -637,6 +642,10 @@ pub fn op_mango_get_computed_style(
         mango_css::values::JustifyContent::SpaceBetween => "space-between",
         mango_css::values::JustifyContent::SpaceAround => "space-around",
         mango_css::values::JustifyContent::SpaceEvenly => "space-evenly",
+        mango_css::values::JustifyContent::Start => "start",
+        mango_css::values::JustifyContent::End => "end",
+        mango_css::values::JustifyContent::Left => "left",
+        mango_css::values::JustifyContent::Right => "right",
     };
     map.insert("justify-content".to_string(), jc_str.to_string());
 

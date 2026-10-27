@@ -19,16 +19,17 @@ pub(crate) enum PaintLayer {
     TopLayer(u32),
 }
 
-pub(crate) fn paint_layer_of(box_node: &LayoutBox) -> PaintLayer {
+pub(crate) fn creates_stacking_context(box_node: &LayoutBox, is_flex_or_grid_item: bool) -> bool {
     let is_top_layer = (box_node.tag_name.as_deref() == Some("dialog")
         && box_node.get_attribute("open").is_some())
         || box_node.get_attribute("data-mango-popover-open") == Some("true")
         || box_node.get_attribute(":popover-open") == Some("true");
     if is_top_layer {
-        return PaintLayer::TopLayer(1);
+        return true;
     }
     if let Some(s) = &box_node.style {
-        let creates_stacking_context = s.position != mango_css::values::Position::Static
+        s.position != mango_css::values::Position::Static
+            || (is_flex_or_grid_item && s.z_index.is_some())
             || s.opacity < 1.0
             || !s.transform.is_identity()
             || !s.filter.is_empty()
@@ -41,9 +42,29 @@ pub(crate) fn paint_layer_of(box_node: &LayoutBox) -> PaintLayer {
                 s.contain,
                 mango_css::values::Contain::Paint | mango_css::values::Contain::Strict
             )
-            || s.will_change;
+            || s.will_change
+    } else {
+        false
+    }
+}
 
-        if creates_stacking_context {
+pub(crate) fn paint_layer_of(box_node: &LayoutBox, is_flex_or_grid_item: bool) -> PaintLayer {
+    let is_top_layer = (box_node.tag_name.as_deref() == Some("dialog")
+        && box_node.get_attribute("open").is_some())
+        || box_node.get_attribute("data-mango-popover-open") == Some("true")
+        || box_node.get_attribute(":popover-open") == Some("true");
+    if is_top_layer {
+        return PaintLayer::TopLayer(1);
+    }
+    if matches!(box_node.box_type, crate::BoxType::TextNode(_))
+        && box_node.style.as_ref().map(|s| s.position) != Some(mango_css::values::Position::Sticky)
+    {
+        return PaintLayer::Inline;
+    }
+    if let Some(s) = &box_node.style {
+        let is_sc = creates_stacking_context(box_node, is_flex_or_grid_item);
+
+        if is_sc {
             match s.z_index {
                 Some(z) if z < 0 => PaintLayer::NegativeZ(z),
                 Some(z) if z > 0 => PaintLayer::PositiveZ(z),
@@ -51,14 +72,14 @@ pub(crate) fn paint_layer_of(box_node: &LayoutBox) -> PaintLayer {
             }
         } else if s.float != mango_css::values::Float::None {
             PaintLayer::Float
-        } else if box_node.is_inline() {
+        } else if box_node.is_inline() || is_flex_or_grid_item {
             PaintLayer::Inline
         } else if has_positioned_descendant(box_node) {
             PaintLayer::ZeroOrAutoZ
         } else {
             PaintLayer::BlockBackgrounds
         }
-    } else if box_node.is_inline() {
+    } else if box_node.is_inline() || is_flex_or_grid_item {
         PaintLayer::Inline
     } else if has_positioned_descendant(box_node) {
         PaintLayer::ZeroOrAutoZ

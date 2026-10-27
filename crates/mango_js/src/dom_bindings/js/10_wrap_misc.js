@@ -750,8 +750,8 @@
             delete el.getAttribute; delete el.setAttribute; delete el.removeAttribute;
             delete el.hasAttribute; delete el.prefix; delete el.localName; delete el.namespaceURI;
         }
-        _ensureWrapperPrototype(el);
         _storeWrapper(nodeId, el);
+        _ensureWrapperPrototype(el);
         return el;
     }
 

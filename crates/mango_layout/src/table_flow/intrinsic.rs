@@ -46,13 +46,34 @@ pub fn measure_box_intrinsic_widths(
     default_family: mango_render::FontFamily,
     memo: &mut HashMap<usize, (f32, f32)>,
 ) -> (f32, f32) {
-    measure_box_intrinsic_widths_with_height(
+    measure_box_intrinsic_widths_internal(
         node,
         default_font_size,
         default_weight,
         default_family,
         memo,
         None,
+        false,
+    )
+}
+
+/// Measures the intrinsic min-content and max-content width of a node based purely
+/// on its contents, ignoring any explicit specified width on the node itself.
+pub fn measure_box_content_intrinsic_widths(
+    node: &LayoutBox,
+    default_font_size: f32,
+    default_weight: mango_render::FontWeight,
+    default_family: mango_render::FontFamily,
+    memo: &mut HashMap<usize, (f32, f32)>,
+) -> (f32, f32) {
+    measure_box_intrinsic_widths_internal(
+        node,
+        default_font_size,
+        default_weight,
+        default_family,
+        memo,
+        None,
+        true,
     )
 }
 
@@ -64,10 +85,35 @@ fn measure_box_intrinsic_widths_with_height(
     memo: &mut HashMap<usize, (f32, f32)>,
     containing_height: Option<f32>,
 ) -> (f32, f32) {
+    measure_box_intrinsic_widths_internal(
+        node,
+        default_font_size,
+        default_weight,
+        default_family,
+        memo,
+        containing_height,
+        false,
+    )
+}
+
+fn measure_box_intrinsic_widths_internal(
+    node: &LayoutBox,
+    default_font_size: f32,
+    default_weight: mango_render::FontWeight,
+    default_family: mango_render::FontFamily,
+    memo: &mut HashMap<usize, (f32, f32)>,
+    containing_height: Option<f32>,
+    ignore_own_explicit_width: bool,
+) -> (f32, f32) {
     // A percentage-height flex subtree has different intrinsic width when its
     // containing block height changes. Include that resolution context in the
     // memo key so a pre-mutation measurement cannot be reused after relayout.
-    let node_key = node as *const LayoutBox as usize;
+    let node_key = (node as *const LayoutBox as usize)
+        ^ (if ignore_own_explicit_width {
+            0x5555_5555
+        } else {
+            0
+        });
     let height_key = containing_height.map(f32::to_bits).unwrap_or(0);
     let key = node_key.rotate_left(17) ^ height_key as usize;
     if let Some(&res) = memo.get(&key) {
@@ -109,6 +155,29 @@ fn measure_box_intrinsic_widths_with_height(
 
     // 1. Text node measurement
     if let Some(text) = node.text() {
+        let is_vertical = node
+            .style
+            .as_ref()
+            .map(|s| s.writing_mode.is_vertical())
+            .unwrap_or(false);
+        if is_vertical {
+            let line_h = node
+                .style
+                .as_ref()
+                .and_then(|s| s.line_height)
+                .unwrap_or(font_size * 1.2);
+            let res = (line_h, line_h);
+            memo.insert(key, res);
+            return res;
+        }
+        let preserves_spaces = node.style.as_ref().is_some_and(|s| {
+            matches!(
+                s.white_space,
+                mango_css::values::WhiteSpace::Pre
+                    | mango_css::values::WhiteSpace::PreWrap
+                    | mango_css::values::WhiteSpace::BreakSpaces
+            )
+        });
         let is_nowrap = node.style.as_ref().is_some_and(|s| {
             matches!(
                 s.white_space,
@@ -123,7 +192,8 @@ fn measure_box_intrinsic_widths_with_height(
         let mut max_word_w = 0.0f32;
         let mut max_line_w = 0.0f32;
 
-        for line in text.split('\n') {
+        for raw_line in text.split('\n') {
+            let line = if preserves_spaces { raw_line } else { raw_line.trim() };
             let line_w = crate::inline_flow::measure_text_width_with_style_and_spacing(
                 line,
                 font_size,
@@ -202,7 +272,8 @@ fn measure_box_intrinsic_widths_with_height(
                 w = Some(val);
             }
         }
-        if w.is_none()
+        if !ignore_own_explicit_width
+            && w.is_none()
             && let Some(style) = &node.style
         {
             match style.width {
@@ -307,7 +378,8 @@ fn measure_box_intrinsic_widths_with_height(
                 w = Some(val);
             }
         }
-        if w.is_none()
+        if !ignore_own_explicit_width
+            && w.is_none()
             && let Some(style) = &node.style
         {
             match style.width {
@@ -355,34 +427,61 @@ fn measure_box_intrinsic_widths_with_height(
         node.style.as_ref().map(|s| s.display),
         Some(Display::Flex) | Some(Display::InlineFlex)
     ) {
-        let is_row = matches!(
+        let is_vertical_wm = node
+            .style
+            .as_ref()
+            .map(|s| s.writing_mode.is_vertical())
+            .unwrap_or(false);
+        let is_flex_dir_row = matches!(
             node.style.as_ref().map(|s| s.flex_direction),
             Some(mango_css::values::FlexDirection::Row)
                 | Some(mango_css::values::FlexDirection::RowReverse)
                 | None
         );
-        let is_wrap = matches!(
-            node.style.as_ref().map(|s| s.flex_wrap),
-            Some(mango_css::values::FlexWrap::Wrap)
-                | Some(mango_css::values::FlexWrap::WrapReverse)
-        );
+        let is_row = if is_vertical_wm {
+            !is_flex_dir_row
+        } else {
+            is_flex_dir_row
+        };
+        let is_wrap = node
+            .style
+            .as_ref()
+            .map(|s| s.flex_wrap.is_wrap())
+            .unwrap_or(false);
+        let is_balanced = node
+            .style
+            .as_ref()
+            .map(|s| s.flex_wrap.is_balanced())
+            .unwrap_or(false);
+        let flex_line_count = node.style.as_ref().and_then(|s| s.flex_line_count);
         let col_gap = node
             .style
             .as_ref()
-            .map(|s| s.column_gap.to_px(s.font_size, s.root_font_size, 0.0))
+            .map(|s| {
+                let gap_len = if is_flex_dir_row {
+                    &s.column_gap
+                } else {
+                    &s.row_gap
+                };
+                gap_len.to_px(s.font_size, s.root_font_size, 0.0)
+            })
             .unwrap_or(0.0);
         let mut min_w = 0.0f32;
         let mut max_w = 0.0f32;
         let mut child_count = 0;
+        let mut child_max_widths = Vec::new();
         let flex_height = child_style_height(node, containing_height);
         for child in &node.children {
             let child_style = child.style.as_ref();
             if child_style
                 .map(|s| {
-                    matches!(
-                        s.position,
-                        mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
-                    )
+                    s.display == Display::None
+                        || s.visibility == mango_css::values::Visibility::Collapse
+                        || matches!(
+                            s.position,
+                            mango_css::values::Position::Absolute
+                                | mango_css::values::Position::Fixed
+                        )
                 })
                 .unwrap_or(false)
             {
@@ -416,25 +515,77 @@ fn measure_box_intrinsic_widths_with_height(
                 };
                 to_px(&s.flex_basis).or_else(|| to_px(&s.width))
             });
-            let aspect_ratio_width = if !is_row {
-                child_style.and_then(|s| {
-                    let ratio = s.aspect_ratio.filter(|ratio| *ratio > 0.0)?;
-                    if explicit_w.is_some() || s.width != Length::Auto {
-                        return None;
+            let ratio = child_style
+                .and_then(|s| s.aspect_ratio.filter(|r| *r > 0.0))
+                .or_else(|| match &child.box_type {
+                    crate::box_model::BoxType::ReplacedElement {
+                        intrinsic_width,
+                        intrinsic_height,
+                        ..
                     }
+                    | crate::box_model::BoxType::IFrame {
+                        intrinsic_width,
+                        intrinsic_height,
+                        ..
+                    }
+                    | crate::box_model::BoxType::Video {
+                        intrinsic_width,
+                        intrinsic_height,
+                        ..
+                    }
+                    | crate::box_model::BoxType::Canvas {
+                        intrinsic_width,
+                        intrinsic_height,
+                        ..
+                    } if *intrinsic_height > 0.0 => Some(*intrinsic_width / *intrinsic_height),
+                    _ => None,
+                });
 
-                    // A column flex container's min-content width depends on
-                    // an aspect-ratio item's definite main size. During a
-                    // relayout that size is already resolved on the flex
-                    // container, even when the item's computed height is
-                    // `auto` (the common case in the WPT fixture).
-                    let height = match s.height {
-                        Length::Px(px) if px > 0.0 => Some(px),
-                        _ if flex_height > 0.0 => Some(flex_height),
-                        _ => None,
-                    }?;
-                    Some(height * ratio)
-                })
+            let aspect_ratio_width = if let Some(r) = ratio {
+                if explicit_w.is_none()
+                    && child_style.map(|s| s.width == Length::Auto).unwrap_or(true)
+                {
+                    if !is_row {
+                        let height = match child_style.map(|s| &s.height) {
+                            Some(Length::Px(px)) if *px > 0.0 => Some(*px),
+                            _ if flex_height > 0.0 => Some(flex_height),
+                            _ => None,
+                        };
+                        height.map(|h| h * r)
+                    } else {
+                        // Row flex container: if child stretches vertically and flex_height is definite
+                        let align = child_style
+                            .map(|s| s.align_self)
+                            .unwrap_or(mango_css::values::AlignSelf::Auto);
+                        let is_stretch = match align {
+                            mango_css::values::AlignSelf::Stretch => true,
+                            mango_css::values::AlignSelf::Auto => matches!(
+                                node.style
+                                    .as_ref()
+                                    .map(|s| s.align_items)
+                                    .unwrap_or(mango_css::values::AlignItems::Stretch),
+                                mango_css::values::AlignItems::Normal
+                                    | mango_css::values::AlignItems::Stretch
+                            ),
+                            _ => false,
+                        };
+                        let has_auto_margin_v = child_style
+                            .map(|s| {
+                                s.margin_top == Length::Auto || s.margin_bottom == Length::Auto
+                            })
+                            .unwrap_or(false);
+                        if is_stretch && !has_auto_margin_v && flex_height > 0.0 {
+                            Some(flex_height * r)
+                        } else {
+                            match child_style.map(|s| &s.height) {
+                                Some(Length::Px(px)) if *px > 0.0 => Some(*px * r),
+                                _ => None,
+                            }
+                        }
+                    }
+                } else {
+                    None
+                }
             } else {
                 None
             };
@@ -452,6 +603,7 @@ fn measure_box_intrinsic_widths_with_height(
                     if !is_row { Some(flex_height) } else { None },
                 )
             };
+            child_max_widths.push(c_max);
             if is_row {
                 if is_wrap {
                     min_w = min_w.max(c_min);
@@ -463,13 +615,25 @@ fn measure_box_intrinsic_widths_with_height(
             } else {
                 min_w = min_w.max(c_min);
                 max_w = max_w.max(c_max);
+                child_count += 1;
             }
         }
-        if is_row && child_count > 1 {
-            let total_gap = (child_count - 1) as f32 * col_gap;
-            max_w += total_gap;
-            if !is_wrap {
-                min_w += total_gap;
+        if is_row {
+            if is_balanced && flex_line_count.unwrap_or(0) > 1 {
+                let k = flex_line_count.unwrap() as usize;
+                max_w = balance_intrinsic_max_content(&child_max_widths, k, col_gap);
+            } else if child_count > 1 {
+                let total_gap = (child_count - 1) as f32 * col_gap;
+                max_w += total_gap;
+                if !is_wrap {
+                    min_w += total_gap;
+                }
+            }
+        } else if is_balanced && flex_line_count.unwrap_or(0) > 1 {
+            let k = (flex_line_count.unwrap() as usize).min(child_count).max(1);
+            if k > 1 {
+                let col_total: f32 = max_w * k as f32 + (k - 1) as f32 * col_gap;
+                max_w = col_total;
             }
         }
         let is_nowrap = node.style.as_ref().is_some_and(|s| {
@@ -581,7 +745,7 @@ fn measure_box_intrinsic_widths_with_height(
     }
 
     // 4. General container: check explicit width first, otherwise max of child intrinsic widths
-    if let Some(style) = &node.style {
+    if !ignore_own_explicit_width && let Some(style) = &node.style {
         match style.width {
             Length::Px(px) if px >= 0.0 => {
                 let non_content_h = get_node_horizontal_spacing(node, font_size);
@@ -626,13 +790,14 @@ fn measure_box_intrinsic_widths_with_height(
                 .style
                 .as_ref()
                 .map(|s| {
-                    matches!(
-                        s.display,
-                        Display::Inline
-                            | Display::InlineBlock
-                            | Display::InlineFlex
-                            | Display::InlineGrid
-                    )
+                    s.float != mango_css::values::Float::None
+                        || matches!(
+                            s.display,
+                            Display::Inline
+                                | Display::InlineBlock
+                                | Display::InlineFlex
+                                | Display::InlineGrid
+                        )
                 })
                 .unwrap_or(false);
 
@@ -682,12 +847,15 @@ pub fn cell_intrinsic_metrics(
     cell: &LayoutBox,
     table_width: f32,
     memo: &mut HashMap<usize, (f32, f32)>,
+    is_table_auto_width: bool,
 ) -> (f32, f32, Option<f32>) {
     let mut explicit_w = None;
     if let Some(style) = &cell.style {
         match style.width {
             Length::Px(px) if px > 0.0 => explicit_w = Some(px),
-            Length::Percent(pct) if pct > 0.0 => explicit_w = Some(table_width * (pct / 100.0)),
+            Length::Percent(pct) if pct > 0.0 && !is_table_auto_width => {
+                explicit_w = Some(table_width * (pct / 100.0));
+            }
             _ => {}
         }
     }
@@ -696,7 +864,9 @@ pub fn cell_intrinsic_metrics(
     {
         let w_str = w_attr.trim();
         if let Some(pct_str) = w_str.strip_suffix('%') {
-            if let Ok(pct) = pct_str.trim().parse::<f32>() {
+            if let Ok(pct) = pct_str.trim().parse::<f32>()
+                && !is_table_auto_width
+            {
                 explicit_w = Some(table_width * (pct / 100.0));
             }
         } else {
@@ -708,11 +878,6 @@ pub fn cell_intrinsic_metrics(
             }
         }
     }
-
-    let h_padding = cell.dimensions.padding.left
-        + cell.dimensions.padding.right
-        + cell.dimensions.border.left
-        + cell.dimensions.border.right;
 
     let font_size = cell.style.as_ref().map(|s| s.font_size).unwrap_or(14.0);
     let is_bold = cell
@@ -734,8 +899,8 @@ pub fn cell_intrinsic_metrics(
     let (content_min, content_max) =
         measure_box_intrinsic_widths(cell, font_size, weight, family, memo);
 
-    let min_content = (content_min + h_padding).max(1.0);
-    let max_content = (content_max + h_padding).max(min_content);
+    let min_content = content_min.max(1.0);
+    let max_content = content_max.max(min_content);
 
     let (final_min, final_max) = if let Some(ew) = explicit_w {
         (min_content.max(ew), max_content.max(ew))
@@ -744,4 +909,66 @@ pub fn cell_intrinsic_metrics(
     };
 
     (final_min, final_max, explicit_w)
+}
+
+fn balance_intrinsic_max_content(sizes: &[f32], k: usize, gap: f32) -> f32 {
+    let n = sizes.len();
+    if n == 0 {
+        return 0.0;
+    }
+    if k <= 1 || n <= 1 {
+        let total: f32 = sizes.iter().sum();
+        let gaps = if n > 1 { (n - 1) as f32 * gap } else { 0.0 };
+        return total + gaps;
+    }
+    let k = k.min(n);
+
+    let calc_len = |from: usize, to: usize| -> f32 {
+        let items: f32 = sizes[from..to].iter().sum();
+        let gaps = (to - from - 1) as f32 * gap;
+        items + gaps
+    };
+
+    // dp[m][j] = (min_max_len: f32, counts: Vec<usize>)
+    let mut dp: Vec<Vec<Option<(f32, Vec<usize>)>>> = vec![vec![None; n + 1]; k + 1];
+
+    for j in 1..=(n - k + 1) {
+        dp[1][j] = Some((calc_len(0, j), vec![j]));
+    }
+
+    for m in 2..=k {
+        for j in m..=(n - k + m) {
+            let mut best: Option<(f32, Vec<usize>)> = None;
+            for p in (m - 1)..j {
+                if let Some((prev_max, prev_counts)) = &dp[m - 1][p] {
+                    let cur_len = calc_len(p, j);
+                    let candidate_max = prev_max.max(cur_len);
+                    let mut candidate_counts = prev_counts.clone();
+                    candidate_counts.push(j - p);
+
+                    let is_better = match &best {
+                        None => true,
+                        Some((best_max, best_counts)) => {
+                            if candidate_max < *best_max - 1e-3 {
+                                true
+                            } else if (candidate_max - *best_max).abs() <= 1e-3 {
+                                candidate_counts > *best_counts
+                            } else {
+                                false
+                            }
+                        }
+                    };
+                    if is_better {
+                        best = Some((candidate_max, candidate_counts));
+                    }
+                }
+            }
+            dp[m][j] = best;
+        }
+    }
+
+    dp[k][n]
+        .as_ref()
+        .map(|(val, _)| *val)
+        .unwrap_or_else(|| sizes.iter().sum::<f32>() + (n - 1) as f32 * gap)
 }

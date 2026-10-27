@@ -440,10 +440,12 @@ impl DisplayListDiff {
         let mut damage: Option<Rect> = None;
         let mut union_damage = |rect_opt: Option<Rect>| {
             if let Some(r) = rect_opt {
-                damage = match damage {
-                    None => Some(r),
-                    Some(cur) => Some(cur.union(&r)),
-                };
+                if !r.is_empty() {
+                    damage = match damage {
+                        None => Some(r),
+                        Some(cur) => Some(cur.union_non_empty(&r)),
+                    };
+                }
             }
         };
 
@@ -637,5 +639,32 @@ mod tests {
         assert!(!diff.is_identical);
         assert_eq!(diff.ops.len(), 2); // Retain(1) + Insert(1)
         assert_eq!(diff.damage_rect(), Some(Rect::new(50.0, 50.0, 50.0, 50.0)));
+    }
+
+    #[test]
+    fn test_display_list_diff_ignores_empty_bounds() {
+        let mut dl1 = DisplayList::new();
+        dl1.push(DisplayCommand::FillRect {
+            rect: Rect::new(200.0, 200.0, 50.0, 50.0),
+            color: Color::RED,
+        });
+
+        let mut dl2 = DisplayList::new();
+        // Insert an empty rect command and a shifted rect
+        dl2.push(DisplayCommand::FillRect {
+            rect: Rect::ZERO,
+            color: Color::TRANSPARENT,
+        });
+        dl2.push(DisplayCommand::FillRect {
+            rect: Rect::new(220.0, 220.0, 50.0, 50.0),
+            color: Color::BLUE,
+        });
+
+        let diff = dl1.diff(&dl2);
+        assert!(!diff.is_identical);
+        // The damage rect should enclose the non-empty rects (200, 200, 50, 50) and (220, 220, 50, 50),
+        // NOT get pulled down to (0, 0) by Rect::ZERO.
+        let damage = diff.damage_rect().expect("damage rect must exist");
+        assert_eq!(damage, Rect::new(200.0, 200.0, 70.0, 70.0));
     }
 }

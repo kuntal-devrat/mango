@@ -31,7 +31,12 @@ pub(crate) fn find_inline_block_last_baseline_from_top(box_: &LayoutBox) -> Opti
         return Some(ascent);
     }
 
-    for child in box_.children.iter().rev() {
+    let is_flex = matches!(
+        box_.style.as_ref().map(|s| s.display),
+        Some(Display::Flex) | Some(Display::InlineFlex)
+    );
+
+    let check_child = |child: &LayoutBox| -> Option<f32> {
         let is_in_flow = child
             .style
             .as_ref()
@@ -52,6 +57,21 @@ pub(crate) fn find_inline_block_last_baseline_from_top(box_: &LayoutBox) -> Opti
                 + box_.dimensions.border.top
                 + box_.dimensions.padding.top;
             return Some(margin_top + top_offset + child_baseline);
+        }
+        None
+    };
+
+    if is_flex {
+        for child in &box_.children {
+            if let Some(b) = check_child(child) {
+                return Some(b);
+            }
+        }
+    } else {
+        for child in box_.children.iter().rev() {
+            if let Some(b) = check_child(child) {
+                return Some(b);
+            }
         }
     }
     None
@@ -198,7 +218,14 @@ pub(crate) fn finalize_line(
         max_below = min_line_height * 0.2;
     }
     let baseline_from_line_top = max_above;
-    let actual_line_height = (max_above + max_below).max(min_line_height).max(1.0);
+    let actual_line_height = if line_atoms
+        .iter()
+        .all(|a| matches!(a.kind, InlineAtomKind::OutOfFlow(_)))
+    {
+        0.0
+    } else {
+        (max_above + max_below).max(min_line_height).max(1.0)
+    };
 
     let is_rtl = atoms_for_metrics
         .first()
@@ -215,9 +242,23 @@ pub(crate) fn finalize_line(
     }
 
     let offset_x = match text_align {
-        TextAlign::Left => 0.0,
+        TextAlign::Start | TextAlign::Left => {
+            if text_align == TextAlign::Start && is_rtl {
+                (available_width - line_content_width).max(0.0)
+            } else {
+                0.0
+            }
+        }
+        TextAlign::End | TextAlign::Right => {
+            if text_align == TextAlign::End && !is_rtl {
+                (available_width - line_content_width).max(0.0)
+            } else if text_align == TextAlign::End && is_rtl {
+                0.0
+            } else {
+                (available_width - line_content_width).max(0.0)
+            }
+        }
         TextAlign::Center => ((available_width - line_content_width) / 2.0).max(0.0),
-        TextAlign::Right => (available_width - line_content_width).max(0.0),
         TextAlign::Justify => {
             if is_last_line && is_rtl {
                 (available_width - line_content_width).max(0.0)
@@ -612,13 +653,28 @@ pub(crate) fn finalize_line(
                         .unwrap_or(false);
                     let hyp_w =
                         crate::block_flow::calculate_shrink_to_fit_width(&placed, available_width);
+                    let had_in_flow_before = !runs.is_empty()
+                        || out.iter().any(|b| {
+                            !matches!(
+                                b.style.as_ref().map(|s| s.position),
+                                Some(
+                                    mango_css::values::Position::Absolute
+                                        | mango_css::values::Position::Fixed
+                                )
+                            )
+                        });
                     let (oof_x, oof_y) = if is_block_level {
                         let bx = if is_rtl {
                             block_start_x - hyp_w
                         } else {
                             block_start_x
                         };
-                        (bx, line_y + actual_line_height)
+                        let by = if had_in_flow_before {
+                            line_y + actual_line_height
+                        } else {
+                            line_y
+                        };
+                        (bx, by)
                     } else if seg_rtl {
                         (atom_start_x - hyp_w, line_y)
                     } else {

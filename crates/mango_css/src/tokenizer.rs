@@ -63,6 +63,8 @@ pub struct CssTokenizer<'a> {
 
 impl<'a> CssTokenizer<'a> {
     pub fn new(input: &'a str) -> Self {
+        // CSS Syntax 3 § 3.2: Filter leading U+FEFF BOM
+        let input = input.strip_prefix('\u{feff}').unwrap_or(input);
         let mut chars = input.chars();
         let current = chars.next();
         Self {

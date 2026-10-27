@@ -270,14 +270,14 @@ pub fn build_styled_node<'a>(
                 part_indexes.push(author_index);
             }
 
-            let style = mango_css::compute_style_with_shadow_and_part_indexes(
+            let style = std::sync::Arc::new(mango_css::compute_style_with_shadow_and_part_indexes(
                 node_id,
                 doc,
                 effective_index,
                 host_shadow_index,
                 &part_indexes,
                 parent_style,
-            );
+            ));
             if style.custom_properties.len() > 1000 {
                 log::debug!(
                     "large custom-property map: node={} tag={} entries={}",
@@ -303,32 +303,36 @@ pub fn build_styled_node<'a>(
             let mut styled_children = Vec::new();
 
             // Synthesize ::before pseudo-element if declared with content
-            let before_opt = compute_pseudo_style_with_shadow_index(
-                node_id,
-                doc,
-                effective_index,
-                host_shadow_index,
-                &style,
-                "before",
-            );
-            if let Some(before_style) = before_opt
-                && before_style.display != Display::None
-                && (before_style.content.is_some()
-                    || before_style
-                        .content_items
-                        .as_ref()
-                        .is_some_and(|items| !items.is_empty()))
+            if effective_index.has_pseudo_rules("before")
+                || host_shadow_index.is_some_and(|si| si.has_pseudo_rules("before"))
             {
-                for action in &before_style.counter_reset {
-                    counter_ctx.reset(&action.name, action.value);
-                }
-                for action in &before_style.counter_increment {
-                    counter_ctx.increment(&action.name, action.value);
-                }
-                if let Some(pseudo_node) =
-                    create_pseudo_styled_node(node_id, doc, before_style, counter_ctx)
-                {
-                    styled_children.push(pseudo_node);
+                if let Some(before_style) = compute_pseudo_style_with_shadow_index(
+                    node_id,
+                    doc,
+                    effective_index,
+                    host_shadow_index,
+                    &style,
+                    "before",
+                ) {
+                    if before_style.display != Display::None
+                        && (before_style.content.is_some()
+                            || before_style
+                                .content_items
+                                .as_ref()
+                                .is_some_and(|items| !items.is_empty()))
+                    {
+                        for action in &before_style.counter_reset {
+                            counter_ctx.reset(&action.name, action.value);
+                        }
+                        for action in &before_style.counter_increment {
+                            counter_ctx.increment(&action.name, action.value);
+                        }
+                        if let Some(pseudo_node) =
+                            create_pseudo_styled_node(node_id, doc, before_style, counter_ctx)
+                        {
+                            styled_children.push(pseudo_node);
+                        }
+                    }
                 }
             }
 
@@ -417,36 +421,40 @@ pub fn build_styled_node<'a>(
             }
 
             // Synthesize ::after pseudo-element if declared with content
-            let after_opt = compute_pseudo_style_with_shadow_index(
-                node_id,
-                doc,
-                effective_index,
-                host_shadow_index,
-                &style,
-                "after",
-            );
-            if let Some(after_style) = after_opt
-                && after_style.display != Display::None
-                && (after_style.content.is_some()
-                    || after_style
-                        .content_items
-                        .as_ref()
-                        .is_some_and(|items| !items.is_empty()))
+            if effective_index.has_pseudo_rules("after")
+                || host_shadow_index.is_some_and(|si| si.has_pseudo_rules("after"))
             {
-                for action in &after_style.counter_reset {
-                    counter_ctx.reset(&action.name, action.value);
-                }
-                for action in &after_style.counter_increment {
-                    counter_ctx.increment(&action.name, action.value);
-                }
-                if let Some(pseudo_node) =
-                    create_pseudo_styled_node(node_id, doc, after_style, counter_ctx)
-                {
-                    styled_children.push(pseudo_node);
+                if let Some(after_style) = compute_pseudo_style_with_shadow_index(
+                    node_id,
+                    doc,
+                    effective_index,
+                    host_shadow_index,
+                    &style,
+                    "after",
+                ) {
+                    if after_style.display != Display::None
+                        && (after_style.content.is_some()
+                            || after_style
+                                .content_items
+                                .as_ref()
+                                .is_some_and(|items| !items.is_empty()))
+                    {
+                        for action in &after_style.counter_reset {
+                            counter_ctx.reset(&action.name, action.value);
+                        }
+                        for action in &after_style.counter_increment {
+                            counter_ctx.increment(&action.name, action.value);
+                        }
+                        if let Some(pseudo_node) =
+                            create_pseudo_styled_node(node_id, doc, after_style, counter_ctx)
+                        {
+                            styled_children.push(pseudo_node);
+                        }
+                    }
                 }
             }
 
-            let mut styled_node = StyledNode::new(Some(node_id), style);
+            let mut styled_node = StyledNode::new(Some(node_id), style.clone());
             // Capture tag name and attributes for downstream use (e.g. <img> detection)
             if let NodeData::Element(el) = &node.data {
                 styled_node.tag_name = Some(el.tag_name.to_lowercase());
@@ -457,87 +465,15 @@ pub fn build_styled_node<'a>(
                     .map(|(name, value)| (name.to_lowercase(), value.clone()))
                     .collect();
 
-                // Capture ::placeholder styling for form inputs
-                if (el.tag_name.eq_ignore_ascii_case("input")
-                    || el.tag_name.eq_ignore_ascii_case("textarea"))
-                    && let Some(ph_style) = compute_pseudo_style_with_shadow_index(
-                        node_id,
-                        doc,
-                        effective_index,
-                        host_shadow_index,
-                        &styled_node.style,
-                        "placeholder",
-                    )
-                {
-                    let effective_alpha = ((ph_style.color.a as f32) * ph_style.opacity)
-                        .round()
-                        .clamp(0.0, 255.0) as u8;
-                    styled_node.attributes.push((
-                        "_mango_placeholder_color".to_string(),
-                        format!(
-                            "rgba({},{},{},{})",
-                            ph_style.color.r, ph_style.color.g, ph_style.color.b, effective_alpha
-                        ),
-                    ));
-                    styled_node.attributes.push((
-                        "_mango_placeholder_opacity".to_string(),
-                        ph_style.opacity.to_string(),
-                    ));
-                }
-
-                // Capture ::marker styling for list items
-                if (el.tag_name.eq_ignore_ascii_case("li")
-                    || styled_node.style.display == Display::ListItem)
-                    && let Some(m_style) = compute_pseudo_style_with_shadow_index(
-                        node_id,
-                        doc,
-                        effective_index,
-                        host_shadow_index,
-                        &styled_node.style,
-                        "marker",
-                    )
-                {
-                    styled_node.attributes.push((
-                        "_mango_marker_color".to_string(),
-                        format!(
-                            "rgba({},{},{},{})",
-                            m_style.color.r, m_style.color.g, m_style.color.b, m_style.color.a
-                        ),
-                    ));
-                    if let Some(c) = &m_style.content {
-                        styled_node
-                            .attributes
-                            .push(("_mango_marker_content".to_string(), c.clone()));
-                    }
-                }
-
-                // Capture ::backdrop styling for dialog and popover elements
-                if (el.tag_name.eq_ignore_ascii_case("dialog")
-                    || el.get_attribute("popover").is_some())
-                    && let Some(bd_style) = compute_pseudo_style_with_shadow_index(
-                        node_id,
-                        doc,
-                        effective_index,
-                        host_shadow_index,
-                        &styled_node.style,
-                        "backdrop",
-                    )
-                {
-                    styled_node.attributes.push((
-                        "_mango_backdrop_bg".to_string(),
-                        format!(
-                            "rgba({},{},{},{})",
-                            bd_style.background_color.r,
-                            bd_style.background_color.g,
-                            bd_style.background_color.b,
-                            bd_style.background_color.a
-                        ),
-                    ));
-                    styled_node.attributes.push((
-                        "_mango_backdrop_visibility".to_string(),
-                        format!("{:?}", bd_style.visibility),
-                    ));
-                }
+                decorate_element_pseudos(
+                    node_id,
+                    doc,
+                    effective_index,
+                    host_shadow_index,
+                    el,
+                    &styled_node.style,
+                    &mut styled_node.attributes,
+                );
 
                 // Capture details disclosure state for summary elements
                 if el.tag_name.eq_ignore_ascii_case("summary")
@@ -734,5 +670,102 @@ pub fn build_styled_node<'a>(
         }
 
         NodeData::DocumentType { .. } | NodeData::Comment(_) | NodeData::DocumentFragment => None,
+    }
+}
+
+#[inline(never)]
+fn decorate_element_pseudos(
+    node_id: NodeId,
+    doc: &Document,
+    effective_index: &RuleIndex,
+    host_shadow_index: Option<&RuleIndex>,
+    el: &mango_html::dom::ElementData,
+    style: &ComputedStyle,
+    attributes: &mut Vec<(String, String)>,
+) {
+    // Capture ::placeholder styling for form inputs
+    if (el.tag_name.eq_ignore_ascii_case("input") || el.tag_name.eq_ignore_ascii_case("textarea"))
+        && (effective_index.has_pseudo_rules("placeholder")
+            || host_shadow_index.is_some_and(|si| si.has_pseudo_rules("placeholder")))
+    {
+        if let Some(ph_style) = compute_pseudo_style_with_shadow_index(
+            node_id,
+            doc,
+            effective_index,
+            host_shadow_index,
+            style,
+            "placeholder",
+        ) {
+            let effective_alpha = ((ph_style.color.a as f32) * ph_style.opacity)
+                .round()
+                .clamp(0.0, 255.0) as u8;
+            attributes.push((
+                "_mango_placeholder_color".to_string(),
+                format!(
+                    "rgba({},{},{},{})",
+                    ph_style.color.r, ph_style.color.g, ph_style.color.b, effective_alpha
+                ),
+            ));
+            attributes.push((
+                "_mango_placeholder_opacity".to_string(),
+                ph_style.opacity.to_string(),
+            ));
+        }
+    }
+
+    // Capture ::marker styling for list items
+    if (el.tag_name.eq_ignore_ascii_case("li") || style.display == Display::ListItem)
+        && (effective_index.has_pseudo_rules("marker")
+            || host_shadow_index.is_some_and(|si| si.has_pseudo_rules("marker")))
+    {
+        if let Some(m_style) = compute_pseudo_style_with_shadow_index(
+            node_id,
+            doc,
+            effective_index,
+            host_shadow_index,
+            style,
+            "marker",
+        ) {
+            attributes.push((
+                "_mango_marker_color".to_string(),
+                format!(
+                    "rgba({},{},{},{})",
+                    m_style.color.r, m_style.color.g, m_style.color.b, m_style.color.a
+                ),
+            ));
+            if let Some(c) = &m_style.content {
+                attributes.push(("_mango_marker_content".to_string(), c.clone()));
+            }
+        }
+    }
+
+    // Capture ::backdrop styling for dialog and popover elements
+    if (el.tag_name.eq_ignore_ascii_case("dialog") || el.get_attribute("popover").is_some())
+        && (effective_index.has_pseudo_rules("backdrop")
+            || host_shadow_index.is_some_and(|si| si.has_pseudo_rules("backdrop")))
+    {
+        if let Some(bd_style) = compute_pseudo_style_with_shadow_index(
+            node_id,
+            doc,
+            effective_index,
+            host_shadow_index,
+            style,
+            "backdrop",
+        ) {
+            attributes.push((
+                "_mango_backdrop_bg".to_string(),
+                format!(
+                    "rgba({},{},{},{})",
+                    bd_style.background_color.r,
+                    bd_style.background_color.g,
+                    bd_style.background_color.b,
+                    bd_style.background_color.a
+                ),
+            ));
+            attributes.push((
+                "_mango_backdrop_visibility".to_string(),
+                format!("{:?}", bd_style.visibility),
+            ));
+        }
     }
 }

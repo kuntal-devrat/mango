@@ -92,6 +92,11 @@ pub(crate) fn layout_vertical_inline_children(
         container.raw_children = Some(std::mem::take(&mut container.children));
     }
 
+    let initial_bidi_override = container.style.as_ref().and_then(|s| match s.unicode_bidi {
+        mango_css::values::UnicodeBidi::BidiOverride
+        | mango_css::values::UnicodeBidi::IsolateOverride => Some(s.unicode_bidi),
+        _ => None,
+    });
     let mut atoms: Vec<InlineAtom> = Vec::new();
     if let Some(source_children) = container.raw_children.as_deref() {
         for child in source_children {
@@ -102,6 +107,7 @@ pub(crate) fn layout_vertical_inline_children(
                 child.link_frame.as_deref(),
                 container_width,
                 max_col_h,
+                initial_bidi_override,
             );
         }
     }
@@ -309,8 +315,28 @@ pub(crate) fn layout_vertical_inline_children(
         });
     }
 
-    let num_lines = lines.len().max(1);
-    let total_width = num_lines as f32 * base_col_w;
+    let get_line_width = |line: &VertLine| -> f32 {
+        let mut w = 0.0f32;
+        let mut has_text = false;
+        for b in &line.boxes {
+            if let BoxType::TextNode(_) = b.box_type {
+                has_text = true;
+            } else {
+                w = w.max(b.dimensions.margin_box().width());
+            }
+        }
+        if has_text || w <= 0.0 {
+            w = w.max(base_col_w);
+        }
+        w
+    };
+
+    let line_widths: Vec<f32> = lines.iter().map(get_line_width).collect();
+    let total_width: f32 = if line_widths.is_empty() {
+        base_col_w
+    } else {
+        line_widths.iter().sum()
+    };
     let is_width_auto = container
         .style
         .as_ref()
@@ -325,12 +351,16 @@ pub(crate) fn layout_vertical_inline_children(
     let mut positioned_boxes = Vec::new();
     let mut max_line_h = 0.0f32;
 
-    let get_line_x = |idx: usize| -> f32 {
+    let get_line_x = |idx: usize, widths: &[f32]| -> f32 {
         match writing_mode {
-            WritingMode::VerticalRl => {
-                container_x + eff_container_w - (idx as f32 + 1.0) * base_col_w
+            WritingMode::VerticalRl | WritingMode::SidewaysRl => {
+                let sum_to_idx: f32 = widths.iter().take(idx + 1).sum();
+                container_x + eff_container_w - sum_to_idx
             }
-            _ => container_x + idx as f32 * base_col_w,
+            _ => {
+                let sum_before_idx: f32 = widths.iter().take(idx).sum();
+                container_x + sum_before_idx
+            }
         }
     };
 
@@ -355,7 +385,7 @@ pub(crate) fn layout_vertical_inline_children(
 
     for (line_idx, line) in lines.into_iter().enumerate() {
         max_line_h = max_line_h.max(line.height);
-        let line_x = get_line_x(line_idx);
+        let line_x = get_line_x(line_idx, &line_widths);
 
         let mut boxes = line.boxes;
         let n_boxes = boxes.len();
@@ -478,7 +508,7 @@ pub(crate) fn layout_vertical_inline_children(
                     } else {
                         line_idx
                     };
-                    let base_x = get_line_x(target_line_idx);
+                    let base_x = get_line_x(target_line_idx, &line_widths);
                     let b_rtl = b
                         .style
                         .as_ref()
@@ -650,5 +680,11 @@ pub(crate) fn layout_vertical_inline_children(
     }
 
     container.children = positioned_boxes;
-    max_line_h
+    if has_fixed_height && container_height > 0.0 {
+        container.dimensions.content.size.height = container_height;
+        container_height
+    } else {
+        container.dimensions.content.size.height = max_line_h;
+        max_line_h
+    }
 }
