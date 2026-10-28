@@ -199,7 +199,25 @@
       "status": "Pass"
     },
     "css/css-cascade/scope-visited-cssom.html": {
-      "status": "Pass"
+      "status": "Fail",
+      "subtests": {
+        ":link as scoped selector": "FAIL",
+        ":visited as scoped selector": "FAIL",
+        ":not(:link) as scoped selector": "FAIL",
+        ":not(:visited) as scoped selector": "FAIL",
+        ":link as scoping root": "FAIL",
+        ":visited as scoping root": "FAIL",
+        ":not(:visited) as scoping root": "FAIL",
+        ":not(:link) as scoping root": "FAIL",
+        ":link as scoping root, :scope": "FAIL",
+        ":visited as scoping root, :scope": "FAIL",
+        ":not(:visited) as scoping root, :scope": "FAIL",
+        ":not(:link) as scoping root, :scope": "FAIL",
+        ":link as scoping limit": "FAIL",
+        ":visited as scoping limit": "FAIL",
+        ":not(:link) as scoping limit": "FAIL",
+        ":not(:visited) as scoping limit": "FAIL"
+      }
     }
   }
 }
