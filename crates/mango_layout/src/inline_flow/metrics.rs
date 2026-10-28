@@ -48,7 +48,7 @@ pub(crate) fn compute_balanced_line_width(
     let mut total_w = 0.0f32;
     let mut max_atom_w = 0.0f32;
     for atom in atoms {
-        if matches!(atom.kind, InlineAtomKind::LineBreak) {
+        if matches!(atom.kind, InlineAtomKind::LineBreak { .. }) {
             return None;
         }
         total_w += atom.width;

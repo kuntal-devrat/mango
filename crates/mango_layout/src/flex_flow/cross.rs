@@ -51,7 +51,26 @@ pub fn resolve_item_cross_size(
         AlignSelf::SafeEnd => AlignItems::SafeEnd,
     };
 
+    let has_cross_auto_margin = if is_row {
+        child_style.margin_top == Length::Auto || child_style.margin_bottom == Length::Auto
+    } else {
+        child_style.margin_left == Length::Auto || child_style.margin_right == Length::Auto
+    };
+
     let is_wrap = container_style.flex_wrap != mango_css::values::FlexWrap::NoWrap;
+    let has_explicit_main_prop = if is_row {
+        child_style.width != Length::Auto
+            && !matches!(
+                child_style.width,
+                Length::MinContent | Length::MaxContent | Length::FitContent | Length::Content
+            )
+    } else {
+        child_style.height != Length::Auto
+            && !matches!(
+                child_style.height,
+                Length::MinContent | Length::MaxContent | Length::FitContent | Length::Content
+            )
+    };
     let mut cross_size = if is_row {
         if !is_child_height_auto {
             let h = child_style.height.to_px_with_viewport(
@@ -65,8 +84,45 @@ pub fn resolve_item_cross_size(
             } else {
                 h
             }
+        } else if !is_wrap
+            && matches!(item_align, AlignItems::Normal | AlignItems::Stretch)
+            && !has_cross_auto_margin
+            && container_height > 0.0
+        {
+            let mut stretched =
+                (container_height - pad_cross - border_cross - margin_cross.max(0.0)).max(0.0);
+            if child_style.max_height != Length::Auto {
+                let max_h = child_style.max_height.to_px_with_viewport(
+                    c_fs,
+                    c_root_fs,
+                    container_height,
+                    container_height,
+                );
+                let max_content = if child_style.box_sizing == BoxSizing::BorderBox {
+                    (max_h - pad_cross - border_cross).max(0.0)
+                } else {
+                    max_h
+                };
+                stretched = stretched.min(max_content);
+            }
+            if child_style.min_height != Length::Auto {
+                let min_h = child_style.min_height.to_px_with_viewport(
+                    c_fs,
+                    c_root_fs,
+                    container_height,
+                    container_height,
+                );
+                let min_content = if child_style.box_sizing == BoxSizing::BorderBox {
+                    (min_h - pad_cross - border_cross).max(0.0)
+                } else {
+                    min_h
+                };
+                stretched = stretched.max(min_content);
+            }
+            stretched
         } else if let Some(ratio) = child_style.aspect_ratio
             && ratio > 0.0
+            && has_explicit_main_prop
             && explicit_main > 0.0
         {
             (explicit_main / ratio).max(0.0)
@@ -97,7 +153,11 @@ pub fn resolve_item_cross_size(
                     intrinsic_width,
                     ..
                 } => {
-                    if explicit_main > 0.0 && *intrinsic_width > 0.0 && *intrinsic_height > 0.0 {
+                    if has_explicit_main_prop
+                        && explicit_main > 0.0
+                        && *intrinsic_width > 0.0
+                        && *intrinsic_height > 0.0
+                    {
                         let ratio = if let Some(r) = child_style.aspect_ratio
                             && r > 0.0
                         {
@@ -110,14 +170,7 @@ pub fn resolve_item_cross_size(
                         *intrinsic_height
                     }
                 }
-                _ if child.tag_name.as_deref() == Some("input") => {
-                    let itype = child.get_attribute("type").unwrap_or("text");
-                    if itype == "checkbox" || itype == "radio" {
-                        16.0
-                    } else {
-                        24.0
-                    }
-                }
+                _ if let Some(fc_h) = super::sizing::form_control_intrinsic_height(child) => fc_h,
                 _ => {
                     let item_w = if explicit_main > 0.0 {
                         explicit_main
@@ -132,8 +185,38 @@ pub fn resolve_item_cross_size(
                         (content_width - pad_main - border_main - margin_main.max(0.0)).max(0.0)
                     };
                     child.dimensions.content.size.width = item_w;
-                    let item_cb =
-                        Dimensions::new(Rect::new(0.0, 0.0, item_w + pad_main + border_main, 0.0));
+                    let eff_cb_h = if container_style.flex_wrap.is_balanced() {
+                        if let Some(min_lines) = container_style.flex_line_count {
+                            if min_lines > 1 {
+                                let cross_gap = super::lines::resolve_flex_cross_gap(
+                                    container_style,
+                                    is_row,
+                                    content_width,
+                                    container_height,
+                                );
+                                if container_height > 0.0 {
+                                    (container_height - (min_lines - 1) as f32 * cross_gap).max(0.0)
+                                        / min_lines as f32
+                                } else {
+                                    0.0
+                                }
+                            } else {
+                                0.0
+                            }
+                        } else {
+                            0.0
+                        }
+                    } else if container_height > 0.0 {
+                        container_height
+                    } else {
+                        0.0
+                    };
+                    let item_cb = Dimensions::new(Rect::new(
+                        0.0,
+                        0.0,
+                        item_w + pad_main + border_main,
+                        eff_cb_h,
+                    ));
                     let mut item_float_ctx = FloatContext::new();
                     layout_flex_item(child, &item_cb, &mut item_float_ctx, c_fs);
                     let measured_h = child.dimensions.content.size.height;
@@ -165,6 +248,8 @@ pub fn resolve_item_cross_size(
     } else if !is_wrap
         && matches!(item_align, AlignItems::Normal | AlignItems::Stretch)
         && child_style.width == Length::Auto
+        && !has_cross_auto_margin
+        && !(container_style.writing_mode.is_vertical() && container_style.width == Length::Auto)
     {
         // An auto cross size on a single-line column flex item is stretched to the flex
         // line's cross size, including replaced elements.
@@ -200,7 +285,11 @@ pub fn resolve_item_cross_size(
             intrinsic_height,
             ..
         } => {
-            if explicit_main > 0.0 && *intrinsic_width > 0.0 && *intrinsic_height > 0.0 {
+            if has_explicit_main_prop
+                && explicit_main > 0.0
+                && *intrinsic_width > 0.0
+                && *intrinsic_height > 0.0
+            {
                 let ratio = if let Some(r) = child_style.aspect_ratio
                     && r > 0.0
                 {
@@ -217,10 +306,45 @@ pub fn resolve_item_cross_size(
     } {
         w
     } else {
-        if !is_wrap && matches!(item_align, AlignItems::Normal | AlignItems::Stretch) {
+        if !is_wrap
+            && matches!(item_align, AlignItems::Normal | AlignItems::Stretch)
+            && !has_cross_auto_margin
+            && !(container_style.writing_mode.is_vertical()
+                && container_style.width == Length::Auto)
+        {
             (content_width - pad_cross - border_cross - margin_cross.max(0.0)).max(0.0)
         } else {
-            let fit_w = crate::block_flow::calculate_shrink_to_fit_width(child, content_width);
+            let available_cross_for_shrink = if container_style.flex_wrap.is_balanced() {
+                if let Some(min_lines) = container_style.flex_line_count {
+                    if min_lines > 1 {
+                        let cross_gap = super::lines::resolve_flex_cross_gap(
+                            container_style,
+                            is_row,
+                            content_width,
+                            container_height,
+                        );
+                        let container_cross = if is_row {
+                            container_height
+                        } else {
+                            content_width
+                        };
+                        if container_cross > 0.0 {
+                            (container_cross - (min_lines - 1) as f32 * cross_gap).max(0.0)
+                                / min_lines as f32
+                        } else {
+                            content_width
+                        }
+                    } else {
+                        content_width
+                    }
+                } else {
+                    content_width
+                }
+            } else {
+                content_width
+            };
+            let fit_w =
+                crate::block_flow::calculate_shrink_to_fit_width(child, available_cross_for_shrink);
             if fit_w > 0.0 {
                 fit_w
             } else {
@@ -245,7 +369,9 @@ pub fn resolve_item_cross_size(
 
     // Clamp cross size by min/max cross constraints
     if is_row {
-        if child_style.max_height != Length::Auto {
+        let is_max_h_pct_indefinite =
+            child_style.max_height.has_percent() && container_height <= 0.0;
+        if child_style.max_height != Length::Auto && !is_max_h_pct_indefinite {
             let max_h = child_style.max_height.to_px_with_viewport(
                 c_fs,
                 c_root_fs,

@@ -110,12 +110,7 @@ pub(crate) fn sdf_rounded_rect(fx: f32, fy: f32, rect: &mango_core::Rect, radii:
     }
 }
 
-pub(crate) fn is_inside_rounded_rect(
-    fx: f32,
-    fy: f32,
-    rect: &mango_core::Rect,
-    radii: [f32; 4],
-) -> bool {
+pub fn is_inside_rounded_rect(fx: f32, fy: f32, rect: &mango_core::Rect, radii: [f32; 4]) -> bool {
     sdf_rounded_rect(fx, fy, rect, radii) <= 0.0
 }
 
@@ -345,10 +340,10 @@ pub(crate) fn fill_gradient(
     let has_radii = radii.iter().any(|r| *r > 0.0);
     let alpha_scale = opacity.clamp(0.0, 1.0);
 
-    let x_start = bounds.x().max(0.0) as u32;
-    let y_start = bounds.y().max(0.0) as u32;
-    let x_end = ((bounds.x() + bounds.width()) as u32).min(buf_width);
-    let y_end = ((bounds.y() + bounds.height()) as u32).min(buf_height);
+    let x_start = bounds.x().round().max(0.0) as u32;
+    let y_start = bounds.y().round().max(0.0) as u32;
+    let x_end = ((bounds.x() + bounds.width()).round() as u32).min(buf_width);
+    let y_end = ((bounds.y() + bounds.height()).round() as u32).min(buf_height);
 
     for py in y_start..y_end {
         let row = (py * buf_width) as usize;

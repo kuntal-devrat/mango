@@ -6,10 +6,12 @@ use crate::values::length::Length;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TextAlign {
     #[default]
+    Start,
     Left,
     Right,
     Center,
     Justify,
+    End,
 }
 
 /// CSS `text-wrap` property values.

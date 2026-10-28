@@ -1,6 +1,6 @@
 use mango_core::{Point, Rect};
 use mango_css::computed::ComputedStyle;
-use mango_css::values::Display;
+use mango_css::values::{Display, Length, Position};
 use mango_html::dom::NodeId;
 
 use crate::box_model::BoxType;
@@ -507,6 +507,192 @@ fn test_hit_testing_visibility_hidden_exclusion() {
     );
     // Outside the child but inside hidden parent still returns None
     assert_eq!(hidden_box.hit_test(Point::new(80.0, 80.0)), None);
+}
+
+#[test]
+fn test_hit_testing_z_index_stacking_order() {
+    let mut parent = LayoutBox::new(BoxType::BlockNode, None);
+    parent.node_id = Some(NodeId::from_raw(1));
+    parent.dimensions.content = Rect::new(0.0, 0.0, 200.0, 200.0);
+
+    // Child 1: earlier in DOM, but higher z-index (10)
+    let mut style1 = ComputedStyle::default();
+    style1.display = Display::Block;
+    style1.position = Position::Relative;
+    style1.z_index = Some(10);
+    let mut child1 = LayoutBox::new(BoxType::BlockNode, Some(style1.into()));
+    child1.node_id = Some(NodeId::from_raw(10));
+    child1.dimensions.content = Rect::new(0.0, 0.0, 100.0, 100.0);
+
+    // Child 2: later in DOM, but lower z-index (1)
+    let mut style2 = ComputedStyle::default();
+    style2.display = Display::Block;
+    style2.position = Position::Relative;
+    style2.z_index = Some(1);
+    let mut child2 = LayoutBox::new(BoxType::BlockNode, Some(style2.into()));
+    child2.node_id = Some(NodeId::from_raw(20));
+    child2.dimensions.content = Rect::new(0.0, 0.0, 100.0, 100.0);
+
+    parent.children.push(child1);
+    parent.children.push(child2);
+
+    // Hit-test at (50, 50) must hit Child 1 (z-index 10) because it paints above Child 2
+    assert_eq!(
+        parent.hit_test(Point::new(50.0, 50.0)),
+        Some(NodeId::from_raw(10))
+    );
+}
+
+#[test]
+fn test_hit_testing_pointer_events_none() {
+    let mut parent = LayoutBox::new(BoxType::BlockNode, None);
+    parent.node_id = Some(NodeId::from_raw(1));
+    parent.dimensions.content = Rect::new(0.0, 0.0, 200.0, 200.0);
+
+    let mut style = ComputedStyle::default();
+    style.display = Display::Block;
+    style.pointer_events = mango_css::values::PointerEvents::None;
+    let mut child = LayoutBox::new(BoxType::BlockNode, Some(style.into()));
+    child.node_id = Some(NodeId::from_raw(2));
+    child.dimensions.content = Rect::new(0.0, 0.0, 100.0, 100.0);
+    child.link_target = Some("https://example.com/unclickable".to_string());
+
+    parent.children.push(child);
+
+    // pointer-events: none on child passes hit through to parent
+    assert_eq!(
+        parent.hit_test(Point::new(50.0, 50.0)),
+        Some(NodeId::from_raw(1))
+    );
+    assert_eq!(parent.hit_test_link(Point::new(50.0, 50.0)), None);
+}
+
+#[test]
+fn test_hit_testing_border_radius_corner_clipping() {
+    let mut style = ComputedStyle::default();
+    style.display = Display::Block;
+    style.border_top_left_radius = 50.0;
+    style.border_top_right_radius = 50.0;
+    style.border_bottom_right_radius = 50.0;
+    style.border_bottom_left_radius = 50.0;
+
+    let mut rounded_box = LayoutBox::new(BoxType::BlockNode, Some(style.into()));
+    rounded_box.node_id = Some(NodeId::from_raw(42));
+    rounded_box.dimensions.content = Rect::new(0.0, 0.0, 100.0, 100.0);
+
+    // Center (50, 50) is inside circle -> hits
+    assert_eq!(
+        rounded_box.hit_test(Point::new(50.0, 50.0)),
+        Some(NodeId::from_raw(42))
+    );
+
+    // Corner (2, 2) is within [0, 100]x[0, 100] bounding rect, but outside rounded corner -> returns None
+    assert_eq!(rounded_box.hit_test(Point::new(2.0, 2.0)), None);
+}
+
+#[test]
+fn test_hit_testing_clip_path_clipping() {
+    let mut style = ComputedStyle::default();
+    style.display = Display::Block;
+    style.clip_path = mango_css::values::ClipPath::Circle {
+        radius: Length::Px(20.0),
+        center_x: Length::Px(50.0),
+        center_y: Length::Px(50.0),
+    };
+
+    let mut clipped_box = LayoutBox::new(BoxType::BlockNode, Some(style.into()));
+    clipped_box.node_id = Some(NodeId::from_raw(99));
+    clipped_box.dimensions.content = Rect::new(0.0, 0.0, 100.0, 100.0);
+
+    // Inside circle (50, 50) -> hits
+    assert_eq!(
+        clipped_box.hit_test(Point::new(50.0, 50.0)),
+        Some(NodeId::from_raw(99))
+    );
+
+    // Outside circle (10, 10) -> clipped out, returns None
+    assert_eq!(clipped_box.hit_test(Point::new(10.0, 10.0)), None);
+}
+
+#[test]
+fn test_hit_testing_negative_z_index_on_non_stacking_context() {
+    // Non-stacking context parent (normal in-flow block)
+    let mut parent = LayoutBox::new(BoxType::BlockNode, None);
+    parent.node_id = Some(NodeId::from_raw(1));
+    parent.dimensions.content = Rect::new(0.0, 0.0, 200.0, 200.0);
+
+    // Child with negative z-index
+    let mut child_style = ComputedStyle::default();
+    child_style.display = Display::Block;
+    child_style.position = Position::Relative;
+    child_style.z_index = Some(-1);
+    let mut child = LayoutBox::new(BoxType::BlockNode, Some(child_style.into()));
+    child.node_id = Some(NodeId::from_raw(2));
+    child.dimensions.content = Rect::new(0.0, 0.0, 100.0, 100.0);
+
+    parent.children.push(child);
+
+    // Parent is NOT a stacking context, so parent's block background is painted ON TOP OF
+    // the negative z-index child. Hit-test at (50, 50) must return the parent (NodeId 1).
+    assert_eq!(
+        parent.hit_test(Point::new(50.0, 50.0)),
+        Some(NodeId::from_raw(1))
+    );
+}
+
+#[test]
+fn test_hit_testing_negative_z_index_on_stacking_context() {
+    // Stacking context parent (e.g. position: relative)
+    let mut parent_style = ComputedStyle::default();
+    parent_style.display = Display::Block;
+    parent_style.position = Position::Relative;
+    let mut parent = LayoutBox::new(BoxType::BlockNode, Some(parent_style.into()));
+    parent.node_id = Some(NodeId::from_raw(1));
+    parent.dimensions.content = Rect::new(0.0, 0.0, 200.0, 200.0);
+
+    // Child with negative z-index
+    let mut child_style = ComputedStyle::default();
+    child_style.display = Display::Block;
+    child_style.position = Position::Relative;
+    child_style.z_index = Some(-1);
+    let mut child = LayoutBox::new(BoxType::BlockNode, Some(child_style.into()));
+    child.node_id = Some(NodeId::from_raw(2));
+    child.dimensions.content = Rect::new(0.0, 0.0, 100.0, 100.0);
+
+    parent.children.push(child);
+
+    // Parent IS a stacking context, so the negative z-index child is painted ON TOP OF
+    // the parent's background. Hit-test at (50, 50) must return the child (NodeId 2).
+    assert_eq!(
+        parent.hit_test(Point::new(50.0, 50.0)),
+        Some(NodeId::from_raw(2))
+    );
+}
+
+#[test]
+fn test_hit_testing_clip_rect_property() {
+    let mut style = ComputedStyle::default();
+    style.display = Display::Block;
+    style.position = Position::Absolute;
+    style.clip = mango_css::values::ClipRect::Rect {
+        top: Length::Px(10.0),
+        right: Length::Px(50.0),
+        bottom: Length::Px(50.0),
+        left: Length::Px(10.0),
+    };
+
+    let mut clipped_box = LayoutBox::new(BoxType::BlockNode, Some(style.into()));
+    clipped_box.node_id = Some(NodeId::from_raw(77));
+    clipped_box.dimensions.content = Rect::new(0.0, 0.0, 100.0, 100.0);
+
+    // Inside clip rect: (25, 25) -> hits
+    assert_eq!(
+        clipped_box.hit_test(Point::new(25.0, 25.0)),
+        Some(NodeId::from_raw(77))
+    );
+
+    // Outside clip rect: (5, 5) is within 100x100 content, but outside clip: rect(10, 50, 50, 10) -> None
+    assert_eq!(clipped_box.hit_test(Point::new(5.0, 5.0)), None);
 }
 
 #[test]

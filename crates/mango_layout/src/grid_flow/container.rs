@@ -481,6 +481,13 @@ pub fn layout_grid_internal(
         .max(min_h)
         .min(max_h);
 
+    let container_dims = container.dimensions;
+    for child in &mut container.children {
+        if child.style.as_ref().map(|s| s.position) == Some(mango_css::values::Position::Relative) {
+            crate::block_flow::apply_relative_offset(child, &container_dims);
+        }
+    }
+
     // 10. Position out-of-flow children
     layout_positioned_children(container, float_ctx);
 }

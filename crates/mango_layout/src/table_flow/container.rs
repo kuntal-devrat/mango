@@ -106,7 +106,7 @@ pub fn layout_table(
 }
 
 /// Main layout function orchestrating captions, rows, cells, and border collapse.
-fn layout_table_contents(
+pub(crate) fn layout_table_contents(
     table_box: &mut LayoutBox,
     containing_block: &Dimensions,
     _float_ctx: &mut FloatContext,

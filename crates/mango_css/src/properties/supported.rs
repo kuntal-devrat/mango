@@ -120,6 +120,7 @@ pub const EXTRA_SUPPORTED_PROPERTIES: &[&str] = &[
     "flex-basis",
     "flex-direction",
     "flex-grow",
+    "flex-line-count",
     "flex-shrink",
     "flex-wrap",
     "gap",

@@ -331,14 +331,39 @@ impl BrowserChrome {
         // the background pipeline (`prepare_document_pipeline`); blocking the
         // UI on a network fetch here would freeze the page.
         let script_timeout = |code_len: usize| -> std::time::Duration {
-            // Provide at least 1.5s for normal scripts, plus ~100ms per 10KB for large bundles, capped at 3.0s
-            let extra_ms = (code_len / 10_000) as u64 * 100;
-            std::time::Duration::from_millis(1500 + extra_ms)
-                .min(std::time::Duration::from_millis(3000))
+            let extra_secs = (code_len / 1_000_000) as u64 * 5;
+            std::time::Duration::from_secs(30 + extra_secs).min(std::time::Duration::from_secs(60))
         };
-        let mut run_script =
-            |s: ScriptToRun, rt: &mut mango_js::JsRuntime, ext_cnt: &mut usize| match s {
-                ScriptToRun::Inline { code, is_module } => {
+        let mut run_script = |s: ScriptToRun, rt: &mut mango_js::JsRuntime, ext_cnt: &mut usize| {
+            let is_mod = s.is_module();
+            if !is_mod {
+                if let Some(node_id) = s.node_id() {
+                    let js_id = mango_html::node_id_to_js(node_id);
+                    let _ = rt.execute_script(&format!(
+                            "if (typeof globalThis.__setCurrentScript === 'function') globalThis.__setCurrentScript({js_id});"
+                        ));
+                } else if let Some(src) = s.src() {
+                    let script_name = self
+                        .base_url
+                        .as_ref()
+                        .and_then(|b| b.resolve(src).ok())
+                        .map(|u| u.to_string())
+                        .unwrap_or_else(|| src.to_string());
+                    if let Ok(json_name) = serde_json::to_string(&script_name) {
+                        let _ = rt.execute_script(&format!(
+                                "if (typeof globalThis.__setCurrentScriptUrl === 'function') globalThis.__setCurrentScriptUrl({json_name});"
+                            ));
+                    }
+                }
+            } else {
+                let _ = rt.execute_script(
+                        "if (typeof globalThis.__setCurrentScript === 'function') globalThis.__setCurrentScript(null);",
+                    );
+            }
+            match s {
+                ScriptToRun::Inline {
+                    code, is_module, ..
+                } => {
                     let to = script_timeout(code.len());
                     let res = if is_module {
                         rt.execute_module_with_timeout(&code, to)
@@ -386,9 +411,19 @@ impl BrowserChrome {
                 }
                 ScriptToRun::External { src, is_module, .. } => {
                     let Some(ref base) = self.base_url else {
+                        if !is_mod {
+                            let _ = rt.execute_script(
+                                    "if (typeof globalThis.__setCurrentScript === 'function') globalThis.__setCurrentScript(null);",
+                                );
+                        }
                         return;
                     };
                     let Ok(resolved) = base.resolve(&src) else {
+                        if !is_mod {
+                            let _ = rt.execute_script(
+                                    "if (typeof globalThis.__setCurrentScript === 'function') globalThis.__setCurrentScript(null);",
+                                );
+                        }
                         return;
                     };
                     let key = resolved.as_str();
@@ -428,6 +463,12 @@ impl BrowserChrome {
                     }
                 }
             };
+            if !is_mod {
+                let _ = rt.execute_script(
+                        "if (typeof globalThis.__setCurrentScript === 'function') globalThis.__setCurrentScript(null);",
+                    );
+            }
+        };
 
         self.pending_scripts.clear();
 
@@ -446,6 +487,7 @@ impl BrowserChrome {
             }
             for js_code in ext_js {
                 self.enqueue_pending_script(ScriptToRun::Inline {
+                    node_id: None,
                     code: js_code,
                     is_module: false,
                 });
@@ -552,6 +594,13 @@ impl BrowserChrome {
     pub(crate) fn navigate_to_address(&mut self, push_history: bool) {
         self.is_all_selected = false;
         let mut input = self.address_text.trim().to_string();
+        if let Some(unwrapped) =
+            crate::browser::navigation::pipeline::unwrap_tracking_redirect(&input)
+        {
+            log::info!("Unwrapped tracking redirect: {} -> {}", input, unwrapped);
+            input = unwrapped;
+            self.address_text = input.clone();
+        }
         log::info!("Navigate to: {}", input);
 
         if input.starts_with('#') {

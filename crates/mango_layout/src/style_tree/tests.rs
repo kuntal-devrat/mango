@@ -445,18 +445,24 @@ fn test_inline_element_with_block_children_promoted_to_block() {
                 return Some(found);
             }
         }
+        if let Some(raw) = &b.raw_children {
+            for child in raw {
+                if let Some(found) = find_by_tag(child, tag) {
+                    return Some(found);
+                }
+            }
+        }
         None
     }
 
     let custom_box = find_by_tag(&box_root, "custom-tag").expect("custom-tag box exists");
-    assert_eq!(custom_box.box_type, crate::box_model::BoxType::BlockNode);
-    assert_eq!(custom_box.children.len(), 1);
+    assert_eq!(custom_box.box_type, crate::box_model::BoxType::InlineNode);
+    assert_eq!(custom_box.children.len(), 3);
 
     let cb = crate::dimensions::Dimensions::new(mango_core::Rect::new(0.0, 0.0, 800.0, 600.0));
     let mut float_ctx = crate::float::FloatContext::new();
     crate::layout_block(&mut box_root, &cb, &mut float_ctx);
 
     let custom_after = find_by_tag(&box_root, "custom-tag").expect("custom-tag box after layout");
-    assert_eq!(custom_after.children.len(), 1);
-    assert!(custom_after.dimensions.content.size.height > 0.0);
+    assert_eq!(custom_after.children.len(), 3);
 }

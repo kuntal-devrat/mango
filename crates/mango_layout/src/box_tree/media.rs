@@ -509,17 +509,8 @@ pub fn build_canvas_element(styled_node: &StyledNode) -> LayoutBox {
         pixels = Some(c_pixels);
     }
 
-    let mut intrinsic_width = width as f32;
-    let mut intrinsic_height = height as f32;
-
-    match styled_node.style.width {
-        Length::Px(px) if px > 0.0 => intrinsic_width = px,
-        _ => {}
-    }
-    match styled_node.style.height {
-        Length::Px(px) if px > 0.0 => intrinsic_height = px,
-        _ => {}
-    }
+    let intrinsic_width = width as f32;
+    let intrinsic_height = height as f32;
 
     let box_type = BoxType::Canvas {
         canvas_key,

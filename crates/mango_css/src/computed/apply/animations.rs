@@ -11,9 +11,14 @@ use crate::values::{
 fn get_keyword_str(v: &Value) -> Option<&str> {
     match v {
         Value::Keyword(k) | Value::String(k) => Some(k.as_str()),
-        Value::Float(Float::Left) => Some("left"),
-        Value::Float(Float::Right) => Some("right"),
-        Value::TextAlign(TextAlign::Center) => Some("center"),
+        Value::Float(Float::Left) | Value::JustifyContent(crate::values::JustifyContent::Left) => {
+            Some("left")
+        }
+        Value::Float(Float::Right)
+        | Value::JustifyContent(crate::values::JustifyContent::Right) => Some("right"),
+        Value::TextAlign(TextAlign::Center)
+        | Value::JustifyContent(crate::values::JustifyContent::Center)
+        | Value::AlignItems(crate::values::AlignItems::Center) => Some("center"),
         Value::VerticalAlign(VerticalAlign::Top) => Some("top"),
         Value::VerticalAlign(VerticalAlign::Bottom) => Some("bottom"),
         _ => None,

@@ -2,14 +2,44 @@ use super::value::Value;
 use mango_core::Color;
 use std::collections::HashMap;
 
+/// Position of a color stop along the gradient line or circumference.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StopPosition {
+    /// Normalized fraction in [0.0, 1.0] (e.g. from percentages `50%` or raw fraction `0.5`).
+    Fraction(f32),
+    /// Length in physical CSS pixels (e.g. `25px`).
+    Px(f32),
+}
+
+impl StopPosition {
+    pub fn to_fraction(&self, grad_len: f32) -> f32 {
+        match self {
+            StopPosition::Fraction(f) => *f,
+            StopPosition::Px(px) => {
+                if grad_len > 0.0 {
+                    *px / grad_len
+                } else {
+                    0.0
+                }
+            }
+        }
+    }
+}
+
+impl From<f32> for StopPosition {
+    fn from(f: f32) -> Self {
+        StopPosition::Fraction(f)
+    }
+}
+
 /// A CSS color stop for gradients.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ColorStop {
     pub color: Color,
-    /// Position as a fraction [0.0, 1.0]. `None` means evenly spaced.
-    pub position: Option<f32>,
+    /// Position along gradient line. `None` means evenly spaced.
+    pub position: Option<StopPosition>,
     /// An optional explicit second position (for `color 10% 20%` double stops).
-    pub end_position: Option<f32>,
+    pub end_position: Option<StopPosition>,
     /// True when the color stop specified `currentColor`.
     pub is_current_color: bool,
     /// Custom property variable name (e.g. `--brand-color-canvas-default`) to resolve at computed style time.
@@ -18,6 +48,20 @@ pub struct ColorStop {
 
 impl ColorStop {
     pub fn new(color: Color, position: Option<f32>, end_position: Option<f32>) -> Self {
+        Self {
+            color,
+            position: position.map(StopPosition::Fraction),
+            end_position: end_position.map(StopPosition::Fraction),
+            is_current_color: false,
+            var_name: None,
+        }
+    }
+
+    pub fn new_with_pos(
+        color: Color,
+        position: Option<StopPosition>,
+        end_position: Option<StopPosition>,
+    ) -> Self {
         Self {
             color,
             position,
@@ -134,15 +178,15 @@ impl Gradient {
                 if stops.is_empty() {
                     return pixels;
                 }
-                // Resolve positions
-                let resolved = resolve_stops(stops);
-                let (a_pos, _) = resolved[0];
-                let (z_pos, _) = resolved[resolved.len() - 1];
-                let span = (z_pos - a_pos).max(0.0001);
                 let angle_rad = angle_deg.to_radians();
                 let (sin_a, cos_a) = angle_rad.sin_cos();
                 // Gradient line length: project corners onto gradient direction
                 let grad_len = (w * sin_a.abs() + h * cos_a.abs()).max(1.0);
+                // Resolve positions
+                let resolved = resolve_stops(stops, grad_len);
+                let (a_pos, _) = resolved[0];
+                let (z_pos, _) = resolved[resolved.len() - 1];
+                let span = (z_pos - a_pos).max(0.0001);
                 for y in 0..height {
                     for x in 0..width {
                         // Normalised position along gradient line (0..1)
@@ -169,10 +213,6 @@ impl Gradient {
                 if stops.is_empty() {
                     return pixels;
                 }
-                let resolved = resolve_stops(stops);
-                let (a_pos, _) = resolved[0];
-                let (z_pos, _) = resolved[resolved.len() - 1];
-                let span = (z_pos - a_pos).max(0.0001);
                 let cx = w * center_x;
                 let cy = h * center_y;
                 let (rx, ry) = match (radius_x, radius_y) {
@@ -188,6 +228,11 @@ impl Gradient {
                         (r, r)
                     }
                 };
+                let grad_len = rx.max(ry);
+                let resolved = resolve_stops(stops, grad_len);
+                let (a_pos, _) = resolved[0];
+                let (z_pos, _) = resolved[resolved.len() - 1];
+                let span = (z_pos - a_pos).max(0.0001);
                 for y in 0..height {
                     for x in 0..width {
                         let dx = (x as f32 + 0.5 - cx) / rx;
@@ -209,7 +254,7 @@ impl Gradient {
                 if stops.is_empty() {
                     return pixels;
                 }
-                let resolved = resolve_stops(stops);
+                let resolved = resolve_stops(stops, 1.0);
                 let (a_pos, _) = resolved[0];
                 let (z_pos, _) = resolved[resolved.len() - 1];
                 let span = (z_pos - a_pos).max(0.0001);
@@ -239,7 +284,7 @@ impl Gradient {
     }
 }
 
-fn resolve_stops(stops: &[ColorStop]) -> Vec<(f32, Color)> {
+fn resolve_stops(stops: &[ColorStop], grad_len: f32) -> Vec<(f32, Color)> {
     let n = stops.len();
     let mut out: Vec<(f32, Color)> = Vec::with_capacity(n);
     for (i, stop) in stops.iter().enumerate() {
@@ -248,10 +293,13 @@ fn resolve_stops(stops: &[ColorStop]) -> Vec<(f32, Color)> {
         } else {
             i as f32 / (n - 1) as f32
         };
-        let start = stop.position.unwrap_or(default_pos);
+        let start = stop
+            .position
+            .map(|p| p.to_fraction(grad_len))
+            .unwrap_or(default_pos);
         out.push((start, stop.color));
         if let Some(end) = stop.end_position {
-            out.push((end, stop.color));
+            out.push((end.to_fraction(grad_len), stop.color));
         }
     }
     // Enforce CSS monotonicity: each stop is at least its predecessor's position.

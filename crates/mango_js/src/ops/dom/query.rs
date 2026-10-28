@@ -168,11 +168,12 @@ pub fn ensure_layout_up_to_date(state: &OpState) {
 #[serde]
 pub fn op_mango_get_element_rect(state: &mut OpState, node_id: u32) -> Vec<f32> {
     ensure_layout_up_to_date(state);
-    let raw = node_id_from_js(node_id).raw();
-    if let Some(bounds) = state.try_borrow::<LayoutBounds>()
-        && let Some(&rect) = bounds.borrow().get(&raw)
-    {
-        return rect.to_vec();
+    let nid = node_id_from_js(node_id);
+    let raw = nid.raw();
+    if let Some(bounds) = state.try_borrow::<LayoutBounds>() {
+        if let Some(&rect) = bounds.borrow().get(&raw) {
+            return rect.to_vec();
+        }
     }
     vec![0.0, 0.0, 0.0, 0.0]
 }

@@ -191,7 +191,29 @@ pub(crate) fn calculate_block_width(box_node: &mut LayoutBox, containing_block: 
                 container_height,
                 container_height,
             );
-            (raw_h * ratio).max(1.0)
+            let effective_h = if raw_h > 0.0 {
+                raw_h
+            } else {
+                let mut max_child_h = 0.0f32;
+                for c in &box_node.children {
+                    let ch = if let Some(_text) = c.text() {
+                        let c_fs = c.style.as_ref().map(|s| s.font_size).unwrap_or(font_size);
+                        c.style.as_ref().and_then(|s| s.line_height).unwrap_or(c_fs)
+                    } else if let Some(cs) = c.style.as_ref() {
+                        cs.height
+                            .to_px_with_viewport(cs.font_size, cs.root_font_size, 0.0, 0.0)
+                    } else {
+                        0.0
+                    };
+                    max_child_h = max_child_h.max(ch);
+                }
+                if max_child_h > 0.0 {
+                    max_child_h
+                } else {
+                    font_size
+                }
+            };
+            (effective_h * ratio).max(1.0)
         } else {
             (container_width - total_non_content_h - margin_left - margin_right).max(0.0)
         }
@@ -240,7 +262,7 @@ pub(crate) fn calculate_block_width(box_node: &mut LayoutBox, containing_block: 
         clamped_w = clamped_w.max(min_content_w);
     }
 
-    if is_inline_level || is_positioned || is_floating {
+    if is_inline_level || is_positioned || is_floating || style.writing_mode.is_vertical() {
         if is_margin_left_auto {
             margin_left = 0.0;
         }
@@ -264,7 +286,7 @@ pub(crate) fn calculate_block_width(box_node: &mut LayoutBox, containing_block: 
         } else {
             let cb_wm = containing_block.writing_mode;
             let cb_dir = containing_block.direction;
-            let is_rtl = style.direction == Direction::Rtl || cb_dir == Direction::Rtl;
+            let is_rtl = cb_dir == Direction::Rtl;
             let is_left_end = matches!(cb_wm, WritingMode::VerticalRl | WritingMode::SidewaysRl)
                 || (cb_wm == WritingMode::HorizontalTb && is_rtl);
 
@@ -503,7 +525,8 @@ pub(crate) fn calculate_block_height(box_node: &mut LayoutBox, containing_block:
     }
 
     // 2. Apply max-height and min-height clamping (CSS 2.1 § 10.7)
-    if style.max_height != Length::Auto {
+    let is_max_h_pct_indefinite = style.max_height.has_percent() && container_h <= 0.0;
+    if style.max_height != Length::Auto && !is_max_h_pct_indefinite {
         let raw_max = style.max_height.to_px_with_viewport(
             font_size,
             root_font_size,

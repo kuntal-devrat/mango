@@ -54,6 +54,20 @@ pub enum IpcMessage {
         process_id: u32,
         exit_code: i32,
     },
+    TitleChanged {
+        title: String,
+    },
+    OpenWindow {
+        url: String,
+        features: String,
+    },
+    ConsoleMessage {
+        level: String,
+        text: String,
+    },
+    NavigationRequest {
+        url: String,
+    },
 
     // Rendering & Compositor
     RenderFrame {
@@ -72,6 +86,16 @@ pub enum IpcMessage {
         width: f32,
         height: f32,
     },
+    ScrollOffset {
+        scroll_y: f32,
+    },
+    ViewportResize {
+        width: f32,
+        height: f32,
+    },
+    DomMutationReady {
+        frame_id: u64,
+    },
 
     // Input & User Events
     InputEvent {
@@ -80,6 +104,9 @@ pub enum IpcMessage {
         y: f32,
         key_code: u32,
         modifiers: u32,
+    },
+    ExecuteScript {
+        code: String,
     },
 
     // Network & Resource Fetching
@@ -136,12 +163,20 @@ impl IpcMessage {
             IpcMessage::DidCommitProvisionalLoad { .. } => 11,
             IpcMessage::DocumentLoaded { .. } => 12,
             IpcMessage::RenderProcessCrashed { .. } => 13,
+            IpcMessage::TitleChanged { .. } => 14,
+            IpcMessage::OpenWindow { .. } => 15,
+            IpcMessage::ConsoleMessage { .. } => 16,
+            IpcMessage::NavigationRequest { .. } => 17,
 
             IpcMessage::RenderFrame { .. } => 20,
             IpcMessage::SwapBuffers { .. } => 21,
             IpcMessage::InvalidateRect { .. } => 22,
+            IpcMessage::ScrollOffset { .. } => 23,
+            IpcMessage::ViewportResize { .. } => 24,
+            IpcMessage::DomMutationReady { .. } => 25,
 
             IpcMessage::InputEvent { .. } => 30,
+            IpcMessage::ExecuteScript { .. } => 31,
 
             IpcMessage::FetchRequest { .. } => 40,
             IpcMessage::FetchResponseHeader { .. } => 41,

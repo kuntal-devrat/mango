@@ -9,7 +9,7 @@ use crate::chrome_ui::*;
 impl BrowserChrome {
     /// Updates the layer tree with the latest chrome and page display lists,
     /// driving incremental tile rasterization and damage repair.
-    pub fn update_layers(&mut self, (width, height): (u32, u32)) {
+    pub fn update_layers(&mut self, (width, height): (u32, u32)) -> bool {
         if self.width != width || self.height != height {
             self.resize(width, height);
         }
@@ -50,11 +50,38 @@ impl BrowserChrome {
             self.layer_tree.chrome_layer.invalidate_all();
         }
 
-        // 3. Rasterize dirty regions
+        // 3. Scrollbar Overlay Layer (isolated from Chrome)
+        if let Some((scrollbar_bounds, scrollbar_dl)) =
+            self.build_scrollbar_display_list((width, height))
+        {
+            let needs_new_layer = match &self.layer_tree.overlay_layer {
+                Some(overlay) => overlay.bounds != scrollbar_bounds,
+                None => true,
+            };
+            if needs_new_layer {
+                let mut layer = mango_render::layer::RenderLayer::new_overlay(scrollbar_bounds);
+                layer.display_list = scrollbar_dl;
+                layer.invalidate_all();
+                self.layer_tree.overlay_layer = Some(layer);
+            } else if let Some(overlay) = &mut self.layer_tree.overlay_layer {
+                if overlay.display_list != scrollbar_dl {
+                    overlay.display_list = scrollbar_dl;
+                    overlay.invalidate_all();
+                }
+            }
+        } else {
+            self.layer_tree.overlay_layer = None;
+        }
+
+        // 4. Rasterize dirty regions
         self.layer_tree
             .chrome_layer
             .rasterize_if_dirty(Color::TRANSPARENT, self.frame_counter);
-        self.layer_tree
+        if let Some(overlay) = &mut self.layer_tree.overlay_layer {
+            overlay.rasterize_if_dirty(Color::TRANSPARENT, self.frame_counter);
+        }
+        let raster_pending = self
+            .layer_tree
             .page_layer
             .rasterize_if_dirty(self.canvas_bg, self.frame_counter);
 
@@ -62,6 +89,7 @@ impl BrowserChrome {
         if let Some(grid) = &mut self.layer_tree.page_layer.tile_grid {
             grid.prune_unused_tiles(self.frame_counter, 300);
         }
+        raster_pending
     }
 
     /// Marks a specific rectangle in the page content area as damaged.

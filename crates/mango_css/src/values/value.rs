@@ -87,6 +87,8 @@ pub enum Value {
     UnicodeBidi(UnicodeBidi),
     /// CSS blend mode (mix-blend-mode / background-blend-mode).
     BlendMode(BlendMode),
+    /// CSS 2.1 clip rectangle.
+    Clip(ClipRect),
     /// CSS clip-path shape.
     ClipPath(ClipPath),
     /// CSS mask-mode.
@@ -360,6 +362,8 @@ impl Value {
                 FlexWrap::NoWrap => "nowrap",
                 FlexWrap::Wrap => "wrap",
                 FlexWrap::WrapReverse => "wrap-reverse",
+                FlexWrap::Balance => "balance",
+                FlexWrap::WrapReverseBalance => "wrap-reverse balance",
             }
             .to_string(),
             Value::BorderStyle(s) => match s {
@@ -376,6 +380,8 @@ impl Value {
             }
             .to_string(),
             Value::TextAlign(ta) => match ta {
+                TextAlign::Start => "start",
+                TextAlign::End => "end",
                 TextAlign::Left => "left",
                 TextAlign::Right => "right",
                 TextAlign::Center => "center",

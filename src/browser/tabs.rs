@@ -70,6 +70,7 @@ impl BrowserChrome {
                 has_active_animations: self.anim_state.is_animating(),
                 canvas_bg: self.canvas_bg,
                 engine: None,
+                renderer_actor: self.renderer_actor.take(),
             });
         }
     }
@@ -102,6 +103,7 @@ impl BrowserChrome {
                 self.resource_scheduler = contents.resource_scheduler;
                 self.resource_scheduler.set_visible(true);
                 self.canvas_bg = contents.canvas_bg;
+                self.renderer_actor = contents.renderer_actor;
                 self.cached_scrollable_height =
                     crate::scroll::compute_scrollable_height(self.root_box.as_ref());
                 self.page_dirty = true;

@@ -21,5 +21,8 @@ pub(crate) mod text;
 #[cfg(test)]
 mod tests;
 
+pub use self::affine::invert_matrix;
 pub use self::blend::{blend_pixel, blend_pixel_mode};
 pub use self::core::{paint, paint_damage, paint_with_clip};
+pub use self::effects::is_point_inside_clip_path;
+pub use self::shapes::is_inside_rounded_rect;

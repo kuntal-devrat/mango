@@ -1,6 +1,8 @@
 use mango_core::Rect;
 use mango_css::computed::ComputedStyle;
-use mango_css::values::{AlignItems, AlignSelf, BoxSizing, JustifyContent, Length, Position};
+use mango_css::values::{
+    AlignItems, AlignSelf, BoxSizing, JustifyContent, Length, Position, WritingMode,
+};
 
 use crate::box_tree::LayoutBox;
 use crate::dimensions::Dimensions;
@@ -99,64 +101,81 @@ pub fn position_flex_items_on_line(params: LinePlacementParams) {
             && !has_cross_auto_margin
         {
             item_cross = (line_cross_size - m.pad_cross - m.border_cross - m.margin_cross).max(0.0);
-            if is_row {
-                if child_style.max_height != Length::Auto {
-                    let max_h = child_style.max_height.to_px_with_viewport(
-                        c_fs,
-                        c_root_fs,
-                        container_height,
-                        container_height,
-                    );
-                    let max_content_h = if child_style.box_sizing == BoxSizing::BorderBox {
-                        (max_h - m.pad_cross - m.border_cross).max(0.0)
-                    } else {
-                        max_h
-                    };
-                    item_cross = item_cross.min(max_content_h);
-                }
-                if child_style.min_height != Length::Auto {
-                    let min_h = child_style.min_height.to_px_with_viewport(
-                        c_fs,
-                        c_root_fs,
-                        container_height,
-                        container_height,
-                    );
-                    let min_content_h = if child_style.box_sizing == BoxSizing::BorderBox {
-                        (min_h - m.pad_cross - m.border_cross).max(0.0)
-                    } else {
-                        min_h
-                    };
-                    item_cross = item_cross.max(min_content_h);
-                }
+        }
+
+        let eff_cross_cb = if is_row {
+            if container_height > 0.0 {
+                container_height
             } else {
-                if child_style.max_width != Length::Auto {
-                    let max_w = child_style.max_width.to_px_with_viewport(
-                        c_fs,
-                        c_root_fs,
-                        content_width,
-                        container_height,
-                    );
-                    let max_content_w = if child_style.box_sizing == BoxSizing::BorderBox {
-                        (max_w - m.pad_cross - m.border_cross).max(0.0)
-                    } else {
-                        max_w
-                    };
-                    item_cross = item_cross.min(max_content_w);
-                }
-                if child_style.min_width != Length::Auto {
-                    let min_w = child_style.min_width.to_px_with_viewport(
-                        c_fs,
-                        c_root_fs,
-                        content_width,
-                        container_height,
-                    );
-                    let min_content_w = if child_style.box_sizing == BoxSizing::BorderBox {
-                        (min_w - m.pad_cross - m.border_cross).max(0.0)
-                    } else {
-                        min_w
-                    };
-                    item_cross = item_cross.max(min_content_w);
-                }
+                line_cross_size
+            }
+        } else {
+            if content_width > 0.0 {
+                content_width
+            } else {
+                line_cross_size
+            }
+        };
+
+        if is_row {
+            let is_max_h_pct_indefinite =
+                child_style.max_height.has_percent() && eff_cross_cb <= 0.0;
+            if child_style.max_height != Length::Auto && !is_max_h_pct_indefinite {
+                let max_h = child_style.max_height.to_px_with_viewport(
+                    c_fs,
+                    c_root_fs,
+                    eff_cross_cb,
+                    container_height,
+                );
+                let max_content_h = if child_style.box_sizing == BoxSizing::BorderBox {
+                    (max_h - m.pad_cross - m.border_cross).max(0.0)
+                } else {
+                    max_h
+                };
+                item_cross = item_cross.min(max_content_h);
+            }
+            if child_style.min_height != Length::Auto {
+                let min_h = child_style.min_height.to_px_with_viewport(
+                    c_fs,
+                    c_root_fs,
+                    eff_cross_cb,
+                    container_height,
+                );
+                let min_content_h = if child_style.box_sizing == BoxSizing::BorderBox {
+                    (min_h - m.pad_cross - m.border_cross).max(0.0)
+                } else {
+                    min_h
+                };
+                item_cross = item_cross.max(min_content_h);
+            }
+        } else {
+            if child_style.max_width != Length::Auto {
+                let max_w = child_style.max_width.to_px_with_viewport(
+                    c_fs,
+                    c_root_fs,
+                    eff_cross_cb,
+                    container_height,
+                );
+                let max_content_w = if child_style.box_sizing == BoxSizing::BorderBox {
+                    (max_w - m.pad_cross - m.border_cross).max(0.0)
+                } else {
+                    max_w
+                };
+                item_cross = item_cross.min(max_content_w);
+            }
+            if child_style.min_width != Length::Auto {
+                let min_w = child_style.min_width.to_px_with_viewport(
+                    c_fs,
+                    c_root_fs,
+                    eff_cross_cb,
+                    container_height,
+                );
+                let min_content_w = if child_style.box_sizing == BoxSizing::BorderBox {
+                    (min_w - m.pad_cross - m.border_cross).max(0.0)
+                } else {
+                    min_w
+                };
+                item_cross = item_cross.max(min_content_w);
             }
         }
 
@@ -190,7 +209,17 @@ pub fn position_flex_items_on_line(params: LinePlacementParams) {
             }
         } else {
             let is_cross_reversed = if is_row {
-                style.flex_wrap == mango_css::values::FlexWrap::WrapReverse
+                if style.writing_mode.is_vertical() {
+                    (style.direction == mango_css::values::Direction::Rtl)
+                        ^ (style.flex_wrap == mango_css::values::FlexWrap::WrapReverse)
+                } else {
+                    style.flex_wrap == mango_css::values::FlexWrap::WrapReverse
+                }
+            } else if style.writing_mode.is_vertical() {
+                matches!(
+                    style.writing_mode,
+                    WritingMode::VerticalRl | WritingMode::SidewaysRl
+                ) ^ (style.flex_wrap == mango_css::values::FlexWrap::WrapReverse)
             } else {
                 (style.direction == mango_css::values::Direction::Rtl)
                     ^ (style.flex_wrap == mango_css::values::FlexWrap::WrapReverse)
@@ -237,7 +266,12 @@ pub fn position_flex_items_on_line(params: LinePlacementParams) {
             };
         }
 
-        let item_outer_main = m.final_main + m.pad_main + m.border_main + m.margin_main;
+        let item_outer_margin = if is_row {
+            child.dimensions.margin.horizontal()
+        } else {
+            child.dimensions.margin.vertical()
+        };
+        let item_outer_main = m.final_main + m.pad_main + m.border_main + item_outer_margin;
         let pre_x = child.dimensions.content.origin.x;
         let pre_y = child.dimensions.content.origin.y;
         let pre_w = child.dimensions.content.size.width;
@@ -263,7 +297,9 @@ pub fn position_flex_items_on_line(params: LinePlacementParams) {
                 + child.dimensions.border.top
                 + child.dimensions.padding.top;
             child.dimensions.content = Rect::new(x, y, m.final_main, item_cross);
-            main_cursor += item_outer_main + item_spacing;
+            if !m.is_collapsed {
+                main_cursor += item_outer_main + item_spacing;
+            }
             (m.final_main, item_cross, x, y)
         } else {
             let x = container_x
@@ -285,7 +321,9 @@ pub fn position_flex_items_on_line(params: LinePlacementParams) {
                     + child.dimensions.padding.top
             };
             child.dimensions.content = Rect::new(x, y, item_cross, m.final_main);
-            main_cursor += item_outer_main + item_spacing;
+            if !m.is_collapsed {
+                main_cursor += item_outer_main + item_spacing;
+            }
             (item_cross, m.final_main, x, y)
         };
 
@@ -312,14 +350,10 @@ pub fn position_flex_items_on_line(params: LinePlacementParams) {
                 .unwrap_or(false);
             if is_row {
                 child.dimensions.content.size.width = m.final_main;
-                if was_stretched {
-                    child.dimensions.content.size.height = item_cross;
-                }
+                child.dimensions.content.size.height = item_cross;
             } else {
                 child.dimensions.content.size.height = m.final_main;
-                if was_stretched {
-                    child.dimensions.content.size.width = item_cross;
-                }
+                child.dimensions.content.size.width = item_cross;
             }
             let mut item_cb_dims = child.dimensions;
             item_cb_dims.content.origin.x = 0.0;
@@ -355,20 +389,24 @@ pub fn position_flex_items_on_line(params: LinePlacementParams) {
             } else {
                 item_cb_dims
             };
+            let saved_padding = child.dimensions.padding;
+            let saved_border = child.dimensions.border;
+            let saved_margin = child.dimensions.margin;
+            let saved_origin = child.dimensions.content.origin;
             let mut item_float_ctx = FloatContext::new();
             let c_fs = child.style.as_ref().map(|s| s.font_size).unwrap_or(16.0);
             layout_flex_item(child, &item_containing_block, &mut item_float_ctx, c_fs);
             if is_row {
                 child.dimensions.content.size.width = m.final_main;
-                if was_stretched {
-                    child.dimensions.content.size.height = item_cross;
-                }
+                child.dimensions.content.size.height = item_cross;
             } else {
                 child.dimensions.content.size.height = m.final_main;
-                if was_stretched {
-                    child.dimensions.content.size.width = item_cross;
-                }
+                child.dimensions.content.size.width = item_cross;
             }
+            child.dimensions.padding = saved_padding;
+            child.dimensions.border = saved_border;
+            child.dimensions.margin = saved_margin;
+            child.dimensions.content.origin = saved_origin;
         }
     }
 }
@@ -676,6 +714,46 @@ pub fn calculate_abspos_static_positions(
                 free_main / 2.0
             }
             JustifyContent::SpaceBetween => 0.0,
+            JustifyContent::Start => {
+                let is_dir_reverse = matches!(
+                    style.flex_direction,
+                    mango_css::values::FlexDirection::RowReverse
+                        | mango_css::values::FlexDirection::ColumnReverse
+                );
+                if is_dir_reverse { free_main } else { 0.0 }
+            }
+            JustifyContent::End => {
+                let is_dir_reverse = matches!(
+                    style.flex_direction,
+                    mango_css::values::FlexDirection::RowReverse
+                        | mango_css::values::FlexDirection::ColumnReverse
+                );
+                if is_dir_reverse { 0.0 } else { free_main }
+            }
+            JustifyContent::Left => {
+                if is_row {
+                    if is_reverse { free_main } else { 0.0 }
+                } else {
+                    let is_dir_reverse = matches!(
+                        style.flex_direction,
+                        mango_css::values::FlexDirection::RowReverse
+                            | mango_css::values::FlexDirection::ColumnReverse
+                    );
+                    if is_dir_reverse { free_main } else { 0.0 }
+                }
+            }
+            JustifyContent::Right => {
+                if is_row {
+                    if is_reverse { 0.0 } else { free_main }
+                } else {
+                    let is_dir_reverse = matches!(
+                        style.flex_direction,
+                        mango_css::values::FlexDirection::RowReverse
+                            | mango_css::values::FlexDirection::ColumnReverse
+                    );
+                    if is_dir_reverse { free_main } else { 0.0 }
+                }
+            }
         };
 
         let main_pos = if is_reverse {

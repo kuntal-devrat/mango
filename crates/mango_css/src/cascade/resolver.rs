@@ -6,7 +6,7 @@ use mango_html::dom::{Document, NodeData, NodeId};
 
 use crate::parser::{Stylesheet, parse_declaration_list};
 use crate::specificity::Specificity;
-use crate::values::Value;
+use crate::values::{Direction, Value, WritingMode};
 
 use super::hints::collect_presentational_hints;
 use super::rule_index::RuleIndex;
@@ -75,13 +75,16 @@ pub fn resolve_cascade_with_shadow_and_part_index_details(
     )
 }
 
-/// Resolves all specified property values with author index, optional shadow index, and multiple outer part indexes.
-pub fn resolve_cascade_with_shadow_and_part_indexes_details(
+/// Resolves all specified property values with author index, optional shadow index, multiple outer part indexes,
+/// and parent writing-mode / direction context for accurate logical property canonicalization.
+pub fn resolve_cascade_with_shadow_and_part_indexes_and_parent_details(
     node_id: NodeId,
     doc: &Document,
     author_index: &RuleIndex,
     shadow_index: Option<&RuleIndex>,
     part_indexes: &[&RuleIndex],
+    parent_wm: Option<WritingMode>,
+    parent_dir: Option<Direction>,
 ) -> (HashMap<String, Value>, std::collections::HashSet<String>) {
     let mut matched_decls: Vec<MatchedDeclaration> = Vec::new();
     let mut source_order = 0;
@@ -180,40 +183,279 @@ pub fn resolve_cascade_with_shadow_and_part_indexes_details(
         return (HashMap::new(), std::collections::HashSet::new());
     }
     matched_decls.sort_by(|a, b| a.compare_cascade(b));
-    resolve_matched_declarations_with_importance(&matched_decls)
+    let (wm, dir) =
+        resolve_writing_mode_and_direction(node_id, doc, &matched_decls, parent_wm, parent_dir);
+    resolve_matched_declarations_with_importance(&matched_decls, wm, dir)
+}
+
+/// Resolves all specified property values with author index, optional shadow index, and multiple outer part indexes.
+pub fn resolve_cascade_with_shadow_and_part_indexes_details(
+    node_id: NodeId,
+    doc: &Document,
+    author_index: &RuleIndex,
+    shadow_index: Option<&RuleIndex>,
+    part_indexes: &[&RuleIndex],
+) -> (HashMap<String, Value>, std::collections::HashSet<String>) {
+    resolve_cascade_with_shadow_and_part_indexes_and_parent_details(
+        node_id,
+        doc,
+        author_index,
+        shadow_index,
+        part_indexes,
+        None,
+        None,
+    )
+}
+
+fn resolve_writing_mode_and_direction(
+    node_id: NodeId,
+    doc: &Document,
+    matched_decls: &[MatchedDeclaration],
+    parent_wm: Option<WritingMode>,
+    parent_dir: Option<Direction>,
+) -> (WritingMode, Direction) {
+    let mut wm = parent_wm.unwrap_or(WritingMode::HorizontalTb);
+    let mut dir = parent_dir.unwrap_or(Direction::Ltr);
+
+    // If parent_wm was not provided, check ancestors for inline style or dir attribute
+    if parent_wm.is_none() {
+        let mut curr = doc.get(node_id).and_then(|n| n.parent);
+        while let Some(pid) = curr {
+            if let Some(pnode) = doc.get(pid) {
+                if let NodeData::Element(pelem) = &pnode.data {
+                    if let Some(style_attr) = pelem.get_attribute("style") {
+                        for decl in parse_declaration_list(style_attr) {
+                            if decl.name == "writing-mode" {
+                                if let Value::Keyword(ref k) = decl.value {
+                                    match k.to_ascii_lowercase().as_str() {
+                                        "vertical-rl" => wm = WritingMode::VerticalRl,
+                                        "vertical-lr" => wm = WritingMode::VerticalLr,
+                                        "sideways-rl" => wm = WritingMode::SidewaysRl,
+                                        "sideways-lr" => wm = WritingMode::SidewaysLr,
+                                        "horizontal-tb" => wm = WritingMode::HorizontalTb,
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let Some(dir_attr) = pelem.get_attribute("dir") {
+                        if dir_attr.eq_ignore_ascii_case("rtl") {
+                            dir = Direction::Rtl;
+                        } else if dir_attr.eq_ignore_ascii_case("ltr") {
+                            dir = Direction::Ltr;
+                        }
+                    }
+                }
+                curr = pnode.parent;
+            } else {
+                break;
+            }
+        }
+    }
+
+    // Check HTML dir attribute on the element itself
+    if let Some(node) = doc.get(node_id) {
+        if let NodeData::Element(elem) = &node.data {
+            if let Some(dir_attr) = elem.get_attribute("dir") {
+                if dir_attr.eq_ignore_ascii_case("rtl") {
+                    dir = Direction::Rtl;
+                } else if dir_attr.eq_ignore_ascii_case("ltr") {
+                    dir = Direction::Ltr;
+                }
+            }
+        }
+    }
+
+    // Check matched declarations on this element (applied in cascade order)
+    for matched in matched_decls {
+        if matched.declaration.name == "writing-mode" {
+            if let Value::Keyword(ref k) = matched.declaration.value {
+                match k.to_ascii_lowercase().as_str() {
+                    "vertical-rl" => wm = WritingMode::VerticalRl,
+                    "vertical-lr" => wm = WritingMode::VerticalLr,
+                    "sideways-rl" => wm = WritingMode::SidewaysRl,
+                    "sideways-lr" => wm = WritingMode::SidewaysLr,
+                    "horizontal-tb" => wm = WritingMode::HorizontalTb,
+                    _ => {}
+                }
+            }
+        } else if matched.declaration.name == "direction" {
+            if let Value::Keyword(ref k) = matched.declaration.value {
+                if k.eq_ignore_ascii_case("rtl") {
+                    dir = Direction::Rtl;
+                } else if k.eq_ignore_ascii_case("ltr") {
+                    dir = Direction::Ltr;
+                }
+            }
+        }
+    }
+
+    (wm, dir)
 }
 
 fn resolve_matched_declarations(matched_decls: &[MatchedDeclaration]) -> HashMap<String, Value> {
-    resolve_matched_declarations_with_importance(matched_decls).0
+    resolve_matched_declarations_with_importance(
+        matched_decls,
+        WritingMode::HorizontalTb,
+        Direction::Ltr,
+    )
+    .0
 }
 
-fn canonical_property_name(name: &str) -> &str {
+fn map_logical_side(side: &str, wm: WritingMode, dir: Direction) -> &'static str {
+    match side {
+        "block-start" => match wm {
+            WritingMode::HorizontalTb => "top",
+            WritingMode::VerticalRl | WritingMode::SidewaysRl => "right",
+            WritingMode::VerticalLr | WritingMode::SidewaysLr => "left",
+        },
+        "block-end" => match wm {
+            WritingMode::HorizontalTb => "bottom",
+            WritingMode::VerticalRl | WritingMode::SidewaysRl => "left",
+            WritingMode::VerticalLr | WritingMode::SidewaysLr => "right",
+        },
+        "inline-start" => {
+            if wm.is_vertical() {
+                if dir == Direction::Rtl {
+                    "bottom"
+                } else {
+                    "top"
+                }
+            } else if dir == Direction::Rtl {
+                "right"
+            } else {
+                "left"
+            }
+        }
+        "inline-end" => {
+            if wm.is_vertical() {
+                if dir == Direction::Rtl {
+                    "top"
+                } else {
+                    "bottom"
+                }
+            } else if dir == Direction::Rtl {
+                "left"
+            } else {
+                "right"
+            }
+        }
+        _ => "top",
+    }
+}
+
+fn canonical_property_name(name: &str, wm: WritingMode, dir: Direction) -> &str {
     match name {
-        "margin-block-start" => "margin-top",
-        "margin-block-end" => "margin-bottom",
-        "margin-inline-start" => "margin-left",
-        "margin-inline-end" => "margin-right",
-        "padding-block-start" => "padding-top",
-        "padding-block-end" => "padding-bottom",
-        "padding-inline-start" => "padding-left",
-        "padding-inline-end" => "padding-right",
-        "inset-block-start" => "top",
-        "inset-block-end" => "bottom",
-        "inset-inline-start" => "left",
-        "inset-inline-end" => "right",
+        "margin-block-start" => match map_logical_side("block-start", wm, dir) {
+            "top" => "margin-top",
+            "bottom" => "margin-bottom",
+            "left" => "margin-left",
+            _ => "margin-right",
+        },
+        "margin-block-end" => match map_logical_side("block-end", wm, dir) {
+            "top" => "margin-top",
+            "bottom" => "margin-bottom",
+            "left" => "margin-left",
+            _ => "margin-right",
+        },
+        "margin-inline-start" => match map_logical_side("inline-start", wm, dir) {
+            "top" => "margin-top",
+            "bottom" => "margin-bottom",
+            "left" => "margin-left",
+            _ => "margin-right",
+        },
+        "margin-inline-end" => match map_logical_side("inline-end", wm, dir) {
+            "top" => "margin-top",
+            "bottom" => "margin-bottom",
+            "left" => "margin-left",
+            _ => "margin-right",
+        },
+        "padding-block-start" => match map_logical_side("block-start", wm, dir) {
+            "top" => "padding-top",
+            "bottom" => "padding-bottom",
+            "left" => "padding-left",
+            _ => "padding-right",
+        },
+        "padding-block-end" => match map_logical_side("block-end", wm, dir) {
+            "top" => "padding-top",
+            "bottom" => "padding-bottom",
+            "left" => "padding-left",
+            _ => "padding-right",
+        },
+        "padding-inline-start" => match map_logical_side("inline-start", wm, dir) {
+            "top" => "padding-top",
+            "bottom" => "padding-bottom",
+            "left" => "padding-left",
+            _ => "padding-right",
+        },
+        "padding-inline-end" => match map_logical_side("inline-end", wm, dir) {
+            "top" => "padding-top",
+            "bottom" => "padding-bottom",
+            "left" => "padding-left",
+            _ => "padding-right",
+        },
+        "inset-block-start" => map_logical_side("block-start", wm, dir),
+        "inset-block-end" => map_logical_side("block-end", wm, dir),
+        "inset-inline-start" => map_logical_side("inline-start", wm, dir),
+        "inset-inline-end" => map_logical_side("inline-end", wm, dir),
+        "block-size" => {
+            if wm.is_vertical() {
+                "width"
+            } else {
+                "height"
+            }
+        }
+        "inline-size" => {
+            if wm.is_vertical() {
+                "height"
+            } else {
+                "width"
+            }
+        }
+        "min-block-size" => {
+            if wm.is_vertical() {
+                "min-width"
+            } else {
+                "min-height"
+            }
+        }
+        "min-inline-size" => {
+            if wm.is_vertical() {
+                "min-height"
+            } else {
+                "min-width"
+            }
+        }
+        "max-block-size" => {
+            if wm.is_vertical() {
+                "max-width"
+            } else {
+                "max-height"
+            }
+        }
+        "max-inline-size" => {
+            if wm.is_vertical() {
+                "max-height"
+            } else {
+                "max-width"
+            }
+        }
         other => other,
     }
 }
 
 fn resolve_matched_declarations_with_importance(
     matched_decls: &[MatchedDeclaration],
+    wm: WritingMode,
+    dir: Direction,
 ) -> (HashMap<String, Value>, std::collections::HashSet<String>) {
     if matched_decls.is_empty() {
         return (HashMap::new(), std::collections::HashSet::new());
     }
     let mut decls_by_prop: HashMap<&str, Vec<&MatchedDeclaration>> = HashMap::new();
     for matched in matched_decls {
-        let prop = canonical_property_name(&matched.declaration.name);
+        let prop = canonical_property_name(&matched.declaration.name, wm, dir);
         decls_by_prop.entry(prop).or_default().push(matched);
     }
 

@@ -8,81 +8,104 @@ use super::super::BrowserChrome;
 use crate::chrome_ui::*;
 
 impl BrowserChrome {
-    /// Builds the display list for the browser chrome UI (scrollbar, tab strip,
+    /// Builds the display list for the scrollbar overlay layer.
+    ///
+    /// Extracted from the main chrome layer so that scrolling only invalidates and
+    /// re-rasterizes this tiny 12px strip, rather than repainting the entire window's
+    /// tabs, toolbar, and devtools on CPU.
+    pub fn build_scrollbar_display_list(
+        &self,
+        (width, height): (u32, u32),
+    ) -> Option<(Rect, DisplayList)> {
+        let max_s = self.max_scroll();
+        if max_s <= 0.0 {
+            return None;
+        }
+
+        let w = width as f32;
+        let h = height as f32;
+        let content_y = HEADER_HEIGHT + 1.0;
+        let content_h = (h - HEADER_HEIGHT - STATUS_BAR_HEIGHT - 1.0).max(10.0);
+        let doc_h = self.scrollable_height();
+
+        let (scrollbar_w, custom_track, custom_thumb) = if let Some(root) = &self.root_box {
+            if let Some(s) = &root.style {
+                let w = match s.scrollbar_width {
+                    mango_css::values::ScrollbarWidth::None => 0.0,
+                    mango_css::values::ScrollbarWidth::Thin => 8.0,
+                    mango_css::values::ScrollbarWidth::Auto => 12.0,
+                };
+                let (track, thumb) = if let Some((c_thumb, c_track)) = s.scrollbar_color {
+                    (Some(c_track), Some(c_thumb))
+                } else {
+                    (None, None)
+                };
+                (w, track, thumb)
+            } else {
+                (12.0, None, None)
+            }
+        } else {
+            (12.0, None, None)
+        };
+
+        if scrollbar_w <= 0.0 {
+            return None;
+        }
+
+        let scrollbar_x = w - scrollbar_w;
+        let bounds = Rect::new(scrollbar_x, content_y, scrollbar_w, content_h);
+
+        let mut dl = DisplayList::new();
+
+        // Track background in layer-local coordinates (0..scrollbar_w, 0..content_h)
+        let track_rect = Rect::new(0.0, 0.0, scrollbar_w, content_h);
+        dl.push(DisplayCommand::FillRect {
+            rect: track_rect,
+            color: custom_track.unwrap_or_else(|| Color::rgba(240, 240, 240, 140)),
+        });
+
+        // Thumb dimensions and local position
+        let thumb_h = ((content_h / doc_h) * content_h).clamp(32.0f32.min(content_h), content_h);
+        let max_thumb_travel = (content_h - thumb_h).max(1.0);
+        let thumb_y_local = (self.scroll_y / max_s) * max_thumb_travel;
+
+        let thumb_padding = 2.0f32;
+        let thumb_rect = Rect::new(
+            thumb_padding,
+            thumb_y_local,
+            (scrollbar_w - thumb_padding * 2.0).max(1.0),
+            thumb_h,
+        );
+
+        let thumb_color = if let Some(ct) = custom_thumb {
+            ct
+        } else if self.scrollbar_dragging {
+            Color::rgb(100, 100, 100)
+        } else if self.hovered_target == Some(HoverTarget::ScrollbarThumb) {
+            Color::rgb(140, 140, 140)
+        } else {
+            Color::rgb(190, 190, 190)
+        };
+
+        dl.push(DisplayCommand::FillRoundedRect {
+            rect: thumb_rect,
+            color: thumb_color,
+            radii: [4.0, 4.0, 4.0, 4.0],
+        });
+
+        Some((bounds, dl))
+    }
+
+    /// Builds the display list for the browser chrome UI (tab strip,
     /// toolbar, omnibox, bookmark bar, status bar, popups, and devtools).
+    ///
+    /// Scrollbars are excluded from this layer to prevent scrolling from invalidating
+    /// chrome textures.
     pub fn build_chrome_display_list(&self, (width, height): (u32, u32)) -> DisplayList {
         let mut dl = DisplayList::new();
         let w = width as f32;
         let h = height as f32;
-
         let content_y = HEADER_HEIGHT + 1.0;
-        let content_h = (h - HEADER_HEIGHT - STATUS_BAR_HEIGHT - 1.0).max(10.0);
-
-        // ── SCROLLBAR (y = content_y..content_y + content_h) ──
-        let max_s = self.max_scroll();
-        if max_s > 0.0 {
-            let doc_h = self.scrollable_height();
-            let (scrollbar_w, custom_track, custom_thumb) = if let Some(root) = &self.root_box {
-                if let Some(s) = &root.style {
-                    let w = match s.scrollbar_width {
-                        mango_css::values::ScrollbarWidth::None => 0.0,
-                        mango_css::values::ScrollbarWidth::Thin => 8.0,
-                        mango_css::values::ScrollbarWidth::Auto => 12.0,
-                    };
-                    let (track, thumb) = if let Some((c_thumb, c_track)) = s.scrollbar_color {
-                        (Some(c_track), Some(c_thumb))
-                    } else {
-                        (None, None)
-                    };
-                    (w, track, thumb)
-                } else {
-                    (12.0, None, None)
-                }
-            } else {
-                (12.0, None, None)
-            };
-
-            if scrollbar_w > 0.0 {
-                let scrollbar_x = w - scrollbar_w;
-                let track_rect = Rect::new(scrollbar_x, content_y, scrollbar_w, content_h);
-
-                // Track background (subtle semi-transparent or custom)
-                dl.push(DisplayCommand::FillRect {
-                    rect: track_rect,
-                    color: custom_track.unwrap_or_else(|| Color::rgba(240, 240, 240, 140)),
-                });
-
-                // Thumb dimensions and position
-                let thumb_h =
-                    ((content_h / doc_h) * content_h).clamp(32.0f32.min(content_h), content_h);
-                let max_thumb_travel = (content_h - thumb_h).max(1.0);
-                let thumb_y = content_y + (self.scroll_y / max_s) * max_thumb_travel;
-
-                let thumb_padding = 2.0f32;
-                let thumb_rect = Rect::new(
-                    scrollbar_x + thumb_padding,
-                    thumb_y,
-                    (scrollbar_w - thumb_padding * 2.0).max(1.0),
-                    thumb_h,
-                );
-
-                let thumb_color = if let Some(ct) = custom_thumb {
-                    ct
-                } else if self.scrollbar_dragging {
-                    Color::rgb(100, 100, 100) // Active dark dragging
-                } else if self.hovered_target == Some(HoverTarget::ScrollbarThumb) {
-                    Color::rgb(140, 140, 140) // Medium hover
-                } else {
-                    Color::rgb(190, 190, 190) // Normal sleek grey
-                };
-
-                dl.push(DisplayCommand::FillRoundedRect {
-                    rect: thumb_rect,
-                    color: thumb_color,
-                    radii: [4.0, 4.0, 4.0, 4.0],
-                });
-            }
-        }
 
         // ══════════════════════════════════════════════════════════════════════
         // ── CHROME REDESIGN: PART 1 — TAB STRIP (y = 0..TAB_BAR_HEIGHT) ──

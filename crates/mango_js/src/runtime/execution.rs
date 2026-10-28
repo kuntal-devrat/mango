@@ -5,10 +5,9 @@ use std::time::Duration;
 
 use crate::runtime::JsRuntime;
 
-/// Maximum execution budget granted to a large script (>= 20 KB), including
-/// the per-byte compilation allowance. This is intentionally a hard ceiling:
-/// a runaway script must never freeze the UI for longer than this.
-const MAX_LARGE_SCRIPT_TIMEOUT: Duration = Duration::from_millis(5_000);
+/// Maximum execution budget granted to a script (default 30s, up to 60s for multi-MB scripts).
+/// Conforms to Chromium's hung renderer watchdog standard (30s).
+const MAX_LARGE_SCRIPT_TIMEOUT: Duration = Duration::from_secs(60);
 /// Scripts below this size are considered small and use their caller-provided
 /// timeout unchanged.
 const LARGE_SCRIPT_THRESHOLD: usize = 20_000;
@@ -222,16 +221,14 @@ impl JsRuntime {
         self.execute_script_with_name_and_timeout(
             "<script>",
             source,
-            std::time::Duration::from_millis(1500),
+            std::time::Duration::from_secs(30),
         )
     }
 
     /// Computes a scaled execution timeout based on script size.
     /// Small scripts (< 20 KB) retain their caller-provided base timeout.
-    /// Large scripts (e.g. YouTube bundles of 1MB-5MB) receive an additional
-    /// 2 ms per KB of source, capped at 5,000 ms. The cap is a hard upper
-    /// bound: a large script can never run longer than five seconds, and no
-    /// input can reduce a caller's explicit timeout.
+    /// Large scripts receive an additional 2 ms per KB of source, with an upper
+    /// ceiling of MAX_LARGE_SCRIPT_TIMEOUT (60s). Caller-provided timeouts are never reduced.
     pub fn compute_scaled_timeout(source_len: usize, base_timeout: Duration) -> Duration {
         if source_len < LARGE_SCRIPT_THRESHOLD {
             return base_timeout;
@@ -239,7 +236,8 @@ impl JsRuntime {
         let extra_kb = (source_len - LARGE_SCRIPT_THRESHOLD) / 1024;
         let extra_ms = (extra_kb as u64) * 2;
         let scaled = base_timeout.saturating_add(Duration::from_millis(extra_ms));
-        scaled.min(MAX_LARGE_SCRIPT_TIMEOUT)
+        let cap = MAX_LARGE_SCRIPT_TIMEOUT.max(base_timeout);
+        scaled.min(cap)
     }
 
     /// Executes a named JavaScript source string with a maximum execution timeout.
@@ -268,7 +266,12 @@ impl JsRuntime {
                     "if (typeof _syncWindowNamedProperties === 'function') _syncWindowNamedProperties();",
                 );
             }
-            self.runtime.execute_script(name_owned, source.to_string())
+            let result = self.runtime.execute_script(name_owned, source.to_string());
+            if result.is_ok() {
+                deno_core::v8::scope!(scope, self.runtime.v8_isolate());
+                scope.perform_microtask_checkpoint();
+            }
+            result
         }));
         std::panic::set_hook(prev_hook);
         let timed_out = watchdog.finish();
@@ -296,8 +299,6 @@ impl JsRuntime {
                     source.len(),
                     heap / (1024 * 1024)
                 );
-                deno_core::v8::scope!(scope, self.runtime.v8_isolate());
-                scope.perform_microtask_checkpoint();
                 Ok(())
             }
             Ok(Err(e)) => {
@@ -349,18 +350,30 @@ impl JsRuntime {
     /// Evaluates a JavaScript expression and returns its string result.
     pub fn eval(&mut self, source: &str) -> Result<String, String> {
         let _guard = self.enter_isolate();
+        let effective_timeout =
+            Self::compute_scaled_timeout(source.len(), std::time::Duration::from_secs(5));
+        let isolate_handle = self.runtime.v8_isolate().thread_safe_handle();
+        let watchdog =
+            ExecutionWatchdog::new(isolate_handle, effective_timeout, "mango-eval-watchdog");
         let prev_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {}));
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.runtime.execute_script("<eval>", source.to_string())
+            let result = self.runtime.execute_script("<eval>", source.to_string());
+            if result.is_ok() {
+                deno_core::v8::scope!(scope, self.runtime.v8_isolate());
+                scope.perform_microtask_checkpoint();
+            }
+            result
         }));
         std::panic::set_hook(prev_hook);
+        if watchdog.finish() {
+            return Err("JavaScript evaluation timed out".to_string());
+        }
 
         match res {
             Ok(Ok(global_val)) => {
                 let context_global = self.runtime.main_context();
                 deno_core::v8::scope!(scope, self.runtime.v8_isolate());
-                scope.perform_microtask_checkpoint();
                 let context_local = deno_core::v8::Local::new(scope, context_global);
                 let scope = &mut deno_core::v8::ContextScope::new(scope, context_local);
                 let local = deno_core::v8::Local::new(scope, global_val);
@@ -390,9 +403,8 @@ impl JsRuntime {
     /// Processes any expired timers and drains promise microtasks with watchdog protection.
     /// Returns `true` if the DOM was mutated.
     pub fn tick(&mut self) -> bool {
-        // Keep one page from monopolising the UI thread. Remaining callbacks
-        // stay queued and are serviced on later browser frames.
-        const MAX_CALLBACKS_PER_TICK: usize = 32;
+        const MAX_CALLBACKS_PER_TICK: usize = 5;
+        const CALLBACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
         let scripts = self
             .event_loop
             .borrow_mut()
@@ -400,11 +412,7 @@ impl JsRuntime {
         let mut timer_fired = false;
         for s in scripts {
             if self
-                .execute_script_with_name_and_timeout(
-                    "<event_loop>",
-                    &s,
-                    std::time::Duration::from_millis(1500),
-                )
+                .execute_script_with_name_and_timeout("<event_loop>", &s, CALLBACK_TIMEOUT)
                 .is_ok()
             {
                 timer_fired = true;
@@ -414,19 +422,29 @@ impl JsRuntime {
         let waker = std::task::Waker::noop();
         let mut cx = std::task::Context::from_waker(waker);
         {
+            let isolate_handle = self.runtime.v8_isolate().thread_safe_handle();
+            let watchdog = ExecutionWatchdog::new(
+                isolate_handle,
+                std::time::Duration::from_secs(5),
+                "mango-event-loop-watchdog",
+            );
             let isolate_ptr: *mut deno_core::v8::Isolate = &mut **self.runtime.v8_isolate();
             // SAFETY: `isolate_ptr` is a valid pointer derived from the active `deno_core` runtime's isolate.
             // Entering the isolate prepares it for polling operations and is balanced by the subsequent `exit()`.
             unsafe {
                 (*isolate_ptr).enter();
             }
-            let _ = self
+            let poll_result = self
                 .runtime
                 .poll_event_loop(&mut cx, deno_core::PollEventLoopOptions::default());
             // SAFETY: `isolate_ptr` was entered immediately before polling; exiting restores the idle state.
             unsafe {
                 (*isolate_ptr).exit();
             }
+            if watchdog.finish() {
+                log::warn!("JavaScript event-loop polling exceeded its budget");
+            }
+            let _ = poll_result;
         }
 
         let dirty = *self.dom_dirty.borrow();
@@ -470,6 +488,12 @@ impl JsRuntime {
 
     /// Drains any queued Promise microtasks, MutationObserver callbacks, or deferred jobs.
     pub fn run_jobs(&mut self) {
+        let isolate_handle = self.runtime.v8_isolate().thread_safe_handle();
+        let watchdog = ExecutionWatchdog::new(
+            isolate_handle,
+            std::time::Duration::from_secs(5),
+            "mango-job-queue-watchdog",
+        );
         {
             let _guard = self.enter_isolate();
             deno_core::v8::scope!(scope, self.runtime.v8_isolate());
@@ -492,6 +516,9 @@ impl JsRuntime {
             unsafe {
                 (*isolate_ptr).exit();
             }
+        }
+        if watchdog.finish() {
+            log::warn!("JavaScript job queue exceeded its budget");
         }
     }
 
@@ -544,19 +571,33 @@ impl JsRuntime {
 
     pub(crate) fn eval_bool_script(&mut self, script: &str) -> Result<bool, String> {
         let _guard = self.enter_isolate();
+        let isolate_handle = self.runtime.v8_isolate().thread_safe_handle();
+        let watchdog = ExecutionWatchdog::new(
+            isolate_handle,
+            std::time::Duration::from_secs(5),
+            "mango-event-watchdog",
+        );
         let prev_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {}));
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.runtime
-                .execute_script("<dispatch>", script.to_string())
+            let result = self
+                .runtime
+                .execute_script("<dispatch>", script.to_string());
+            if result.is_ok() {
+                deno_core::v8::scope!(scope, self.runtime.v8_isolate());
+                scope.perform_microtask_checkpoint();
+            }
+            result
         }));
         std::panic::set_hook(prev_hook);
+        if watchdog.finish() {
+            return Err("JavaScript event handler timed out".to_string());
+        }
 
         match res {
             Ok(Ok(global_val)) => {
                 let context_global = self.runtime.main_context();
                 deno_core::v8::scope!(scope, self.runtime.v8_isolate());
-                scope.perform_microtask_checkpoint();
                 let context_local = deno_core::v8::Local::new(scope, context_global);
                 let scope = &mut deno_core::v8::ContextScope::new(scope, context_local);
                 let local = deno_core::v8::Local::new(scope, global_val);

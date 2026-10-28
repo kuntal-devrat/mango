@@ -4,8 +4,9 @@ use std::collections::HashMap;
 
 use crate::computed::style::ComputedStyle;
 use crate::values::{
-    Clear, Direction, Float, FontStyle, FontWeight, Length, TextAlign, TextDecorationLine,
-    TextDecorationStyle, TextOverflow, TextTransform, UnicodeBidi, Value, WhiteSpace,
+    Clear, Direction, Float, FontStyle, FontWeight, JustifyContent, Length, TextAlign,
+    TextDecorationLine, TextDecorationStyle, TextOverflow, TextTransform, UnicodeBidi, Value,
+    WhiteSpace,
 };
 
 /// Pre-applies `font-size` early so subsequent length values (like `em`) can resolve against it.
@@ -100,13 +101,47 @@ pub(crate) fn apply_typography_property(
         },
         "text-align" => match val {
             Value::TextAlign(ta) => style.text_align = *ta,
-            Value::Float(Float::Left) => style.text_align = TextAlign::Left,
-            Value::Float(Float::Right) => style.text_align = TextAlign::Right,
-            Value::Clear(Clear::Left) => style.text_align = TextAlign::Left,
-            Value::Clear(Clear::Right) => style.text_align = TextAlign::Right,
+            Value::Float(Float::Left)
+            | Value::Clear(Clear::Left)
+            | Value::JustifyContent(JustifyContent::Left) => {
+                style.text_align = TextAlign::Left;
+            }
+            Value::Float(Float::Right)
+            | Value::Clear(Clear::Right)
+            | Value::JustifyContent(JustifyContent::Right) => {
+                style.text_align = TextAlign::Right;
+            }
+            Value::JustifyContent(JustifyContent::Start) => {
+                style.text_align = if style.direction == Direction::Rtl {
+                    TextAlign::Right
+                } else {
+                    TextAlign::Left
+                };
+            }
+            Value::JustifyContent(JustifyContent::End) => {
+                style.text_align = if style.direction == Direction::Rtl {
+                    TextAlign::Left
+                } else {
+                    TextAlign::Right
+                };
+            }
             Value::Keyword(k) => match k.to_ascii_lowercase().as_str() {
-                "left" | "start" => style.text_align = TextAlign::Left,
-                "right" | "end" => style.text_align = TextAlign::Right,
+                "left" => style.text_align = TextAlign::Left,
+                "right" => style.text_align = TextAlign::Right,
+                "start" => {
+                    style.text_align = if style.direction == Direction::Rtl {
+                        TextAlign::Right
+                    } else {
+                        TextAlign::Left
+                    };
+                }
+                "end" => {
+                    style.text_align = if style.direction == Direction::Rtl {
+                        TextAlign::Left
+                    } else {
+                        TextAlign::Right
+                    };
+                }
                 "center" => style.text_align = TextAlign::Center,
                 "justify" => style.text_align = TextAlign::Justify,
                 _ => {}
@@ -422,6 +457,9 @@ pub(crate) fn apply_typography_property(
                 if let Some(tw) = crate::values::TextWrap::parse(k) {
                     style.text_wrap = tw;
                 }
+            }
+            Value::FlexWrap(crate::values::FlexWrap::Balance) => {
+                style.text_wrap = crate::values::TextWrap::Balance;
             }
             _ => {}
         },

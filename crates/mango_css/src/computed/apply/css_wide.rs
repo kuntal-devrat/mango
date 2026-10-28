@@ -283,6 +283,7 @@ fn copy_single_property(style: &mut ComputedStyle, source: &ComputedStyle, prop:
         "outline-offset" => style.outline_offset = source.outline_offset,
         "flex-direction" => style.flex_direction = source.flex_direction,
         "flex-wrap" => style.flex_wrap = source.flex_wrap,
+        "flex-line-count" => style.flex_line_count = source.flex_line_count,
         "flex-grow" => style.flex_grow = source.flex_grow,
         "flex-shrink" => style.flex_shrink = source.flex_shrink,
         "flex-basis" => style.flex_basis = source.flex_basis,

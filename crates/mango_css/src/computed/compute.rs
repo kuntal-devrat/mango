@@ -60,12 +60,14 @@ pub fn compute_style_with_shadow_and_part_indexes(
     parent_style: Option<&ComputedStyle>,
 ) -> ComputedStyle {
     let (cascaded, important_props) =
-        crate::cascade::resolve_cascade_with_shadow_and_part_indexes_details(
+        crate::cascade::resolve_cascade_with_shadow_and_part_indexes_and_parent_details(
             node_id,
             doc,
             author_index,
             shadow_index,
             part_indexes,
+            parent_style.map(|p| p.writing_mode),
+            parent_style.map(|p| p.direction),
         );
     let mut style = ComputedStyle::default();
 

@@ -127,10 +127,20 @@ pub(crate) fn resolve_inline_containing_blocks(
     }
 
     for (inline_id, (oof_list, dir, wm)) in oof_by_inline {
-        let matching: Vec<&LayoutBox> = positioned_boxes
+        let mut matching: Vec<&LayoutBox> = positioned_boxes
             .iter()
-            .filter(|b| b.node_id == Some(inline_id))
+            .filter(|b| {
+                b.node_id == Some(inline_id)
+                    && b.tag_name.as_deref() != Some("br")
+                    && b.dimensions.content.width() > 0.0
+            })
             .collect();
+        if matching.is_empty() {
+            matching = positioned_boxes
+                .iter()
+                .filter(|b| b.node_id == Some(inline_id))
+                .collect();
+        }
         let cb_rect = if !matching.is_empty() {
             match wm {
                 WritingMode::VerticalRl

@@ -10,6 +10,35 @@ use crate::float::FloatContext;
 
 use super::item::layout_flex_item;
 
+pub(crate) fn form_control_intrinsic_height(child: &LayoutBox) -> Option<f32> {
+    match child.tag_name.as_deref() {
+        Some("select") => {
+            let is_multiple = child.get_attribute("_mango_is_multiple") == Some("true")
+                || child.get_attribute("multiple").is_some();
+            let size_attr = child
+                .get_attribute("size")
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(if is_multiple { 4 } else { 1 });
+            if is_multiple || size_attr > 1 {
+                Some(size_attr.max(3) as f32 * 18.0 + 8.0)
+            } else {
+                Some(24.0)
+            }
+        }
+        Some("textarea") => Some(64.0),
+        Some("input") => {
+            let itype = child.get_attribute("type").unwrap_or("text");
+            if itype == "checkbox" || itype == "radio" {
+                Some(16.0)
+            } else {
+                Some(24.0)
+            }
+        }
+        Some("button") => Some(24.0),
+        _ => None,
+    }
+}
+
 pub fn resolve_item_main_size(
     child: &mut LayoutBox,
     is_row: bool,
@@ -33,8 +62,75 @@ pub fn resolve_item_main_size(
     let is_basis_auto = basis.is_auto();
 
     let mut is_main_explicit = false;
+    let aspect_ratio =
+        child_style
+            .aspect_ratio
+            .filter(|&r| r > 0.0)
+            .or_else(|| match &child.box_type {
+                BoxType::ReplacedElement {
+                    intrinsic_width,
+                    intrinsic_height,
+                    ..
+                }
+                | BoxType::IFrame {
+                    intrinsic_width,
+                    intrinsic_height,
+                    ..
+                }
+                | BoxType::Video {
+                    intrinsic_width,
+                    intrinsic_height,
+                    ..
+                }
+                | BoxType::Audio {
+                    intrinsic_width,
+                    intrinsic_height,
+                    ..
+                }
+                | BoxType::Canvas {
+                    intrinsic_width,
+                    intrinsic_height,
+                    ..
+                } if *intrinsic_height > 0.0 => Some(*intrinsic_width / *intrinsic_height),
+                _ => None,
+            });
+
     let explicit_main = if is_row {
-        if is_basis_min_content {
+        let aspect_w = if let Some(ratio) = aspect_ratio {
+            if child_style.width == Length::Auto || is_basis_content {
+                if child_style.height != Length::Auto
+                    && !matches!(child_style.height, Length::Percent(_))
+                    || (matches!(child_style.height, Length::Percent(_)) && container_height > 0.0)
+                {
+                    let h = child_style.height.to_px_with_viewport(
+                        c_fs,
+                        c_root_fs,
+                        container_height,
+                        container_height,
+                    );
+                    Some((h * ratio).max(0.0))
+                } else if container_height > 0.0
+                    && matches!(
+                        child_style.align_self,
+                        mango_css::values::AlignSelf::Stretch | mango_css::values::AlignSelf::Auto
+                    )
+                {
+                    let h = (container_height - pad_cross - border_cross - margin_cross.max(0.0))
+                        .max(0.0);
+                    Some((h * ratio).max(0.0))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some(w) = aspect_w {
+            w
+        } else if is_basis_min_content {
             let mut memo = HashMap::new();
             let (c_min, _) = crate::table_flow::measure_box_intrinsic_widths(
                 child,
@@ -174,6 +270,36 @@ pub fn resolve_item_main_size(
                 }
             }
         }
+    } else if let Some(h) = if let Some(ratio) = aspect_ratio {
+        if child_style.height == Length::Auto || is_basis_content {
+            if child_style.width != Length::Auto && !matches!(child_style.width, Length::Percent(_))
+                || (matches!(child_style.width, Length::Percent(_)) && content_width > 0.0)
+            {
+                let w = child_style.width.to_px_with_viewport(
+                    c_fs,
+                    c_root_fs,
+                    content_width,
+                    container_height,
+                );
+                Some((w / ratio).max(0.0))
+            } else if content_width > 0.0
+                && matches!(
+                    child_style.align_self,
+                    mango_css::values::AlignSelf::Stretch | mango_css::values::AlignSelf::Auto
+                )
+            {
+                let w = (content_width - pad_cross - border_cross - margin_cross.max(0.0)).max(0.0);
+                Some((w / ratio).max(0.0))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    } {
+        h
     } else if is_basis_min_content
         || is_basis_max_content
         || is_basis_content
@@ -249,26 +375,34 @@ pub fn resolve_item_main_size(
                 }
             }
             _ => {
-                let item_w = if child_style.width != Length::Auto {
-                    child_style.width.to_px_with_viewport(
-                        c_fs,
-                        c_root_fs,
-                        content_width,
-                        container_height,
-                    )
+                if let Some(fc_h) = form_control_intrinsic_height(child) {
+                    fc_h
                 } else {
-                    (content_width - pad_cross - border_cross - margin_cross.max(0.0)).max(0.0)
-                };
-                child.dimensions.content.size.width = item_w;
-                let item_cb =
-                    Dimensions::new(Rect::new(0.0, 0.0, item_w + pad_cross + border_cross, 0.0));
-                let mut item_float_ctx = FloatContext::new();
-                layout_flex_item(child, &item_cb, &mut item_float_ctx, c_fs);
-                let measured_h = child.dimensions.content.size.height;
-                if child.is_inline() || child.box_type.is_text() {
-                    measured_h.max(c_fs * 1.3)
-                } else {
-                    measured_h
+                    let item_w = if child_style.width != Length::Auto {
+                        child_style.width.to_px_with_viewport(
+                            c_fs,
+                            c_root_fs,
+                            content_width,
+                            container_height,
+                        )
+                    } else {
+                        (content_width - pad_cross - border_cross - margin_cross.max(0.0)).max(0.0)
+                    };
+                    child.dimensions.content.size.width = item_w;
+                    let item_cb = Dimensions::new(Rect::new(
+                        0.0,
+                        0.0,
+                        item_w + pad_cross + border_cross,
+                        0.0,
+                    ));
+                    let mut item_float_ctx = FloatContext::new();
+                    layout_flex_item(child, &item_cb, &mut item_float_ctx, c_fs);
+                    let measured_h = child.dimensions.content.size.height;
+                    if child.is_inline() || child.box_type.is_text() {
+                        measured_h.max(c_fs * 1.3)
+                    } else {
+                        measured_h
+                    }
                 }
             }
         }
@@ -293,7 +427,7 @@ pub fn resolve_item_base_and_limits(
 ) -> (f32, f32, f32) {
     let child_style = child.style.clone().unwrap_or_default();
 
-    let mut base_main = if is_main_explicit {
+    let base_main = if is_main_explicit {
         if child_style.box_sizing == BoxSizing::BorderBox {
             (explicit_main - pad_main - border_main).max(0.0)
         } else {
@@ -360,6 +494,8 @@ pub fn resolve_item_base_and_limits(
                     let fit_w =
                         crate::block_flow::calculate_shrink_to_fit_width(child, content_width);
                     if fit_w > 0.0 { fit_w } else { 0.0 }
+                } else if let Some(fc_h) = form_control_intrinsic_height(child) {
+                    fc_h
                 } else {
                     let pad_cross = child.dimensions.padding.horizontal();
                     let border_cross = child.dimensions.border.horizontal();
@@ -431,13 +567,14 @@ pub fn resolve_item_base_and_limits(
                         0.0
                     } else {
                         let mut memo = HashMap::new();
-                        let (child_min, _) = crate::table_flow::measure_box_intrinsic_widths(
-                            child,
-                            c_fs,
-                            mango_render::FontWeight::Regular,
-                            mango_render::FontFamily::SansSerif,
-                            &mut memo,
-                        );
+                        let (child_min, _) =
+                            crate::table_flow::measure_box_content_intrinsic_widths(
+                                child,
+                                c_fs,
+                                mango_render::FontWeight::Regular,
+                                mango_render::FontFamily::SansSerif,
+                                &mut memo,
+                            );
                         let content_min =
                             (child_min - pad_main - border_main - margin_main.max(0.0)).max(0.0);
                         if is_main_explicit && explicit_main > 0.0 {
@@ -496,7 +633,9 @@ pub fn resolve_item_base_and_limits(
                     intrinsic_height, ..
                 } => *intrinsic_height,
                 _ => {
-                    if child.dimensions.content.size.height > 0.0 {
+                    if let Some(fc_h) = form_control_intrinsic_height(child) {
+                        fc_h
+                    } else if child.dimensions.content.size.height > 0.0 {
                         child.dimensions.content.size.height
                     } else if child.children.is_empty() && child.text().is_none() {
                         0.0
@@ -513,6 +652,10 @@ pub fn resolve_item_base_and_limits(
         }
     }
 
-    base_main = base_main.clamp(min_main, max_main);
+    // Per CSS Flexbox §4.5 & CSS 2.1 §10.4:
+    // If the minimum main size is greater than the maximum main size,
+    // the maximum main size is set to the minimum main size.
+    let max_main = max_main.max(min_main);
+
     (base_main, min_main, max_main)
 }

@@ -385,12 +385,22 @@ fn parse_color_stop(s: &str) -> Option<ColorStop> {
         let c = Value::parse_color(color_part)?;
         (c, None)
     };
-    let to_pos = |p: &str| -> Option<f32> {
-        if let Some(pct_str) = p.strip_suffix('%') {
-            pct_str.trim().parse::<f32>().ok().map(|v| v / 100.0)
+    let to_pos = |p: &str| -> Option<crate::values::StopPosition> {
+        let p = p.trim();
+        if p == "0" {
+            Some(crate::values::StopPosition::Fraction(0.0))
+        } else if let Some(pct_str) = p.strip_suffix('%') {
+            pct_str
+                .trim()
+                .parse::<f32>()
+                .ok()
+                .map(|v| crate::values::StopPosition::Fraction(v / 100.0))
         } else if let Some(px_str) = p.strip_suffix("px") {
-            // Pixel stops are approximated against a nominal 1000px gradient box.
-            px_str.trim().parse::<f32>().ok().map(|v| v / 1000.0)
+            px_str
+                .trim()
+                .parse::<f32>()
+                .ok()
+                .map(crate::values::StopPosition::Px)
         } else {
             None
         }

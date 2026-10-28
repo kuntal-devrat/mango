@@ -19,7 +19,23 @@ pub fn is_emoji_char(ch: char) -> bool {
         | 0x2600..=0x26FF   // Misc Symbols (e.g. ☀️, ☁️, ⚡, ☕)
         | 0x2700..=0x27BF   // Dingbats (e.g. ✂️, ✈️, ✉️, ✏️, ✨, ❤)
         | 0x2B00..=0x2BFF   // Misc Symbols and Arrows (e.g. ⭐, ⭕, ⬛, ⬜)
-        | 0xFE00..=0xFE0F   // Variation Selectors
+    )
+}
+
+/// Returns true if a character is a Unicode variation selector (VS1..VS16).
+#[inline]
+pub fn is_variation_selector(ch: char) -> bool {
+    matches!(ch, '\u{FE00}'..='\u{FE0F}')
+}
+
+/// Returns true if a character is a zero-width formatter, joiner, or non-spacing format mark.
+#[inline]
+pub fn is_zero_width_or_format(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{FE00}'..='\u{FE0F}' // Variation Selectors (e.g. VS16 emoji presentation)
+            | '\u{200B}'..='\u{200D}' // Zero-width space, ZWNJ, ZWJ
+            | '\u{FEFF}' // BOM / Zero-width no-break space
     )
 }
 

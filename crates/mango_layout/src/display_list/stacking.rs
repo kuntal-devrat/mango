@@ -6,7 +6,7 @@ use crate::box_model::BoxType;
 use crate::box_tree::LayoutBox;
 
 use super::builder::render_layout_box;
-use super::paint_layer::paint_layer_of;
+use super::paint_layer::{creates_stacking_context, paint_layer_of};
 use super::types::apply_opacity;
 
 #[derive(Debug, Clone, Copy)]
@@ -228,6 +228,71 @@ pub(crate) fn sticky_shift(
     (target_x - in_flow_x, target_y - in_flow_y)
 }
 
+struct PaintItem<'a> {
+    child: &'a LayoutBox,
+    is_flex_or_grid_item: bool,
+    is_sc: bool,
+    orig_idx: usize,
+    offset_x: f32,
+    offset_y: f32,
+}
+
+fn collect_hoisted_stacking_contexts<'a>(
+    parent: &'a LayoutBox,
+    offset_x: f32,
+    offset_y: f32,
+    out: &mut Vec<PaintItem<'a>>,
+    orig_idx_counter: &mut usize,
+) {
+    if matches!(
+        parent.tag_name.as_deref(),
+        Some("table" | "thead" | "tbody" | "tfoot" | "tr")
+    ) {
+        return;
+    }
+    let parent_is_fg = parent.style.as_ref().is_some_and(|s| {
+        matches!(
+            s.display,
+            mango_css::values::Display::Flex
+                | mango_css::values::Display::InlineFlex
+                | mango_css::values::Display::Grid
+                | mango_css::values::Display::InlineGrid
+        )
+    });
+    let mut child_offset_x = offset_x;
+    let mut child_offset_y = offset_y;
+    if parent.is_scroll_container() {
+        child_offset_x -= parent.scroll_offset_x;
+        child_offset_y -= parent.scroll_offset_y;
+    }
+    for child in &parent.children {
+        if child.is_out_of_flow() {
+            continue;
+        }
+        let is_item = parent_is_fg;
+        let should_hoist = is_item && child.style.as_ref().and_then(|s| s.z_index).is_some();
+        if should_hoist {
+            *orig_idx_counter += 1;
+            out.push(PaintItem {
+                child,
+                is_flex_or_grid_item: true,
+                is_sc: true,
+                orig_idx: *orig_idx_counter,
+                offset_x: child_offset_x,
+                offset_y: child_offset_y,
+            });
+        } else if !creates_stacking_context(child, is_item) {
+            collect_hoisted_stacking_contexts(
+                child,
+                child_offset_x,
+                child_offset_y,
+                out,
+                orig_idx_counter,
+            );
+        }
+    }
+}
+
 pub(crate) fn paint_children_and_scrollbars(
     box_node: &LayoutBox,
     style: Option<&ComputedStyle>,
@@ -245,6 +310,7 @@ pub(crate) fn paint_children_and_scrollbars(
     sticky_cb: Option<StickyContainingBlock>,
     skip_html_bg: bool,
     skip_body_bg: bool,
+    is_stacking_context: bool,
 ) {
     let active_viewport = if box_node.is_scroll_container() {
         Some(pad_box)
@@ -256,18 +322,88 @@ pub(crate) fn paint_children_and_scrollbars(
     } else {
         table_rect
     };
-    let mut sorted_children: Vec<(usize, &LayoutBox)> =
-        box_node.children.iter().enumerate().collect();
-    sorted_children.sort_by(|(idx_a, a), (idx_b, b)| {
-        let layer_a = paint_layer_of(a);
-        let layer_b = paint_layer_of(b);
+    let is_flex_or_grid = style.is_some_and(|s| {
+        matches!(
+            s.display,
+            mango_css::values::Display::Flex
+                | mango_css::values::Display::InlineFlex
+                | mango_css::values::Display::Grid
+                | mango_css::values::Display::InlineGrid
+        )
+    });
+    let mut items: Vec<PaintItem> = Vec::new();
+    let mut orig_idx_counter = box_node.children.len();
+
+    if is_stacking_context {
+        for (idx, child) in box_node.children.iter().enumerate() {
+            let is_item = is_flex_or_grid && !child.is_out_of_flow();
+            let is_sc = creates_stacking_context(child, is_item);
+            if is_sc {
+                items.push(PaintItem {
+                    child,
+                    is_flex_or_grid_item: is_item,
+                    is_sc: true,
+                    orig_idx: idx,
+                    offset_x,
+                    offset_y,
+                });
+            } else {
+                items.push(PaintItem {
+                    child,
+                    is_flex_or_grid_item: is_item,
+                    is_sc: false,
+                    orig_idx: idx,
+                    offset_x,
+                    offset_y,
+                });
+                let mut child_off_x = offset_x;
+                let mut child_off_y = offset_y;
+                if box_node.is_scroll_container() {
+                    child_off_x -= box_node.scroll_offset_x;
+                    child_off_y -= box_node.scroll_offset_y;
+                }
+                collect_hoisted_stacking_contexts(
+                    child,
+                    child_off_x,
+                    child_off_y,
+                    &mut items,
+                    &mut orig_idx_counter,
+                );
+            }
+        }
+    } else {
+        for (idx, child) in box_node.children.iter().enumerate() {
+            let is_item = is_flex_or_grid && !child.is_out_of_flow();
+            let is_sc = creates_stacking_context(child, is_item);
+            let should_hoist = is_item && child.style.as_ref().and_then(|s| s.z_index).is_some();
+            if should_hoist {
+                continue;
+            }
+            items.push(PaintItem {
+                child,
+                is_flex_or_grid_item: is_item,
+                is_sc,
+                orig_idx: idx,
+                offset_x,
+                offset_y,
+            });
+        }
+    }
+
+    items.sort_by(|a, b| {
+        let layer_a = paint_layer_of(a.child, a.is_flex_or_grid_item);
+        let layer_b = paint_layer_of(b.child, b.is_flex_or_grid_item);
         if layer_a != layer_b {
             return layer_a.cmp(&layer_b);
         }
-        match (a.node_id, b.node_id) {
-            (Some(na), Some(nb)) if na != nb => na.index().cmp(&nb.index()),
-            _ => idx_a.cmp(idx_b),
+        if a.is_flex_or_grid_item && b.is_flex_or_grid_item {
+            let order_a = a.child.style.as_ref().map(|s| s.order).unwrap_or(0);
+            let order_b = b.child.style.as_ref().map(|s| s.order).unwrap_or(0);
+            if order_a != order_b {
+                return order_a.cmp(&order_b);
+            }
         }
+        a.orig_idx.cmp(&b.orig_idx)
     });
 
     // Root element (<html>) and <body> overflow belongs to the viewport (CSS 2.1 §11.1.1).
@@ -434,8 +570,8 @@ pub(crate) fn paint_children_and_scrollbars(
     let should_escape = clips_children || box_node.is_scroll_container();
     let mut normal_children = Vec::new();
     let mut escaped_children = Vec::new();
-    for item in sorted_children {
-        let child = item.1;
+    for item in items {
+        let child = item.child;
         let child_pos = child.style.as_ref().map(|s| s.position);
         let is_fixed_escaped =
             should_escape && child_pos == Some(mango_css::values::Position::Fixed) && !traps_fixed;
@@ -450,13 +586,37 @@ pub(crate) fn paint_children_and_scrollbars(
         }
     }
 
-    for (_orig_idx, child) in normal_children {
-        let mut child_offset_x = offset_x;
-        let mut child_offset_y = offset_y;
+    for item in normal_children {
+        let child = item.child;
+        let mut child_offset_x = item.offset_x;
+        let mut child_offset_y = item.offset_y;
 
-        if box_node.is_scroll_container() {
-            child_offset_x -= box_node.scroll_offset_x;
-            child_offset_y -= box_node.scroll_offset_y;
+        if box_node.is_scroll_container()
+            && (item.offset_x - offset_x).abs() < 1e-4
+            && (item.offset_y - offset_y).abs() < 1e-4
+        {
+            let (max_x, max_y) = box_node.max_scroll();
+            let is_rtl_x = box_node.style.as_ref().is_some_and(|s| {
+                s.writing_mode == mango_css::values::WritingMode::VerticalRl
+                    || s.direction == mango_css::values::Direction::Rtl
+            });
+            let eff_sx = if is_rtl_x {
+                box_node.scroll_offset_x.clamp(-max_x, 0.0)
+            } else {
+                box_node.scroll_offset_x.clamp(0.0, max_x)
+            };
+            let is_rtl_y = box_node.style.as_ref().is_some_and(|s| {
+                (s.writing_mode == mango_css::values::WritingMode::VerticalRl
+                    || s.writing_mode == mango_css::values::WritingMode::VerticalLr)
+                    && s.direction == mango_css::values::Direction::Rtl
+            });
+            let eff_sy = if is_rtl_y {
+                box_node.scroll_offset_y.clamp(-max_y, 0.0)
+            } else {
+                box_node.scroll_offset_y.clamp(0.0, max_y)
+            };
+            child_offset_x -= eff_sx;
+            child_offset_y -= eff_sy;
         }
 
         let child_escaped_sx = escaped_scroll_x;
@@ -515,6 +675,7 @@ pub(crate) fn paint_children_and_scrollbars(
             sticky_cb,
             skip_html_bg,
             skip_body_bg,
+            item.is_sc,
         );
     }
 
@@ -571,7 +732,7 @@ pub(crate) fn paint_children_and_scrollbars(
 
                 let thumb_h = ((pad_h / content_h) * pad_h).clamp(16.0, pad_h);
                 let max_scroll = (content_h - pad_h).max(1.0);
-                let scroll_ratio = (box_node.scroll_offset_y / max_scroll).clamp(0.0, 1.0);
+                let scroll_ratio = (box_node.scroll_offset_y.abs() / max_scroll).clamp(0.0, 1.0);
                 let thumb_y = track_y + scroll_ratio * (track_h - thumb_h);
 
                 list.push(DisplayCommand::FillRoundedRect {
@@ -606,7 +767,7 @@ pub(crate) fn paint_children_and_scrollbars(
 
                 let thumb_w = ((pad_w / content_w) * pad_w).clamp(16.0, track_w);
                 let max_scroll = (content_w - pad_w).max(1.0);
-                let scroll_ratio = (box_node.scroll_offset_x / max_scroll).clamp(0.0, 1.0);
+                let scroll_ratio = (box_node.scroll_offset_x.abs() / max_scroll).clamp(0.0, 1.0);
                 let thumb_x = track_x + scroll_ratio * (track_w - thumb_w);
 
                 list.push(DisplayCommand::FillRoundedRect {
@@ -623,9 +784,10 @@ pub(crate) fn paint_children_and_scrollbars(
         }
     }
 
-    for (_orig_idx, child) in escaped_children {
-        let mut child_offset_x = offset_x;
-        let mut child_offset_y = offset_y;
+    for item in escaped_children {
+        let child = item.child;
+        let mut child_offset_x = item.offset_x;
+        let mut child_offset_y = item.offset_y;
 
         let child_pos = child.style.as_ref().map(|s| s.position);
         let is_fixed_escaped =
@@ -658,6 +820,7 @@ pub(crate) fn paint_children_and_scrollbars(
             sticky_cb,
             skip_html_bg,
             skip_body_bg,
+            item.is_sc,
         );
     }
 }

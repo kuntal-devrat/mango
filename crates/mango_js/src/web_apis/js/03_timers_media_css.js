@@ -273,6 +273,27 @@
             defaultDisplay = 'list-item';
         }
 
+        var pRect = (el && el.parentElement && typeof el.parentElement.getBoundingClientRect === 'function')
+            ? el.parentElement.getBoundingClientRect()
+            : null;
+        var usedMarginTop = (backendProps && (backendProps['margin-top'] || backendProps.marginTop));
+        var usedMarginRight = (backendProps && (backendProps['margin-right'] || backendProps.marginRight));
+        var usedMarginBottom = (backendProps && (backendProps['margin-bottom'] || backendProps.marginBottom));
+        var usedMarginLeft = (backendProps && (backendProps['margin-left'] || backendProps.marginLeft));
+
+        if ((!usedMarginTop || usedMarginTop === 'auto') && rect && pRect) {
+            usedMarginTop = Math.max(0, Math.round(rect.top - pRect.top)) + 'px';
+        }
+        if ((!usedMarginLeft || usedMarginLeft === 'auto') && rect && pRect) {
+            usedMarginLeft = Math.max(0, Math.round(rect.left - pRect.left)) + 'px';
+        }
+        if ((!usedMarginRight || usedMarginRight === 'auto') && rect && pRect) {
+            usedMarginRight = Math.max(0, Math.round(pRect.right - rect.right)) + 'px';
+        }
+        if ((!usedMarginBottom || usedMarginBottom === 'auto') && rect && pRect) {
+            usedMarginBottom = Math.max(0, Math.round(pRect.bottom - rect.bottom)) + 'px';
+        }
+
         var props = {
             display:          (backendProps && backendProps.display) || s.display          || defaultDisplay,
             visibility:       (backendProps && backendProps.visibility) || s.visibility       || 'visible',
@@ -291,10 +312,10 @@
             right:            s.right            || 'auto',
             bottom:           s.bottom           || 'auto',
             margin:           s.margin           || '0px',
-            marginTop:        s.marginTop        || s.margin || '0px',
-            marginRight:      s.marginRight      || s.margin || '0px',
-            marginBottom:     s.marginBottom     || s.margin || '0px',
-            marginLeft:       s.marginLeft       || s.margin || '0px',
+            marginTop:        usedMarginTop      || s.marginTop        || s.margin || '0px',
+            marginRight:      usedMarginRight    || s.marginRight      || s.margin || '0px',
+            marginBottom:     usedMarginBottom   || s.marginBottom     || s.margin || '0px',
+            marginLeft:       usedMarginLeft     || s.marginLeft       || s.margin || '0px',
             padding:          s.padding          || '0px',
             paddingTop:       s.paddingTop       || s.padding || '0px',
             paddingRight:     s.paddingRight     || s.padding || '0px',

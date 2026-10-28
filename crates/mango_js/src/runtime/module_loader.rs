@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use deno_core::error::ModuleLoaderError;
@@ -23,7 +23,6 @@ pub struct MangoModuleLoader {
 /// concurrent fallback fetches.
 struct ModuleCache {
     entries: HashMap<String, String>,
-    in_flight: HashSet<String>,
     bytes: usize,
 }
 
@@ -33,7 +32,6 @@ impl ModuleCache {
     fn new() -> Self {
         Self {
             entries: HashMap::new(),
-            in_flight: HashSet::new(),
             bytes: 0,
         }
     }
@@ -75,7 +73,7 @@ impl MangoModuleLoader {
             page_url: page_url.to_string(),
             import_maps,
             client: Arc::new(mango_net::HttpClient::with_timeout(
-                std::time::Duration::from_millis(500),
+                std::time::Duration::from_secs(30),
             )),
             cache: Arc::new(Mutex::new(ModuleCache::new())),
             module_loads: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
@@ -109,7 +107,12 @@ impl ModuleLoader for MangoModuleLoader {
             specifier.to_string()
         };
 
-        let ref_url = if referrer.is_empty() || referrer == "." || referrer == "about:blank" {
+        let ref_url = if referrer.is_empty()
+            || referrer == "."
+            || referrer == "about:blank"
+            || referrer.starts_with('<')
+            || !referrer.contains("://")
+        {
             &self.page_url
         } else {
             referrer
@@ -118,6 +121,11 @@ impl ModuleLoader for MangoModuleLoader {
         match resolve_import(&mapped_specifier, ref_url) {
             Ok(spec) => Ok(spec),
             Err(e) => {
+                if ref_url != self.page_url {
+                    if let Ok(spec) = resolve_import(&mapped_specifier, &self.page_url) {
+                        return Ok(spec);
+                    }
+                }
                 if !mapped_specifier.starts_with('/')
                     && !mapped_specifier.starts_with("./")
                     && !mapped_specifier.starts_with("../")
@@ -179,61 +187,36 @@ impl ModuleLoader for MangoModuleLoader {
                 }
             }
 
-            // 3. Fallback: NEVER block the UI loop on synchronous network I/O.
-            // Dispatch a background worker fetch to warm the cache for a later
-            // load, but report the unavailable module instead of fabricating
-            // exports. Fabricated source breaks module semantics silently.
-            log::warn!(
-                "Module {url_str} not in memory cache on UI thread; pre-fetching on background worker"
-            );
-            let client = self.client.clone();
-            let cache_store = self.cache.clone();
-            let rcache_opt = self.resource_cache.clone();
-            let target_url = url_str.clone();
-            let should_fetch = self
-                .cache
-                .lock()
-                .map(|mut cache| cache.in_flight.insert(target_url.clone()))
-                .unwrap_or(false);
-            if !should_fetch {
-                return ModuleLoadResponse::Sync(Err(ModuleLoaderError::generic(format!(
-                    "Module resource is already being fetched: {url_str}"
-                ))));
-            }
-            let _ = std::thread::Builder::new()
-                .name("mango-bg-module-fetch".to_string())
-                .spawn(move || {
-                    if let Ok(u) = mango_net::Url::parse(&target_url) {
-                        if let Ok(resp) = client.fetch(&u) {
-                            let c = String::from_utf8_lossy(&resp.body).to_string();
-                            if let Ok(mut g) = cache_store.lock() {
-                                g.insert(target_url.clone(), c);
-                                g.in_flight.remove(&target_url);
-                            }
-                            if let Some(ref rc) = rcache_opt {
-                                rc.insert(
-                                    &target_url,
-                                    "application/javascript",
-                                    resp.status,
-                                    resp.headers,
-                                    resp.body,
-                                    None,
-                                );
-                            }
+            // 3. Fallback: Fetch missing module resource directly so ES module resolution succeeds
+            if let Ok(u) = mango_net::Url::parse(&url_str) {
+                if let Ok(resp) = self.client.fetch(&u) {
+                    if resp.status >= 200 && resp.status < 400 {
+                        let code = String::from_utf8_lossy(&resp.body).to_string();
+                        if let Ok(mut g) = self.cache.lock() {
+                            g.insert(url_str.clone(), code.clone());
                         }
+                        if let Some(ref rc) = self.resource_cache {
+                            rc.insert(
+                                &url_str,
+                                "application/javascript",
+                                resp.status,
+                                resp.headers,
+                                resp.body,
+                                None,
+                            );
+                        }
+                        return ModuleLoadResponse::Sync(Ok(ModuleSource::new(
+                            ModuleType::JavaScript,
+                            ModuleSourceCode::String(code.into()),
+                            &spec,
+                            None,
+                        )));
                     }
-                    if let Ok(mut g) = cache_store.lock() {
-                        g.in_flight.remove(&target_url);
-                    }
-                });
+                }
+            }
 
-            // The loader API is synchronous here. Do not execute fabricated
-            // module source while the real response is still in flight: that
-            // hides a missing resource and corrupts module semantics. The
-            // background fetch warms the cache for the next navigation/tick,
-            // while this load reports the real unavailable-resource error.
             ModuleLoadResponse::Sync(Err(ModuleLoaderError::generic(format!(
-                "Module resource is not available yet: {url_str}"
+                "Failed to fetch module resource: {url_str}"
             ))))
         } else if spec.scheme() == "mango" {
             // Internal synthetic/empty stub module with Proxy exports
@@ -250,5 +233,28 @@ impl ModuleLoader for MangoModuleLoader {
                 spec.scheme()
             ))))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use deno_core::ResolutionKind;
+
+    #[test]
+    fn test_module_loader_resolves_with_script_referrer() {
+        let loader =
+            MangoModuleLoader::new("https://chatgpt.com/", Arc::new(Mutex::new(HashMap::new())));
+        let res = loader.resolve(
+            "/unauth-mweb/assets/octane-signal-bootstrap.js",
+            "<script>",
+            ResolutionKind::Import,
+        );
+        assert!(res.is_ok());
+        let spec = res.unwrap();
+        assert_eq!(
+            spec.as_str(),
+            "https://chatgpt.com/unauth-mweb/assets/octane-signal-bootstrap.js"
+        );
     }
 }

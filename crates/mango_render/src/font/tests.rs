@@ -430,3 +430,86 @@ fn test_prune_web_fonts() {
     let (w, h) = fm.measure_text("Hello", 16.0, FontWeight::Regular, sans);
     assert!(w > 0.0 && h > 0.0);
 }
+
+#[test]
+fn test_arabic_shaping_and_ligatures() {
+    use super::shaping::{shape_arabic, shape_complex_script};
+
+    // "كتب": Kaf (\u{0643}), Teh (\u{062A}), Beh (\u{0628})
+    // Kaf connects to Teh (initial: \u{FEDB})
+    // Teh connects Kaf and Beh (medial: \u{FE98})
+    // Beh connects from Teh (final: \u{FE90})
+    let shaped = shape_arabic("كتب");
+    assert_eq!(shaped, "\u{FEDB}\u{FE98}\u{FE90}");
+
+    // Lam-Alef ligature: Lam (\u{0644}) + Alef (\u{0627}) -> \u{FEFB}
+    let lam_alef = shape_arabic("لا");
+    assert_eq!(lam_alef, "\u{FEFB}");
+
+    // Lam-Alef with Tashkeel transparency: Lam (\u{0644}) + Fatha (\u{064E}) + Alef (\u{0627})
+    let lam_fatha_alef = shape_arabic("\u{0644}\u{064E}\u{0627}");
+    assert_eq!(lam_fatha_alef, "\u{FEFB}\u{064E}");
+
+    // Full complex shaper delegation
+    let shaped_full = shape_complex_script("كتب لا");
+    assert_eq!(shaped_full, "\u{FEDB}\u{FE98}\u{FE90} \u{FEFB}");
+}
+
+#[test]
+fn test_devanagari_matra_reordering_and_conjuncts() {
+    use super::shaping::{shape_complex_script, shape_devanagari};
+
+    // Ka (\u{0915}) + I-matra (\u{093F}) -> I-matra + Ka (\u{093F}\u{0915})
+    let ki = shape_devanagari("कि");
+    assert_eq!(ki, "\u{093F}\u{0915}");
+
+    // Ka (\u{0915}) + Virama (\u{094D}) + Ssa (\u{0937}) -> KSSA ligature (\u{0915}\u{094D}\u{0937})
+    let ksha = shape_devanagari("क्ष");
+    assert_eq!(ksha, "\u{0915}\u{094D}\u{0937}");
+
+    // Nukta composition: Dda (\u{0921}) + Nukta (\u{093C}) -> Rra (\u{095C})
+    let rra = shape_devanagari("\u{0921}\u{093C}");
+    assert_eq!(rra, "\u{095C}");
+
+    let shaped_full = shape_complex_script("किताब");
+    assert_eq!(shaped_full, "\u{093F}\u{0915}\u{0924}\u{093E}\u{092C}");
+}
+
+#[test]
+fn test_thai_vowel_normalization_and_segmentation() {
+    use super::shaping::{segment_thai_syllables, shape_complex_script, shape_thai};
+
+    // Out-of-order Tone + Above Vowel -> canonical Consonant + Above Vowel + Tone
+    let raw = "\u{0E01}\u{0E48}\u{0E34}";
+    let thai_norm = shape_thai(raw);
+    assert_eq!(thai_norm, "\u{0E01}\u{0E34}\u{0E48}");
+
+    let shaped_full = shape_complex_script(raw);
+    assert_eq!(shaped_full, "\u{0E01}\u{0E34}\u{0E48}");
+
+    let syllables = segment_thai_syllables("ภาษาไทย");
+    assert!(!syllables.is_empty());
+}
+
+#[test]
+fn test_variation_selector_and_zero_width_metrics() {
+    use super::emoji::{is_emoji_char, is_variation_selector, is_zero_width_or_format};
+
+    // Variation selector \u{FE0F} is NOT treated as standalone emoji
+    assert!(!is_emoji_char('\u{FE0F}'));
+    assert!(is_variation_selector('\u{FE0F}'));
+    assert!(is_zero_width_or_format('\u{FE0F}'));
+    assert!(is_zero_width_or_format('\u{200B}'));
+    assert!(is_zero_width_or_format('\u{200D}'));
+
+    let fm = font_manager();
+    // Measuring a string with variation selectors should not double-count width
+    let (w1, _) = fm.measure_text("Test", 16.0, FontWeight::Regular, FontFamily::SansSerif);
+    let (w2, _) = fm.measure_text(
+        "Test\u{FE0F}",
+        16.0,
+        FontWeight::Regular,
+        FontFamily::SansSerif,
+    );
+    assert_eq!(w1, w2);
+}

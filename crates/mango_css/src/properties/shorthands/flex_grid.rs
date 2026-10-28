@@ -247,6 +247,8 @@ pub(crate) fn expand_flex_flow_shorthand(value: &Value, important: bool) -> Vec<
                 crate::values::FlexWrap::NoWrap => "nowrap".to_string(),
                 crate::values::FlexWrap::Wrap => "wrap".to_string(),
                 crate::values::FlexWrap::WrapReverse => "wrap-reverse".to_string(),
+                crate::values::FlexWrap::Balance => "balance".to_string(),
+                crate::values::FlexWrap::WrapReverseBalance => "wrap-reverse balance".to_string(),
             }),
             _ => None,
         })
@@ -310,6 +312,8 @@ pub(crate) fn expand_flex_flow_shorthand(value: &Value, important: bool) -> Vec<
         "nowrap" => Value::FlexWrap(crate::values::FlexWrap::NoWrap),
         "wrap" => Value::FlexWrap(crate::values::FlexWrap::Wrap),
         "wrap-reverse" => Value::FlexWrap(crate::values::FlexWrap::WrapReverse),
+        "balance" => Value::FlexWrap(crate::values::FlexWrap::Balance),
+        "wrap-reverse balance" => Value::FlexWrap(crate::values::FlexWrap::WrapReverseBalance),
         other => Value::Keyword(other.to_string()),
     };
     vec![

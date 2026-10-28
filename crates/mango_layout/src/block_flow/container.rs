@@ -184,8 +184,7 @@ pub(crate) fn layout_block_children(
                 || s.will_change
         })
         .unwrap_or(false);
-    let is_root = box_node.tag_name.as_deref().is_some_and(|t| t == "html");
-    let mut child_cb = if is_positioned_ancestor || is_root {
+    let mut child_cb = if is_positioned_ancestor {
         box_node.dimensions
     } else {
         *containing_block
@@ -385,15 +384,17 @@ pub(crate) fn layout_block_children(
                 .map(|s| s.position)
                 .unwrap_or(Position::Static);
             if matches!(child_pos, Position::Absolute | Position::Fixed) {
-                // Absolutely/fixed positioned elements are out-of-flow; record static position before skipping
+                // Absolutely/fixed positioned elements are out-of-flow; record static position before skipping (CSS 2.1 § 10.6.4)
                 child.dimensions.content.origin.x = container_dims.content.x();
-                child.dimensions.content.origin.y = cursor_y;
+                child.dimensions.content.origin.y = cursor_y + prev_margin_bottom;
+                child.static_position = Some(child.dimensions.content.origin);
                 continue;
             }
 
             let child_float = child.style.as_ref().map(|s| s.float).unwrap_or(Float::None);
             if child_float != Float::None {
-                layout_single_float(child, &container_dims, cursor_y, float_ctx);
+                let float_start_y = cursor_y + prev_margin_bottom;
+                layout_single_float(child, &container_dims, float_start_y, float_ctx);
                 continue;
             }
 
@@ -431,7 +432,7 @@ pub(crate) fn layout_block_children(
                     box_node.dimensions.margin.top = collapsed;
                     box_node.dimensions.content.origin.y += diff;
                     container_dims.content.origin.y = box_node.dimensions.content.origin.y;
-                    if is_positioned_ancestor || is_root {
+                    if is_positioned_ancestor {
                         child_cb = box_node.dimensions;
                     }
                 }
@@ -594,9 +595,18 @@ pub(crate) fn layout_block_children(
             }
         }
 
+        let parent_height_is_auto = box_node
+            .style
+            .as_ref()
+            .map(|s| {
+                s.height == Length::Auto
+                    && (s.min_height == Length::Auto || s.min_height == Length::Px(0.0))
+            })
+            .unwrap_or(true);
         let parent_has_bottom_strut = container_dims.border.bottom > 0.0
             || container_dims.padding.bottom > 0.0
-            || box_establishes_bfc;
+            || box_establishes_bfc
+            || !parent_height_is_auto;
         if !parent_has_bottom_strut && in_flow_count > 0 {
             box_node.dimensions.margin.bottom =
                 collapse_margins(box_node.dimensions.margin.bottom, prev_margin_bottom);

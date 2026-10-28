@@ -398,6 +398,7 @@ const ALL_SHORTHAND_LONGHANDS: &[&str] = &[
     "outline-offset",
     "flex-direction",
     "flex-wrap",
+    "flex-line-count",
     "flex-grow",
     "flex-shrink",
     "flex-basis",

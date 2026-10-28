@@ -154,7 +154,7 @@ fn prepare_document_pipeline_internal(
 
     let mut raw_scripts = Vec::new();
     collect_scripts(&doc, doc.root(), &mut raw_scripts);
-    const SCRIPT_FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+    const SCRIPT_FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
     let mut to_fetch: Vec<(usize, String, Option<String>)> = Vec::new();
     if !is_progressive {
         for (idx, s) in raw_scripts.iter().enumerate() {
@@ -215,13 +215,49 @@ fn prepare_document_pipeline_internal(
         }
     }
 
+    // Prefetch transitive ES module imports for any fetched modules
+    if !should_cancel() {
+        for (idx, res) in fetched_scripts.iter() {
+            if let Ok(code) = res {
+                if let Some(s) = raw_scripts.get(*idx) {
+                    if s.is_module() {
+                        let module_base = if let Some(src) = s.src() {
+                            final_url.resolve(src).unwrap_or_else(|_| final_url.clone())
+                        } else {
+                            final_url.clone()
+                        };
+                        for import_path in scan_es_module_imports(code) {
+                            if let Ok(resolved) = module_base.resolve(&import_path) {
+                                let key = resolved.as_str();
+                                if loader.cache().get(&key).is_none() {
+                                    let _ = loader.fetch_script_with_nonce(
+                                        &module_base,
+                                        &import_path,
+                                        None,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     let mut preloaded_scripts = Vec::with_capacity(raw_scripts.len());
     for (idx, s) in raw_scripts.into_iter().enumerate() {
         match s {
-            ScriptToRun::Inline { code, is_module } => {
-                preloaded_scripts.push(ScriptToRun::Inline { code, is_module })
-            }
+            ScriptToRun::Inline {
+                node_id,
+                code,
+                is_module,
+            } => preloaded_scripts.push(ScriptToRun::Inline {
+                node_id,
+                code,
+                is_module,
+            }),
             ScriptToRun::External {
+                node_id,
                 src,
                 is_defer,
                 is_async,
@@ -230,6 +266,7 @@ fn prepare_document_pipeline_internal(
             } => {
                 if let Some(Ok(code)) = fetched_scripts.remove(&idx) {
                     preloaded_scripts.push(ScriptToRun::Preloaded {
+                        node_id,
                         src,
                         code,
                         is_defer,
@@ -239,6 +276,7 @@ fn prepare_document_pipeline_internal(
                     });
                 } else {
                     preloaded_scripts.push(ScriptToRun::External {
+                        node_id,
                         src,
                         is_defer,
                         is_async,
@@ -248,6 +286,7 @@ fn prepare_document_pipeline_internal(
                 }
             }
             ScriptToRun::Preloaded {
+                node_id,
                 src,
                 code,
                 is_defer,
@@ -256,6 +295,7 @@ fn prepare_document_pipeline_internal(
                 nonce,
             } => {
                 preloaded_scripts.push(ScriptToRun::Preloaded {
+                    node_id,
                     src,
                     code,
                     is_defer,
@@ -336,6 +376,7 @@ pub(crate) fn collect_scripts(doc: &Document, root_id: NodeId, scripts: &mut Vec
                 let trimmed = src.trim();
                 if !trimmed.is_empty() {
                     scripts.push(ScriptToRun::External {
+                        node_id: Some(node_id),
                         src: trimmed.to_string(),
                         is_defer,
                         is_async,
@@ -346,7 +387,11 @@ pub(crate) fn collect_scripts(doc: &Document, root_id: NodeId, scripts: &mut Vec
             } else {
                 let code = doc.text_content(node_id);
                 if !code.trim().is_empty() {
-                    scripts.push(ScriptToRun::Inline { code, is_module });
+                    scripts.push(ScriptToRun::Inline {
+                        node_id: Some(node_id),
+                        code,
+                        is_module,
+                    });
                 }
             }
         }
@@ -648,4 +693,133 @@ fn load_imported_stylesheets_parallel_cancellable(
             }
         }
     }
+}
+
+fn scan_es_module_imports(source: &str) -> Vec<String> {
+    let mut imports = Vec::new();
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("import") || trimmed.starts_with("export") {
+            if let Some(pos) = trimmed.find("from") {
+                let rest = trimmed[pos + 4..].trim();
+                if let Some(q) = rest.chars().next() {
+                    if q == '\'' || q == '"' {
+                        if let Some(end) = rest[1..].find(q) {
+                            let path = &rest[1..1 + end];
+                            if !path.is_empty() {
+                                imports.push(path.to_string());
+                            }
+                        }
+                    }
+                }
+            } else if let Some(rest) = trimmed.strip_prefix("import") {
+                let rest = rest.trim();
+                if let Some(q) = rest.chars().next() {
+                    if q == '\'' || q == '"' {
+                        if let Some(end) = rest[1..].find(q) {
+                            let path = &rest[1..1 + end];
+                            if !path.is_empty() {
+                                imports.push(path.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    imports
+}
+
+/// Unwraps tracking redirects (e.g. DuckDuckGo `/l/?uddg=...` or Google `/url?q=...`)
+/// into direct destination URLs so navigation does not get stalled by intermediate
+/// empty redirect interstitials.
+pub fn unwrap_tracking_redirect(url_str: &str) -> Option<String> {
+    let parsed = Url::parse(url_str).ok()?;
+    let host = parsed.host.as_deref().unwrap_or("");
+    let path = &parsed.path;
+    let query = parsed.query.as_deref().unwrap_or("");
+
+    if (host.ends_with("duckduckgo.com") || host == "ddg.gg") && path.starts_with("/l/") {
+        for param in query.split('&') {
+            if let Some(val) = param.strip_prefix("uddg=") {
+                let decoded = crate::browser::navigation::anchor::percent_decode(val);
+                if decoded.starts_with("http://") || decoded.starts_with("https://") {
+                    return Some(decoded);
+                }
+            }
+        }
+    } else if host.contains("google.") && path.starts_with("/url") {
+        for param in query.split('&') {
+            if let Some(val) = param
+                .strip_prefix("q=")
+                .or_else(|| param.strip_prefix("url="))
+            {
+                let decoded = crate::browser::navigation::anchor::percent_decode(val);
+                if decoded.starts_with("http://") || decoded.starts_with("https://") {
+                    return Some(decoded);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Checks for a `<meta http-equiv="refresh" content="...">` tag in the document.
+/// Returns `Some((delay_seconds, target_url))` if present.
+pub fn check_meta_refresh(doc: &Document, base_url: Option<&Url>) -> Option<(u64, String)> {
+    fn search_meta(doc: &Document, node_id: NodeId) -> Option<(u64, String)> {
+        if let Some(node) = doc.get(node_id) {
+            if let NodeData::Element(elem) = &node.data {
+                if elem.tag_name.eq_ignore_ascii_case("meta") {
+                    let is_refresh = elem
+                        .get_attribute("http-equiv")
+                        .is_some_and(|v| v.trim().eq_ignore_ascii_case("refresh"));
+                    if is_refresh && let Some(content) = elem.get_attribute("content") {
+                        let trimmed = content.trim();
+                        let (delay_str, url_part) = if let Some((d, u)) = trimmed.split_once(';') {
+                            (d.trim(), Some(u.trim()))
+                        } else {
+                            (trimmed, None)
+                        };
+                        let delay = delay_str.parse::<u64>().unwrap_or(0);
+                        let target_url = if let Some(u) = url_part {
+                            let mut raw_url = u;
+                            if let Some(idx) = raw_url.to_ascii_lowercase().find("url=") {
+                                raw_url = raw_url[idx + 4..].trim();
+                            }
+                            let raw_url =
+                                raw_url.trim_matches(|c| c == '\'' || c == '"' || c == ' ');
+                            if !raw_url.is_empty() {
+                                raw_url.to_string()
+                            } else {
+                                String::new()
+                            }
+                        } else {
+                            String::new()
+                        };
+                        return Some((delay, target_url));
+                    }
+                }
+            }
+            for child in doc.children(node_id) {
+                if let Some(found) = search_meta(doc, child.id) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+
+    let (delay, target) = search_meta(doc, doc.root())?;
+    if target.is_empty() {
+        return None;
+    }
+    let resolved = if let Some(base) = base_url {
+        base.resolve(&target)
+            .map(|u| u.to_string())
+            .unwrap_or(target)
+    } else {
+        target
+    };
+    Some((delay, resolved))
 }

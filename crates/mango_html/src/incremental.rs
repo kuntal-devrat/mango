@@ -8,7 +8,7 @@ use crate::dom::Document;
 use crate::tree_builder::parse_html;
 
 /// Kinds of speculative preload hints discovered during streaming.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PreloadHintKind {
     Style,
     Script,
@@ -35,6 +35,9 @@ pub struct IncrementalParser {
     pending: Vec<u8>,
     scanned_up_to: usize,
     discovered_hints: Vec<PreloadHint>,
+    /// Membership index for `discovered_hints`; keeps streaming deduplication
+    /// close to O(1) per hint while the Vec preserves discovery order.
+    discovered_hint_keys: std::collections::HashSet<(String, PreloadHintKind, Option<String>)>,
 }
 
 impl IncrementalParser {
@@ -148,7 +151,8 @@ impl IncrementalParser {
             self.scanned_up_to = tag_abs_start + 1 + tag_close + 1;
 
             for hint in parse_tag_for_preload(tag_content) {
-                if !self.discovered_hints.contains(&hint) {
+                let key = (hint.url.clone(), hint.kind.clone(), hint.as_attr.clone());
+                if self.discovered_hint_keys.insert(key) {
                     self.discovered_hints.push(hint.clone());
                     new_hints.push(hint);
                 }
@@ -168,20 +172,26 @@ impl IncrementalParser {
         &self.buffer
     }
 
+    /// Copies the currently decoded source, including a partial UTF-8 tail,
+    /// without parsing it. Streaming callers can hand this snapshot to a
+    /// preparation worker instead of doing a full parse in the network read
+    /// callback.
+    pub fn snapshot_html(&self) -> String {
+        if self.pending.is_empty() {
+            self.buffer.clone()
+        } else {
+            let mut snapshot = self.buffer.clone();
+            snapshot.push_str(&String::from_utf8_lossy(&self.pending));
+            snapshot
+        }
+    }
+
     /// Constructs and returns a live snapshot of the [`Document`] tree parsed so far.
     ///
     /// Enables early paint passes (FCP - First Contentful Paint) while the document
     /// is still downloading over the network.
     pub fn current_document(&self) -> Document {
-        // Include any pending tail decoded lossy for snapshot purposes only
-        // (do not mutate parser state).
-        if self.pending.is_empty() {
-            parse_html(&self.buffer)
-        } else {
-            let mut tmp = self.buffer.clone();
-            tmp.push_str(&String::from_utf8_lossy(&self.pending));
-            parse_html(&tmp)
-        }
+        parse_html(&self.snapshot_html())
     }
 
     /// Finalizes parsing and returns the complete [`Document`].

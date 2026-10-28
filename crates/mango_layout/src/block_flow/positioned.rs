@@ -723,24 +723,19 @@ pub(crate) fn layout_positioned_element(
         Display::Flex | Display::InlineFlex | Display::Grid | Display::InlineGrid
     );
 
+    if let Some(sh) = stretched_h {
+        box_node.dimensions.content.size.height = sh;
+    }
+    if let Some(sw) = stretched_w {
+        box_node.dimensions.content.size.width = sw;
+    }
+
     if style.display == Display::Table || box_node.tag_name.as_deref() == Some("table") {
         crate::table_flow::layout_table(box_node, cb, float_ctx);
     } else if matches!(style.display, Display::Flex | Display::InlineFlex) {
         crate::flex_flow::layout_flex(box_node, cb, float_ctx);
-        if let Some(sh) = stretched_h {
-            box_node.dimensions.content.size.height = sh;
-        }
-        if let Some(sw) = stretched_w {
-            box_node.dimensions.content.size.width = sw;
-        }
     } else if style.display == Display::Grid || style.display == Display::InlineGrid {
         crate::grid_flow::layout_grid(box_node, cb, float_ctx);
-        if let Some(sh) = stretched_h {
-            box_node.dimensions.content.size.height = sh;
-        }
-        if let Some(sw) = stretched_w {
-            box_node.dimensions.content.size.width = sw;
-        }
     } else {
         layout_block_children(box_node, cb, float_ctx);
         if let Some(sh) = stretched_h {

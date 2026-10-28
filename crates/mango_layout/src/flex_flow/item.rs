@@ -12,11 +12,17 @@ pub fn layout_flex_item(
     float_ctx: &mut FloatContext,
     c_fs: f32,
 ) {
+    if child.children.is_empty() && !matches!(child.box_type, BoxType::TextNode(_)) {
+        return;
+    }
     let c_disp = child.style.as_ref().map(|s| s.display);
     if matches!(c_disp, Some(Display::Flex) | Some(Display::InlineFlex)) {
         crate::flex_flow::layout_flex(child, item_cb, float_ctx);
     } else if matches!(c_disp, Some(Display::Grid) | Some(Display::InlineGrid)) {
         crate::grid_flow::layout_grid(child, item_cb, float_ctx);
+    } else if matches!(c_disp, Some(Display::Table)) || child.tag_name.as_deref() == Some("table") {
+        child.is_independent_formatting_context = true;
+        crate::table_flow::layout_table_contents(child, item_cb, float_ctx);
     } else if let BoxType::TextNode(ref t) = child.box_type {
         let (c_weight, c_family, c_spacing) = if let Some(s) = &child.style {
             let bold = crate::inline_flow::is_bold_weight(s.font_weight, s.font_size);
@@ -76,7 +82,18 @@ pub fn find_first_baseline_ascent(box_: &LayoutBox, default_fs: f32) -> f32 {
             .unwrap_or(default_fs);
         return fs * 0.8;
     }
+
+    let is_fieldset = box_.tag_name.as_deref() == Some("fieldset");
+    let has_non_legend = is_fieldset
+        && box_
+            .children
+            .iter()
+            .any(|c| c.tag_name.as_deref() != Some("legend"));
+
     for child in &box_.children {
+        if is_fieldset && has_non_legend && child.tag_name.as_deref() == Some("legend") {
+            continue;
+        }
         if child
             .style
             .as_ref()

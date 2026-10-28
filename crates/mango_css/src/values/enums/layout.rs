@@ -115,6 +115,28 @@ pub enum FlexWrap {
     NoWrap,
     Wrap,
     WrapReverse,
+    Balance,
+    WrapReverseBalance,
+}
+
+impl FlexWrap {
+    /// Returns `true` if this wrap value enables multi-line wrapping.
+    #[inline]
+    pub fn is_wrap(&self) -> bool {
+        !matches!(self, FlexWrap::NoWrap)
+    }
+
+    /// Returns `true` if this wrap value reverses the cross axis line placement.
+    #[inline]
+    pub fn is_reverse(&self) -> bool {
+        matches!(self, FlexWrap::WrapReverse | FlexWrap::WrapReverseBalance)
+    }
+
+    /// Returns `true` if this wrap value balances line lengths.
+    #[inline]
+    pub fn is_balanced(&self) -> bool {
+        matches!(self, FlexWrap::Balance | FlexWrap::WrapReverseBalance)
+    }
 }
 
 /// CSS `justify-content` property values.
@@ -128,6 +150,10 @@ pub enum JustifyContent {
     SpaceBetween,
     SpaceAround,
     SpaceEvenly,
+    Start,
+    End,
+    Left,
+    Right,
 }
 
 /// CSS `justify-items` property values.

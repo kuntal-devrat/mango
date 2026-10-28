@@ -1,6 +1,7 @@
 //! Viewport layout, geometry calculation, and zoom controls.
 
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
 
 use mango_core::{Color, Size};
 use mango_css::Stylesheet;
@@ -11,6 +12,166 @@ use mango_layout::{extract_style_elements, layout_document, layout_document_with
 use super::super::BrowserChrome;
 use super::super::types::DocumentView;
 use crate::chrome_ui::*;
+
+struct LayoutRequest {
+    generation: u64,
+    document: mango_html::dom::Document,
+    stylesheets: Vec<Stylesheet>,
+    viewport: Size,
+}
+
+pub(crate) struct LayoutResult {
+    pub generation: u64,
+    pub root_box: mango_layout::box_tree::LayoutBox,
+    pub page_display_list: mango_render::display_list::DisplayList,
+    pub canvas_bg: Color,
+    pub scrollable_height: f32,
+    pub background_images: Vec<String>,
+    pub box_rects: HashMap<u32, [f32; 4]>,
+}
+
+#[derive(Default)]
+struct LayoutQueueState {
+    pending: Option<LayoutRequest>,
+    running: bool,
+}
+
+/// Coalesces layout requests per window and runs expensive style/layout work
+/// away from the native event thread. A newer request replaces queued stale
+/// input instead of building an unbounded backlog during resize or mutation.
+pub(crate) struct AsyncLayoutCoordinator {
+    state: Arc<Mutex<LayoutQueueState>>,
+    tx: mpsc::Sender<LayoutResult>,
+    rx: mpsc::Receiver<LayoutResult>,
+    generation: u64,
+}
+
+static LAYOUT_POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+
+fn layout_pool() -> &'static rayon::ThreadPool {
+    LAYOUT_POOL.get_or_init(|| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(2)
+            .thread_name(|i| format!("mango-layout-{i}"))
+            .stack_size(16 * 1024 * 1024)
+            .build()
+            .expect("failed to initialize layout worker pool")
+    })
+}
+
+impl AsyncLayoutCoordinator {
+    pub(crate) fn new() -> Self {
+        let (tx, rx) = mpsc::channel();
+        Self {
+            state: Arc::new(Mutex::new(LayoutQueueState::default())),
+            tx,
+            rx,
+            generation: 0,
+        }
+    }
+
+    pub(crate) fn request(
+        &mut self,
+        document: mango_html::dom::Document,
+        stylesheets: Vec<Stylesheet>,
+        viewport: Size,
+    ) {
+        self.generation = self.generation.wrapping_add(1);
+        let request = LayoutRequest {
+            generation: self.generation,
+            document,
+            stylesheets,
+            viewport,
+        };
+        let start_worker = if let Ok(mut state) = self.state.lock() {
+            state.pending = Some(request);
+            if state.running {
+                false
+            } else {
+                state.running = true;
+                true
+            }
+        } else {
+            false
+        };
+
+        if start_worker {
+            let state = self.state.clone();
+            let tx = self.tx.clone();
+            layout_pool().spawn(move || {
+                loop {
+                    let request = match state.lock() {
+                        Ok(mut state) => match state.pending.take() {
+                            Some(request) => request,
+                            None => {
+                                state.running = false;
+                                return;
+                            }
+                        },
+                        Err(_) => return,
+                    };
+
+                    let result = compute_layout(request);
+                    if tx.send(result).is_err() {
+                        if let Ok(mut state) = state.lock() {
+                            state.running = false;
+                            state.pending = None;
+                        }
+                        return;
+                    }
+                    mango_core::wake_event_loop();
+                }
+            });
+        }
+    }
+
+    pub(crate) fn poll_latest(&mut self) -> Option<LayoutResult> {
+        let mut latest = None;
+        loop {
+            match self.rx.try_recv() {
+                Ok(result) if result.generation == self.generation => latest = Some(result),
+                Ok(_) => {}
+                Err(mpsc::TryRecvError::Empty | mpsc::TryRecvError::Disconnected) => break,
+            }
+        }
+        latest
+    }
+
+    pub(crate) fn is_active(&self) -> bool {
+        self.state
+            .lock()
+            .is_ok_and(|state| state.running || state.pending.is_some())
+    }
+}
+
+fn compute_layout(request: LayoutRequest) -> LayoutResult {
+    let mut stylesheets = request.stylesheets;
+    stylesheets.extend(extract_style_elements(&request.document));
+    let mut media = mango_css::current_media_environment();
+    media.viewport_width = request.viewport.width;
+    media.viewport_height = request.viewport.height;
+    let style_index = mango_layout::PageStyleIndex::from_stylesheets(stylesheets, media);
+    let (root_box, page_display_list) =
+        layout_document_with_style_index(&request.document, &style_index, request.viewport);
+    let canvas_bg = canvas_background_color(&root_box);
+    let scrollable_height = crate::scroll::compute_scrollable_height(Some(&root_box));
+    let mut background_images = Vec::new();
+    crate::browser::navigation::resources::collect_box_background_images(
+        &root_box,
+        &mut background_images,
+    );
+    let mut box_rects = HashMap::new();
+    mango_layout::collect_box_rects(&root_box, &mut box_rects);
+    LayoutResult {
+        generation: request.generation,
+        root_box,
+        page_display_list,
+        canvas_bg,
+        scrollable_height,
+        background_images,
+        box_rects,
+    }
+}
 
 pub fn canvas_background_color(root: &mango_layout::box_tree::LayoutBox) -> Color {
     if let Some(style) = &root.style {
@@ -48,6 +209,14 @@ impl BrowserChrome {
     pub fn relayout(&mut self) {
         self.layout_pending = false;
         let viewport = Size::new(self.width as f32, self.content_height());
+
+        if self.async_navigation {
+            let document = (*self.document_view()).clone();
+            self.style_index_cache = None;
+            self.async_layout
+                .request(document, self.cached_stylesheets.clone(), viewport);
+            return;
+        }
 
         // Do not retain the previous full-page representation while building
         // the replacement. On large documents the old layout tree, old paint
@@ -124,8 +293,59 @@ impl BrowserChrome {
         self.publish_layout_bounds();
     }
 
-    /// Flushes a DOM/style invalidation once per event-loop turn.
+    /// Applies the newest completed worker layout on the UI thread.
+    pub fn tick_async_layout(&mut self) -> bool {
+        let Some(result) = self.async_layout.poll_latest() else {
+            return false;
+        };
+        self.root_box = Some(result.root_box);
+        self.page_display_list = result.page_display_list;
+        self.canvas_bg = result.canvas_bg;
+        self.cached_scrollable_height = result.scrollable_height;
+        self.page_dirty = true;
+        self.display_list_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .invalidate(None);
+        if let Some(base) = self.base_url.clone() {
+            self.queue_additional_image_sources(result.background_images, base);
+        }
+        self.refresh_animation_targets();
+        if let Some(rt) = &self.js_runtime {
+            rt.set_layout_bounds(result.box_rects);
+        }
+        true
+    }
+
+    /// True while a background style/layout result is queued or being built.
+    pub fn has_pending_layout(&self) -> bool {
+        self.async_layout.is_active()
+    }
+
+    /// True while background web font downloads or decodes are in flight.
+    pub fn has_pending_font_fetches(&self) -> bool {
+        crate::browser::navigation::resources::has_pending_font_fetches()
+    }
+
+    /// Number of active background web font download tasks.
+    pub fn pending_font_fetch_count(&self) -> usize {
+        crate::browser::navigation::resources::pending_font_fetch_count()
+    }
+
+    /// Flushes a DOM/style invalidation once per event-loop turn, including
+    /// relayout triggered by asynchronously completed `@font-face` downloads.
     pub fn flush_pending_layout(&mut self) -> bool {
+        let current_font_epoch = mango_render::web_font_epoch();
+        if self.last_font_epoch != current_font_epoch {
+            self.last_font_epoch = current_font_epoch;
+            self.display_list_cache
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clear();
+            self.page_dirty = true;
+            self.layout_pending = true;
+        }
+
         if self.layout_pending {
             self.relayout();
             true
@@ -146,6 +366,9 @@ impl BrowserChrome {
         let mut rects = HashMap::new();
         mango_layout::collect_box_rects(root, &mut rects);
         rt.set_layout_bounds(rects);
+        let mut margins = HashMap::new();
+        mango_layout::collect_box_margins(root, &mut margins);
+        rt.set_layout_margins(margins);
     }
 
     /// Re-syncs the animation/transition engines against the freshly laid-out tree.

@@ -17,16 +17,19 @@ use crate::parser::declarations::typography::{
 use crate::parser::declarations::value::parse_value_from_tokens;
 use crate::parser::declarations::visual::{
     split_commas, try_parse_background_attachment, try_parse_background_blend_mode,
-    try_parse_background_clip, try_parse_blend_mode, try_parse_border_image, try_parse_clip_path,
-    try_parse_filter_list, try_parse_isolation, try_parse_layered_background_images,
-    try_parse_mask_composite, try_parse_mask_mode, try_parse_text_shadow,
+    try_parse_background_clip, try_parse_blend_mode, try_parse_border_image, try_parse_clip,
+    try_parse_clip_path, try_parse_filter_list, try_parse_isolation,
+    try_parse_layered_background_images, try_parse_mask_composite, try_parse_mask_mode,
+    try_parse_text_shadow,
 };
 use crate::parser::stream::CssParser;
 use crate::parser::types::{MediaRule, Rule, StyleRule};
 use crate::properties::Declaration;
 use crate::selectors::SelectorList;
 use crate::tokenizer::Token;
-use crate::values::{CaptionSide, Clear, Display, Float, Overflow, TableLayout, Value, Visibility};
+use crate::values::{
+    CaptionSide, Clear, Display, FlexWrap, Float, Overflow, TableLayout, Value, Visibility,
+};
 
 impl CssParser {
     pub(crate) fn parse_declarations_until(&mut self, stop_token: Token) -> Vec<Declaration> {
@@ -420,8 +423,19 @@ impl CssParser {
                 Some(Value::Keyword(ident.to_ascii_lowercase()))
             } else {
                 match prop_lower.as_str() {
+                    "text-wrap" => match value_tokens.iter().find_map(|t| match t {
+                        Token::Ident(s) => Some(s.to_ascii_lowercase()),
+                        _ => None,
+                    }) {
+                        Some(s) if crate::values::TextWrap::parse(&s).is_some() => {
+                            Some(Value::Keyword(s))
+                        }
+                        _ => parse_value_from_tokens(&value_tokens),
+                    },
                     "aspect-ratio" => try_parse_aspect_ratio(&value_tokens)
                         .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "flex-wrap" => try_parse_flex_wrap(&value_tokens),
+                    "flex-line-count" => try_parse_flex_line_count(&value_tokens),
                     "transform" | "-webkit-transform" | "-moz-transform" | "-ms-transform"
                     | "-o-transform" => try_parse_transform_list(&value_tokens)
                         .or_else(|| parse_value_from_tokens(&value_tokens)),
@@ -453,6 +467,8 @@ impl CssParser {
                         try_parse_filter_list(&value_tokens)
                             .or_else(|| parse_value_from_tokens(&value_tokens))
                     }
+                    "clip" => try_parse_clip(&value_tokens)
+                        .or_else(|| parse_value_from_tokens(&value_tokens)),
                     "clip-path" | "-webkit-clip-path" => try_parse_clip_path(&value_tokens)
                         .or_else(|| parse_value_from_tokens(&value_tokens)),
                     "mix-blend-mode" => try_parse_blend_mode(&value_tokens)
@@ -688,26 +704,26 @@ impl CssParser {
                                 _ => only_idents = false,
                             }
                         }
-                        if !only_idents {
+                        if !only_idents || idents.is_empty() {
                             None
-                        } else if idents.len() == 1 {
-                            match idents[0].as_str() {
-                                "none" => Some(Value::Keyword("none".to_string())),
-                                "block" => Some(Value::Keyword("block".to_string())),
-                                "block-start" => Some(Value::Keyword("block-start".to_string())),
-                                "block-end" => Some(Value::Keyword("block-end".to_string())),
-                                _ => None,
-                            }
-                        } else if idents.len() == 2 {
-                            if (idents[0] == "block-start" && idents[1] == "block-end")
-                                || (idents[0] == "block-end" && idents[1] == "block-start")
-                            {
-                                Some(Value::Keyword("block".to_string()))
+                        } else if idents.len() == 1 && idents[0] == "none" {
+                            Some(Value::Keyword("none".to_string()))
+                        } else {
+                            let valid_tokens = [
+                                "block",
+                                "block-start",
+                                "block-end",
+                                "inline",
+                                "inline-start",
+                                "inline-end",
+                            ];
+                            let all_valid =
+                                idents.iter().all(|id| valid_tokens.contains(&id.as_str()));
+                            if all_valid && idents.len() <= 4 {
+                                Some(Value::Keyword(idents.join(" ")))
                             } else {
                                 None
                             }
-                        } else {
-                            None
                         }
                     }
                     _ => {
@@ -789,4 +805,79 @@ impl CssParser {
     ) -> Vec<Declaration> {
         super::font::parse_font_shorthand(tokens, important)
     }
+}
+
+fn try_parse_flex_wrap(tokens: &[Token]) -> Option<Value> {
+    let filtered: Vec<&Token> = tokens
+        .iter()
+        .filter(|t| !matches!(t, Token::Whitespace | Token::Comment(_)))
+        .collect();
+
+    if filtered.is_empty() {
+        return None;
+    }
+
+    if filtered.len() == 1 {
+        if let Token::Ident(ident) = filtered[0] {
+            return match ident.to_ascii_lowercase().as_str() {
+                "nowrap" => Some(Value::FlexWrap(FlexWrap::NoWrap)),
+                "wrap" => Some(Value::FlexWrap(FlexWrap::Wrap)),
+                "wrap-reverse" => Some(Value::FlexWrap(FlexWrap::WrapReverse)),
+                "balance" => Some(Value::FlexWrap(FlexWrap::Balance)),
+                _ => None,
+            };
+        }
+        return None;
+    }
+
+    if filtered.len() == 2 {
+        if let (Token::Ident(a), Token::Ident(b)) = (filtered[0], filtered[1]) {
+            let a_str = a.to_ascii_lowercase();
+            let b_str = b.to_ascii_lowercase();
+            return match (a_str.as_str(), b_str.as_str()) {
+                ("wrap", "balance") | ("balance", "wrap") => {
+                    Some(Value::FlexWrap(FlexWrap::Balance))
+                }
+                ("wrap-reverse", "balance") | ("balance", "wrap-reverse") => {
+                    Some(Value::FlexWrap(FlexWrap::WrapReverseBalance))
+                }
+                _ => None,
+            };
+        }
+    }
+
+    None
+}
+
+fn try_parse_flex_line_count(tokens: &[Token]) -> Option<Value> {
+    let filtered: Vec<&Token> = tokens
+        .iter()
+        .filter(|t| !matches!(t, Token::Whitespace | Token::Comment(_)))
+        .collect();
+
+    if filtered.is_empty() {
+        return None;
+    }
+
+    if filtered.len() == 1 {
+        if let Token::Number(value) = filtered[0] {
+            if *value >= 1.0 && value.fract() == 0.0 {
+                return Some(Value::Number(*value));
+            }
+            return None;
+        }
+    }
+
+    // Support calc(), round(), etc.
+    if let Some((calc_val, consumed)) = crate::parser::declarations::math::parse_math_call(tokens) {
+        let remaining = &tokens[consumed..];
+        if remaining
+            .iter()
+            .all(|t| matches!(t, Token::Whitespace | Token::Comment(_)))
+        {
+            return Some(calc_val);
+        }
+    }
+
+    None
 }

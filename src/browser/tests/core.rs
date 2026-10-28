@@ -127,6 +127,50 @@ fn test_inline_script_execution_in_browser() {
 }
 
 #[test]
+fn test_document_current_script_lifecycle() {
+    let mut browser = BrowserChrome::new(1024, 768);
+    let html = r#"
+            <html>
+            <body>
+                <div id="status">initial</div>
+                <script id="my-script" type="text/javascript">
+                    var cs = document.currentScript;
+                    var status = document.getElementById("status");
+                    if (cs && cs.tagName === 'SCRIPT' && cs.id === 'my-script' && cs.parentElement && cs.parentElement.tagName === 'BODY' && cs.src === '') {
+                        status.textContent = "CurrentScriptValid";
+                    } else {
+                        status.textContent = "CurrentScriptInvalid:" + (cs ? cs.tagName : "null");
+                    }
+                </script>
+            </body>
+            </html>
+        "#;
+    browser.load_html(html.to_string(), "http://example.com/test.html".to_string());
+
+    let dl = browser.build_display_list((1024, 768));
+    let found_valid = dl.iter().any(|cmd| {
+        if let DisplayCommand::DrawText { text, .. } = cmd {
+            text == "CurrentScriptValid"
+        } else {
+            false
+        }
+    });
+    assert!(
+        found_valid,
+        "display list should contain 'CurrentScriptValid', proving document.currentScript was populated"
+    );
+
+    // Outside of script tag execution, document.currentScript must reset to null per W3C specification
+    if let Some(ref mut rt) = browser.js_runtime {
+        let after = rt.eval("document.currentScript === null").unwrap();
+        assert_eq!(
+            after, "true",
+            "document.currentScript should reset to null after script completes"
+        );
+    }
+}
+
+#[test]
 fn test_ui_button_clicks() {
     let mut browser = BrowserChrome::new(1024, 768);
 
@@ -504,4 +548,330 @@ fn test_unicode_tab_title_boundary_safety() {
         let dl = browser.build_display_list((1024, 768));
         assert!(!dl.is_empty());
     }
+}
+
+#[test]
+fn test_isolated_renderer_actor_load_and_frame_delivery() {
+    use crate::renderer_actor::{LoadDocumentPayload, RendererActorHandle, RendererResult};
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    let mut renderer = RendererActorHandle::spawn(201);
+    let html = "<html><head><title>Initial</title><script>document.title = 'Isolated Title';</script></head><body><h1>Hello Isolated Renderer</h1></body></html>";
+    let doc = mango_html::parse_html(html);
+
+    renderer.load_document(LoadDocumentPayload {
+        url: "https://example.com/test".to_string(),
+        doc,
+        html: html.to_string(),
+        stylesheets: Vec::new(),
+        preloaded_scripts: Vec::new(),
+        viewport_width: 800.0,
+        viewport_height: 600.0,
+        base_url: mango_net::Url::parse("https://example.com/test").ok(),
+        generation: 1,
+        local_storage: Arc::new(Mutex::new(HashMap::new())),
+        session_storage: Arc::new(Mutex::new(HashMap::new())),
+        cookie_jar: Arc::new(Mutex::new(mango_net::CookieJar::new())),
+        cache: None,
+    });
+
+    let frame_result = renderer
+        .result_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("Isolated renderer must emit FrameReady within timeout");
+
+    match frame_result {
+        RendererResult::FrameReady(frame) => {
+            assert_eq!(frame.title.as_deref(), Some("Isolated Title"));
+            assert!(!frame.display_list.is_empty());
+            assert!(frame.scrollable_height > 0.0);
+        }
+        _other => panic!("Expected FrameReady, got unexpected message"),
+    }
+
+    renderer.shutdown();
+}
+
+#[test]
+fn test_heavy_js_keeps_ui_scrolling_and_tab_switching_uninterrupted() {
+    use crate::renderer_actor::{LoadDocumentPayload, RendererActorHandle};
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    // 1. Initialize BrowserChrome with async navigation
+    let mut browser = BrowserChrome::new(1024, 768);
+    browser.async_navigation = true;
+
+    // 2. Spawn isolated renderer for tab
+    let renderer = RendererActorHandle::spawn(203);
+
+    // 3. Document has a 400ms CPU-heavy synchronous JS loop
+    let html = "<html><head><title>Start</title><script>var t0 = Date.now(); while (Date.now() - t0 < 400) {} document.title = 'Finished 400ms';</script></head><body style='height: 10000px;'><h1>Long Page</h1></body></html>";
+    let doc = mango_html::parse_html(html);
+
+    renderer.load_document(LoadDocumentPayload {
+        url: "https://example.com/busy".to_string(),
+        doc,
+        html: html.to_string(),
+        stylesheets: Vec::new(),
+        preloaded_scripts: Vec::new(),
+        viewport_width: 1024.0,
+        viewport_height: 768.0,
+        base_url: mango_net::Url::parse("https://example.com/busy").ok(),
+        generation: 1,
+        local_storage: Arc::new(Mutex::new(HashMap::new())),
+        session_storage: Arc::new(Mutex::new(HashMap::new())),
+        cookie_jar: Arc::new(Mutex::new(mango_net::CookieJar::new())),
+        cache: None,
+    });
+
+    browser.renderer_actor = Some(renderer);
+
+    // 4. While the renderer is 100% pegged in heavy JS, the UI thread must be able to:
+    //    a) Process mouse wheel input immediately
+    //    b) Advance smooth kinetic scrolling at 60-120 FPS
+    //    c) Open and switch tabs immediately with zero delay
+    browser.cached_scrollable_height = 5000.0;
+    let start_ui = Instant::now();
+    browser.handle_wheel_scroll_smooth(0.0, -10.0);
+    assert!(
+        browser.smooth_scroll.is_some(),
+        "Smooth scroll animation must start immediately"
+    );
+
+    let mut frames_rendered = 0;
+    while start_ui.elapsed() < Duration::from_millis(250) {
+        // Step kinetic animation (simulating 120 FPS frame ticks)
+        browser.tick_animations(8.33);
+        browser.tick_renderer();
+        frames_rendered += 1;
+        std::thread::sleep(Duration::from_millis(8));
+    }
+
+    // Scrolling progressed smoothly during the heavy script execution!
+    assert!(
+        frames_rendered >= 15,
+        "UI thread must maintain continuous 60-120 FPS ticks during heavy JS, rendered {frames_rendered} frames"
+    );
+    assert!(
+        browser.scroll_y > 0.0,
+        "Compositor scroll offset must update continuously on UI thread"
+    );
+
+    // Tab switching happens instantly without freezing
+    let tab2 = Tab::with_url_and_title("about:welcome", "Tab 2");
+    browser.tabs.push(tab2);
+    browser.switch_tab(1);
+    assert_eq!(browser.active_tab_idx, 1);
+    browser.switch_tab(0);
+    assert_eq!(browser.active_tab_idx, 0);
+
+    // Now wait for the renderer to finish its work
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if browser.tick_renderer() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    assert_eq!(browser.page_title, "Finished 400ms");
+
+    if let Some(mut r) = browser.renderer_actor.take() {
+        r.shutdown();
+    }
+}
+
+#[test]
+fn test_isolated_renderer_heavy_js_does_not_block_ui_thread() {
+    use crate::renderer_actor::{LoadDocumentPayload, RendererActorHandle, RendererResult};
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    let mut renderer = RendererActorHandle::spawn(202);
+    // Script runs a synchronous 300ms loop
+    let html = "<html><head><script>var t0 = Date.now(); while (Date.now() - t0 < 300) {} document.title = 'Heavy Done';</script></head><body><p>Heavy JS Test</p></body></html>";
+    let doc = mango_html::parse_html(html);
+
+    let start = Instant::now();
+    renderer.load_document(LoadDocumentPayload {
+        url: "https://example.com/heavy".to_string(),
+        doc,
+        html: html.to_string(),
+        stylesheets: Vec::new(),
+        preloaded_scripts: Vec::new(),
+        viewport_width: 800.0,
+        viewport_height: 600.0,
+        base_url: mango_net::Url::parse("https://example.com/heavy").ok(),
+        generation: 1,
+        local_storage: Arc::new(Mutex::new(HashMap::new())),
+        session_storage: Arc::new(Mutex::new(HashMap::new())),
+        cookie_jar: Arc::new(Mutex::new(mango_net::CookieJar::new())),
+        cache: None,
+    });
+
+    // The UI thread is NOT blocked by load_document; dispatch returns immediately (<10ms)
+    let elapsed_dispatch = start.elapsed();
+    assert!(
+        elapsed_dispatch < Duration::from_millis(50),
+        "UI thread dispatch to isolated renderer must return immediately, took {elapsed_dispatch:?}"
+    );
+
+    // Simulated UI thread work: smooth scrolling / omnibox updates run with zero lag
+    let mut ui_scroll_y = 0.0f32;
+    for _ in 0..10 {
+        ui_scroll_y += 10.0;
+        renderer.update_scroll(ui_scroll_y);
+    }
+
+    // Now wait for the isolated renderer to complete its JS work
+    let frame_result = renderer
+        .result_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("Renderer must complete and send FrameReady");
+
+    match frame_result {
+        RendererResult::FrameReady(frame) => {
+            assert_eq!(frame.title.as_deref(), Some("Heavy Done"));
+            assert!(!frame.display_list.is_empty());
+        }
+        _ => panic!("Expected FrameReady from heavy JS document"),
+    }
+
+    renderer.shutdown();
+}
+
+#[test]
+fn test_async_web_font_reflow_in_flush_pending_layout() {
+    let mut browser = BrowserChrome::new(800, 600);
+    browser.load_html(
+        "<!doctype html><html><body><h1>Web Font Test</h1></body></html>".to_string(),
+        "http://example.com/test.html".to_string(),
+    );
+
+    // Initial flush settles any pending layout
+    let _ = browser.flush_pending_layout();
+    assert!(
+        !browser.flush_pending_layout(),
+        "No relayout when font epoch has not changed"
+    );
+
+    // Simulate background web font completion
+    mango_render::bump_web_font_epoch();
+
+    // flush_pending_layout must detect epoch increment and execute relayout
+    assert!(
+        browser.flush_pending_layout(),
+        "flush_pending_layout must trigger relayout on web_font_epoch bump"
+    );
+
+    // After flushing, epoch is up to date, so next flush returns false
+    assert!(
+        !browser.flush_pending_layout(),
+        "Layout is clean after reflow"
+    );
+}
+
+#[test]
+fn test_unwrap_tracking_redirect() {
+    use crate::browser::navigation::pipeline::unwrap_tracking_redirect;
+
+    let ddg = "https://duckduckgo.com/l/?uddg=https%3A%2F%2Fgetemoji.com%2F&rut=5064819afc221ff0ef7ad498c3d52db83ed90fb620670932902099070389e440";
+    assert_eq!(
+        unwrap_tracking_redirect(ddg),
+        Some("https://getemoji.com/".to_string())
+    );
+
+    let ddg_short = "https://ddg.gg/l/?uddg=http%3A%2F%2Fexample.com%2Ftest%3Fparam%3Dval";
+    assert_eq!(
+        unwrap_tracking_redirect(ddg_short),
+        Some("http://example.com/test?param=val".to_string())
+    );
+
+    let google = "https://www.google.com/url?q=https%3A%2F%2Fexample.org%2F&sa=D&sntz=1";
+    assert_eq!(
+        unwrap_tracking_redirect(google),
+        Some("https://example.org/".to_string())
+    );
+
+    let non_tracking = "https://getemoji.com/";
+    assert_eq!(unwrap_tracking_redirect(non_tracking), None);
+}
+
+#[test]
+fn test_check_meta_refresh() {
+    use crate::browser::navigation::pipeline::check_meta_refresh;
+    use mango_html::parse_html;
+    use mango_net::Url;
+
+    let html = "<html><head><meta http-equiv='refresh' content='0;URL=https://getemoji.com/'></head><body></body></html>";
+    let doc = parse_html(html);
+    assert_eq!(
+        check_meta_refresh(&doc, None),
+        Some((0, "https://getemoji.com/".to_string()))
+    );
+
+    let html_rel = "<html><body><noscript><meta http-equiv=\"refresh\" content=\"0; url=/local/path\"></noscript></body></html>";
+    let doc_rel = parse_html(html_rel);
+    let base = Url::parse("https://example.com/dir/index.html").ok();
+    assert_eq!(
+        check_meta_refresh(&doc_rel, base.as_ref()),
+        Some((0, "https://example.com/local/path".to_string()))
+    );
+
+    let html_none =
+        "<html><head><meta name='description' content='Mango'></head><body></body></html>";
+    let doc_none = parse_html(html_none);
+    assert_eq!(check_meta_refresh(&doc_none, None), None);
+}
+
+#[test]
+fn test_renderer_actor_navigation_requested() {
+    use crate::renderer_actor::{LoadDocumentPayload, RendererActorHandle, RendererResult};
+    use mango_html::parse_html;
+    use mango_net::CookieJar;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    let mut renderer = RendererActorHandle::spawn(301);
+    let html = "<html><body><script>window.parent.location.replace('https://getemoji.com/');</script></body></html>";
+    let doc = parse_html(html);
+
+    renderer.load_document(LoadDocumentPayload {
+        url: "https://duckduckgo.com/l/?uddg=https%3A%2F%2Fgetemoji.com%2F".to_string(),
+        doc,
+        html: html.to_string(),
+        stylesheets: Vec::new(),
+        preloaded_scripts: Vec::new(),
+        viewport_width: 800.0,
+        viewport_height: 600.0,
+        base_url: None,
+        generation: 1,
+        local_storage: Arc::new(Mutex::new(HashMap::new())),
+        session_storage: Arc::new(Mutex::new(HashMap::new())),
+        cookie_jar: Arc::new(Mutex::new(CookieJar::new())),
+        cache: None,
+    });
+
+    let mut found_nav = false;
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        if let Ok(RendererResult::NavigationRequested { url }) =
+            renderer.result_rx.recv_timeout(Duration::from_millis(50))
+        {
+            assert_eq!(url, "https://getemoji.com/");
+            found_nav = true;
+            break;
+        }
+    }
+    assert!(
+        found_nav,
+        "RendererActor must emit NavigationRequested when script calls location.replace()"
+    );
+    renderer.shutdown();
 }

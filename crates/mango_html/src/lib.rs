@@ -23,7 +23,10 @@ pub mod incremental;
 pub mod tokenizer;
 pub mod tree_builder;
 
-pub use dom::{ChildrenIter, Document, DomError, ElementData, Node, NodeData, NodeId, QuirksMode};
+pub use dom::{
+    ChildrenIter, Document, DomError, ElementData, Node, NodeData, NodeId, QuirksMode,
+    node_id_from_js, node_id_to_js,
+};
 pub use entities::decode_entities;
 pub use incremental::{IncrementalParser, PreloadHint, PreloadHintKind};
 pub use tokenizer::{Token, Tokenizer};

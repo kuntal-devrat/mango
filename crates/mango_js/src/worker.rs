@@ -25,6 +25,8 @@ pub struct WorkerHandle {
     pub id: u64,
     pub tx: Sender<WorkerInboundMsg>,
     pub _thread: Option<JoinHandle<()>>,
+    isolate: Arc<Mutex<Option<deno_core::v8::IsolateHandle>>>,
+    running: Arc<AtomicBool>,
 }
 
 /// Thread-safe manager for all active Web Workers in the page.
@@ -72,11 +74,24 @@ impl WorkerManager {
         let base_url = page_url.to_string();
         let blobs = self.blob_urls.clone();
         let main_tasks = tasks.clone();
+        let isolate = Arc::new(Mutex::new(None));
+        let worker_isolate = isolate.clone();
+        let running = Arc::new(AtomicBool::new(true));
+        let worker_running = running.clone();
 
         let thread_handle = thread::Builder::new()
             .name(format!("mango-worker-{}", id))
             .spawn(move || {
-                run_worker_thread(id, target_script, base_url, rx, blobs, main_tasks);
+                run_worker_thread(
+                    id,
+                    target_script,
+                    base_url,
+                    rx,
+                    blobs,
+                    main_tasks,
+                    worker_isolate,
+                    worker_running,
+                );
             })
             .ok();
 
@@ -84,6 +99,8 @@ impl WorkerManager {
             id,
             tx,
             _thread: thread_handle,
+            isolate,
+            running,
         };
 
         if let Ok(mut map) = self.workers.lock() {
@@ -112,22 +129,35 @@ impl WorkerManager {
             None
         };
         if let Some(mut worker) = worker_opt {
+            self.stop_worker(&worker);
             let _ = worker.tx.send(WorkerInboundMsg::Terminate);
-            if let Some(th) = worker._thread.take() {
-                let _ = th.join();
-            }
+            // Dropping JoinHandle detaches. Never block the caller (often the
+            // browser/UI thread) waiting for page-controlled worker code.
+            worker._thread.take();
         }
     }
 
     /// Shuts down all active background worker threads immediately.
     pub fn terminate_all(&self) {
-        if let Ok(mut map) = self.workers.lock() {
-            for (_, mut worker) in map.drain() {
+        let workers = self
+            .workers
+            .lock()
+            .map(|mut map| map.drain().map(|(_, w)| w).collect::<Vec<_>>());
+        if let Ok(workers) = workers {
+            for mut worker in workers {
+                self.stop_worker(&worker);
                 let _ = worker.tx.send(WorkerInboundMsg::Terminate);
-                if let Some(th) = worker._thread.take() {
-                    let _ = th.join();
-                }
+                worker._thread.take();
             }
+        }
+    }
+
+    fn stop_worker(&self, worker: &WorkerHandle) {
+        worker.running.store(false, Ordering::Release);
+        if let Ok(isolate) = worker.isolate.lock()
+            && let Some(isolate) = isolate.as_ref()
+        {
+            isolate.terminate_execution();
         }
     }
 }
@@ -308,6 +338,8 @@ fn run_worker_thread(
     rx: Receiver<WorkerInboundMsg>,
     blobs: Arc<Mutex<HashMap<String, String>>>,
     main_tasks: Arc<Mutex<Vec<String>>>,
+    isolate_slot: Arc<Mutex<Option<deno_core::v8::IsolateHandle>>>,
+    is_running: Arc<AtomicBool>,
 ) {
     let tokio_rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -315,12 +347,13 @@ fn run_worker_thread(
         .ok();
     let _guard = tokio_rt.as_ref().map(|r| r.enter());
 
-    let is_running = Arc::new(AtomicBool::new(true));
-
     let mut runtime = deno_core::JsRuntime::new(deno_core::RuntimeOptions {
         extensions: vec![mango_worker_runtime::init()],
         ..Default::default()
     });
+    if let Ok(mut slot) = isolate_slot.lock() {
+        *slot = Some(runtime.v8_isolate().thread_safe_handle());
+    }
 
     runtime.op_state().borrow_mut().put(WorkerState {
         id,
@@ -463,6 +496,7 @@ fn run_worker_thread(
     // Resolve and execute initial worker script
     let initial_code = resolve_script_content(&script_url, &base_url, &blobs);
     match initial_code {
+        _ if !is_running.load(Ordering::Relaxed) => {}
         Ok(code) => {
             if let Err(e) = runtime.execute_script("<worker_script>", code) {
                 let err_msg = serde_json::to_string(&format!("Worker script error: {e}"))

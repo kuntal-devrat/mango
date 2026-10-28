@@ -388,7 +388,6 @@ fn render_html_to_buffer(html: &str, base_dir: Option<&Path>) -> Vec<u32> {
     } else {
         final_dl = dl;
     }
-
     let mut pixels = vec![0x00FFFFFFu32; (VIEWPORT_WIDTH * VIEWPORT_HEIGHT) as usize];
     paint(&final_dl, &mut pixels, VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
     pixels

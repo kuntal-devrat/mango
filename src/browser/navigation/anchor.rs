@@ -152,7 +152,14 @@ impl BrowserChrome {
             }
         }
         if let Some(redirect) = redirect {
-            self.navigate(&redirect);
+            let nav_url = if let Some(base) = &self.base_url {
+                base.resolve(&redirect)
+                    .map(|u| u.to_string())
+                    .unwrap_or(redirect)
+            } else {
+                redirect
+            };
+            self.navigate(&nav_url);
         }
         if let Some(open_req) = open_req {
             let nav_url = if let Some(base) = &self.base_url {

@@ -355,8 +355,18 @@ pub(crate) fn parse_color_str(s: &str) -> Option<Color> {
 }
 
 pub(crate) fn parse_length(val: &str) -> Option<f32> {
-    let s = val.trim().trim_end_matches("px");
-    s.parse::<f32>().ok()
+    parse_length_with_ref(val, 0.0)
+}
+
+pub(crate) fn parse_length_with_ref(val: &str, ref_size: f32) -> Option<f32> {
+    let s = val.trim();
+    if let Some(pct) = s.strip_suffix('%') {
+        let p = pct.trim().parse::<f32>().ok()?;
+        Some((p / 100.0) * ref_size)
+    } else {
+        let s = s.trim_end_matches("px");
+        s.parse::<f32>().ok()
+    }
 }
 
 pub(crate) fn parse_view_box(val: &str) -> Option<(f32, f32, f32, f32)> {
@@ -423,11 +433,20 @@ pub(crate) fn parse_transform(val: &str) -> Option<Transform> {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn get_f32_attr(attrs: &[(String, String)], name: &str) -> Option<f32> {
+    get_f32_attr_with_ref(attrs, name, 0.0)
+}
+
+pub(crate) fn get_f32_attr_with_ref(
+    attrs: &[(String, String)],
+    name: &str,
+    ref_size: f32,
+) -> Option<f32> {
     attrs
         .iter()
         .find(|(k, _)| k.eq_ignore_ascii_case(name))
-        .and_then(|(_, v)| parse_length(v))
+        .and_then(|(_, v)| parse_length_with_ref(v, ref_size))
 }
 
 pub(crate) fn get_str_attr<'a>(attrs: &'a [(String, String)], name: &str) -> Option<&'a str> {
@@ -441,6 +460,8 @@ pub(crate) fn parse_leaf_element(
     name: &str,
     attrs: &[(String, String)],
     cur_state: &SvgRenderState,
+    ref_w: f32,
+    ref_h: f32,
 ) -> Option<SvgNode> {
     let state = apply_attributes_to_state(cur_state.clone(), attrs);
     let tag_name = name.to_ascii_lowercase();
@@ -453,12 +474,12 @@ pub(crate) fn parse_leaf_element(
             }
         }
         "rect" => {
-            let x = get_f32_attr(attrs, "x").unwrap_or(0.0);
-            let y = get_f32_attr(attrs, "y").unwrap_or(0.0);
-            let w = get_f32_attr(attrs, "width").unwrap_or(0.0);
-            let h = get_f32_attr(attrs, "height").unwrap_or(0.0);
-            let rx = get_f32_attr(attrs, "rx").unwrap_or(0.0);
-            let ry = get_f32_attr(attrs, "ry").unwrap_or(rx);
+            let x = get_f32_attr_with_ref(attrs, "x", ref_w).unwrap_or(0.0);
+            let y = get_f32_attr_with_ref(attrs, "y", ref_h).unwrap_or(0.0);
+            let w = get_f32_attr_with_ref(attrs, "width", ref_w).unwrap_or(0.0);
+            let h = get_f32_attr_with_ref(attrs, "height", ref_h).unwrap_or(0.0);
+            let rx = get_f32_attr_with_ref(attrs, "rx", ref_w).unwrap_or(0.0);
+            let ry = get_f32_attr_with_ref(attrs, "ry", ref_h).unwrap_or(rx);
             if w > 0.0 && h > 0.0 {
                 Some(SvgNode::Rect {
                     x,
@@ -474,9 +495,10 @@ pub(crate) fn parse_leaf_element(
             }
         }
         "circle" => {
-            let cx = get_f32_attr(attrs, "cx").unwrap_or(0.0);
-            let cy = get_f32_attr(attrs, "cy").unwrap_or(0.0);
-            let r = get_f32_attr(attrs, "r").unwrap_or(0.0);
+            let cx = get_f32_attr_with_ref(attrs, "cx", ref_w).unwrap_or(0.0);
+            let cy = get_f32_attr_with_ref(attrs, "cy", ref_h).unwrap_or(0.0);
+            let ref_diag = ((ref_w * ref_w + ref_h * ref_h) / 2.0).sqrt();
+            let r = get_f32_attr_with_ref(attrs, "r", ref_diag).unwrap_or(0.0);
             if r > 0.0 {
                 Some(SvgNode::Circle { cx, cy, r, state })
             } else {
@@ -484,10 +506,10 @@ pub(crate) fn parse_leaf_element(
             }
         }
         "ellipse" => {
-            let cx = get_f32_attr(attrs, "cx").unwrap_or(0.0);
-            let cy = get_f32_attr(attrs, "cy").unwrap_or(0.0);
-            let rx = get_f32_attr(attrs, "rx").unwrap_or(0.0);
-            let ry = get_f32_attr(attrs, "ry").unwrap_or(0.0);
+            let cx = get_f32_attr_with_ref(attrs, "cx", ref_w).unwrap_or(0.0);
+            let cy = get_f32_attr_with_ref(attrs, "cy", ref_h).unwrap_or(0.0);
+            let rx = get_f32_attr_with_ref(attrs, "rx", ref_w).unwrap_or(0.0);
+            let ry = get_f32_attr_with_ref(attrs, "ry", ref_h).unwrap_or(0.0);
             if rx > 0.0 && ry > 0.0 {
                 Some(SvgNode::Ellipse {
                     cx,
@@ -501,10 +523,10 @@ pub(crate) fn parse_leaf_element(
             }
         }
         "line" => {
-            let x1 = get_f32_attr(attrs, "x1").unwrap_or(0.0);
-            let y1 = get_f32_attr(attrs, "y1").unwrap_or(0.0);
-            let x2 = get_f32_attr(attrs, "x2").unwrap_or(0.0);
-            let y2 = get_f32_attr(attrs, "y2").unwrap_or(0.0);
+            let x1 = get_f32_attr_with_ref(attrs, "x1", ref_w).unwrap_or(0.0);
+            let y1 = get_f32_attr_with_ref(attrs, "y1", ref_h).unwrap_or(0.0);
+            let x2 = get_f32_attr_with_ref(attrs, "x2", ref_w).unwrap_or(0.0);
+            let y2 = get_f32_attr_with_ref(attrs, "y2", ref_h).unwrap_or(0.0);
             Some(SvgNode::Line {
                 x1,
                 y1,
@@ -535,10 +557,10 @@ pub(crate) fn parse_leaf_element(
                 })
                 .map(|(_, v)| v.clone())
                 .unwrap_or_default();
-            let x = get_f32_attr(attrs, "x").unwrap_or(0.0);
-            let y = get_f32_attr(attrs, "y").unwrap_or(0.0);
-            let width = get_f32_attr(attrs, "width");
-            let height = get_f32_attr(attrs, "height");
+            let x = get_f32_attr_with_ref(attrs, "x", ref_w).unwrap_or(0.0);
+            let y = get_f32_attr_with_ref(attrs, "y", ref_h).unwrap_or(0.0);
+            let width = get_f32_attr_with_ref(attrs, "width", ref_w);
+            let height = get_f32_attr_with_ref(attrs, "height", ref_h);
             let transform = attrs
                 .iter()
                 .find(|(k, _)| k.eq_ignore_ascii_case("transform"))
@@ -554,6 +576,27 @@ pub(crate) fn parse_leaf_element(
             })
         }
         _ => None,
+    }
+}
+
+fn get_cur_ref_dims(
+    container_stack: &[SvgContainer],
+    root_view_box: Option<(f32, f32, f32, f32)>,
+    root_width: Option<f32>,
+    root_height: Option<f32>,
+) -> (f32, f32) {
+    for c in container_stack.iter().rev() {
+        if let SvgContainer::Symbol {
+            view_box: Some(vb), ..
+        } = c
+        {
+            return (vb.2, vb.3);
+        }
+    }
+    if let Some(vb) = root_view_box {
+        (vb.2, vb.3)
+    } else {
+        (root_width.unwrap_or(300.0), root_height.unwrap_or(150.0))
     }
 }
 
@@ -627,7 +670,11 @@ impl SvgDocument {
                         });
                     } else {
                         let cur_state = get_cur_state(&container_stack, &base_state);
-                        if let Some(node) = parse_leaf_element(&tag_name, &attrs, &cur_state) {
+                        let (ref_w, ref_h) =
+                            get_cur_ref_dims(&container_stack, view_box, width, height);
+                        if let Some(node) =
+                            parse_leaf_element(&tag_name, &attrs, &cur_state, ref_w, ref_h)
+                        {
                             if let Some(id) = get_str_attr(&attrs, "id") {
                                 let sym = SvgSymbol {
                                     view_box: None,
@@ -673,7 +720,11 @@ impl SvgDocument {
                         }
                     } else {
                         let cur_state = get_cur_state(&container_stack, &base_state);
-                        if let Some(node) = parse_leaf_element(&tag_name, &attrs, &cur_state) {
+                        let (ref_w, ref_h) =
+                            get_cur_ref_dims(&container_stack, view_box, width, height);
+                        if let Some(node) =
+                            parse_leaf_element(&tag_name, &attrs, &cur_state, ref_w, ref_h)
+                        {
                             if let Some(id) = get_str_attr(&attrs, "id") {
                                 let sym = SvgSymbol {
                                     view_box: None,

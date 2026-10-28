@@ -61,6 +61,9 @@ impl SoftwareCompositor {
             let visible_coords = grid.visible_tile_coords(visible_viewport, 0);
             for coord in visible_coords {
                 if let Some(tile) = grid.get_tile(coord) {
+                    if tile.version == 0 && tile.dirty {
+                        continue;
+                    }
                     let dest_x = coord.col as i32 * tile.width as i32 - int_scroll_x + int_clip_x;
                     let dest_y = coord.row as i32 * tile.height as i32 - int_scroll_y + int_clip_y;
 
