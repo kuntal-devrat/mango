@@ -29,7 +29,7 @@ pub fn build_flex_lines(
     let floored_outer_sizes: Vec<f32> = item_metrics
         .iter()
         .map(|m| {
-            let hypo = m.base_main.clamp(m.min_main, m.max_main);
+            let hypo = m.base_main.clamp(m.min_main, m.max_main.max(m.min_main));
             (hypo + m.pad_main + m.border_main + m.margin_main).max(0.0)
         })
         .collect();
@@ -264,10 +264,10 @@ pub fn resolve_flexible_lengths(
                 let m = &item_metrics[idx];
                 if initial_free >= 0.0 && m.flex_grow <= 0.0 {
                     is_frozen[i] = true;
-                    item_sizes[i] = m.base_main.clamp(m.min_main, m.max_main);
+                    item_sizes[i] = m.base_main.clamp(m.min_main, m.max_main.max(m.min_main));
                 } else if initial_free < 0.0 && m.flex_shrink <= 0.0 {
                     is_frozen[i] = true;
-                    item_sizes[i] = m.base_main.clamp(m.min_main, m.max_main);
+                    item_sizes[i] = m.base_main.clamp(m.min_main, m.max_main.max(m.min_main));
                 }
             }
 
@@ -367,7 +367,7 @@ pub fn resolve_flexible_lengths(
 
             for (i, &idx) in line.iter().enumerate() {
                 let (min_m, max_m) = (item_metrics[idx].min_main, item_metrics[idx].max_main);
-                item_metrics[idx].final_main = item_sizes[i].clamp(min_m, max_m);
+                item_metrics[idx].final_main = item_sizes[i].clamp(min_m, max_m.max(min_m));
             }
         }
 

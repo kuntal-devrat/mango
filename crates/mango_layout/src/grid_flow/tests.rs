@@ -537,3 +537,28 @@ fn test_grid_min_max_sizing_constraints() {
     // Height clamped to min-height 200
     assert_eq!(container.dimensions.content.height(), 200.0);
 }
+
+#[test]
+fn test_flex_min_greater_than_max_no_panic() {
+    let mut container = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+    let mut c_style = ComputedStyle::default();
+    c_style.display = Display::Flex;
+    c_style.width = Length::Px(500.0);
+    c_style.height = Length::Px(200.0);
+    container.style = Some(c_style.into());
+
+    let mut item = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+    let mut i_style = ComputedStyle::default();
+    i_style.min_width = Length::Px(42.0);
+    i_style.max_width = Length::Px(20.0);
+    item.style = Some(i_style.into());
+    container.children.push(item);
+
+    let mut containing_block = Dimensions::default();
+    containing_block.content = Rect::new(0.0, 0.0, 800.0, 800.0);
+    let mut float_ctx = FloatContext::new();
+
+    // Must not panic with min > max in clamp; min-width wins per CSS Flexbox §4.5
+    crate::flex_flow::layout_flex(&mut container, &containing_block, &mut float_ctx);
+    assert!(container.children[0].dimensions.content.width() >= 42.0);
+}

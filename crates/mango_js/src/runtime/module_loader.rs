@@ -107,7 +107,12 @@ impl ModuleLoader for MangoModuleLoader {
             specifier.to_string()
         };
 
-        let ref_url = if referrer.is_empty() || referrer == "." || referrer == "about:blank" {
+        let ref_url = if referrer.is_empty()
+            || referrer == "."
+            || referrer == "about:blank"
+            || referrer.starts_with('<')
+            || !referrer.contains("://")
+        {
             &self.page_url
         } else {
             referrer
@@ -116,6 +121,11 @@ impl ModuleLoader for MangoModuleLoader {
         match resolve_import(&mapped_specifier, ref_url) {
             Ok(spec) => Ok(spec),
             Err(e) => {
+                if ref_url != self.page_url {
+                    if let Ok(spec) = resolve_import(&mapped_specifier, &self.page_url) {
+                        return Ok(spec);
+                    }
+                }
                 if !mapped_specifier.starts_with('/')
                     && !mapped_specifier.starts_with("./")
                     && !mapped_specifier.starts_with("../")
@@ -223,5 +233,28 @@ impl ModuleLoader for MangoModuleLoader {
                 spec.scheme()
             ))))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use deno_core::ResolutionKind;
+
+    #[test]
+    fn test_module_loader_resolves_with_script_referrer() {
+        let loader =
+            MangoModuleLoader::new("https://chatgpt.com/", Arc::new(Mutex::new(HashMap::new())));
+        let res = loader.resolve(
+            "/unauth-mweb/assets/octane-signal-bootstrap.js",
+            "<script>",
+            ResolutionKind::Import,
+        );
+        assert!(res.is_ok());
+        let spec = res.unwrap();
+        assert_eq!(
+            spec.as_str(),
+            "https://chatgpt.com/unauth-mweb/assets/octane-signal-bootstrap.js"
+        );
     }
 }

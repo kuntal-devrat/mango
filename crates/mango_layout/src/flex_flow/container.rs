@@ -568,7 +568,7 @@ pub fn layout_flex(
 
     let sum_hypothetical: f32 = item_metrics
         .iter()
-        .map(|m| m.base_main.clamp(m.min_main, m.max_main))
+        .map(|m| m.base_main.clamp(m.min_main, m.max_main.max(m.min_main)))
         .sum();
     let is_container_main_definite = if is_row {
         true

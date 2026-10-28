@@ -252,7 +252,7 @@ pub fn measure_item_metrics(
             final_main: if is_collapsed {
                 0.0
             } else {
-                base_main.clamp(min_main, max_main)
+                base_main.clamp(min_main, max_main.max(min_main))
             },
             min_main,
             max_main,

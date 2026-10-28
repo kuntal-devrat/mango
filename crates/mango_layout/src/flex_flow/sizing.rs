@@ -652,5 +652,10 @@ pub fn resolve_item_base_and_limits(
         }
     }
 
+    // Per CSS Flexbox §4.5 & CSS 2.1 §10.4:
+    // If the minimum main size is greater than the maximum main size,
+    // the maximum main size is set to the minimum main size.
+    let max_main = max_main.max(min_main);
+
     (base_main, min_main, max_main)
 }
