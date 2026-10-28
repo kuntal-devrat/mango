@@ -208,8 +208,7 @@ impl BrowserChrome {
 
     /// Returns whether any CSS transitions, animations, or smooth scrolling are active.
     pub fn is_animating(&self) -> bool {
-        self.anim_state.is_animating()
-            || self.smooth_scroll.as_ref().is_some_and(|s| s.active)
+        self.anim_state.is_animating() || self.smooth_scroll.as_ref().is_some_and(|s| s.active)
     }
 
     /// Returns a reference to the active CSS animation state.

@@ -537,7 +537,10 @@ fn test_hit_testing_z_index_stacking_order() {
     parent.children.push(child2);
 
     // Hit-test at (50, 50) must hit Child 1 (z-index 10) because it paints above Child 2
-    assert_eq!(parent.hit_test(Point::new(50.0, 50.0)), Some(NodeId::from_raw(10)));
+    assert_eq!(
+        parent.hit_test(Point::new(50.0, 50.0)),
+        Some(NodeId::from_raw(10))
+    );
 }
 
 #[test]
@@ -557,7 +560,10 @@ fn test_hit_testing_pointer_events_none() {
     parent.children.push(child);
 
     // pointer-events: none on child passes hit through to parent
-    assert_eq!(parent.hit_test(Point::new(50.0, 50.0)), Some(NodeId::from_raw(1)));
+    assert_eq!(
+        parent.hit_test(Point::new(50.0, 50.0)),
+        Some(NodeId::from_raw(1))
+    );
     assert_eq!(parent.hit_test_link(Point::new(50.0, 50.0)), None);
 }
 
@@ -575,7 +581,10 @@ fn test_hit_testing_border_radius_corner_clipping() {
     rounded_box.dimensions.content = Rect::new(0.0, 0.0, 100.0, 100.0);
 
     // Center (50, 50) is inside circle -> hits
-    assert_eq!(rounded_box.hit_test(Point::new(50.0, 50.0)), Some(NodeId::from_raw(42)));
+    assert_eq!(
+        rounded_box.hit_test(Point::new(50.0, 50.0)),
+        Some(NodeId::from_raw(42))
+    );
 
     // Corner (2, 2) is within [0, 100]x[0, 100] bounding rect, but outside rounded corner -> returns None
     assert_eq!(rounded_box.hit_test(Point::new(2.0, 2.0)), None);
@@ -596,7 +605,10 @@ fn test_hit_testing_clip_path_clipping() {
     clipped_box.dimensions.content = Rect::new(0.0, 0.0, 100.0, 100.0);
 
     // Inside circle (50, 50) -> hits
-    assert_eq!(clipped_box.hit_test(Point::new(50.0, 50.0)), Some(NodeId::from_raw(99)));
+    assert_eq!(
+        clipped_box.hit_test(Point::new(50.0, 50.0)),
+        Some(NodeId::from_raw(99))
+    );
 
     // Outside circle (10, 10) -> clipped out, returns None
     assert_eq!(clipped_box.hit_test(Point::new(10.0, 10.0)), None);
@@ -622,7 +634,10 @@ fn test_hit_testing_negative_z_index_on_non_stacking_context() {
 
     // Parent is NOT a stacking context, so parent's block background is painted ON TOP OF
     // the negative z-index child. Hit-test at (50, 50) must return the parent (NodeId 1).
-    assert_eq!(parent.hit_test(Point::new(50.0, 50.0)), Some(NodeId::from_raw(1)));
+    assert_eq!(
+        parent.hit_test(Point::new(50.0, 50.0)),
+        Some(NodeId::from_raw(1))
+    );
 }
 
 #[test]
@@ -648,7 +663,10 @@ fn test_hit_testing_negative_z_index_on_stacking_context() {
 
     // Parent IS a stacking context, so the negative z-index child is painted ON TOP OF
     // the parent's background. Hit-test at (50, 50) must return the child (NodeId 2).
-    assert_eq!(parent.hit_test(Point::new(50.0, 50.0)), Some(NodeId::from_raw(2)));
+    assert_eq!(
+        parent.hit_test(Point::new(50.0, 50.0)),
+        Some(NodeId::from_raw(2))
+    );
 }
 
 #[test]
@@ -668,7 +686,10 @@ fn test_hit_testing_clip_rect_property() {
     clipped_box.dimensions.content = Rect::new(0.0, 0.0, 100.0, 100.0);
 
     // Inside clip rect: (25, 25) -> hits
-    assert_eq!(clipped_box.hit_test(Point::new(25.0, 25.0)), Some(NodeId::from_raw(77)));
+    assert_eq!(
+        clipped_box.hit_test(Point::new(25.0, 25.0)),
+        Some(NodeId::from_raw(77))
+    );
 
     // Outside clip rect: (5, 5) is within 100x100 content, but outside clip: rect(10, 50, 50, 10) -> None
     assert_eq!(clipped_box.hit_test(Point::new(5.0, 5.0)), None);

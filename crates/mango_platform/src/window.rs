@@ -195,7 +195,9 @@ impl WindowSurface {
         match self {
             Self::Gpu { compositor, window } => {
                 if let Err(err) = compositor.render_display_list(dl, bg_color) {
-                    log::warn!("GPU presentation failed; switching to software presentation: {err}");
+                    log::warn!(
+                        "GPU presentation failed; switching to software presentation: {err}"
+                    );
                     let win = window.clone();
                     // Explicitly drop GPU compositor and its swapchain/surface first
                     let old_state = std::mem::replace(self, Self::Transitioning);

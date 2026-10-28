@@ -163,7 +163,10 @@ fn test_document_current_script_lifecycle() {
     // Outside of script tag execution, document.currentScript must reset to null per W3C specification
     if let Some(ref mut rt) = browser.js_runtime {
         let after = rt.eval("document.currentScript === null").unwrap();
-        assert_eq!(after, "true", "document.currentScript should reset to null after script completes");
+        assert_eq!(
+            after, "true",
+            "document.currentScript should reset to null after script completes"
+        );
     }
 }
 
@@ -634,7 +637,10 @@ fn test_heavy_js_keeps_ui_scrolling_and_tab_switching_uninterrupted() {
     browser.cached_scrollable_height = 5000.0;
     let start_ui = Instant::now();
     browser.handle_wheel_scroll_smooth(0.0, -10.0);
-    assert!(browser.smooth_scroll.is_some(), "Smooth scroll animation must start immediately");
+    assert!(
+        browser.smooth_scroll.is_some(),
+        "Smooth scroll animation must start immediately"
+    );
 
     let mut frames_rendered = 0;
     while start_ui.elapsed() < Duration::from_millis(250) {
@@ -678,8 +684,6 @@ fn test_heavy_js_keeps_ui_scrolling_and_tab_switching_uninterrupted() {
         r.shutdown();
     }
 }
-
-
 
 #[test]
 fn test_isolated_renderer_heavy_js_does_not_block_ui_thread() {
@@ -751,17 +755,23 @@ fn test_async_web_font_reflow_in_flush_pending_layout() {
 
     // Initial flush settles any pending layout
     let _ = browser.flush_pending_layout();
-    assert!(!browser.flush_pending_layout(), "No relayout when font epoch has not changed");
+    assert!(
+        !browser.flush_pending_layout(),
+        "No relayout when font epoch has not changed"
+    );
 
     // Simulate background web font completion
     mango_render::bump_web_font_epoch();
 
     // flush_pending_layout must detect epoch increment and execute relayout
-    assert!(browser.flush_pending_layout(), "flush_pending_layout must trigger relayout on web_font_epoch bump");
+    assert!(
+        browser.flush_pending_layout(),
+        "flush_pending_layout must trigger relayout on web_font_epoch bump"
+    );
 
     // After flushing, epoch is up to date, so next flush returns false
-    assert!(!browser.flush_pending_layout(), "Layout is clean after reflow");
+    assert!(
+        !browser.flush_pending_layout(),
+        "Layout is clean after reflow"
+    );
 }
-
-
-

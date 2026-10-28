@@ -71,10 +71,10 @@ fn collect_inline_atoms_internal(
     let current_bidi_override = match style.unicode_bidi {
         mango_css::values::UnicodeBidi::BidiOverride
         | mango_css::values::UnicodeBidi::IsolateOverride => Some(style.unicode_bidi),
-        mango_css::values::UnicodeBidi::Isolate
-        | mango_css::values::UnicodeBidi::Plaintext => None,
-        mango_css::values::UnicodeBidi::Normal
-        | mango_css::values::UnicodeBidi::Embed => active_bidi_override,
+        mango_css::values::UnicodeBidi::Isolate | mango_css::values::UnicodeBidi::Plaintext => None,
+        mango_css::values::UnicodeBidi::Normal | mango_css::values::UnicodeBidi::Embed => {
+            active_bidi_override
+        }
     };
 
     if let Some(pos_style) = next_pos_style {
@@ -138,7 +138,7 @@ fn collect_inline_atoms_internal(
 
     if box_node.tag_name.as_deref() == Some("br") {
         out.push(InlineAtom {
-            kind: InlineAtomKind::LineBreak,
+            kind: InlineAtomKind::LineBreak { is_br: true },
             style: style.clone(),
             width: 0.0,
             height: line_height,
@@ -275,7 +275,7 @@ fn collect_inline_atoms_internal(
                     push_word(std::mem::take(&mut current_word), out);
                     if preserve_newlines {
                         out.push(InlineAtom {
-                            kind: InlineAtomKind::LineBreak,
+                            kind: InlineAtomKind::LineBreak { is_br: false },
                             style: style.clone(),
                             width: 0.0,
                             height: line_height,
@@ -340,7 +340,9 @@ fn collect_inline_atoms_internal(
                             .iter()
                             .rev()
                             .find(|a| !matches!(a.kind, InlineAtomKind::OutOfFlow(_)))
-                            .map(|a| !a.is_space() && !matches!(a.kind, InlineAtomKind::LineBreak))
+                            .map(|a| {
+                                !a.is_space() && !matches!(a.kind, InlineAtomKind::LineBreak { .. })
+                            })
                             .unwrap_or(false)
                     {
                         let space_char = if ch == '\t' { "    " } else { " " };
@@ -578,10 +580,13 @@ fn collect_inline_atoms_internal(
                 }
             }
             if !out.is_empty()
-                && !matches!(out.last().map(|a| &a.kind), Some(InlineAtomKind::LineBreak))
+                && !matches!(
+                    out.last().map(|a| &a.kind),
+                    Some(InlineAtomKind::LineBreak { .. })
+                )
             {
                 out.push(InlineAtom {
-                    kind: InlineAtomKind::LineBreak,
+                    kind: InlineAtomKind::LineBreak { is_br: false },
                     style: style.clone(),
                     width: 0.0,
                     height: 0.0,
@@ -616,7 +621,7 @@ fn collect_inline_atoms_internal(
             });
 
             out.push(InlineAtom {
-                kind: InlineAtomKind::LineBreak,
+                kind: InlineAtomKind::LineBreak { is_br: false },
                 style: style.clone(),
                 width: 0.0,
                 height: 0.0,

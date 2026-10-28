@@ -229,7 +229,6 @@ pub fn build_box_tree_with_maps(
         collect_child_boxes_with_maps(child, &mut raw_children, maps);
     }
 
-
     let is_flex = styled_node.style.display == Display::Flex
         || styled_node.style.display == Display::InlineFlex;
     let is_grid = styled_node.style.display == Display::Grid

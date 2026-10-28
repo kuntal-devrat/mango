@@ -193,7 +193,11 @@ fn measure_box_intrinsic_widths_internal(
         let mut max_line_w = 0.0f32;
 
         for raw_line in text.split('\n') {
-            let line = if preserves_spaces { raw_line } else { raw_line.trim() };
+            let line = if preserves_spaces {
+                raw_line
+            } else {
+                raw_line.trim()
+            };
             let line_w = crate::inline_flow::measure_text_width_with_style_and_spacing(
                 line,
                 font_size,

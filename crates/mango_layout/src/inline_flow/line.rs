@@ -630,7 +630,7 @@ pub(crate) fn finalize_line(
                 InlineAtomKind::Spacing => {
                     flush_text_runs(&mut runs, out);
                 }
-                InlineAtomKind::LineBreak => {
+                InlineAtomKind::LineBreak { .. } => {
                     flush_text_runs(&mut runs, out);
                 }
                 InlineAtomKind::OutOfFlow(oof) => {

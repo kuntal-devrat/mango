@@ -712,8 +712,8 @@ fn scan_es_module_imports(source: &str) -> Vec<String> {
                         }
                     }
                 }
-            } else if trimmed.starts_with("import") {
-                let rest = trimmed[6..].trim();
+            } else if let Some(rest) = trimmed.strip_prefix("import") {
+                let rest = rest.trim();
                 if let Some(q) = rest.chars().next() {
                     if q == '\'' || q == '"' {
                         if let Some(end) = rest[1..].find(q) {

@@ -237,43 +237,27 @@ pub fn compute_justify_content_spacing(
             }
             JustifyContent::Left => {
                 let off = if is_row {
-                    if is_reverse {
-                        remaining_free
-                    } else {
-                        0.0
-                    }
+                    if is_reverse { remaining_free } else { 0.0 }
                 } else {
                     let is_dir_reverse = matches!(
                         style.flex_direction,
                         mango_css::values::FlexDirection::RowReverse
                             | mango_css::values::FlexDirection::ColumnReverse
                     );
-                    if is_dir_reverse {
-                        remaining_free
-                    } else {
-                        0.0
-                    }
+                    if is_dir_reverse { remaining_free } else { 0.0 }
                 };
                 (off, main_gap)
             }
             JustifyContent::Right => {
                 let off = if is_row {
-                    if is_reverse {
-                        0.0
-                    } else {
-                        remaining_free
-                    }
+                    if is_reverse { 0.0 } else { remaining_free }
                 } else {
                     let is_dir_reverse = matches!(
                         style.flex_direction,
                         mango_css::values::FlexDirection::RowReverse
                             | mango_css::values::FlexDirection::ColumnReverse
                     );
-                    if is_dir_reverse {
-                        remaining_free
-                    } else {
-                        0.0
-                    }
+                    if is_dir_reverse { remaining_free } else { 0.0 }
                 };
                 (off, main_gap)
             }

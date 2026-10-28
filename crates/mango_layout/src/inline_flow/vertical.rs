@@ -181,7 +181,7 @@ pub(crate) fn layout_vertical_inline_children(
     };
 
     for atom in atoms {
-        if matches!(atom.kind, InlineAtomKind::LineBreak) {
+        if matches!(atom.kind, InlineAtomKind::LineBreak { .. }) {
             strip_trailing_space(&mut cur_line_boxes, &mut cur_y);
             lines.push(VertLine {
                 boxes: std::mem::take(&mut cur_line_boxes),

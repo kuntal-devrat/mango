@@ -73,7 +73,7 @@ impl MangoModuleLoader {
             page_url: page_url.to_string(),
             import_maps,
             client: Arc::new(mango_net::HttpClient::with_timeout(
-                std::time::Duration::from_millis(500),
+                std::time::Duration::from_secs(30),
             )),
             cache: Arc::new(Mutex::new(ModuleCache::new())),
             module_loads: Arc::new(std::sync::atomic::AtomicUsize::new(0)),

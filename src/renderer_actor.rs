@@ -155,18 +155,29 @@ impl RendererActorHandle {
     /// Updates the compositor scroll offset asynchronously without blocking the UI thread.
     pub fn update_scroll(&self, scroll_y: f32) {
         let _ = self.cmd_tx.send(RendererCommand::ScrollOffset { scroll_y });
-        let _ = self.ipc_endpoint.send(&IpcMessage::ScrollOffset { scroll_y });
+        let _ = self
+            .ipc_endpoint
+            .send(&IpcMessage::ScrollOffset { scroll_y });
     }
 
     /// Notifies the isolated renderer of viewport dimensions change.
     pub fn resize(&self, width: f32, height: f32) {
-        let _ = self.cmd_tx.send(RendererCommand::ResizeViewport { width, height });
-        let _ = self.ipc_endpoint.send(&IpcMessage::ViewportResize { width, height });
+        let _ = self
+            .cmd_tx
+            .send(RendererCommand::ResizeViewport { width, height });
+        let _ = self
+            .ipc_endpoint
+            .send(&IpcMessage::ViewportResize { width, height });
     }
 
     /// Dispatches an input click event to the isolated renderer.
     pub fn input_click(&self, x: f32, y: f32, button: MouseButton, state: KeyState) {
-        let _ = self.cmd_tx.send(RendererCommand::InputClick { x, y, button, state });
+        let _ = self.cmd_tx.send(RendererCommand::InputClick {
+            x,
+            y,
+            button,
+            state,
+        });
     }
 
     /// Dispatches a keyboard event to the isolated renderer.
@@ -197,9 +208,10 @@ impl Drop for RendererActorHandle {
 }
 
 /// Helper function to calculate proportional watchdog timeouts for script execution.
+/// Aligns with Chromium's 30-second unresponsive execution watchdog.
 fn script_timeout(code_len: usize) -> Duration {
-    let extra_ms = (code_len / 10_000) as u64 * 20;
-    Duration::from_millis(500 + extra_ms).min(Duration::from_millis(2500))
+    let extra_secs = (code_len / 1_000_000) as u64 * 5;
+    Duration::from_secs(30 + extra_secs).min(Duration::from_secs(60))
 }
 
 /// Collects `<script type="importmap">` definitions from document.
@@ -323,7 +335,11 @@ fn run_renderer_loop(
                 } else {
                     let mut s = Vec::new();
                     let doc_ref = rt.document_ref();
-                    crate::browser::navigation::pipeline::collect_scripts(&doc_ref, doc_ref.root(), &mut s);
+                    crate::browser::navigation::pipeline::collect_scripts(
+                        &doc_ref,
+                        doc_ref.root(),
+                        &mut s,
+                    );
                     s
                 };
 
@@ -340,7 +356,12 @@ fn run_renderer_loop(
 
                 // Run synchronous scripts on this isolated thread
                 for s in sync_scripts {
-                    run_single_script(&s, &mut rt, current_base_url.as_ref(), cache_ref.as_ref().map(|a| a.as_ref()));
+                    run_single_script(
+                        &s,
+                        &mut rt,
+                        current_base_url.as_ref(),
+                        cache_ref.as_ref().map(|a| a.as_ref()),
+                    );
                 }
 
                 // Queue deferred / async scripts
@@ -357,7 +378,10 @@ fn run_renderer_loop(
 
                 // Initial layout & display list calculation
                 let doc_clone = rt.document_ref().clone();
-                let title = rt.eval("document.title").ok().filter(|s| !s.is_empty())
+                let title = rt
+                    .eval("document.title")
+                    .ok()
+                    .filter(|s| !s.is_empty())
                     .or_else(|| crate::browser::navigation::resources::extract_title(&doc_clone));
                 let (root, display_list, scrollable_height, canvas_bg) =
                     compute_layout_snapshot(&doc_clone, &current_stylesheets, viewport_size);
@@ -397,24 +421,35 @@ fn run_renderer_loop(
                         });
                     } else if rt.is_dom_dirty() {
                         let doc_clone = rt.document_ref().clone();
-                        let title = rt.eval("document.title").ok().filter(|s| !s.is_empty())
-                            .or_else(|| crate::browser::navigation::resources::extract_title(&doc_clone));
+                        let title = rt
+                            .eval("document.title")
+                            .ok()
+                            .filter(|s| !s.is_empty())
+                            .or_else(|| {
+                                crate::browser::navigation::resources::extract_title(&doc_clone)
+                            });
                         let (root, display_list, scrollable_height, canvas_bg) =
-                            compute_layout_snapshot(&doc_clone, &current_stylesheets, viewport_size);
+                            compute_layout_snapshot(
+                                &doc_clone,
+                                &current_stylesheets,
+                                viewport_size,
+                            );
 
                         frame_seq = frame_seq.wrapping_add(1);
-                        let _ = result_tx.send(RendererResult::FrameReady(Box::new(RenderFramePayload {
-                            frame_id: frame_seq,
-                            generation: current_generation,
-                            display_list,
-                            scrollable_height,
-                            title,
-                            canvas_bg,
-                            root_box: Some(root),
-                            style_snapshot: HashMap::new(),
-                            focused_control: None,
-                            doc_mirror: Some(doc_clone),
-                        })));
+                        let _ = result_tx.send(RendererResult::FrameReady(Box::new(
+                            RenderFramePayload {
+                                frame_id: frame_seq,
+                                generation: current_generation,
+                                display_list,
+                                scrollable_height,
+                                title,
+                                canvas_bg,
+                                root_box: Some(root),
+                                style_snapshot: HashMap::new(),
+                                focused_control: None,
+                                doc_mirror: Some(doc_clone),
+                            },
+                        )));
                     }
                     is_busy.store(false, Ordering::Release);
                 }
@@ -437,42 +472,19 @@ fn run_renderer_loop(
                         "if (typeof window !== 'undefined') {{ window.innerWidth = {width}; window.innerHeight = {height}; if (typeof window.dispatchEvent === 'function') window.dispatchEvent(new Event('resize')); }}"
                     ));
                     let doc_clone = rt.document_ref().clone();
-                    let title = rt.eval("document.title").ok().filter(|s| !s.is_empty())
-                        .or_else(|| crate::browser::navigation::resources::extract_title(&doc_clone));
+                    let title = rt
+                        .eval("document.title")
+                        .ok()
+                        .filter(|s| !s.is_empty())
+                        .or_else(|| {
+                            crate::browser::navigation::resources::extract_title(&doc_clone)
+                        });
                     let (root, display_list, scrollable_height, canvas_bg) =
                         compute_layout_snapshot(&doc_clone, &current_stylesheets, viewport_size);
 
                     frame_seq = frame_seq.wrapping_add(1);
-                    let _ = result_tx.send(RendererResult::FrameReady(Box::new(RenderFramePayload {
-                        frame_id: frame_seq,
-                        generation: current_generation,
-                        display_list,
-                        scrollable_height,
-                        title,
-                        canvas_bg,
-                        root_box: Some(root),
-                        style_snapshot: HashMap::new(),
-                        focused_control: None,
-                        doc_mirror: Some(doc_clone),
-                    })));
-                    is_busy.store(false, Ordering::Release);
-                }
-            }
-
-            Ok(RendererCommand::InputClick { x, y, button: _, state: _ }) => {
-                if let Some(ref mut rt) = js_rt {
-                    is_busy.store(true, Ordering::Release);
-                    let _ = rt.execute_script(&format!(
-                        "if (typeof document !== 'undefined') {{ var ev = new MouseEvent('click', {{ clientX: {x}, clientY: {y}, bubbles: true }}); document.dispatchEvent(ev); }}"
-                    ));
-                    if rt.is_dom_dirty() {
-                        let doc_clone = rt.document_ref().clone();
-                        let title = crate::browser::navigation::resources::extract_title(&doc_clone);
-                        let (root, display_list, scrollable_height, canvas_bg) =
-                            compute_layout_snapshot(&doc_clone, &current_stylesheets, viewport_size);
-
-                        frame_seq = frame_seq.wrapping_add(1);
-                        let _ = result_tx.send(RendererResult::FrameReady(Box::new(RenderFramePayload {
+                    let _ =
+                        result_tx.send(RendererResult::FrameReady(Box::new(RenderFramePayload {
                             frame_id: frame_seq,
                             generation: current_generation,
                             display_list,
@@ -484,6 +496,47 @@ fn run_renderer_loop(
                             focused_control: None,
                             doc_mirror: Some(doc_clone),
                         })));
+                    is_busy.store(false, Ordering::Release);
+                }
+            }
+
+            Ok(RendererCommand::InputClick {
+                x,
+                y,
+                button: _,
+                state: _,
+            }) => {
+                if let Some(ref mut rt) = js_rt {
+                    is_busy.store(true, Ordering::Release);
+                    let _ = rt.execute_script(&format!(
+                        "if (typeof document !== 'undefined') {{ var ev = new MouseEvent('click', {{ clientX: {x}, clientY: {y}, bubbles: true }}); document.dispatchEvent(ev); }}"
+                    ));
+                    if rt.is_dom_dirty() {
+                        let doc_clone = rt.document_ref().clone();
+                        let title =
+                            crate::browser::navigation::resources::extract_title(&doc_clone);
+                        let (root, display_list, scrollable_height, canvas_bg) =
+                            compute_layout_snapshot(
+                                &doc_clone,
+                                &current_stylesheets,
+                                viewport_size,
+                            );
+
+                        frame_seq = frame_seq.wrapping_add(1);
+                        let _ = result_tx.send(RendererResult::FrameReady(Box::new(
+                            RenderFramePayload {
+                                frame_id: frame_seq,
+                                generation: current_generation,
+                                display_list,
+                                scrollable_height,
+                                title,
+                                canvas_bg,
+                                root_box: Some(root),
+                                style_snapshot: HashMap::new(),
+                                focused_control: None,
+                                doc_mirror: Some(doc_clone),
+                            },
+                        )));
                     }
                     is_busy.store(false, Ordering::Release);
                 }
@@ -508,7 +561,12 @@ fn run_renderer_loop(
                     // 1. Run queued deferred/async scripts
                     if let Some(scheduled) = pending_scripts.pop_front() {
                         is_busy.store(true, Ordering::Release);
-                        run_single_script(&scheduled, rt, current_base_url.as_ref(), cache_ref.as_ref().map(|a| a.as_ref()));
+                        run_single_script(
+                            &scheduled,
+                            rt,
+                            current_base_url.as_ref(),
+                            cache_ref.as_ref().map(|a| a.as_ref()),
+                        );
                         if pending_scripts.is_empty() {
                             let _ = rt.dispatch_dom_content_loaded();
                             let _ = rt.dispatch_load();
@@ -536,10 +594,18 @@ fn run_renderer_loop(
                     // 4. Drain console messages
                     for msg in rt.take_console_messages() {
                         let lvl = match msg.level {
-                            mango_js::console::ConsoleLevel::Log => crate::devtools::ConsoleLevel::Log,
-                            mango_js::console::ConsoleLevel::Info => crate::devtools::ConsoleLevel::Info,
-                            mango_js::console::ConsoleLevel::Warn => crate::devtools::ConsoleLevel::Warn,
-                            mango_js::console::ConsoleLevel::Error => crate::devtools::ConsoleLevel::Error,
+                            mango_js::console::ConsoleLevel::Log => {
+                                crate::devtools::ConsoleLevel::Log
+                            }
+                            mango_js::console::ConsoleLevel::Info => {
+                                crate::devtools::ConsoleLevel::Info
+                            }
+                            mango_js::console::ConsoleLevel::Warn => {
+                                crate::devtools::ConsoleLevel::Warn
+                            }
+                            mango_js::console::ConsoleLevel::Error => {
+                                crate::devtools::ConsoleLevel::Error
+                            }
                         };
                         let _ = result_tx.send(RendererResult::ConsoleMessage {
                             level: lvl,
@@ -554,24 +620,35 @@ fn run_renderer_loop(
                     // 5. If DOM mutated, re-compute layout and emit FrameReady
                     if mutated && rt.is_dom_dirty() {
                         let doc_clone = rt.document_ref().clone();
-                        let title = rt.eval("document.title").ok().filter(|s| !s.is_empty())
-                            .or_else(|| crate::browser::navigation::resources::extract_title(&doc_clone));
+                        let title = rt
+                            .eval("document.title")
+                            .ok()
+                            .filter(|s| !s.is_empty())
+                            .or_else(|| {
+                                crate::browser::navigation::resources::extract_title(&doc_clone)
+                            });
                         let (root, display_list, scrollable_height, canvas_bg) =
-                            compute_layout_snapshot(&doc_clone, &current_stylesheets, viewport_size);
+                            compute_layout_snapshot(
+                                &doc_clone,
+                                &current_stylesheets,
+                                viewport_size,
+                            );
 
                         frame_seq = frame_seq.wrapping_add(1);
-                        let _ = result_tx.send(RendererResult::FrameReady(Box::new(RenderFramePayload {
-                            frame_id: frame_seq,
-                            generation: current_generation,
-                            display_list,
-                            scrollable_height,
-                            title,
-                            canvas_bg,
-                            root_box: Some(root),
-                            style_snapshot: HashMap::new(),
-                            focused_control: None,
-                            doc_mirror: Some(doc_clone),
-                        })));
+                        let _ = result_tx.send(RendererResult::FrameReady(Box::new(
+                            RenderFramePayload {
+                                frame_id: frame_seq,
+                                generation: current_generation,
+                                display_list,
+                                scrollable_height,
+                                title,
+                                canvas_bg,
+                                root_box: Some(root),
+                                style_snapshot: HashMap::new(),
+                                focused_control: None,
+                                doc_mirror: Some(doc_clone),
+                            },
+                        )));
                     }
 
                     is_busy.store(false, Ordering::Release);
@@ -617,7 +694,9 @@ fn run_single_script(
     }
 
     match script {
-        ScriptToRun::Inline { code, is_module, .. } => {
+        ScriptToRun::Inline {
+            code, is_module, ..
+        } => {
             let to = script_timeout(code.len());
             let res = if *is_module {
                 rt.execute_module_with_timeout(code, to)
@@ -628,7 +707,12 @@ fn run_single_script(
                 log::warn!("Isolated renderer inline script error: {e}");
             }
         }
-        ScriptToRun::Preloaded { code, src, is_module, .. } => {
+        ScriptToRun::Preloaded {
+            code,
+            src,
+            is_module,
+            ..
+        } => {
             let to = script_timeout(code.len());
             let script_name = base_url
                 .and_then(|b| b.resolve(src).ok())
@@ -662,7 +746,8 @@ fn run_single_script(
             };
             let key = resolved.to_string();
             let script_code = if let Some(c) = cache {
-                c.get(&key).map(|entry| String::from_utf8_lossy(&entry.body).into_owned())
+                c.get(&key)
+                    .map(|entry| String::from_utf8_lossy(&entry.body).into_owned())
             } else {
                 None
             };

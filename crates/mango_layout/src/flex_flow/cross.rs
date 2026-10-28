@@ -89,7 +89,8 @@ pub fn resolve_item_cross_size(
             && !has_cross_auto_margin
             && container_height > 0.0
         {
-            let mut stretched = (container_height - pad_cross - border_cross - margin_cross.max(0.0)).max(0.0);
+            let mut stretched =
+                (container_height - pad_cross - border_cross - margin_cross.max(0.0)).max(0.0);
             if child_style.max_height != Length::Auto {
                 let max_h = child_style.max_height.to_px_with_viewport(
                     c_fs,
@@ -169,9 +170,7 @@ pub fn resolve_item_cross_size(
                         *intrinsic_height
                     }
                 }
-                _ if let Some(fc_h) = super::sizing::form_control_intrinsic_height(child) => {
-                    fc_h
-                }
+                _ if let Some(fc_h) = super::sizing::form_control_intrinsic_height(child) => fc_h,
                 _ => {
                     let item_w = if explicit_main > 0.0 {
                         explicit_main
@@ -370,7 +369,8 @@ pub fn resolve_item_cross_size(
 
     // Clamp cross size by min/max cross constraints
     if is_row {
-        let is_max_h_pct_indefinite = child_style.max_height.has_percent() && container_height <= 0.0;
+        let is_max_h_pct_indefinite =
+            child_style.max_height.has_percent() && container_height <= 0.0;
         if child_style.max_height != Length::Auto && !is_max_h_pct_indefinite {
             let max_h = child_style.max_height.to_px_with_viewport(
                 c_fs,

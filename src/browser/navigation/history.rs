@@ -331,78 +331,128 @@ impl BrowserChrome {
         // the background pipeline (`prepare_document_pipeline`); blocking the
         // UI on a network fetch here would freeze the page.
         let script_timeout = |code_len: usize| -> std::time::Duration {
-            let extra_ms = (code_len / 10_000) as u64 * 20;
-            std::time::Duration::from_millis(500 + extra_ms)
-                .min(std::time::Duration::from_millis(2500))
+            let extra_secs = (code_len / 1_000_000) as u64 * 5;
+            std::time::Duration::from_secs(30 + extra_secs).min(std::time::Duration::from_secs(60))
         };
-        let mut run_script =
-            |s: ScriptToRun, rt: &mut mango_js::JsRuntime, ext_cnt: &mut usize| {
-                let is_mod = s.is_module();
-                if !is_mod {
-                    if let Some(node_id) = s.node_id() {
-                        let js_id = mango_html::node_id_to_js(node_id);
-                        let _ = rt.execute_script(&format!(
+        let mut run_script = |s: ScriptToRun, rt: &mut mango_js::JsRuntime, ext_cnt: &mut usize| {
+            let is_mod = s.is_module();
+            if !is_mod {
+                if let Some(node_id) = s.node_id() {
+                    let js_id = mango_html::node_id_to_js(node_id);
+                    let _ = rt.execute_script(&format!(
                             "if (typeof globalThis.__setCurrentScript === 'function') globalThis.__setCurrentScript({js_id});"
                         ));
-                    } else if let Some(src) = s.src() {
-                        let script_name = self
-                            .base_url
-                            .as_ref()
-                            .and_then(|b| b.resolve(src).ok())
-                            .map(|u| u.to_string())
-                            .unwrap_or_else(|| src.to_string());
-                        if let Ok(json_name) = serde_json::to_string(&script_name) {
-                            let _ = rt.execute_script(&format!(
+                } else if let Some(src) = s.src() {
+                    let script_name = self
+                        .base_url
+                        .as_ref()
+                        .and_then(|b| b.resolve(src).ok())
+                        .map(|u| u.to_string())
+                        .unwrap_or_else(|| src.to_string());
+                    if let Ok(json_name) = serde_json::to_string(&script_name) {
+                        let _ = rt.execute_script(&format!(
                                 "if (typeof globalThis.__setCurrentScriptUrl === 'function') globalThis.__setCurrentScriptUrl({json_name});"
                             ));
-                        }
                     }
-                } else {
-                    let _ = rt.execute_script(
+                }
+            } else {
+                let _ = rt.execute_script(
                         "if (typeof globalThis.__setCurrentScript === 'function') globalThis.__setCurrentScript(null);",
                     );
-                }
-                match s {
-                    ScriptToRun::Inline {
-                        code, is_module, ..
-                    } => {
-                        let to = script_timeout(code.len());
-                        let res = if is_module {
-                            rt.execute_module_with_timeout(&code, to)
-                        } else {
-                            rt.execute_script_with_timeout(&code, to)
-                        };
-                        if let Err(e) = res {
-                            log::warn!("Inline script error: {e}");
-                        }
-                        self.resource_scheduler.finish_url(
-                            "inline://document",
-                            crate::browser::resource_scheduler::ResourceState::Completed,
-                            None,
-                            code.len(),
-                        );
+            }
+            match s {
+                ScriptToRun::Inline {
+                    code, is_module, ..
+                } => {
+                    let to = script_timeout(code.len());
+                    let res = if is_module {
+                        rt.execute_module_with_timeout(&code, to)
+                    } else {
+                        rt.execute_script_with_timeout(&code, to)
+                    };
+                    if let Err(e) = res {
+                        log::warn!("Inline script error: {e}");
                     }
-                    ScriptToRun::Preloaded {
-                        code,
-                        src,
-                        is_module,
-                        ..
-                    } => {
+                    self.resource_scheduler.finish_url(
+                        "inline://document",
+                        crate::browser::resource_scheduler::ResourceState::Completed,
+                        None,
+                        code.len(),
+                    );
+                }
+                ScriptToRun::Preloaded {
+                    code,
+                    src,
+                    is_module,
+                    ..
+                } => {
+                    *ext_cnt += 1;
+                    let to = script_timeout(code.len());
+                    let script_name = self
+                        .base_url
+                        .as_ref()
+                        .and_then(|b| b.resolve(&src).ok())
+                        .map(|u| u.to_string())
+                        .unwrap_or_else(|| src.clone());
+                    let res = if is_module {
+                        rt.execute_module_with_name_and_timeout(&script_name, &code, to)
+                    } else {
+                        rt.execute_script_with_name_and_timeout(&script_name, &code, to)
+                    };
+                    if let Err(e) = res {
+                        log::warn!("Preloaded script error ({src}): {e}");
+                    }
+                    self.resource_scheduler.finish_url(
+                        &src,
+                        crate::browser::resource_scheduler::ResourceState::Completed,
+                        None,
+                        code.len(),
+                    );
+                }
+                ScriptToRun::External { src, is_module, .. } => {
+                    let Some(ref base) = self.base_url else {
+                        if !is_mod {
+                            let _ = rt.execute_script(
+                                    "if (typeof globalThis.__setCurrentScript === 'function') globalThis.__setCurrentScript(null);",
+                                );
+                        }
+                        return;
+                    };
+                    let Ok(resolved) = base.resolve(&src) else {
+                        if !is_mod {
+                            let _ = rt.execute_script(
+                                    "if (typeof globalThis.__setCurrentScript === 'function') globalThis.__setCurrentScript(null);",
+                                );
+                        }
+                        return;
+                    };
+                    let key = resolved.as_str();
+                    let script_code = if let Some(cached) = self.loader.cache().get(&key) {
+                        Some(String::from_utf8_lossy(&cached.body).into_owned())
+                    } else {
+                        log::warn!("Resource failed: external script unavailable in cache: {src}");
+                        self.devtools.log(
+                            crate::devtools::ConsoleLevel::Error,
+                            format!("Resource failed: external script unavailable in cache: {src}"),
+                        );
+                        self.resource_scheduler.finish_url(
+                            &src,
+                            crate::browser::resource_scheduler::ResourceState::Failed,
+                            Some(crate::browser::resource_scheduler::RejectReason::NetworkFailure),
+                            0,
+                        );
+                        None
+                    };
+                    if let Some(code) = script_code {
                         *ext_cnt += 1;
                         let to = script_timeout(code.len());
-                        let script_name = self
-                            .base_url
-                            .as_ref()
-                            .and_then(|b| b.resolve(&src).ok())
-                            .map(|u| u.to_string())
-                            .unwrap_or_else(|| src.clone());
                         let res = if is_module {
-                            rt.execute_module_with_name_and_timeout(&script_name, &code, to)
+                            rt.execute_module_with_name_and_timeout(&key, &code, to)
                         } else {
-                            rt.execute_script_with_name_and_timeout(&script_name, &code, to)
+                            rt.execute_script_with_name_and_timeout(&key, &code, to)
                         };
                         if let Err(e) = res {
-                            log::warn!("Preloaded script error ({src}): {e}");
+                            log::warn!("External script error ({src}): {e}");
                         }
                         self.resource_scheduler.finish_url(
                             &src,
@@ -411,66 +461,14 @@ impl BrowserChrome {
                             code.len(),
                         );
                     }
-                    ScriptToRun::External { src, is_module, .. } => {
-                        let Some(ref base) = self.base_url else {
-                            if !is_mod {
-                                let _ = rt.execute_script(
-                                    "if (typeof globalThis.__setCurrentScript === 'function') globalThis.__setCurrentScript(null);",
-                                );
-                            }
-                            return;
-                        };
-                        let Ok(resolved) = base.resolve(&src) else {
-                            if !is_mod {
-                                let _ = rt.execute_script(
-                                    "if (typeof globalThis.__setCurrentScript === 'function') globalThis.__setCurrentScript(null);",
-                                );
-                            }
-                            return;
-                        };
-                        let key = resolved.as_str();
-                        let script_code = if let Some(cached) = self.loader.cache().get(&key) {
-                            Some(String::from_utf8_lossy(&cached.body).into_owned())
-                        } else {
-                            log::warn!("Resource failed: external script unavailable in cache: {src}");
-                            self.devtools.log(
-                                crate::devtools::ConsoleLevel::Error,
-                                format!("Resource failed: external script unavailable in cache: {src}"),
-                            );
-                            self.resource_scheduler.finish_url(
-                                &src,
-                                crate::browser::resource_scheduler::ResourceState::Failed,
-                                Some(crate::browser::resource_scheduler::RejectReason::NetworkFailure),
-                                0,
-                            );
-                            None
-                        };
-                        if let Some(code) = script_code {
-                            *ext_cnt += 1;
-                            let to = script_timeout(code.len());
-                            let res = if is_module {
-                                rt.execute_module_with_name_and_timeout(&key, &code, to)
-                            } else {
-                                rt.execute_script_with_name_and_timeout(&key, &code, to)
-                            };
-                            if let Err(e) = res {
-                                log::warn!("External script error ({src}): {e}");
-                            }
-                            self.resource_scheduler.finish_url(
-                                &src,
-                                crate::browser::resource_scheduler::ResourceState::Completed,
-                                None,
-                                code.len(),
-                            );
-                        }
-                    }
-                };
-                if !is_mod {
-                    let _ = rt.execute_script(
-                        "if (typeof globalThis.__setCurrentScript === 'function') globalThis.__setCurrentScript(null);",
-                    );
                 }
             };
+            if !is_mod {
+                let _ = rt.execute_script(
+                        "if (typeof globalThis.__setCurrentScript === 'function') globalThis.__setCurrentScript(null);",
+                    );
+            }
+        };
 
         self.pending_scripts.clear();
 

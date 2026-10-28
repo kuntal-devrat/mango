@@ -190,7 +190,7 @@ pub fn compute_auto_column_widths(
 
     let sum_min: f32 = col_min_widths.iter().sum();
     let sum_max: f32 = col_max_widths.iter().sum();
-    let col_widths = if available_w <= sum_min {
+    if available_w <= sum_min {
         col_min_widths.clone()
     } else if available_w <= sum_max {
         let extra = available_w - sum_min;
@@ -240,6 +240,5 @@ pub fn compute_auto_column_widths(
             }
             w
         }
-    };
-    col_widths
+    }
 }

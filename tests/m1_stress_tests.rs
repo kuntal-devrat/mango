@@ -6,6 +6,8 @@
 //! 3. BrowserChrome::eval_js exception safety under syntax errors, thrown objects/primitives,
 //!    stack recursion, and post-exception runtime stability.
 
+#![allow(clippy::duplicate_mod)]
+
 #[path = "wpt_acid3_runner.rs"]
 mod runner;
 #[path = "wpt/server.rs"]
@@ -65,7 +67,7 @@ fn test_runner_zero_timeout_boundary() {
 fn test_wpt_server_rapid_concurrent_requests() {
     let server = Arc::new(WptServer::new("tests/wpt").expect("Failed to start server"));
     let mut handles = Vec::new();
-    let endpoints = vec![
+    let endpoints = [
         "/acid/acid3/test.html",
         "/acid3/empty.css",
         "/acid3/empty.html",

@@ -505,6 +505,11 @@ fn test_variation_selector_and_zero_width_metrics() {
     let fm = font_manager();
     // Measuring a string with variation selectors should not double-count width
     let (w1, _) = fm.measure_text("Test", 16.0, FontWeight::Regular, FontFamily::SansSerif);
-    let (w2, _) = fm.measure_text("Test\u{FE0F}", 16.0, FontWeight::Regular, FontFamily::SansSerif);
+    let (w2, _) = fm.measure_text(
+        "Test\u{FE0F}",
+        16.0,
+        FontWeight::Regular,
+        FontFamily::SansSerif,
+    );
     assert_eq!(w1, w2);
 }

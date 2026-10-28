@@ -131,7 +131,11 @@ pub fn measure_item_metrics(
             (
                 0.0,
                 if is_wrap {
-                    if is_row { p_top + p_bottom } else { p_left + p_right }
+                    if is_row {
+                        p_top + p_bottom
+                    } else {
+                        p_left + p_right
+                    }
                 } else {
                     0.0
                 },
@@ -145,7 +149,11 @@ pub fn measure_item_metrics(
             (
                 0.0,
                 if is_wrap {
-                    if is_row { b_top + b_bottom } else { b_left + b_right }
+                    if is_row {
+                        b_top + b_bottom
+                    } else {
+                        b_left + b_right
+                    }
                 } else {
                     0.0
                 },
@@ -159,7 +167,11 @@ pub fn measure_item_metrics(
             (
                 0.0,
                 if is_wrap {
-                    if is_row { m_top + m_bottom } else { m_left + m_right }
+                    if is_row {
+                        m_top + m_bottom
+                    } else {
+                        m_left + m_right
+                    }
                 } else {
                     0.0
                 },
@@ -237,13 +249,25 @@ pub fn measure_item_metrics(
             index: idx,
             is_collapsed,
             base_main,
-            final_main: if is_collapsed { 0.0 } else { base_main.clamp(min_main, max_main) },
+            final_main: if is_collapsed {
+                0.0
+            } else {
+                base_main.clamp(min_main, max_main)
+            },
             min_main,
             max_main,
             cross: cross_size,
             baseline_ascent,
-            flex_grow: if is_collapsed { 0.0 } else { child_style.flex_grow },
-            flex_shrink: if is_collapsed { 0.0 } else { child_style.flex_shrink },
+            flex_grow: if is_collapsed {
+                0.0
+            } else {
+                child_style.flex_grow
+            },
+            flex_shrink: if is_collapsed {
+                0.0
+            } else {
+                child_style.flex_shrink
+            },
             pad_main,
             pad_cross,
             border_main,

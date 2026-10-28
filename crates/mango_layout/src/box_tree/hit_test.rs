@@ -9,8 +9,9 @@ fn map_point_through_transform(b: &LayoutBox, point: Point) -> Option<Point> {
     if let Some(s) = &b.style {
         if !s.transform.is_identity() {
             let border_box = b.dimensions.border_box();
-            let [a, b_mat, c, d, e, f] =
-                s.transform.to_matrix_with_size(border_box.width(), border_box.height());
+            let [a, b_mat, c, d, e, f] = s
+                .transform
+                .to_matrix_with_size(border_box.width(), border_box.height());
             let ox = crate::display_list::types::resolve_origin(
                 s.transform_origin_x,
                 border_box.width(),
@@ -57,12 +58,8 @@ fn is_point_inside_box_clip(b: &LayoutBox, point: Point) -> bool {
     if let Some(s) = &b.style {
         if s.clip_path != mango_css::values::ClipPath::None {
             let border_box = b.dimensions.border_box();
-            if !mango_render::is_point_inside_clip_path(
-                &s.clip_path,
-                &border_box,
-                point.x,
-                point.y,
-            ) {
+            if !mango_render::is_point_inside_clip_path(&s.clip_path, &border_box, point.x, point.y)
+            {
                 return false;
             }
         }
@@ -72,7 +69,13 @@ fn is_point_inside_box_clip(b: &LayoutBox, point: Point) -> bool {
                 mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
             )
         {
-            if let mango_css::values::ClipRect::Rect { top, right, bottom, left } = s.clip {
+            if let mango_css::values::ClipRect::Rect {
+                top,
+                right,
+                bottom,
+                left,
+            } = s.clip
+            {
                 let fs = s.font_size;
                 let rfs = s.root_font_size;
                 let border_box = b.dimensions.border_box();
@@ -130,12 +133,8 @@ fn point_hits_box(b: &LayoutBox, point: Point) -> bool {
         }
         if s.clip_path != mango_css::values::ClipPath::None {
             let border_box = b.dimensions.border_box();
-            if !mango_render::is_point_inside_clip_path(
-                &s.clip_path,
-                &border_box,
-                point.x,
-                point.y,
-            ) {
+            if !mango_render::is_point_inside_clip_path(&s.clip_path, &border_box, point.x, point.y)
+            {
                 return false;
             }
         }
@@ -145,7 +144,13 @@ fn point_hits_box(b: &LayoutBox, point: Point) -> bool {
                 mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
             )
         {
-            if let mango_css::values::ClipRect::Rect { top, right, bottom, left } = s.clip {
+            if let mango_css::values::ClipRect::Rect {
+                top,
+                right,
+                bottom,
+                left,
+            } = s.clip
+            {
                 let fs = s.font_size;
                 let rfs = s.root_font_size;
                 let border_box = b.dimensions.border_box();
@@ -268,9 +273,7 @@ fn sorted_children_for_hit_test<'a>(
 impl LayoutBox {
     /// Hit-tests a point against this layout box and its descendants, returning the deepest matching DOM NodeId.
     pub fn hit_test(&self, point: Point) -> Option<NodeId> {
-        let Some(local_pt) = map_point_through_transform(self, point) else {
-            return None;
-        };
+        let local_pt = map_point_through_transform(self, point)?;
 
         let inside_clip = is_point_inside_box_clip(self, local_pt);
         let is_sc = is_stacking_context_box(self);
@@ -314,9 +317,7 @@ impl LayoutBox {
 
     /// Hit-tests a point against this layout box and its descendants, returning `(url, target_frame)`.
     pub fn hit_test_link_full(&self, point: Point) -> Option<(&str, Option<&str>)> {
-        let Some(local_pt) = map_point_through_transform(self, point) else {
-            return None;
-        };
+        let local_pt = map_point_through_transform(self, point)?;
 
         let inside_clip = is_point_inside_box_clip(self, local_pt);
         let is_sc = is_stacking_context_box(self);
@@ -385,9 +386,7 @@ impl LayoutBox {
 
     /// Hit-tests a point against this layout box and its descendants for interactive form elements.
     pub fn hit_test_form_control(&self, point: Point) -> Option<FormControlHit> {
-        let Some(local_pt) = map_point_through_transform(self, point) else {
-            return None;
-        };
+        let local_pt = map_point_through_transform(self, point)?;
 
         let inside_clip = is_point_inside_box_clip(self, local_pt);
         let is_sc = is_stacking_context_box(self);
@@ -419,8 +418,7 @@ impl LayoutBox {
                         .to_ascii_lowercase();
                     let click_offset_x = (local_pt.x - b.dimensions.content.x()).max(0.0);
                     let checked = b.get_attribute("checked").is_some()
-                        || b
-                            .get_attribute("data-mango-checked")
+                        || b.get_attribute("data-mango-checked")
                             .is_some_and(|v| v.eq_ignore_ascii_case("true") || v == "1");
                     return Some(FormControlHit {
                         node_id: b.node_id,
@@ -475,9 +473,7 @@ impl LayoutBox {
 
     /// Hit-tests a point against this layout box and its descendants for interactive media (<video> and <audio>) elements.
     pub fn hit_test_media_control(&self, point: Point) -> Option<MediaControlHit> {
-        let Some(local_pt) = map_point_through_transform(self, point) else {
-            return None;
-        };
+        let local_pt = map_point_through_transform(self, point)?;
 
         let inside_clip = is_point_inside_box_clip(self, local_pt);
         let is_sc = is_stacking_context_box(self);
@@ -511,8 +507,8 @@ impl LayoutBox {
                             } else if rel_x > 36.0 {
                                 let track_start = 110.0f32.min(content.width() * 0.3);
                                 let track_end = (content.width() - 75.0).max(track_start + 10.0);
-                                let ratio =
-                                    ((rel_x - track_start) / (track_end - track_start)).clamp(0.0, 1.0);
+                                let ratio = ((rel_x - track_start) / (track_end - track_start))
+                                    .clamp(0.0, 1.0);
                                 MediaClickAction::Seek(ratio * duration)
                             } else {
                                 MediaClickAction::TogglePlayPause
@@ -557,7 +553,8 @@ impl LayoutBox {
                     } else {
                         let track_start = 110.0f32.min(content.width() * 0.3);
                         let track_end = (content.width() - 50.0).max(track_start + 10.0);
-                        let ratio = ((rel_x - track_start) / (track_end - track_start)).clamp(0.0, 1.0);
+                        let ratio =
+                            ((rel_x - track_start) / (track_end - track_start)).clamp(0.0, 1.0);
                         MediaClickAction::Seek(ratio * duration)
                     };
 

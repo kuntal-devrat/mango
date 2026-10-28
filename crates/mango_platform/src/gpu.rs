@@ -130,7 +130,13 @@ impl GpuTexture {
 
         if is_opaque {
             // Fast path for 100% opaque page tiles
-            for (chunk, &px) in bytes.as_mut_slice().chunks_exact_mut(4).zip(pixels.iter()) {
+            for (chunk, &px) in bytes
+                .as_mut_slice()
+                .as_chunks_mut::<4>()
+                .0
+                .iter_mut()
+                .zip(pixels.iter())
+            {
                 chunk[0] = ((px >> 16) & 0xFF) as u8;
                 chunk[1] = ((px >> 8) & 0xFF) as u8;
                 chunk[2] = (px & 0xFF) as u8;
@@ -138,7 +144,13 @@ impl GpuTexture {
             }
         } else {
             // For chrome UI, overlay, and promoted layers with alpha
-            for (chunk, &px) in bytes.as_mut_slice().chunks_exact_mut(4).zip(pixels.iter()) {
+            for (chunk, &px) in bytes
+                .as_mut_slice()
+                .as_chunks_mut::<4>()
+                .0
+                .iter_mut()
+                .zip(pixels.iter())
+            {
                 let a = ((px >> 24) & 0xFF) as u8;
                 let alpha = if a != 0 {
                     a
@@ -245,12 +257,10 @@ impl GpuCompositor {
             info.backend
         );
 
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("Mango GPU Device"),
-                ..Default::default()
-            },
-            ))
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("Mango GPU Device"),
+            ..Default::default()
+        }))
         .map_err(|e| format!("Failed to request wgpu device: {e}"))?;
 
         let caps = surface.get_capabilities(&adapter);
@@ -423,7 +433,9 @@ impl GpuCompositor {
                     wgpu::CurrentSurfaceTexture::Success(frame)
                     | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
                     other => {
-                        return Err(format!("Surface acquire failed after reconfigure: {other:?}"));
+                        return Err(format!(
+                            "Surface acquire failed after reconfigure: {other:?}"
+                        ));
                     }
                 }
             }
@@ -530,9 +542,8 @@ impl GpuCompositor {
                         let ndc_x1 = (clamp_x1 / w_f32) * 2.0 - 1.0;
                         let ndc_y1 = 1.0 - (clamp_y1 / h_f32) * 2.0;
 
-                        let verts = make_quad_vertices(
-                            ndc_x0, ndc_y0, ndc_x1, ndc_y1, u0, v0, u1, v1, 1.0,
-                        );
+                        let verts =
+                            make_quad_vertices(ndc_x0, ndc_y0, ndc_x1, ndc_y1, u0, v0, u1, v1, 1.0);
                         quads.push(QuadDraw {
                             bind_group: gpu_tex.bind_group.clone(),
                             vertices: verts,
@@ -670,9 +681,8 @@ impl GpuCompositor {
                 let ndc_x1 = (cx1 / w_f32) * 2.0 - 1.0;
                 let ndc_y1 = 1.0 - (cy1 / h_f32) * 2.0;
 
-                let verts = make_quad_vertices(
-                    ndc_x0, ndc_y0, ndc_x1, ndc_y1, 0.0, 0.0, 1.0, 1.0, 1.0,
-                );
+                let verts =
+                    make_quad_vertices(ndc_x0, ndc_y0, ndc_x1, ndc_y1, 0.0, 0.0, 1.0, 1.0, 1.0);
                 quads.push(QuadDraw {
                     bind_group: tex.bind_group.clone(),
                     vertices: verts,
@@ -729,9 +739,8 @@ impl GpuCompositor {
                 let ndc_x1 = (ox1 / w_f32) * 2.0 - 1.0;
                 let ndc_y1 = 1.0 - (oy1 / h_f32) * 2.0;
 
-                let verts = make_quad_vertices(
-                    ndc_x0, ndc_y0, ndc_x1, ndc_y1, 0.0, 0.0, 1.0, 1.0, 1.0,
-                );
+                let verts =
+                    make_quad_vertices(ndc_x0, ndc_y0, ndc_x1, ndc_y1, 0.0, 0.0, 1.0, 1.0, 1.0);
                 quads.push(QuadDraw {
                     bind_group: tex.bind_group.clone(),
                     vertices: verts,
@@ -849,7 +858,9 @@ impl GpuCompositor {
                     wgpu::CurrentSurfaceTexture::Success(frame)
                     | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
                     other => {
-                        return Err(format!("Surface acquire failed after reconfigure: {other:?}"));
+                        return Err(format!(
+                            "Surface acquire failed after reconfigure: {other:?}"
+                        ));
                     }
                 }
             }
@@ -924,8 +935,7 @@ impl GpuCompositor {
             }
 
             if let Some(vb) = &self.vertex_buffer {
-                self.queue
-                    .write_buffer(vb, 0, bytemuck::cast_slice(&verts));
+                self.queue.write_buffer(vb, 0, bytemuck::cast_slice(&verts));
             }
 
             {

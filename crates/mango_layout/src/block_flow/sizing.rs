@@ -200,7 +200,8 @@ pub(crate) fn calculate_block_width(box_node: &mut LayoutBox, containing_block: 
                         let c_fs = c.style.as_ref().map(|s| s.font_size).unwrap_or(font_size);
                         c.style.as_ref().and_then(|s| s.line_height).unwrap_or(c_fs)
                     } else if let Some(cs) = c.style.as_ref() {
-                        cs.height.to_px_with_viewport(cs.font_size, cs.root_font_size, 0.0, 0.0)
+                        cs.height
+                            .to_px_with_viewport(cs.font_size, cs.root_font_size, 0.0, 0.0)
                     } else {
                         0.0
                     };

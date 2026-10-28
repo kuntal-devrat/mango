@@ -10,7 +10,7 @@ pub enum InlineAtomKind {
     Text { text: String, is_space: bool },
     AtomicBox(Box<LayoutBox>),
     OutOfFlow(Box<LayoutBox>),
-    LineBreak,
+    LineBreak { is_br: bool },
     WordBreakOpportunity,
     SoftHyphen,
     Spacing,
@@ -34,7 +34,7 @@ impl InlineAtom {
             InlineAtomKind::Text { is_space, .. } => *is_space,
             InlineAtomKind::AtomicBox(_)
             | InlineAtomKind::OutOfFlow(_)
-            | InlineAtomKind::LineBreak
+            | InlineAtomKind::LineBreak { .. }
             | InlineAtomKind::WordBreakOpportunity
             | InlineAtomKind::SoftHyphen
             | InlineAtomKind::Spacing => false,

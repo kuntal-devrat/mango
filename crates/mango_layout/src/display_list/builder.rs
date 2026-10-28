@@ -224,7 +224,13 @@ pub(crate) fn render_layout_box(
                 mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
             )
         {
-            if let mango_css::values::ClipRect::Rect { top, right, bottom, left } = st.clip {
+            if let mango_css::values::ClipRect::Rect {
+                top,
+                right,
+                bottom,
+                left,
+            } = st.clip
+            {
                 let fs = st.font_size;
                 let rfs = st.root_font_size;
                 let bw = elem_rect.width();

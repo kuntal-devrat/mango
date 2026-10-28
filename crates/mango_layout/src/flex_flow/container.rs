@@ -873,39 +873,33 @@ pub fn layout_flex(
         let (max_x, max_y) = container.max_scroll();
         let is_rtl = style.direction == Direction::Rtl;
         match style.writing_mode {
-            WritingMode::HorizontalTb => {
-                match style.flex_direction {
-                    FlexDirection::RowReverse => {
-                        container.scroll_offset_x = if is_rtl { -max_x } else { max_x };
-                    }
-                    FlexDirection::ColumnReverse => {
-                        container.scroll_offset_y = max_y;
-                    }
-                    _ => {}
+            WritingMode::HorizontalTb => match style.flex_direction {
+                FlexDirection::RowReverse => {
+                    container.scroll_offset_x = if is_rtl { -max_x } else { max_x };
                 }
-            }
-            WritingMode::VerticalRl => {
-                match style.flex_direction {
-                    FlexDirection::RowReverse => {
-                        container.scroll_offset_y = if is_rtl { -max_y } else { max_y };
-                    }
-                    FlexDirection::ColumnReverse => {
-                        container.scroll_offset_x = -max_x;
-                    }
-                    _ => {}
+                FlexDirection::ColumnReverse => {
+                    container.scroll_offset_y = max_y;
                 }
-            }
-            WritingMode::VerticalLr | WritingMode::SidewaysLr => {
-                match style.flex_direction {
-                    FlexDirection::RowReverse => {
-                        container.scroll_offset_y = if is_rtl { -max_y } else { max_y };
-                    }
-                    FlexDirection::ColumnReverse => {
-                        container.scroll_offset_x = max_x;
-                    }
-                    _ => {}
+                _ => {}
+            },
+            WritingMode::VerticalRl => match style.flex_direction {
+                FlexDirection::RowReverse => {
+                    container.scroll_offset_y = if is_rtl { -max_y } else { max_y };
                 }
-            }
+                FlexDirection::ColumnReverse => {
+                    container.scroll_offset_x = -max_x;
+                }
+                _ => {}
+            },
+            WritingMode::VerticalLr | WritingMode::SidewaysLr => match style.flex_direction {
+                FlexDirection::RowReverse => {
+                    container.scroll_offset_y = if is_rtl { -max_y } else { max_y };
+                }
+                FlexDirection::ColumnReverse => {
+                    container.scroll_offset_x = max_x;
+                }
+                _ => {}
+            },
             _ => {}
         }
     }

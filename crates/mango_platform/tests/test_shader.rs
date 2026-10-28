@@ -16,13 +16,14 @@ fn test_compile_wgsl_shader() {
         }
     };
 
-    let (device, _queue) = match pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())) {
-        Ok(d) => d,
-        Err(e) => {
-            println!("Skipping GPU test (request_device failed): {e:?}");
-            return;
-        }
-    };
+    let (device, _queue) =
+        match pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())) {
+            Ok(d) => d,
+            Err(e) => {
+                println!("Skipping GPU test (request_device failed): {e:?}");
+                return;
+            }
+        };
 
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Mango Compositor Shader Test"),
@@ -64,7 +65,8 @@ fn test_compile_wgsl_shader() {
             module: &shader,
             entry_point: Some("vs_main"),
             buffers: &[Some(wgpu::VertexBufferLayout {
-                array_stride: std::mem::size_of::<mango_platform::QuadVertex>() as wgpu::BufferAddress,
+                array_stride: std::mem::size_of::<mango_platform::QuadVertex>()
+                    as wgpu::BufferAddress,
                 step_mode: wgpu::VertexStepMode::Vertex,
                 attributes: &[
                     wgpu::VertexAttribute {

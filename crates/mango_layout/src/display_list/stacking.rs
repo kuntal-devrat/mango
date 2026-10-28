@@ -244,7 +244,10 @@ fn collect_hoisted_stacking_contexts<'a>(
     out: &mut Vec<PaintItem<'a>>,
     orig_idx_counter: &mut usize,
 ) {
-    if matches!(parent.tag_name.as_deref(), Some("table" | "thead" | "tbody" | "tfoot" | "tr")) {
+    if matches!(
+        parent.tag_name.as_deref(),
+        Some("table" | "thead" | "tbody" | "tfoot" | "tr")
+    ) {
         return;
     }
     let parent_is_fg = parent.style.as_ref().is_some_and(|s| {

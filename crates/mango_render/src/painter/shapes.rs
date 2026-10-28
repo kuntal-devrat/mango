@@ -110,12 +110,7 @@ pub(crate) fn sdf_rounded_rect(fx: f32, fy: f32, rect: &mango_core::Rect, radii:
     }
 }
 
-pub fn is_inside_rounded_rect(
-    fx: f32,
-    fy: f32,
-    rect: &mango_core::Rect,
-    radii: [f32; 4],
-) -> bool {
+pub fn is_inside_rounded_rect(fx: f32, fy: f32, rect: &mango_core::Rect, radii: [f32; 4]) -> bool {
     sdf_rounded_rect(fx, fy, rect, radii) <= 0.0
 }
 

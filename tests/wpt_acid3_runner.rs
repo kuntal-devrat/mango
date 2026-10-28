@@ -45,8 +45,7 @@ pub struct Acid3Failure {
 }
 
 #[allow(unused_imports)]
-pub use acid3_metadata::{bucket_for_test, TestMeta, ACID3_METADATA};
-
+pub use acid3_metadata::{ACID3_METADATA, TestMeta, bucket_for_test};
 
 pub fn run_acid3_headless(
     server_base_url: &str,

@@ -6,6 +6,8 @@ pub mod bfc;
 pub mod container;
 pub mod floats;
 pub mod intrinsic;
+pub mod intrinsic_inline;
+pub mod intrinsic_vertical;
 pub mod margins;
 pub mod multicol;
 pub mod positioned;

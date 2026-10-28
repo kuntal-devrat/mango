@@ -131,7 +131,11 @@ impl<'a> TreeBuilder<'a> {
             }
             Token::StartTag {
                 name, attributes, ..
-            } if matches!(name.as_str(), "meta" | "link" | "base" | "basefont" | "bgsound") => {
+            } if matches!(
+                name.as_str(),
+                "meta" | "link" | "base" | "basefont" | "bgsound"
+            ) =>
+            {
                 self.insert_element(&name, attributes);
             }
             Token::StartTag { name, .. } if name == "head" => {}

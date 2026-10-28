@@ -407,22 +407,49 @@ pub fn resolve_flexible_lengths(
                     let mut item_float_ctx = FloatContext::new();
                     let c_fs = child_style.font_size;
                     layout_flex_item(child, &item_cb, &mut item_float_ctx, c_fs);
-                    let aspect_ratio = child_style.aspect_ratio.filter(|&r| r > 0.0).or_else(|| {
-                        match &child.box_type {
-                            BoxType::ReplacedElement { intrinsic_width, intrinsic_height, .. }
-                            | BoxType::IFrame { intrinsic_width, intrinsic_height, .. }
-                            | BoxType::Video { intrinsic_width, intrinsic_height, .. }
-                            | BoxType::Audio { intrinsic_width, intrinsic_height, .. }
-                            | BoxType::Canvas { intrinsic_width, intrinsic_height, .. }
-                                if *intrinsic_height > 0.0 => Some(*intrinsic_width / *intrinsic_height),
-                            _ => None,
-                        }
-                    });
+                    let aspect_ratio =
+                        child_style.aspect_ratio.filter(|&r| r > 0.0).or_else(|| {
+                            match &child.box_type {
+                                BoxType::ReplacedElement {
+                                    intrinsic_width,
+                                    intrinsic_height,
+                                    ..
+                                }
+                                | BoxType::IFrame {
+                                    intrinsic_width,
+                                    intrinsic_height,
+                                    ..
+                                }
+                                | BoxType::Video {
+                                    intrinsic_width,
+                                    intrinsic_height,
+                                    ..
+                                }
+                                | BoxType::Audio {
+                                    intrinsic_width,
+                                    intrinsic_height,
+                                    ..
+                                }
+                                | BoxType::Canvas {
+                                    intrinsic_width,
+                                    intrinsic_height,
+                                    ..
+                                } if *intrinsic_height > 0.0 => {
+                                    Some(*intrinsic_width / *intrinsic_height)
+                                }
+                                _ => None,
+                            }
+                        });
                     if let Some(ratio) = aspect_ratio {
                         let mut h = (m.final_main / ratio).max(0.0);
                         let c_root_fs = child_style.root_font_size;
                         if child_style.min_height != Length::Auto {
-                            let min_h = child_style.min_height.to_px_with_viewport(c_fs, c_root_fs, container_height, container_height);
+                            let min_h = child_style.min_height.to_px_with_viewport(
+                                c_fs,
+                                c_root_fs,
+                                container_height,
+                                container_height,
+                            );
                             let min_content = if child_style.box_sizing == BoxSizing::BorderBox {
                                 (min_h - m.pad_cross - m.border_cross).max(0.0)
                             } else {
@@ -431,7 +458,12 @@ pub fn resolve_flexible_lengths(
                             h = h.max(min_content);
                         }
                         if child_style.max_height != Length::Auto {
-                            let max_h = child_style.max_height.to_px_with_viewport(c_fs, c_root_fs, container_height, container_height);
+                            let max_h = child_style.max_height.to_px_with_viewport(
+                                c_fs,
+                                c_root_fs,
+                                container_height,
+                                container_height,
+                            );
                             let max_content = if child_style.box_sizing == BoxSizing::BorderBox {
                                 (max_h - m.pad_cross - m.border_cross).max(0.0)
                             } else {
@@ -454,23 +486,50 @@ pub fn resolve_flexible_lengths(
                 let is_child_w_auto = child_style.width == Length::Auto
                     || matches!(child_style.width, Length::Percent(p) if p >= 99.9);
                 if is_child_w_auto {
-                    let aspect_ratio = child_style.aspect_ratio.filter(|&r| r > 0.0).or_else(|| {
-                        match &child.box_type {
-                            BoxType::ReplacedElement { intrinsic_width, intrinsic_height, .. }
-                            | BoxType::IFrame { intrinsic_width, intrinsic_height, .. }
-                            | BoxType::Video { intrinsic_width, intrinsic_height, .. }
-                            | BoxType::Audio { intrinsic_width, intrinsic_height, .. }
-                            | BoxType::Canvas { intrinsic_width, intrinsic_height, .. }
-                                if *intrinsic_height > 0.0 => Some(*intrinsic_width / *intrinsic_height),
-                            _ => None,
-                        }
-                    });
+                    let aspect_ratio =
+                        child_style.aspect_ratio.filter(|&r| r > 0.0).or_else(|| {
+                            match &child.box_type {
+                                BoxType::ReplacedElement {
+                                    intrinsic_width,
+                                    intrinsic_height,
+                                    ..
+                                }
+                                | BoxType::IFrame {
+                                    intrinsic_width,
+                                    intrinsic_height,
+                                    ..
+                                }
+                                | BoxType::Video {
+                                    intrinsic_width,
+                                    intrinsic_height,
+                                    ..
+                                }
+                                | BoxType::Audio {
+                                    intrinsic_width,
+                                    intrinsic_height,
+                                    ..
+                                }
+                                | BoxType::Canvas {
+                                    intrinsic_width,
+                                    intrinsic_height,
+                                    ..
+                                } if *intrinsic_height > 0.0 => {
+                                    Some(*intrinsic_width / *intrinsic_height)
+                                }
+                                _ => None,
+                            }
+                        });
                     if let Some(ratio) = aspect_ratio {
                         let mut w = (m.final_main * ratio).max(0.0);
                         let c_fs = child_style.font_size;
                         let c_root_fs = child_style.root_font_size;
                         if child_style.min_width != Length::Auto {
-                            let min_w = child_style.min_width.to_px_with_viewport(c_fs, c_root_fs, container_main_size, container_height);
+                            let min_w = child_style.min_width.to_px_with_viewport(
+                                c_fs,
+                                c_root_fs,
+                                container_main_size,
+                                container_height,
+                            );
                             let min_content = if child_style.box_sizing == BoxSizing::BorderBox {
                                 (min_w - m.pad_cross - m.border_cross).max(0.0)
                             } else {
@@ -479,7 +538,12 @@ pub fn resolve_flexible_lengths(
                             w = w.max(min_content);
                         }
                         if child_style.max_width != Length::Auto {
-                            let max_w = child_style.max_width.to_px_with_viewport(c_fs, c_root_fs, container_main_size, container_height);
+                            let max_w = child_style.max_width.to_px_with_viewport(
+                                c_fs,
+                                c_root_fs,
+                                container_main_size,
+                                container_height,
+                            );
                             let max_content = if child_style.box_sizing == BoxSizing::BorderBox {
                                 (max_w - m.pad_cross - m.border_cross).max(0.0)
                             } else {

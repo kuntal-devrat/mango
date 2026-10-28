@@ -5,10 +5,9 @@ use std::time::Duration;
 
 use crate::runtime::JsRuntime;
 
-/// Maximum execution budget granted to a large script (>= 20 KB), including
-/// the per-byte compilation allowance. This is intentionally a hard ceiling:
-/// a runaway script must never freeze the UI for longer than this.
-const MAX_LARGE_SCRIPT_TIMEOUT: Duration = Duration::from_millis(3_000);
+/// Maximum execution budget granted to a script (default 30s, up to 60s for multi-MB scripts).
+/// Conforms to Chromium's hung renderer watchdog standard (30s).
+const MAX_LARGE_SCRIPT_TIMEOUT: Duration = Duration::from_secs(60);
 /// Scripts below this size are considered small and use their caller-provided
 /// timeout unchanged.
 const LARGE_SCRIPT_THRESHOLD: usize = 20_000;
@@ -222,16 +221,14 @@ impl JsRuntime {
         self.execute_script_with_name_and_timeout(
             "<script>",
             source,
-            std::time::Duration::from_millis(5_000),
+            std::time::Duration::from_secs(30),
         )
     }
 
     /// Computes a scaled execution timeout based on script size.
     /// Small scripts (< 20 KB) retain their caller-provided base timeout.
-    /// Large scripts (e.g. YouTube bundles of 1MB-5MB) receive an additional
-    /// 2 ms per KB of source, capped at 5,000 ms. The cap is a hard upper
-    /// bound: a large script can never run longer than five seconds, and no
-    /// input can reduce a caller's explicit timeout.
+    /// Large scripts receive an additional 2 ms per KB of source, with an upper
+    /// ceiling of MAX_LARGE_SCRIPT_TIMEOUT (60s). Caller-provided timeouts are never reduced.
     pub fn compute_scaled_timeout(source_len: usize, base_timeout: Duration) -> Duration {
         if source_len < LARGE_SCRIPT_THRESHOLD {
             return base_timeout;
@@ -239,7 +236,8 @@ impl JsRuntime {
         let extra_kb = (source_len - LARGE_SCRIPT_THRESHOLD) / 1024;
         let extra_ms = (extra_kb as u64) * 2;
         let scaled = base_timeout.saturating_add(Duration::from_millis(extra_ms));
-        scaled.min(MAX_LARGE_SCRIPT_TIMEOUT)
+        let cap = MAX_LARGE_SCRIPT_TIMEOUT.max(base_timeout);
+        scaled.min(cap)
     }
 
     /// Executes a named JavaScript source string with a maximum execution timeout.
@@ -353,7 +351,7 @@ impl JsRuntime {
     pub fn eval(&mut self, source: &str) -> Result<String, String> {
         let _guard = self.enter_isolate();
         let effective_timeout =
-            Self::compute_scaled_timeout(source.len(), std::time::Duration::from_millis(2_000));
+            Self::compute_scaled_timeout(source.len(), std::time::Duration::from_secs(5));
         let isolate_handle = self.runtime.v8_isolate().thread_safe_handle();
         let watchdog =
             ExecutionWatchdog::new(isolate_handle, effective_timeout, "mango-eval-watchdog");
@@ -369,7 +367,7 @@ impl JsRuntime {
         }));
         std::panic::set_hook(prev_hook);
         if watchdog.finish() {
-            return Err("JavaScript evaluation timed out after 250ms".to_string());
+            return Err("JavaScript evaluation timed out".to_string());
         }
 
         match res {
@@ -405,13 +403,8 @@ impl JsRuntime {
     /// Processes any expired timers and drains promise microtasks with watchdog protection.
     /// Returns `true` if the DOM was mutated.
     pub fn tick(&mut self) -> bool {
-        // Keep one page from monopolising the UI thread. Remaining callbacks
-        // stay queued and are serviced on later browser frames.
-        // A synchronous V8 callback cannot yield midway through execution, so
-        // keep both the callback count and each callback's watchdog small.
-        // Remaining work stays queued for the next event-loop turn.
-        const MAX_CALLBACKS_PER_TICK: usize = 1;
-        const CALLBACK_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(20);
+        const MAX_CALLBACKS_PER_TICK: usize = 5;
+        const CALLBACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
         let scripts = self
             .event_loop
             .borrow_mut()
@@ -432,7 +425,7 @@ impl JsRuntime {
             let isolate_handle = self.runtime.v8_isolate().thread_safe_handle();
             let watchdog = ExecutionWatchdog::new(
                 isolate_handle,
-                std::time::Duration::from_millis(10),
+                std::time::Duration::from_secs(5),
                 "mango-event-loop-watchdog",
             );
             let isolate_ptr: *mut deno_core::v8::Isolate = &mut **self.runtime.v8_isolate();
@@ -449,7 +442,7 @@ impl JsRuntime {
                 (*isolate_ptr).exit();
             }
             if watchdog.finish() {
-                log::warn!("JavaScript event-loop polling exceeded its 10ms budget");
+                log::warn!("JavaScript event-loop polling exceeded its budget");
             }
             let _ = poll_result;
         }
@@ -498,7 +491,7 @@ impl JsRuntime {
         let isolate_handle = self.runtime.v8_isolate().thread_safe_handle();
         let watchdog = ExecutionWatchdog::new(
             isolate_handle,
-            std::time::Duration::from_millis(20),
+            std::time::Duration::from_secs(5),
             "mango-job-queue-watchdog",
         );
         {
@@ -525,7 +518,7 @@ impl JsRuntime {
             }
         }
         if watchdog.finish() {
-            log::warn!("JavaScript job queue exceeded its 20ms budget");
+            log::warn!("JavaScript job queue exceeded its budget");
         }
     }
 
@@ -581,7 +574,7 @@ impl JsRuntime {
         let isolate_handle = self.runtime.v8_isolate().thread_safe_handle();
         let watchdog = ExecutionWatchdog::new(
             isolate_handle,
-            std::time::Duration::from_millis(250),
+            std::time::Duration::from_secs(5),
             "mango-event-watchdog",
         );
         let prev_hook = std::panic::take_hook();
@@ -598,7 +591,7 @@ impl JsRuntime {
         }));
         std::panic::set_hook(prev_hook);
         if watchdog.finish() {
-            return Err("JavaScript event handler timed out after 250ms".to_string());
+            return Err("JavaScript event handler timed out".to_string());
         }
 
         match res {

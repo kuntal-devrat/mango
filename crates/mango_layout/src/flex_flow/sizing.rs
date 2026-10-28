@@ -62,22 +62,44 @@ pub fn resolve_item_main_size(
     let is_basis_auto = basis.is_auto();
 
     let mut is_main_explicit = false;
-    let aspect_ratio = child_style.aspect_ratio.filter(|&r| r > 0.0).or_else(|| {
-        match &child.box_type {
-            BoxType::ReplacedElement { intrinsic_width, intrinsic_height, .. }
-            | BoxType::IFrame { intrinsic_width, intrinsic_height, .. }
-            | BoxType::Video { intrinsic_width, intrinsic_height, .. }
-            | BoxType::Audio { intrinsic_width, intrinsic_height, .. }
-            | BoxType::Canvas { intrinsic_width, intrinsic_height, .. }
-                if *intrinsic_height > 0.0 => Some(*intrinsic_width / *intrinsic_height),
-            _ => None,
-        }
-    });
+    let aspect_ratio =
+        child_style
+            .aspect_ratio
+            .filter(|&r| r > 0.0)
+            .or_else(|| match &child.box_type {
+                BoxType::ReplacedElement {
+                    intrinsic_width,
+                    intrinsic_height,
+                    ..
+                }
+                | BoxType::IFrame {
+                    intrinsic_width,
+                    intrinsic_height,
+                    ..
+                }
+                | BoxType::Video {
+                    intrinsic_width,
+                    intrinsic_height,
+                    ..
+                }
+                | BoxType::Audio {
+                    intrinsic_width,
+                    intrinsic_height,
+                    ..
+                }
+                | BoxType::Canvas {
+                    intrinsic_width,
+                    intrinsic_height,
+                    ..
+                } if *intrinsic_height > 0.0 => Some(*intrinsic_width / *intrinsic_height),
+                _ => None,
+            });
 
     let explicit_main = if is_row {
         let aspect_w = if let Some(ratio) = aspect_ratio {
             if child_style.width == Length::Auto || is_basis_content {
-                if child_style.height != Length::Auto && !matches!(child_style.height, Length::Percent(_))
+                if child_style.height != Length::Auto
+                    && !matches!(child_style.height, Length::Percent(_))
                     || (matches!(child_style.height, Length::Percent(_)) && container_height > 0.0)
                 {
                     let h = child_style.height.to_px_with_viewport(
@@ -93,7 +115,8 @@ pub fn resolve_item_main_size(
                         mango_css::values::AlignSelf::Stretch | mango_css::values::AlignSelf::Auto
                     )
                 {
-                    let h = (container_height - pad_cross - border_cross - margin_cross.max(0.0)).max(0.0);
+                    let h = (container_height - pad_cross - border_cross - margin_cross.max(0.0))
+                        .max(0.0);
                     Some((h * ratio).max(0.0))
                 } else {
                     None
@@ -366,8 +389,12 @@ pub fn resolve_item_main_size(
                         (content_width - pad_cross - border_cross - margin_cross.max(0.0)).max(0.0)
                     };
                     child.dimensions.content.size.width = item_w;
-                    let item_cb =
-                        Dimensions::new(Rect::new(0.0, 0.0, item_w + pad_cross + border_cross, 0.0));
+                    let item_cb = Dimensions::new(Rect::new(
+                        0.0,
+                        0.0,
+                        item_w + pad_cross + border_cross,
+                        0.0,
+                    ));
                     let mut item_float_ctx = FloatContext::new();
                     layout_flex_item(child, &item_cb, &mut item_float_ctx, c_fs);
                     let measured_h = child.dimensions.content.size.height;
@@ -540,13 +567,14 @@ pub fn resolve_item_base_and_limits(
                         0.0
                     } else {
                         let mut memo = HashMap::new();
-                        let (child_min, _) = crate::table_flow::measure_box_content_intrinsic_widths(
-                            child,
-                            c_fs,
-                            mango_render::FontWeight::Regular,
-                            mango_render::FontFamily::SansSerif,
-                            &mut memo,
-                        );
+                        let (child_min, _) =
+                            crate::table_flow::measure_box_content_intrinsic_widths(
+                                child,
+                                c_fs,
+                                mango_render::FontWeight::Regular,
+                                mango_render::FontFamily::SansSerif,
+                                &mut memo,
+                            );
                         let content_min =
                             (child_min - pad_main - border_main - margin_main.max(0.0)).max(0.0);
                         if is_main_explicit && explicit_main > 0.0 {

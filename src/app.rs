@@ -249,8 +249,7 @@ impl ApplicationHandler for MangoApp {
                 earliest_script_resume =
                     Some(earliest_script_resume.map_or(deadline, |prev| prev.min(deadline)));
             }
-            if state.browser.has_pending_image_fetches()
-                || state.browser.has_pending_font_fetches()
+            if state.browser.has_pending_image_fetches() || state.browser.has_pending_font_fetches()
             {
                 any_background_work = true;
             }
@@ -285,11 +284,7 @@ impl ApplicationHandler for MangoApp {
             event_loop.set_control_flow(ControlFlow::WaitUntil(
                 Instant::now() + Duration::from_millis(4),
             ));
-        } else if any_animating || any_smooth_scroll {
-            event_loop.set_control_flow(ControlFlow::WaitUntil(
-                Instant::now() + Duration::from_millis(16),
-            ));
-        } else if any_background_work {
+        } else if any_animating || any_smooth_scroll || any_background_work {
             event_loop.set_control_flow(ControlFlow::WaitUntil(
                 Instant::now() + Duration::from_millis(16),
             ));

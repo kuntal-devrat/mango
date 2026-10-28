@@ -354,7 +354,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
     let mut atom_queue: std::collections::VecDeque<InlineAtom> = atoms.into();
 
     while let Some(atom) = atom_queue.pop_front() {
-        if matches!(atom.kind, InlineAtomKind::LineBreak) {
+        if let InlineAtomKind::LineBreak { is_br } = atom.kind {
             let (min_x, max_x) =
                 float_ctx.available_span(current_y, atom.height, container_x, layout_width);
             let (line_x, available_width, _) = get_line_x_and_width(min_x, max_x, is_first_line);
@@ -370,11 +370,13 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
                 block_start_x,
             );
             let step_h = line_h.max(atom.height);
-            let mut br_box = LayoutBox::new(BoxType::InlineNode, Some(atom.style.clone()));
-            br_box.node_id = atom.owner_inline_id;
-            br_box.tag_name = Some("br".to_string());
-            br_box.dimensions.content = Rect::new(line_x, current_y, 0.0, step_h);
-            positioned_boxes.push(br_box);
+            if is_br {
+                let mut br_box = LayoutBox::new(BoxType::InlineNode, Some(atom.style.clone()));
+                br_box.node_id = atom.owner_inline_id;
+                br_box.tag_name = Some("br".to_string());
+                br_box.dimensions.content = Rect::new(line_x, current_y, 0.0, step_h);
+                positioned_boxes.push(br_box);
+            }
             current_y += step_h;
             is_first_line = false;
             line_atoms.clear();
@@ -572,7 +574,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
                 let remaining_words = (!atom.is_space() as usize)
                     + atom_queue
                         .iter()
-                        .take_while(|a| !matches!(a.kind, InlineAtomKind::LineBreak))
+                        .take_while(|a| !matches!(a.kind, InlineAtomKind::LineBreak { .. }))
                         .filter(|a| !a.is_space())
                         .count();
                 let current_words = line_atoms.iter().filter(|a| !a.is_space()).count();

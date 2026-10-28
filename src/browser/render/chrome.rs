@@ -65,8 +65,7 @@ impl BrowserChrome {
         });
 
         // Thumb dimensions and local position
-        let thumb_h =
-            ((content_h / doc_h) * content_h).clamp(32.0f32.min(content_h), content_h);
+        let thumb_h = ((content_h / doc_h) * content_h).clamp(32.0f32.min(content_h), content_h);
         let max_thumb_travel = (content_h - thumb_h).max(1.0);
         let thumb_y_local = (self.scroll_y / max_s) * max_thumb_travel;
 

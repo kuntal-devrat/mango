@@ -527,7 +527,6 @@ pub fn bucket_for_test(num: u32) -> u8 {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -41,9 +41,8 @@ impl BrowserChrome {
             return;
         };
         let script_timeout = |code_len: usize| -> std::time::Duration {
-            let extra_ms = (code_len / 10_000) as u64 * 20;
-            std::time::Duration::from_millis(500 + extra_ms)
-                .min(std::time::Duration::from_millis(2500))
+            let extra_secs = (code_len / 1_000_000) as u64 * 5;
+            std::time::Duration::from_secs(30 + extra_secs).min(std::time::Duration::from_secs(60))
         };
         let is_mod = s.is_module();
         if !is_mod {
@@ -71,7 +70,9 @@ impl BrowserChrome {
             );
         }
         match s {
-            ScriptToRun::Inline { code, is_module, .. } => {
+            ScriptToRun::Inline {
+                code, is_module, ..
+            } => {
                 let to = script_timeout(code.len());
                 let res = if is_module {
                     rt.execute_module_with_timeout(&code, to)

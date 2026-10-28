@@ -102,10 +102,7 @@ pub fn find_first_baseline_ascent(box_: &LayoutBox, default_fs: f32) -> f32 {
         {
             let child_ascent = find_first_baseline_ascent(child, default_fs);
             if child_ascent > 0.0 {
-                let top_offset =
-                    (child.dimensions.content.y() - box_.dimensions.content.y()).max(0.0);
-                return top_offset
-                    + child.dimensions.margin.top
+                return child.dimensions.margin.top
                     + child.dimensions.border.top
                     + child.dimensions.padding.top
                     + child_ascent;

@@ -118,7 +118,8 @@ pub fn position_flex_items_on_line(params: LinePlacementParams) {
         };
 
         if is_row {
-            let is_max_h_pct_indefinite = child_style.max_height.has_percent() && eff_cross_cb <= 0.0;
+            let is_max_h_pct_indefinite =
+                child_style.max_height.has_percent() && eff_cross_cb <= 0.0;
             if child_style.max_height != Length::Auto && !is_max_h_pct_indefinite {
                 let max_h = child_style.max_height.to_px_with_viewport(
                     c_fs,
@@ -719,11 +720,7 @@ pub fn calculate_abspos_static_positions(
                     mango_css::values::FlexDirection::RowReverse
                         | mango_css::values::FlexDirection::ColumnReverse
                 );
-                if is_dir_reverse {
-                    free_main
-                } else {
-                    0.0
-                }
+                if is_dir_reverse { free_main } else { 0.0 }
             }
             JustifyContent::End => {
                 let is_dir_reverse = matches!(
@@ -731,50 +728,30 @@ pub fn calculate_abspos_static_positions(
                     mango_css::values::FlexDirection::RowReverse
                         | mango_css::values::FlexDirection::ColumnReverse
                 );
-                if is_dir_reverse {
-                    0.0
-                } else {
-                    free_main
-                }
+                if is_dir_reverse { 0.0 } else { free_main }
             }
             JustifyContent::Left => {
                 if is_row {
-                    if is_reverse {
-                        free_main
-                    } else {
-                        0.0
-                    }
+                    if is_reverse { free_main } else { 0.0 }
                 } else {
                     let is_dir_reverse = matches!(
                         style.flex_direction,
                         mango_css::values::FlexDirection::RowReverse
                             | mango_css::values::FlexDirection::ColumnReverse
                     );
-                    if is_dir_reverse {
-                        free_main
-                    } else {
-                        0.0
-                    }
+                    if is_dir_reverse { free_main } else { 0.0 }
                 }
             }
             JustifyContent::Right => {
                 if is_row {
-                    if is_reverse {
-                        0.0
-                    } else {
-                        free_main
-                    }
+                    if is_reverse { 0.0 } else { free_main }
                 } else {
                     let is_dir_reverse = matches!(
                         style.flex_direction,
                         mango_css::values::FlexDirection::RowReverse
                             | mango_css::values::FlexDirection::ColumnReverse
                     );
-                    if is_dir_reverse {
-                        free_main
-                    } else {
-                        0.0
-                    }
+                    if is_dir_reverse { free_main } else { 0.0 }
                 }
             }
         };

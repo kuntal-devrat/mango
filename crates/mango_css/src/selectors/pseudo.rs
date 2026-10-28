@@ -113,7 +113,10 @@ pub(crate) fn matches_pseudo_class(
         }
         "link" => {
             (el.tag_name.eq_ignore_ascii_case("a") || el.tag_name.eq_ignore_ascii_case("area"))
-                && el.get_attribute("href").map(|h| !h.is_empty()).unwrap_or(false)
+                && el
+                    .get_attribute("href")
+                    .map(|h| !h.is_empty())
+                    .unwrap_or(false)
         }
         "visited" => {
             (el.tag_name.eq_ignore_ascii_case("a") || el.tag_name.eq_ignore_ascii_case("area"))

@@ -396,18 +396,19 @@ pub fn op_mango_get_computed_style(
         Some([t, r, b, l]) => (Some(t), Some(r), Some(b), Some(l)),
         None => (None, None, None, None),
     };
-    let format_margin = |specified: &mango_css::values::Length, used: Option<f32>, cb_w: Option<f32>| -> String {
-        if let Some(u) = used {
-            let rounded = (u * 1000.0).round() / 1000.0;
-            if (rounded - rounded.round()).abs() < 1e-4 {
-                format!("{:.0}px", rounded.round())
+    let format_margin =
+        |specified: &mango_css::values::Length, used: Option<f32>, cb_w: Option<f32>| -> String {
+            if let Some(u) = used {
+                let rounded = (u * 1000.0).round() / 1000.0;
+                if (rounded - rounded.round()).abs() < 1e-4 {
+                    format!("{:.0}px", rounded.round())
+                } else {
+                    format!("{rounded}px")
+                }
             } else {
-                format!("{rounded}px")
+                format_css_length(specified, style.font_size, style.root_font_size, cb_w)
             }
-        } else {
-            format_css_length(specified, style.font_size, style.root_font_size, cb_w)
-        }
-    };
+        };
     let mt = format_margin(&style.margin_top, used_mt, cb_w);
     let mr = format_margin(&style.margin_right, used_mr, cb_w);
     let mb = format_margin(&style.margin_bottom, used_mb, cb_w);

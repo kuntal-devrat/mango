@@ -206,10 +206,12 @@ fn resolve_target_file(base_dir: &Path, clean_path: &str) -> Option<PathBuf> {
     // Sanitize against path traversal attacks: reject any path containing `..`,
     // root, or prefix components.
     let normalized = clean_path.replace('\\', "/");
-    if Path::new(&normalized)
-        .components()
-        .any(|c| matches!(c, Component::ParentDir | Component::RootDir | Component::Prefix(_)))
-    {
+    if Path::new(&normalized).components().any(|c| {
+        matches!(
+            c,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
         return None;
     }
 
@@ -531,13 +533,19 @@ mod tests {
         // Direct path traversal attempts must be rejected with None (resulting in 404)
         assert_eq!(resolve_target_file(&sub_dir, "../secret.txt"), None);
         assert_eq!(resolve_target_file(&sub_dir, "../../secret.txt"), None);
-        assert_eq!(resolve_target_file(&sub_dir, "acid3/../../secret.txt"), None);
+        assert_eq!(
+            resolve_target_file(&sub_dir, "acid3/../../secret.txt"),
+            None
+        );
         assert_eq!(resolve_target_file(&sub_dir, r"..\secret.txt"), None);
         assert_eq!(resolve_target_file(&sub_dir, ".."), None);
         assert_eq!(resolve_target_file(&sub_dir, "/etc/passwd"), None);
 
         // Legitimate file must still resolve
-        assert_eq!(resolve_target_file(&sub_dir, "test.html"), Some(normal_file));
+        assert_eq!(
+            resolve_target_file(&sub_dir, "test.html"),
+            Some(normal_file)
+        );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
