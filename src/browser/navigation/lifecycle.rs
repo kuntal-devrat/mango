@@ -255,6 +255,18 @@ impl BrowserChrome {
     /// Applies an asynchronously prepared document to the browser UI without freezing the event loop.
     pub fn apply_prepared_document(&mut self, prep: PreparedDocument, push_history: bool) {
         let final_url = prep.url.clone();
+
+        // Check for immediate meta refresh redirect (e.g. <meta http-equiv="refresh" content="0; url=...">)
+        if let Some((delay, refresh_url)) =
+            super::pipeline::check_meta_refresh(&prep.doc, Some(&final_url))
+        {
+            if delay == 0 && refresh_url != final_url.to_string() {
+                log::info!("Meta refresh redirecting immediately to: {}", refresh_url);
+                self.navigate(&refresh_url);
+                return;
+            }
+        }
+
         self.base_url = Some(final_url.clone());
         self.cached_stylesheets = prep.cached_stylesheets.clone();
         self.layer_tree.clear_page_tiles();

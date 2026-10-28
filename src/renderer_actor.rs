@@ -235,6 +235,60 @@ fn collect_import_maps(doc: &Document, node_id: NodeId, out: &mut Vec<String>) {
     }
 }
 
+/// Drains pending client-side navigations, window opens, and console logs from the JS runtime.
+fn drain_renderer_js_effects(
+    rt: &mut JsRuntime,
+    current_base_url: Option<&Url>,
+    result_tx: &Sender<RendererResult>,
+    ipc_ep: &IpcEndpoint,
+) {
+    if let Some(url) = rt.take_pending_navigation() {
+        let nav_url = if let Some(base) = current_base_url {
+            base.resolve(&url).map(|u| u.to_string()).unwrap_or(url)
+        } else {
+            url
+        };
+        log::info!("Isolated renderer emitted navigation request: {}", nav_url);
+        let _ = result_tx.send(RendererResult::NavigationRequested {
+            url: nav_url.clone(),
+        });
+        let _ = ipc_ep.send(&IpcMessage::NavigationRequest { url: nav_url });
+    }
+    if let Some(open_req) = rt.take_pending_open_window() {
+        let nav_url = if let Some(base) = current_base_url {
+            base.resolve(&open_req.url)
+                .map(|u| u.to_string())
+                .unwrap_or(open_req.url)
+        } else {
+            open_req.url
+        };
+        let _ = result_tx.send(RendererResult::OpenWindow {
+            url: nav_url.clone(),
+            features: open_req.features.clone(),
+        });
+        let _ = ipc_ep.send(&IpcMessage::OpenWindow {
+            url: nav_url,
+            features: open_req.features,
+        });
+    }
+    for msg in rt.take_console_messages() {
+        let lvl = match msg.level {
+            mango_js::console::ConsoleLevel::Log => crate::devtools::ConsoleLevel::Log,
+            mango_js::console::ConsoleLevel::Info => crate::devtools::ConsoleLevel::Info,
+            mango_js::console::ConsoleLevel::Warn => crate::devtools::ConsoleLevel::Warn,
+            mango_js::console::ConsoleLevel::Error => crate::devtools::ConsoleLevel::Error,
+        };
+        let _ = result_tx.send(RendererResult::ConsoleMessage {
+            level: lvl,
+            text: msg.text.clone(),
+        });
+        let _ = ipc_ep.send(&IpcMessage::ConsoleMessage {
+            level: format!("{lvl:?}"),
+            text: msg.text,
+        });
+    }
+}
+
 /// Computes layout and display list for a document snapshot.
 fn compute_layout_snapshot(
     doc: &Document,
@@ -364,6 +418,8 @@ fn run_renderer_loop(
                     );
                 }
 
+                drain_renderer_js_effects(&mut rt, current_base_url.as_ref(), &result_tx, &ipc_ep);
+
                 // Queue deferred / async scripts
                 pending_scripts.clear();
                 for s in defer_async_scripts {
@@ -374,6 +430,12 @@ fn run_renderer_loop(
                 if pending_scripts.is_empty() {
                     let _ = rt.dispatch_dom_content_loaded();
                     let _ = rt.dispatch_load();
+                    drain_renderer_js_effects(
+                        &mut rt,
+                        current_base_url.as_ref(),
+                        &result_tx,
+                        &ipc_ep,
+                    );
                 }
 
                 // Initial layout & display list calculation
@@ -419,7 +481,9 @@ fn run_renderer_loop(
                         let _ = result_tx.send(RendererResult::Error {
                             message: format!("Script execution error: {e}"),
                         });
-                    } else if rt.is_dom_dirty() {
+                    }
+                    drain_renderer_js_effects(rt, current_base_url.as_ref(), &result_tx, &ipc_ep);
+                    if rt.is_dom_dirty() {
                         let doc_clone = rt.document_ref().clone();
                         let title = rt
                             .eval("document.title")
@@ -511,6 +575,7 @@ fn run_renderer_loop(
                     let _ = rt.execute_script(&format!(
                         "if (typeof document !== 'undefined') {{ var ev = new MouseEvent('click', {{ clientX: {x}, clientY: {y}, bubbles: true }}); document.dispatchEvent(ev); }}"
                     ));
+                    drain_renderer_js_effects(rt, current_base_url.as_ref(), &result_tx, &ipc_ep);
                     if rt.is_dom_dirty() {
                         let doc_clone = rt.document_ref().clone();
                         let title =
@@ -549,6 +614,7 @@ fn run_renderer_loop(
                     let _ = rt.execute_script(&format!(
                         "if (typeof document !== 'undefined') {{ var ev = new KeyboardEvent('keydown', {{ key: '{key_str}', bubbles: true }}); document.dispatchEvent(ev); }}"
                     ));
+                    drain_renderer_js_effects(rt, current_base_url.as_ref(), &result_tx, &ipc_ep);
                     is_busy.store(false, Ordering::Release);
                 }
             }
@@ -579,45 +645,10 @@ fn run_renderer_loop(
                         mutated |= rt.tick();
                     }
 
-                    // 3. Drain pending window.open requests
-                    if let Some(open_req) = rt.take_pending_open_window() {
-                        let _ = result_tx.send(RendererResult::OpenWindow {
-                            url: open_req.url.clone(),
-                            features: open_req.features.clone(),
-                        });
-                        let _ = ipc_ep.send(&IpcMessage::OpenWindow {
-                            url: open_req.url,
-                            features: open_req.features,
-                        });
-                    }
+                    // 3. Drain pending JS side-effects (navigation, window.open, console)
+                    drain_renderer_js_effects(rt, current_base_url.as_ref(), &result_tx, &ipc_ep);
 
-                    // 4. Drain console messages
-                    for msg in rt.take_console_messages() {
-                        let lvl = match msg.level {
-                            mango_js::console::ConsoleLevel::Log => {
-                                crate::devtools::ConsoleLevel::Log
-                            }
-                            mango_js::console::ConsoleLevel::Info => {
-                                crate::devtools::ConsoleLevel::Info
-                            }
-                            mango_js::console::ConsoleLevel::Warn => {
-                                crate::devtools::ConsoleLevel::Warn
-                            }
-                            mango_js::console::ConsoleLevel::Error => {
-                                crate::devtools::ConsoleLevel::Error
-                            }
-                        };
-                        let _ = result_tx.send(RendererResult::ConsoleMessage {
-                            level: lvl,
-                            text: msg.text.clone(),
-                        });
-                        let _ = ipc_ep.send(&IpcMessage::ConsoleMessage {
-                            level: format!("{lvl:?}"),
-                            text: msg.text,
-                        });
-                    }
-
-                    // 5. If DOM mutated, re-compute layout and emit FrameReady
+                    // 4. If DOM mutated, re-compute layout and emit FrameReady
                     if mutated && rt.is_dom_dirty() {
                         let doc_clone = rt.document_ref().clone();
                         let title = rt

@@ -480,7 +480,12 @@ impl BrowserChrome {
                     self.devtools.log(level, text);
                 }
                 crate::renderer_actor::RendererResult::NavigationRequested { url } => {
-                    self.navigate(&url);
+                    let nav_url = if let Some(base) = &self.base_url {
+                        base.resolve(&url).map(|u| u.to_string()).unwrap_or(url)
+                    } else {
+                        url
+                    };
+                    self.navigate(&nav_url);
                     updated = true;
                 }
                 crate::renderer_actor::RendererResult::Error { message } => {

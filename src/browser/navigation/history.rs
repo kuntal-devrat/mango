@@ -594,6 +594,13 @@ impl BrowserChrome {
     pub(crate) fn navigate_to_address(&mut self, push_history: bool) {
         self.is_all_selected = false;
         let mut input = self.address_text.trim().to_string();
+        if let Some(unwrapped) =
+            crate::browser::navigation::pipeline::unwrap_tracking_redirect(&input)
+        {
+            log::info!("Unwrapped tracking redirect: {} -> {}", input, unwrapped);
+            input = unwrapped;
+            self.address_text = input.clone();
+        }
         log::info!("Navigate to: {}", input);
 
         if input.starts_with('#') {

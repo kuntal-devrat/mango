@@ -775,3 +775,103 @@ fn test_async_web_font_reflow_in_flush_pending_layout() {
         "Layout is clean after reflow"
     );
 }
+
+#[test]
+fn test_unwrap_tracking_redirect() {
+    use crate::browser::navigation::pipeline::unwrap_tracking_redirect;
+
+    let ddg = "https://duckduckgo.com/l/?uddg=https%3A%2F%2Fgetemoji.com%2F&rut=5064819afc221ff0ef7ad498c3d52db83ed90fb620670932902099070389e440";
+    assert_eq!(
+        unwrap_tracking_redirect(ddg),
+        Some("https://getemoji.com/".to_string())
+    );
+
+    let ddg_short = "https://ddg.gg/l/?uddg=http%3A%2F%2Fexample.com%2Ftest%3Fparam%3Dval";
+    assert_eq!(
+        unwrap_tracking_redirect(ddg_short),
+        Some("http://example.com/test?param=val".to_string())
+    );
+
+    let google = "https://www.google.com/url?q=https%3A%2F%2Fexample.org%2F&sa=D&sntz=1";
+    assert_eq!(
+        unwrap_tracking_redirect(google),
+        Some("https://example.org/".to_string())
+    );
+
+    let non_tracking = "https://getemoji.com/";
+    assert_eq!(unwrap_tracking_redirect(non_tracking), None);
+}
+
+#[test]
+fn test_check_meta_refresh() {
+    use crate::browser::navigation::pipeline::check_meta_refresh;
+    use mango_html::parse_html;
+    use mango_net::Url;
+
+    let html = "<html><head><meta http-equiv='refresh' content='0;URL=https://getemoji.com/'></head><body></body></html>";
+    let doc = parse_html(html);
+    assert_eq!(
+        check_meta_refresh(&doc, None),
+        Some((0, "https://getemoji.com/".to_string()))
+    );
+
+    let html_rel = "<html><body><noscript><meta http-equiv=\"refresh\" content=\"0; url=/local/path\"></noscript></body></html>";
+    let doc_rel = parse_html(html_rel);
+    let base = Url::parse("https://example.com/dir/index.html").ok();
+    assert_eq!(
+        check_meta_refresh(&doc_rel, base.as_ref()),
+        Some((0, "https://example.com/local/path".to_string()))
+    );
+
+    let html_none =
+        "<html><head><meta name='description' content='Mango'></head><body></body></html>";
+    let doc_none = parse_html(html_none);
+    assert_eq!(check_meta_refresh(&doc_none, None), None);
+}
+
+#[test]
+fn test_renderer_actor_navigation_requested() {
+    use crate::renderer_actor::{LoadDocumentPayload, RendererActorHandle, RendererResult};
+    use mango_html::parse_html;
+    use mango_net::CookieJar;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    let mut renderer = RendererActorHandle::spawn(301);
+    let html = "<html><body><script>window.parent.location.replace('https://getemoji.com/');</script></body></html>";
+    let doc = parse_html(html);
+
+    renderer.load_document(LoadDocumentPayload {
+        url: "https://duckduckgo.com/l/?uddg=https%3A%2F%2Fgetemoji.com%2F".to_string(),
+        doc,
+        html: html.to_string(),
+        stylesheets: Vec::new(),
+        preloaded_scripts: Vec::new(),
+        viewport_width: 800.0,
+        viewport_height: 600.0,
+        base_url: None,
+        generation: 1,
+        local_storage: Arc::new(Mutex::new(HashMap::new())),
+        session_storage: Arc::new(Mutex::new(HashMap::new())),
+        cookie_jar: Arc::new(Mutex::new(CookieJar::new())),
+        cache: None,
+    });
+
+    let mut found_nav = false;
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        if let Ok(RendererResult::NavigationRequested { url }) =
+            renderer.result_rx.recv_timeout(Duration::from_millis(50))
+        {
+            assert_eq!(url, "https://getemoji.com/");
+            found_nav = true;
+            break;
+        }
+    }
+    assert!(
+        found_nav,
+        "RendererActor must emit NavigationRequested when script calls location.replace()"
+    );
+    renderer.shutdown();
+}

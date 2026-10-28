@@ -222,6 +222,24 @@ impl ApplicationHandler for MangoApp {
                 }
             }
 
+            // Check for pending navigation requests from scripts (sync mode / main-thread fallback)
+            if let Some(nav_url) = state
+                .browser
+                .js_runtime
+                .as_mut()
+                .and_then(|rt| rt.take_pending_navigation())
+            {
+                let resolved_url = if let Some(base) = &state.browser.base_url {
+                    base.resolve(&nav_url)
+                        .map(|u| u.to_string())
+                        .unwrap_or(nav_url)
+                } else {
+                    nav_url
+                };
+                state.browser.navigate(&resolved_url);
+                needs_redraw = true;
+            }
+
             // Drive CSS transitions and @keyframes animations
             if state.browser.is_animating() && state.browser.tick_animations(dt_ms) {
                 needs_redraw = true;

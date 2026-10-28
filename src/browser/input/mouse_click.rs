@@ -75,6 +75,9 @@ impl BrowserChrome {
                     } else {
                         target_href
                     };
+                    let nav_url =
+                        crate::browser::navigation::pipeline::unwrap_tracking_redirect(&nav_url)
+                            .unwrap_or(nav_url);
                     log::info!(
                         "Navigating to clicked link: {} (target={:?})",
                         nav_url,
