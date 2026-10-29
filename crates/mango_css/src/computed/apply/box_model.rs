@@ -713,7 +713,13 @@ pub(crate) fn apply_box_model_property(style: &mut ComputedStyle, prop: &str, va
             _ => {}
         },
         "margin-trim" => match val {
-            Value::Keyword(k) | Value::String(k) => style.margin_trim = k.clone(),
+            Value::Keyword(k) | Value::String(k) => {
+                if k == "block-start block-end" || k == "block-end block-start" {
+                    style.margin_trim = "block".to_string();
+                } else {
+                    style.margin_trim = k.clone();
+                }
+            }
             Value::List(list) => {
                 let parts: Vec<String> = list
                     .iter()
@@ -722,10 +728,16 @@ pub(crate) fn apply_box_model_property(style: &mut ComputedStyle, prop: &str, va
                         _ => None,
                     })
                     .collect();
-                style.margin_trim = parts.join(" ");
+                if parts.len() == 2
+                    && ((parts[0] == "block-start" && parts[1] == "block-end")
+                        || (parts[0] == "block-end" && parts[1] == "block-start"))
+                {
+                    style.margin_trim = "block".to_string();
+                } else {
+                    style.margin_trim = parts.join(" ");
+                }
             }
             Value::Display(Display::Block) => style.margin_trim = "block".to_string(),
-            Value::Display(Display::Inline) => style.margin_trim = "inline".to_string(),
             _ => {}
         },
         "opacity" => match val {

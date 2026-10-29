@@ -48,7 +48,8 @@ pub fn build_flex_lines(
                 main_gap
             };
 
-            if is_container_main_definite
+            let can_wrap = is_container_main_definite && container_main_size.is_finite();
+            if can_wrap
                 && !current_line.is_empty()
                 && !is_collapsed
                 && (current_line_main + item_gap + outer_item_main > container_main_size + 0.5)
@@ -566,12 +567,16 @@ pub fn resolve_flexible_lengths(
 /// inner main size if definite, or 0.0 if indefinite.
 pub fn resolve_flex_main_gap(
     style: &ComputedStyle,
-    is_row: bool,
+    _is_row: bool,
     container_main_size: f32,
     container_height: f32,
     is_container_main_definite: bool,
 ) -> f32 {
-    let gap_length = if is_row {
+    let is_flex_dir_row = matches!(
+        style.flex_direction,
+        mango_css::values::FlexDirection::Row | mango_css::values::FlexDirection::RowReverse
+    );
+    let gap_length = if is_flex_dir_row {
         &style.column_gap
     } else {
         &style.row_gap
@@ -599,19 +604,21 @@ pub fn resolve_flex_main_gap(
 /// percentage gaps resolve to 0.0.
 pub fn resolve_flex_cross_gap(
     style: &ComputedStyle,
-    is_row: bool,
+    _is_row: bool,
     container_cross_size: f32,
     container_height: f32,
 ) -> f32 {
-    let gap_length = if is_row {
+    let is_flex_dir_row = matches!(
+        style.flex_direction,
+        mango_css::values::FlexDirection::Row | mango_css::values::FlexDirection::RowReverse
+    );
+    let gap_length = if is_flex_dir_row {
         &style.row_gap
     } else {
         &style.column_gap
     };
 
-    if (container_cross_size <= 0.0 || (is_row && container_height <= 0.0))
-        && gap_length.has_percent()
-    {
+    if container_cross_size <= 0.0 && gap_length.has_percent() {
         return 0.0;
     }
 
@@ -642,6 +649,7 @@ mod tests {
     #[test]
     fn test_resolve_flex_main_gap_column_percentage() {
         let mut style = ComputedStyle::default();
+        style.flex_direction = mango_css::values::FlexDirection::Column;
         style.row_gap = Length::Percent(15.0);
         let gap = resolve_flex_main_gap(&style, false, 300.0, 300.0, true);
         assert_eq!(gap, 45.0);

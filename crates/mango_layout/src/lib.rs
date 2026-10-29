@@ -383,4 +383,49 @@ mod tests {
             assert!(rss_kib < 768 * 1024, "stress layout RSS was {rss_kib} KiB");
         }
     }
+
+    #[test]
+    fn test_flexbox_stf_table_singleline_shrink_to_fit() {
+        let html = r#"<!DOCTYPE html>
+<style>
+#test { background: red; display: table; }
+div div { background: red; width: 0; display: flex; }
+p { font-family: Ahem; margin: 1em 0; width: 200px; }
+</style>
+<div id="test">
+    <div>
+        <p>filler</p>
+        <p>filler</p>
+        <p>filler</p>
+        <p>filler</p>
+        <p>filler</p>
+    </div>
+</div>"#;
+        let doc = mango_html::parse_html(html);
+        let (root_box, _dl) = layout_document(&doc, &[], Size::new(800.0, 600.0));
+        fn find_test(b: &LayoutBox) -> Option<&LayoutBox> {
+            if b.get_attribute("id") == Some("test") {
+                return Some(b);
+            }
+            for c in &b.children {
+                if let Some(found) = find_test(c) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        let test_box = find_test(&root_box).expect("found #test");
+        assert_eq!(
+            test_box.children[0].style.as_ref().map(|s| s.display),
+            Some(mango_css::values::Display::TableRow)
+        );
+        assert_eq!(
+            test_box.children[0].children[0]
+                .style
+                .as_ref()
+                .map(|s| s.display),
+            Some(mango_css::values::Display::TableCell)
+        );
+        assert_eq!(test_box.dimensions.content.size.width, 0.0);
+    }
 }

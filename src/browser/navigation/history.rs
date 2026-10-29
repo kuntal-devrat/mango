@@ -74,6 +74,104 @@ impl BrowserChrome {
         );
     }
 
+    /// Fast non-blocking path for asynchronous isolated renderer navigation.
+    /// Updates browser chrome state, tab history, and resource scheduling
+    /// without blocking the UI thread on duplicate V8 runtime creation,
+    /// full CSS selector matching, or layout tree construction.
+    pub(crate) fn apply_async_navigation_state(
+        &mut self,
+        doc: &Document,
+        html: &str,
+        url: &str,
+        push_history: bool,
+    ) {
+        self.resource_scheduler.cancel_generation(
+            crate::browser::resource_scheduler::RejectReason::SupersededNavigation,
+        );
+        let generation = self
+            .image_epoch
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
+        self.resource_scheduler.begin_document(generation);
+        self.style_index_cache = None;
+        self.style_index_version = u64::MAX;
+        self.style_index_viewport = (0, 0);
+        self.current_html = html.to_string();
+        self.address_text = url.to_string();
+        self.cursor_pos = self.address_text.len();
+        self.context_menu = None;
+        self.select_dropdown = None;
+        self.picker = None;
+        self.validation_bubble = None;
+        self.range_dragging = None;
+        self.range_drag_start_value = None;
+        self.focused_control = None;
+        self.focused_initial_value = None;
+        self.control_cursor_pos = 0;
+
+        if let Some(title) = extract_title(doc) {
+            self.page_title = title;
+        } else {
+            self.page_title = url.to_string();
+        }
+        if let Some(tab) = self.tabs.get_mut(self.active_tab_idx) {
+            if push_history {
+                if let Some(ref root) = self.root_box
+                    && root.descendant_count() <= 10_000
+                {
+                    let (w, h) = (
+                        self.width as f32,
+                        (self.height.saturating_sub(HEADER_HEIGHT as u32)) as f32,
+                    );
+                    let snapshot = mango_layout::LayoutSnapshot::from_layout_box(
+                        root,
+                        mango_core::Size::new(w, h),
+                    );
+                    tab.store_bfcache_snapshot(Box::new(snapshot));
+                }
+                tab.push_history(url.to_string(), self.page_title.clone());
+                self.scroll_y = 0.0;
+                self.scroll_y_f64 = 0.0;
+            } else {
+                tab.url = url.to_string();
+                tab.set_title(self.page_title.clone());
+            }
+        }
+
+        if let Some(old_doc) = self.cached_document.take() {
+            mango_render::remove_canvases_for_document(old_doc.id());
+        }
+        if let Some(rt) = &self.js_runtime {
+            mango_render::remove_canvases_for_document(rt.document_ref().id());
+        }
+        self.root_box = None;
+        self.page_display_list = DisplayList::new();
+        self.display_list_cache.lock().unwrap().clear();
+        self.layer_tree.clear_page_tiles();
+        mango_render::prune_image_caches();
+        if let Some(mut old_rt) = self.js_runtime.take() {
+            old_rt.clear_timers();
+        }
+
+        self.cached_document = Some(doc.clone());
+        self.base_url = Url::parse(url).ok();
+        self.anim_state = mango_css::AnimationState::new();
+        self.style_snapshot.clear();
+        self.hovered_dom_nodes.clear();
+        self.active_dom_nodes.clear();
+        self.pending_scripts.clear();
+
+        if let Ok(parsed) = Url::parse(url)
+            && let Some(ref frag) = parsed.fragment
+        {
+            let frag_str = frag.clone();
+            if let Some(ref mut d) = self.cached_document {
+                d.set_target_id(Some(frag_str.clone()));
+            }
+            self.scroll_to_anchor_fragment(&frag_str);
+        }
+    }
+
     pub(crate) fn load_document_internal_with_scripts(
         &mut self,
         doc: Document,

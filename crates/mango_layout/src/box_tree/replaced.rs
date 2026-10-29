@@ -148,6 +148,30 @@ pub fn build_replaced_element_with_maps(
     }
 
     let src = get_attr("src").unwrap_or("");
+    let mut no_aspect_ratio = false;
+    if src.starts_with("data:image/svg+xml") || src.ends_with(".svg") || src.contains(".svg?") {
+        let svg_str: Option<String> = if let Some(rest) = src.strip_prefix("data:image/svg+xml") {
+            let data = rest
+                .strip_prefix(',')
+                .or_else(|| rest.strip_prefix(";utf8,"))
+                .unwrap_or(rest);
+            if let Some(b64) = data.strip_prefix(";base64,") {
+                mango_render::image_decode::base64_decode(b64)
+                    .and_then(|bytes| String::from_utf8(bytes).ok())
+            } else {
+                Some(mango_render::percent_decode(data))
+            }
+        } else {
+            None
+        };
+        if let Some(s) = svg_str.as_deref() {
+            let (iw, ih) = mango_render::get_svg_intrinsic_dimensions(s);
+            if iw.is_none() && ih.is_none() {
+                no_aspect_ratio = true;
+            }
+        }
+    }
+
     if decoded.is_none() {
         decoded = lookup_image(src);
     }
@@ -188,11 +212,19 @@ pub fn build_replaced_element_with_maps(
             (Some(ew), Some(eh)) => (ew.max(1.0), eh.max(1.0)),
             (Some(ew), None) => {
                 let ew = ew.max(1.0);
-                (ew, (ew / aspect_ratio).max(1.0))
+                if no_aspect_ratio {
+                    (ew, natural_h.max(1.0))
+                } else {
+                    (ew, (ew / aspect_ratio).max(1.0))
+                }
             }
             (None, Some(eh)) => {
                 let eh = eh.max(1.0);
-                (((eh * aspect_ratio).max(1.0)), eh)
+                if no_aspect_ratio {
+                    (natural_w.max(1.0), eh)
+                } else {
+                    (((eh * aspect_ratio).max(1.0)), eh)
+                }
             }
             (None, None) => (natural_w.max(1.0), natural_h.max(1.0)),
         };
@@ -230,6 +262,11 @@ pub fn build_replaced_element_with_maps(
     b.node_id = styled_node.node_id;
     b.tag_name = styled_node.tag_name.clone();
     b.attributes = styled_node.attributes.clone();
+
+    if no_aspect_ratio {
+        b.attributes
+            .push(("_mango_no_aspect_ratio".to_string(), "1".to_string()));
+    }
 
     if let Some(usemap) = get_attr("usemap")
         && let Some(areas) = resolve_map_areas(usemap, maps)
@@ -322,6 +359,7 @@ pub fn try_build_object_element_with_maps(
     };
 
     let img = decoded?;
+    let no_aspect_ratio = false;
 
     let explicit_w: Option<f32> = match styled_node.style.width {
         Length::Px(px) if px > 0.0 => Some(px),
@@ -361,6 +399,11 @@ pub fn try_build_object_element_with_maps(
     b.node_id = styled_node.node_id;
     b.tag_name = styled_node.tag_name.clone();
     b.attributes = styled_node.attributes.clone();
+
+    if no_aspect_ratio {
+        b.attributes
+            .push(("_mango_no_aspect_ratio".to_string(), "1".to_string()));
+    }
 
     if let Some(usemap) = get_attr("usemap")
         && let Some(areas) = resolve_map_areas(usemap, maps)
@@ -459,7 +502,23 @@ pub fn build_svg_replaced_element(styled_node: &StyledNode) -> LayoutBox {
         pixels,
     };
 
-    let mut b = LayoutBox::new(box_type, Some(styled_node.style.clone()));
+    let mut style = (*styled_node.style).clone();
+    if style.width == Length::Auto {
+        if let Some(w_attr) = get_attr("width") {
+            let trimmed = w_attr.trim();
+            if let Some(pct) = trimmed.strip_suffix('%') {
+                if let Ok(p) = pct.trim().parse::<f32>() {
+                    style.width = Length::Percent(p);
+                }
+            }
+        } else {
+            // Per SVG 1.1 § 5.1.2 & SVG 2 § 7.2:
+            // "If the width attribute is not specified, the effect is as if a value of '100%' were specified."
+            style.width = Length::Percent(100.0);
+        }
+    }
+
+    let mut b = LayoutBox::new(box_type, Some(std::sync::Arc::new(style)));
     b.node_id = styled_node.node_id;
     b.tag_name = styled_node.tag_name.clone();
     b.attributes = styled_node.attributes.clone();

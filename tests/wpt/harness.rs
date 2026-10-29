@@ -217,10 +217,50 @@ fn collect_scripts_in_order(
 /// Resolves an upstream `<script src="...">` reference to a file on disk.
 ///
 /// Mirrors the wptrunner URL resolution rules:
+/// Normalizes WPT URL substitutions (e.g. `//{{hosts[alt][www]}}:{{ports[http][0]}}{{location[path]}}/../path`).
+pub fn normalize_wpt_url(src: &str) -> String {
+    let s = src.split(['?', '#']).next().unwrap_or(src).trim();
+    if let Some(idx) = s.find("{{location[path]}}/") {
+        let rest = &s[idx + "{{location[path]}}/".len()..];
+        let rel = rest.strip_prefix("../").unwrap_or(rest);
+        return rel.to_string();
+    }
+    if let Some(idx) = s.find("{{location[path]}}") {
+        let rest = &s[idx + "{{location[path]}}".len()..];
+        let rel = rest
+            .strip_prefix("/../")
+            .or_else(|| rest.strip_prefix('/'))
+            .unwrap_or(rest);
+        return rel.to_string();
+    }
+    if let Some(first_bracket) = s.rfind("}}/") {
+        return s[first_bracket + 3..].to_string();
+    }
+    s.to_string()
+}
+
+/// Strips XML CDATA markers from inline scripts so JS executes cleanly in XHTML documents.
+pub fn strip_cdata_script(code: &str) -> String {
+    let trimmed = code.trim();
+    if trimmed.contains("<![CDATA[") || trimmed.contains("]]>") {
+        trimmed
+            .replace("//<![CDATA[", "")
+            .replace("/*<![CDATA[*/", "")
+            .replace("<![CDATA[", "")
+            .replace("//]]>", "")
+            .replace("/*]]>*/", "")
+            .replace("]]>", "")
+    } else {
+        code.to_string()
+    }
+}
+
 /// * `/resources/foo.js`  -> `<root>/resources/foo.js`
 /// * `/dir/foo.js`         -> `<root>/dir/foo.js`
 /// * `foo.js`              -> relative to the directory of the test file
 pub fn resolve_script_path(root: &Path, test_path: &Path, src: &str) -> PathBuf {
+    let norm = normalize_wpt_url(src);
+    let src = norm.as_str();
     let src = src
         .split('#')
         .next()
@@ -246,6 +286,7 @@ fn collect_iframes_in_order(
     test_path: &Path,
 ) {
     let mut stack = vec![root_id];
+    let mut pending_subresources: Vec<(String, PathBuf)> = Vec::new();
     while let Some(node_id) = stack.pop() {
         if let Some(node) = doc.get(node_id) {
             if let NodeData::Element(ref elem) = node.data
@@ -253,15 +294,44 @@ fn collect_iframes_in_order(
                 && let Some(src) = elem.get_attribute("src")
             {
                 let sub_path = resolve_script_path(root, test_path, src);
-                if sub_path.exists()
-                    && let Ok(c) = std::fs::read_to_string(&sub_path)
-                {
-                    out.push((src.trim().to_string(), c));
+                if sub_path.exists() {
+                    pending_subresources.push((src.trim().to_string(), sub_path));
                 }
             }
             let mut kids: Vec<NodeId> = doc.children(node_id).map(|c| c.id).collect();
             kids.reverse();
             stack.extend(kids);
+        }
+    }
+    let mut visited = std::collections::HashSet::new();
+    while let Some((src_str, path)) = pending_subresources.pop() {
+        if !visited.insert(path.clone()) {
+            continue;
+        }
+        if let Ok(c) = std::fs::read_to_string(&path) {
+            let norm = normalize_wpt_url(&src_str);
+            out.push((src_str.clone(), c.clone()));
+            if norm != src_str {
+                out.push((norm, c.clone()));
+            }
+            let sub_doc = parse_html(&c);
+            let mut sub_stack = vec![sub_doc.root()];
+            while let Some(nid) = sub_stack.pop() {
+                if let Some(node) = sub_doc.get(nid) {
+                    if let NodeData::Element(ref elem) = node.data
+                        && elem.tag_name.eq_ignore_ascii_case("iframe")
+                        && let Some(nsrc) = elem.get_attribute("src")
+                    {
+                        let npath = resolve_script_path(root, &path, nsrc);
+                        if npath.exists() {
+                            pending_subresources.push((nsrc.trim().to_string(), npath));
+                        }
+                    }
+                    let mut kids: Vec<NodeId> = sub_doc.children(nid).map(|c| c.id).collect();
+                    kids.reverse();
+                    sub_stack.extend(kids);
+                }
+            }
         }
     }
 }
@@ -480,8 +550,9 @@ pub fn run_wpt_file(root: &Path, rel_path: &str, timeout: Duration) -> WptFileRe
                 }
             }
             None => {
-                if !inline_code.trim().is_empty()
-                    && let Err(e) = rt.execute_script(&inline_code)
+                let clean_code = strip_cdata_script(&inline_code);
+                if !clean_code.trim().is_empty()
+                    && let Err(e) = rt.execute_script(&clean_code)
                 {
                     script_errors.push(format!("<inline>: {e}"));
                 }

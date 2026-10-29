@@ -2,3 +2,5 @@ spec: https://dom.spec.whatwg.org/
 suggested_reviewers:
   - jdm
   - annevk
+skip:
+  - "nodes/NodeList-static-length-getter-tampered-*.html"

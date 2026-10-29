@@ -224,26 +224,25 @@ fn wildcard_match(pattern: &str, text: &str) -> bool {
 /// `META.yml` skip globs are relative to the directory containing the
 /// `META.yml`, matching wptrunner's behaviour.
 pub fn is_skipped(root: &Path, rel_path: &str) -> bool {
-    let mut dir = root.to_path_buf();
-    let mut segments: Vec<&str> = rel_path.split('/').collect();
-    let file_name = segments.pop().unwrap_or_default();
+    let full_path = root.join(rel_path);
+    let mut dir = match full_path.parent() {
+        Some(p) if p.starts_with(root) => p.to_path_buf(),
+        _ => root.to_path_buf(),
+    };
 
     loop {
         let meta = load_meta(&dir);
         if !meta.skip.is_empty() {
-            let rel_to_dir = match dir.strip_prefix(root) {
-                Ok(r) => r.to_string_lossy().replace('\\', "/"),
-                Err(_) => String::new(),
-            };
-            let rel_to_dir = rel_to_dir.trim_end_matches('/').to_string();
-            let candidate = if rel_to_dir.is_empty() {
-                file_name.to_string()
-            } else {
-                format!("{rel_to_dir}/{file_name}")
-            };
-            for pattern in &meta.skip {
-                if glob_match(pattern, &candidate) {
-                    return true;
+            let candidate = full_path
+                .strip_prefix(&dir)
+                .ok()
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_default();
+            if !candidate.is_empty() {
+                for pattern in &meta.skip {
+                    if glob_match(pattern, &candidate) {
+                        return true;
+                    }
                 }
             }
         }
@@ -251,8 +250,8 @@ pub fn is_skipped(root: &Path, rel_path: &str) -> bool {
             break;
         }
         match dir.parent() {
-            Some(p) => dir = p.to_path_buf(),
-            None => break,
+            Some(p) if p.starts_with(root) => dir = p.to_path_buf(),
+            _ => break,
         }
     }
     false

@@ -1,5 +1,7 @@
 use mango_core::Rect;
-use mango_css::values::{BorderCollapse, CaptionSide, Display, Length, Position, TableLayout};
+use mango_css::values::{
+    BorderCollapse, BoxSizing, CaptionSide, Display, Length, Position, TableLayout,
+};
 
 use crate::box_tree::LayoutBox;
 use crate::dimensions::Dimensions;
@@ -242,17 +244,38 @@ pub(crate) fn layout_table_contents(
         if is_auto_table_width && max_child_w > 0.0 {
             table_box.dimensions.content.size.width = max_child_w;
         }
-        let raw_h = (current_y - table_box.dimensions.content.y()).max(if max_child_w > 0.0 {
-            0.0
-        } else {
-            10.0
-        });
         let font_size = style.font_size;
         let (_, vp_h) = mango_css::get_current_viewport();
+        let explicit_h = if style.height != Length::Auto {
+            let h_px = style
+                .height
+                .to_px_with_viewport(font_size, 16.0, table_w, vp_h);
+            if style.box_sizing == BoxSizing::BorderBox {
+                let border_v = style.border_top_width + style.border_bottom_width;
+                let pad_v = style
+                    .padding_top
+                    .to_px_with_viewport(font_size, 16.0, table_w, vp_h)
+                    + style
+                        .padding_bottom
+                        .to_px_with_viewport(font_size, 16.0, table_w, vp_h);
+                (h_px - border_v - pad_v).max(0.0)
+            } else {
+                h_px
+            }
+        } else {
+            0.0
+        };
+        let raw_h = (current_y - table_box.dimensions.content.y()).max(
+            if max_child_w > 0.0 || explicit_h > 0.0 {
+                explicit_h
+            } else {
+                10.0
+            },
+        );
         let min_h = style
             .min_height
             .to_px_with_viewport(font_size, 16.0, table_w, vp_h);
-        let mut final_h = raw_h.max(min_h);
+        let mut final_h = raw_h.max(explicit_h).max(min_h);
         let max_h = style
             .max_height
             .to_px_with_viewport(font_size, 16.0, table_w, vp_h);
@@ -494,13 +517,36 @@ pub(crate) fn layout_table_contents(
         current_y += caption.dimensions.margin_box().height();
     }
 
-    let raw_h = (current_y - table_box.dimensions.content.y()).max(10.0);
     let font_size = style.font_size;
     let (_, vp_h) = mango_css::get_current_viewport();
+    let explicit_h = if style.height != Length::Auto {
+        let h_px = style
+            .height
+            .to_px_with_viewport(font_size, 16.0, table_w, vp_h);
+        if style.box_sizing == BoxSizing::BorderBox {
+            let border_v = style.border_top_width + style.border_bottom_width;
+            let pad_v = style
+                .padding_top
+                .to_px_with_viewport(font_size, 16.0, table_w, vp_h)
+                + style
+                    .padding_bottom
+                    .to_px_with_viewport(font_size, 16.0, table_w, vp_h);
+            (h_px - border_v - pad_v).max(0.0)
+        } else {
+            h_px
+        }
+    } else {
+        0.0
+    };
+    let raw_h = (current_y - table_box.dimensions.content.y()).max(if explicit_h > 0.0 {
+        explicit_h
+    } else {
+        10.0
+    });
     let min_h = style
         .min_height
         .to_px_with_viewport(font_size, 16.0, table_w, vp_h);
-    let mut final_h = raw_h.max(min_h);
+    let mut final_h = raw_h.max(explicit_h).max(min_h);
     let max_h = style
         .max_height
         .to_px_with_viewport(font_size, 16.0, table_w, vp_h);

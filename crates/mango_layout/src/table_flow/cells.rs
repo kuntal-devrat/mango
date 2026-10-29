@@ -360,3 +360,71 @@ pub fn position_rows_and_cells(
 
     row_y
 }
+
+pub fn cell_intrinsic_metrics(
+    cell: &LayoutBox,
+    table_width: f32,
+    memo: &mut HashMap<usize, (f32, f32)>,
+    is_table_auto_width: bool,
+) -> (f32, f32, Option<f32>) {
+    let mut explicit_w = None;
+    if let Some(style) = &cell.style {
+        match style.width {
+            Length::Px(px) if px >= 0.0 => explicit_w = Some(px),
+            Length::Percent(pct) if pct > 0.0 && !is_table_auto_width => {
+                explicit_w = Some(table_width * (pct / 100.0));
+            }
+            _ => {}
+        }
+    }
+    if explicit_w.is_none()
+        && let Some(w_attr) = cell.get_attribute("width")
+    {
+        let w_str = w_attr.trim();
+        if let Some(pct_str) = w_str.strip_suffix('%') {
+            if let Ok(pct) = pct_str.trim().parse::<f32>()
+                && !is_table_auto_width
+            {
+                explicit_w = Some(table_width * (pct / 100.0));
+            }
+        } else {
+            let num_str = w_str.strip_suffix("px").unwrap_or(w_str).trim();
+            if let Ok(px) = num_str.parse::<f32>()
+                && px >= 0.0
+            {
+                explicit_w = Some(px);
+            }
+        }
+    }
+
+    let font_size = cell.style.as_ref().map(|s| s.font_size).unwrap_or(14.0);
+    let is_bold = cell
+        .style
+        .as_ref()
+        .map(|s| crate::inline_flow::is_bold_weight(s.font_weight, s.font_size))
+        .unwrap_or(false);
+    let weight = if is_bold {
+        mango_render::FontWeight::Bold
+    } else {
+        mango_render::FontWeight::Regular
+    };
+    let family = cell
+        .style
+        .as_ref()
+        .map(|s| mango_render::FontFamily::from_css_name(&s.font_family))
+        .unwrap_or(mango_render::FontFamily::SansSerif);
+
+    let (content_min, content_max) =
+        super::intrinsic::measure_box_intrinsic_widths(cell, font_size, weight, family, memo);
+
+    let min_content = content_min.max(0.0);
+    let max_content = content_max.max(min_content);
+
+    let (final_min, final_max) = if let Some(ew) = explicit_w {
+        (min_content.max(ew), max_content.max(ew))
+    } else {
+        (min_content, max_content)
+    };
+
+    (final_min, final_max, explicit_w)
+}

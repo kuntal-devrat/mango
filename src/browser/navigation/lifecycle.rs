@@ -327,15 +327,26 @@ impl BrowserChrome {
                 crate::renderer_actor::RendererActorHandle::spawn(100 + self.active_tab_idx as u32)
             });
             renderer.load_document(payload);
+
+            // Fast, decoupled async path: avoid duplicate V8 isolate instantiation, CSS matching,
+            // and layout on the UI thread. The isolated renderer actor computes layout in the background.
+            self.apply_async_navigation_state(
+                &prep.doc,
+                &prep.html,
+                &final_url.to_string(),
+                push_history,
+            );
+        } else {
+            // Synchronous fallback for headless testing
+            self.load_document_internal_with_scripts(
+                prep.doc,
+                prep.html,
+                final_url.to_string(),
+                push_history,
+                true,
+                Some(prep.preloaded_scripts),
+            );
         }
-        self.load_document_internal_with_scripts(
-            prep.doc,
-            prep.html,
-            final_url.to_string(),
-            push_history,
-            true,
-            Some(prep.preloaded_scripts),
-        );
         // Start image work only after the document generation has been
         // established by load_document_internal_with_scripts.  That function
         // resets the per-document scheduler; queueing before it would make

@@ -97,7 +97,19 @@ impl LayoutBox {
             let mut s = (*s).clone();
             // Anonymous blocks only inherit inheritable properties (CSS 2.1 §9.2.1.1).
             // Reset all non-inheritable box/positioning/visual props to initial.
-            s.display = Display::Block;
+            if !matches!(
+                s.display,
+                Display::TableRow
+                    | Display::TableCell
+                    | Display::TableRowGroup
+                    | Display::TableHeaderGroup
+                    | Display::TableFooterGroup
+                    | Display::TableColumn
+                    | Display::TableColumnGroup
+                    | Display::TableCaption
+            ) {
+                s.display = Display::Block;
+            }
             s.clear = mango_css::values::Clear::None;
             s.float = mango_css::values::Float::None;
             s.position = mango_css::values::Position::Static;
@@ -162,9 +174,13 @@ impl LayoutBox {
             s.will_change_properties = Vec::new();
             Arc::new(s)
         });
+        let mut dimensions = Dimensions::default();
+        if let Some(ref s) = style {
+            dimensions.writing_mode = s.writing_mode;
+        }
         Self {
             box_type: BoxType::AnonymousBlock,
-            dimensions: Dimensions::default(),
+            dimensions,
             style,
             children: Vec::new(),
             link_target: None,

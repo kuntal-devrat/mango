@@ -136,12 +136,35 @@ fn collect_scripts_in_order(
     }
 }
 
+/// Normalizes WPT URL substitutions (e.g. `//{{hosts[alt][www]}}:{{ports[http][0]}}{{location[path]}}/../path`).
+fn normalize_wpt_url(src: &str) -> String {
+    let s = src.split(['?', '#']).next().unwrap_or(src).trim();
+    if let Some(idx) = s.find("{{location[path]}}/") {
+        let rest = &s[idx + "{{location[path]}}/".len()..];
+        let rel = rest.strip_prefix("../").unwrap_or(rest);
+        return rel.to_string();
+    }
+    if let Some(idx) = s.find("{{location[path]}}") {
+        let rest = &s[idx + "{{location[path]}}".len()..];
+        let rel = rest
+            .strip_prefix("/../")
+            .or_else(|| rest.strip_prefix('/'))
+            .unwrap_or(rest);
+        return rel.to_string();
+    }
+    if let Some(first_bracket) = s.rfind("}}/") {
+        return s[first_bracket + 3..].to_string();
+    }
+    s.to_string()
+}
+
 /// Resolves a `<script src>` reference to a file on disk.
 ///
 /// Absolute URLs (`/common/reftest-wait.js`) are rooted at the vendored WPT
 /// tree, while relative paths are resolved against the document directory.
 fn resolve_script_path(src: &str, base_dir: Option<&Path>) -> Option<PathBuf> {
-    let src = src.split(['?', '#']).next().unwrap_or(src);
+    let norm = normalize_wpt_url(src);
+    let src = norm.as_str();
     if src.is_empty() || src.contains("://") || src.starts_with("data:") || src.starts_with("//") {
         return None;
     }
@@ -239,6 +262,7 @@ fn preload_document_images(doc: &Document, base_dir: Option<&Path>) {
 /// Preloads local iframe sources referenced in `<iframe src="...">` tags into JS `__subresourceMap`.
 fn preload_document_iframes(rt: &mut mango_js::JsRuntime, base_dir: Option<&Path>) {
     let mut subresources = Vec::new();
+    let mut pending: Vec<(String, PathBuf)> = Vec::new();
     {
         let doc = rt.document_ref();
         let mut stack = vec![doc.root()];
@@ -249,15 +273,44 @@ fn preload_document_iframes(rt: &mut mango_js::JsRuntime, base_dir: Option<&Path
                     && let Some(src) = elem.get_attribute("src")
                 {
                     let trimmed = src.trim();
-                    if let Some(path) = resolve_script_path(trimmed, base_dir)
-                        && let Ok(source) = fs::read_to_string(&path)
-                    {
-                        subresources.push((trimmed.to_string(), source));
+                    if let Some(path) = resolve_script_path(trimmed, base_dir) {
+                        pending.push((trimmed.to_string(), path));
                     }
                 }
                 let mut kids: Vec<NodeId> = doc.children(node_id).map(|c| c.id).collect();
                 kids.reverse();
                 stack.extend(kids);
+            }
+        }
+    }
+    let mut visited = std::collections::HashSet::new();
+    while let Some((src_str, path)) = pending.pop() {
+        if !visited.insert(path.clone()) {
+            continue;
+        }
+        if let Ok(source) = fs::read_to_string(&path) {
+            let norm = normalize_wpt_url(&src_str);
+            subresources.push((src_str.clone(), source.clone()));
+            if norm != src_str {
+                subresources.push((norm, source.clone()));
+            }
+            let sub_doc = parse_html(&source);
+            let mut sub_stack = vec![sub_doc.root()];
+            while let Some(nid) = sub_stack.pop() {
+                if let Some(node) = sub_doc.get(nid) {
+                    if let NodeData::Element(ref elem) = node.data
+                        && elem.tag_name.eq_ignore_ascii_case("iframe")
+                        && let Some(nsrc) = elem.get_attribute("src")
+                    {
+                        let ntrimmed = nsrc.trim();
+                        if let Some(npath) = resolve_script_path(ntrimmed, path.parent()) {
+                            pending.push((ntrimmed.to_string(), npath));
+                        }
+                    }
+                    let mut kids: Vec<NodeId> = sub_doc.children(nid).map(|c| c.id).collect();
+                    kids.reverse();
+                    sub_stack.extend(kids);
+                }
             }
         }
     }
@@ -349,11 +402,17 @@ fn render_html_to_buffer(html: &str, base_dir: Option<&Path>) -> Vec<u32> {
         let _ = rt.dispatch_load();
         // WPT reftests routinely mutate style/scroll in nested
         // requestAnimationFrame callbacks before taking the screenshot.
-        // Run each frame with fresh geometry, as a real browser would.
-        for _ in 0..8 {
-            if !rt.has_pending_event_loop_work() {
+        // If documentElement has class 'reftest-wait', pump event loop until removed.
+        for _ in 0..24 {
+            let is_waiting = rt
+                .eval("Boolean(document.documentElement && document.documentElement.classList && document.documentElement.classList.contains('reftest-wait'))")
+                .ok()
+                .map(|v| v.trim() == "true")
+                .unwrap_or(false);
+            if !is_waiting && !rt.has_pending_event_loop_work() {
                 break;
             }
+            rt.tick();
             rt.run_animation_frame();
             let (fx, fy) = read_window_scroll(&mut rt);
             refresh_layout_bounds(&rt, fx, fy, &style_refs);

@@ -17,6 +17,6 @@ pub use cache::{
 pub use decoder::{
     base64_decode, base64_encode, create_placeholder, decode_animated_gif,
     decode_animated_image_bytes, decode_data_uri, decode_image_bytes,
-    decode_progressive_jpeg_scans, is_progressive_jpeg,
+    decode_progressive_jpeg_scans, is_progressive_jpeg, percent_decode,
 };
 pub use image::{AnimatedImage, AnimationFrame, DecodedImage, ProgressiveScan};

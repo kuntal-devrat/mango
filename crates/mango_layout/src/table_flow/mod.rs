@@ -21,4 +21,7 @@ pub mod types;
 
 pub use container::layout_table;
 pub(crate) use container::layout_table_contents;
-pub use intrinsic::{measure_box_content_intrinsic_widths, measure_box_intrinsic_widths};
+pub use intrinsic::{
+    measure_box_content_intrinsic_widths, measure_box_content_intrinsic_widths_with_height,
+    measure_box_intrinsic_widths,
+};

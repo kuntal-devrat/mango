@@ -104,8 +104,8 @@ pub fn compute_auto_column_widths(
     available_w: f32,
     border_spacing: f32,
 ) -> Vec<f32> {
-    let mut col_min_widths = vec![4.0f32; num_cols];
-    let mut col_max_widths = vec![4.0f32; num_cols];
+    let mut col_min_widths = vec![0.0f32; num_cols];
+    let mut col_max_widths = vec![0.0f32; num_cols];
     let mut col_explicit_widths = vec![None::<f32>; num_cols];
     let mut intrinsic_memo = std::collections::HashMap::new();
 
@@ -184,7 +184,7 @@ pub fn compute_auto_column_widths(
     }
 
     for i in 0..num_cols {
-        col_min_widths[i] = col_min_widths[i].max(4.0);
+        col_min_widths[i] = col_min_widths[i].max(0.0);
         col_max_widths[i] = col_max_widths[i].max(col_min_widths[i]);
     }
 

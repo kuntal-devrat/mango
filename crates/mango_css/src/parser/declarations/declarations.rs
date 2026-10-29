@@ -706,24 +706,23 @@ impl CssParser {
                         }
                         if !only_idents || idents.is_empty() {
                             None
-                        } else if idents.len() == 1 && idents[0] == "none" {
-                            Some(Value::Keyword("none".to_string()))
-                        } else {
-                            let valid_tokens = [
-                                "block",
-                                "block-start",
-                                "block-end",
-                                "inline",
-                                "inline-start",
-                                "inline-end",
-                            ];
-                            let all_valid =
-                                idents.iter().all(|id| valid_tokens.contains(&id.as_str()));
-                            if all_valid && idents.len() <= 4 {
-                                Some(Value::Keyword(idents.join(" ")))
+                        } else if idents.len() == 1 {
+                            match idents[0].as_str() {
+                                "none" | "block" | "block-start" | "block-end" => {
+                                    Some(Value::Keyword(idents[0].clone()))
+                                }
+                                _ => None,
+                            }
+                        } else if idents.len() == 2 {
+                            if (idents[0] == "block-start" && idents[1] == "block-end")
+                                || (idents[0] == "block-end" && idents[1] == "block-start")
+                            {
+                                Some(Value::Keyword("block".to_string()))
                             } else {
                                 None
                             }
+                        } else {
+                            None
                         }
                     }
                     _ => {

@@ -241,45 +241,42 @@ pub fn load_web_fonts(loader: &ResourceLoader, base_url: Option<&Url>, styleshee
             }
         }
         let mut url_bytes = std::collections::HashMap::new();
-        for chunk in unique_urls.chunks(MAX_CONCURRENT_FETCHES) {
-            let (tx, rx) = std::sync::mpsc::channel();
-            let n = chunk.len();
-            for url in chunk.iter() {
-                let tx = tx.clone();
-                let loader = loader.clone();
-                let base = base.clone();
-                let url = url.clone();
-                font_fetch_pool().spawn(move || {
-                    match fetch_with_timeout(
-                        {
-                            let loader = loader.clone();
-                            let base = base.clone();
-                            let url = url.clone();
-                            move || loader.fetch_font_bytes(&base, &url)
-                        },
-                        SUBRESOURCE_FETCH_TIMEOUT,
-                    ) {
-                        Ok(Ok(bytes)) => {
-                            let _ = tx.send((url, bytes));
-                        }
-                        Ok(Err(e)) => {
-                            log::warn!("Font fetch failed for {url}: {e}");
-                        }
-                        Err(msg) => {
-                            log::warn!("Font fetch timed out for {url}: {msg}");
-                        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let total = unique_urls.len();
+        for url in &unique_urls {
+            let tx = tx.clone();
+            let loader = loader.clone();
+            let base = base.clone();
+            let url = url.clone();
+            font_fetch_pool().spawn(move || {
+                match fetch_with_timeout(
+                    {
+                        let loader = loader.clone();
+                        let base = base.clone();
+                        let url = url.clone();
+                        move || loader.fetch_font_bytes(&base, &url)
+                    },
+                    SUBRESOURCE_FETCH_TIMEOUT,
+                ) {
+                    Ok(Ok(bytes)) => {
+                        let _ = tx.send((url, bytes));
                     }
-                });
-            }
-            drop(tx);
-            for _ in 0..n {
-                match rx.recv_timeout(SUBRESOURCE_FETCH_TIMEOUT + std::time::Duration::from_secs(2))
-                {
-                    Ok((url, bytes)) => {
-                        url_bytes.insert(url, bytes);
+                    Ok(Err(e)) => {
+                        log::warn!("Font fetch failed for {url}: {e}");
                     }
-                    Err(_) => break,
+                    Err(msg) => {
+                        log::warn!("Font fetch timed out for {url}: {msg}");
+                    }
                 }
+            });
+        }
+        drop(tx);
+        for _ in 0..total {
+            match rx.recv_timeout(SUBRESOURCE_FETCH_TIMEOUT + std::time::Duration::from_secs(2)) {
+                Ok((url, bytes)) => {
+                    url_bytes.insert(url, bytes);
+                }
+                Err(_) => break,
             }
         }
         for (seq, _, _, url) in &remotes {

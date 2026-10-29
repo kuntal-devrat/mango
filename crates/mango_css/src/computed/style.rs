@@ -515,7 +515,7 @@ impl Default for ComputedStyle {
             cursor: Cursor::Auto,
             vertical_align: VerticalAlign::Baseline,
             border_collapse: BorderCollapse::Separate,
-            border_spacing: 2.0,
+            border_spacing: 0.0,
             table_layout: TableLayout::Auto,
             caption_side: CaptionSide::Top,
 
