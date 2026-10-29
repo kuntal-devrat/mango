@@ -76,6 +76,7 @@ pub fn layout_flex(
     container.dimensions.padding = EdgeSizes::new(pad_top, pad_right, pad_bottom, pad_left);
     container.dimensions.border =
         EdgeSizes::new(border_top, border_right, border_bottom, border_left);
+    container.dimensions.writing_mode = style.writing_mode;
 
     let margin_top = style.margin_top.to_px_with_viewport(
         font_size,
@@ -163,6 +164,75 @@ pub fn layout_flex(
         }
     } else if is_pre_resolved_height {
         container.dimensions.content.size.height
+    } else if is_vertical_wm && containing_block.writing_mode == WritingMode::HorizontalTb {
+        let mut sum_h = 0.0f32;
+        let mut max_h = 0.0f32;
+        for c in &container.children {
+            let cs = c.style.as_ref();
+            let c_fs = cs.map(|s| s.font_size).unwrap_or(font_size);
+            let c_rfs = cs.map(|s| s.root_font_size).unwrap_or(root_font_size);
+            let ch = if let Some(cs) = cs {
+                let h = if cs.height != Length::Auto {
+                    cs.height
+                        .to_px_with_viewport(c_fs, c_rfs, container_height, container_height)
+                } else {
+                    let mut child_clone = c.clone();
+                    let c_w = if cs.width != Length::Auto {
+                        cs.width
+                            .to_px_with_viewport(c_fs, c_rfs, container_width, container_height)
+                    } else {
+                        container_width
+                    };
+                    child_clone.dimensions.content.size.width = c_w;
+                    let item_cb = Dimensions::new(mango_core::Rect::new(0.0, 0.0, c_w, 0.0));
+                    let mut item_float_ctx = FloatContext::new();
+                    crate::flex_flow::item::layout_flex_item(
+                        &mut child_clone,
+                        &item_cb,
+                        &mut item_float_ctx,
+                        c_fs,
+                    );
+                    child_clone.dimensions.content.size.height.max(c_fs * 1.3)
+                };
+                let p_top = cs
+                    .padding_top
+                    .to_px_with_viewport(c_fs, c_rfs, 0.0, container_height);
+                let p_bot =
+                    cs.padding_bottom
+                        .to_px_with_viewport(c_fs, c_rfs, 0.0, container_height);
+                let m_top = cs
+                    .margin_top
+                    .to_px_with_viewport(c_fs, c_rfs, 0.0, container_height);
+                let m_bot =
+                    cs.margin_bottom
+                        .to_px_with_viewport(c_fs, c_rfs, 0.0, container_height);
+                h + p_top + p_bot + cs.border_top_width + cs.border_bottom_width + m_top + m_bot
+            } else {
+                c.dimensions.margin_box().height()
+            };
+            sum_h += ch;
+            max_h = max_h.max(ch);
+        }
+        let gap_prop = if is_flex_dir_row {
+            &style.column_gap
+        } else {
+            &style.row_gap
+        };
+        let gap_val =
+            gap_prop.to_px_with_viewport(font_size, root_font_size, 0.0, container_height);
+        let count = container.children.len();
+        if count > 1 && gap_val > 0.0 {
+            sum_h += (count - 1) as f32 * gap_val;
+        }
+        let (_, vp_h) = mango_css::get_current_viewport();
+        let avail_h = if containing_block.content.height() > 0.0 {
+            containing_block.content.height()
+        } else {
+            vp_h
+        };
+        let max_content_h = if is_flex_dir_row { sum_h } else { max_h };
+        let min_content_h = max_h;
+        avail_h.min(max_content_h).max(min_content_h)
     } else {
         0.0
     };
@@ -173,7 +243,7 @@ pub fn layout_flex(
         Length::MinContent | Length::MaxContent | Length::FitContent | Length::Content
     );
     let (intrinsic_min, intrinsic_max) = if is_width_content
-        || (is_inline_flex && is_width_auto)
+        || ((is_inline_flex || is_vertical_wm) && is_width_auto)
         || matches!(
             style.max_width,
             Length::MinContent | Length::MaxContent | Length::FitContent | Length::Content
@@ -223,7 +293,9 @@ pub fn layout_flex(
             margin_right = 0.0;
         }
         let avail = (container_width - total_non_content_h - margin_left - margin_right).max(0.0);
-        if is_inline_flex {
+        if is_inline_flex
+            || (is_vertical_wm && containing_block.writing_mode == WritingMode::HorizontalTb)
+        {
             let max_c = (intrinsic_max - total_non_content_h).max(0.0);
             let min_c = (intrinsic_min - total_non_content_h).max(0.0);
             avail.min(max_c).max(min_c)
@@ -571,18 +643,25 @@ pub fn layout_flex(
         .map(|m| m.base_main.clamp(m.min_main, m.max_main.max(m.min_main)))
         .sum();
     let is_container_main_definite = if is_row {
-        true
+        !(is_vertical_wm && is_width_auto)
     } else {
         content_height > 0.0
             || (style.height != Length::Auto && !is_percent_indefinite)
             || (min_main_size > 0.0 && sum_hypothetical < min_main_size)
-            || (max_main_size.is_finite() && sum_hypothetical > max_main_size)
     };
     let container_main_size = if is_row {
-        content_width.max(min_main_size).min(max_main_size)
+        if is_vertical_wm && is_width_auto {
+            if max_main_size.is_finite() {
+                max_main_size
+            } else {
+                min_main_size
+            }
+        } else {
+            content_width.max(min_main_size).min(max_main_size)
+        }
     } else if content_height > 0.0 {
         content_height.max(min_main_size).min(max_main_size)
-    } else if max_main_size.is_finite() && sum_hypothetical > max_main_size {
+    } else if max_main_size.is_finite() {
         max_main_size
     } else {
         min_main_size
@@ -722,9 +801,7 @@ pub fn layout_flex(
     let cross_start_offset = cross_cursor;
     let mut normal_cross_cursor = cross_start_offset;
 
-    let effective_container_main = if is_row {
-        container_main_size
-    } else if is_container_main_definite {
+    let effective_container_main = if is_container_main_definite {
         container_main_size
     } else {
         let max_line_main: f32 = lines

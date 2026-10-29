@@ -400,7 +400,10 @@ pub(crate) fn layout_block_children(
 
             // Normal in-flow child: apply clearance from active floats
             let clear = child.style.as_ref().map(|s| s.clear).unwrap_or(Clear::None);
-            cursor_y = float_ctx.apply_clearance(cursor_y, clear);
+            let cleared_y = float_ctx.apply_clearance(cursor_y, clear);
+            let has_clearance =
+                clear != Clear::None && (cleared_y > cursor_y || float_ctx.has_floats());
+            cursor_y = cleared_y;
             if clear != Clear::None {
                 prev_margin_bottom = 0.0;
             }
@@ -411,7 +414,8 @@ pub(crate) fn layout_block_children(
             // Margin collapsing with previous sibling (CSS 2.1 §8.3.1)
             let parent_has_top_strut = container_dims.border.top > 0.0
                 || container_dims.padding.top > 0.0
-                || box_establishes_bfc;
+                || box_establishes_bfc
+                || has_clearance;
             let curr_margin_top = if in_flow_count == 0 && !parent_has_top_strut {
                 let collapsed = collapsed_margin_top_for_box(child, &container_dims);
                 child.dimensions.margin.top = collapsed;

@@ -66,13 +66,33 @@ pub fn measure_box_content_intrinsic_widths(
     default_family: mango_render::FontFamily,
     memo: &mut HashMap<usize, (f32, f32)>,
 ) -> (f32, f32) {
-    measure_box_intrinsic_widths_internal(
+    measure_box_content_intrinsic_widths_with_height(
         node,
         default_font_size,
         default_weight,
         default_family,
         memo,
         None,
+    )
+}
+
+/// Measures content intrinsic width while supplying a definite containing block height
+/// for aspect-ratio and percentage-height child resolution.
+pub fn measure_box_content_intrinsic_widths_with_height(
+    node: &LayoutBox,
+    default_font_size: f32,
+    default_weight: mango_render::FontWeight,
+    default_family: mango_render::FontFamily,
+    memo: &mut HashMap<usize, (f32, f32)>,
+    containing_height: Option<f32>,
+) -> (f32, f32) {
+    measure_box_intrinsic_widths_internal(
+        node,
+        default_font_size,
+        default_weight,
+        default_family,
+        memo,
+        containing_height,
         true,
     )
 }
@@ -426,6 +446,24 @@ fn measure_box_intrinsic_widths_internal(
         return res;
     }
 
+    // 2. Check explicit width on containers before layout-specific measurements
+    if !ignore_own_explicit_width && let Some(style) = &node.style {
+        match style.width {
+            Length::Px(px) if px >= 0.0 => {
+                let non_content_h = get_node_horizontal_spacing(node, font_size);
+                let w = if style.box_sizing == BoxSizing::BorderBox {
+                    (px - non_content_h).max(0.0)
+                } else {
+                    px
+                };
+                let res = (w + non_content_h, w + non_content_h);
+                memo.insert(key, res);
+                return res;
+            }
+            _ => {}
+        }
+    }
+
     // Flex container intrinsic measurement
     if matches!(
         node.style.as_ref().map(|s| s.display),
@@ -593,10 +631,19 @@ fn measure_box_intrinsic_widths_internal(
             } else {
                 None
             };
+            let child_non_content_h = get_node_horizontal_spacing(child, font_size);
+            let is_child_border_box = child_style
+                .map(|s| s.box_sizing == BoxSizing::BorderBox)
+                .unwrap_or(false);
+            let child_extra_w = if is_child_border_box {
+                child_margin_h
+            } else {
+                child_non_content_h
+            };
             let (c_min, c_max) = if let Some(w) = explicit_w {
-                (w + child_margin_h, w + child_margin_h)
+                (w + child_extra_w, w + child_extra_w)
             } else if let Some(w) = aspect_ratio_width {
-                (w + child_margin_h, w + child_margin_h)
+                (w + child_extra_w, w + child_extra_w)
             } else {
                 measure_box_intrinsic_widths_with_height(
                     child,
@@ -847,73 +894,7 @@ fn child_style_height(node: &LayoutBox, containing_height: Option<f32>) -> f32 {
     }
 }
 
-pub fn cell_intrinsic_metrics(
-    cell: &LayoutBox,
-    table_width: f32,
-    memo: &mut HashMap<usize, (f32, f32)>,
-    is_table_auto_width: bool,
-) -> (f32, f32, Option<f32>) {
-    let mut explicit_w = None;
-    if let Some(style) = &cell.style {
-        match style.width {
-            Length::Px(px) if px > 0.0 => explicit_w = Some(px),
-            Length::Percent(pct) if pct > 0.0 && !is_table_auto_width => {
-                explicit_w = Some(table_width * (pct / 100.0));
-            }
-            _ => {}
-        }
-    }
-    if explicit_w.is_none()
-        && let Some(w_attr) = cell.get_attribute("width")
-    {
-        let w_str = w_attr.trim();
-        if let Some(pct_str) = w_str.strip_suffix('%') {
-            if let Ok(pct) = pct_str.trim().parse::<f32>()
-                && !is_table_auto_width
-            {
-                explicit_w = Some(table_width * (pct / 100.0));
-            }
-        } else {
-            let num_str = w_str.strip_suffix("px").unwrap_or(w_str).trim();
-            if let Ok(px) = num_str.parse::<f32>()
-                && px > 0.0
-            {
-                explicit_w = Some(px);
-            }
-        }
-    }
-
-    let font_size = cell.style.as_ref().map(|s| s.font_size).unwrap_or(14.0);
-    let is_bold = cell
-        .style
-        .as_ref()
-        .map(|s| crate::inline_flow::is_bold_weight(s.font_weight, s.font_size))
-        .unwrap_or(false);
-    let weight = if is_bold {
-        mango_render::FontWeight::Bold
-    } else {
-        mango_render::FontWeight::Regular
-    };
-    let family = cell
-        .style
-        .as_ref()
-        .map(|s| mango_render::FontFamily::from_css_name(&s.font_family))
-        .unwrap_or(mango_render::FontFamily::SansSerif);
-
-    let (content_min, content_max) =
-        measure_box_intrinsic_widths(cell, font_size, weight, family, memo);
-
-    let min_content = content_min.max(1.0);
-    let max_content = content_max.max(min_content);
-
-    let (final_min, final_max) = if let Some(ew) = explicit_w {
-        (min_content.max(ew), max_content.max(ew))
-    } else {
-        (min_content, max_content)
-    };
-
-    (final_min, final_max, explicit_w)
-}
+pub use super::cells::cell_intrinsic_metrics;
 
 fn balance_intrinsic_max_content(sizes: &[f32], k: usize, gap: f32) -> f32 {
     let n = sizes.len();

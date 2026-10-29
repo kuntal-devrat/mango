@@ -181,37 +181,25 @@ fn test_canvas_ua_styles_and_presentational_hints() {
     let doc = parse_html(html);
     let root = doc.root();
 
-    // 1. Default canvas: inline-block, 300x150
+    // 1. Default canvas: inline-block, width/height auto (intrinsic dimensions handled in layout)
     let c1_id = doc.find_element_by_id(root, "c1").unwrap();
     let c1_styles = resolve_cascade(c1_id, &doc, &[]);
     assert_eq!(
         c1_styles.get("display"),
         Some(&Value::Display(crate::values::Display::InlineBlock))
     );
-    assert_eq!(
-        c1_styles.get("width"),
-        Some(&Value::Length(Length::Px(300.0)))
-    );
-    assert_eq!(
-        c1_styles.get("height"),
-        Some(&Value::Length(Length::Px(150.0)))
-    );
+    assert_eq!(c1_styles.get("width"), None);
+    assert_eq!(c1_styles.get("height"), None);
 
-    // 2. Canvas with presentational hints
+    // 2. Canvas with HTML width/height attributes (coordinate space, not CSS presentational hints)
     let c2_id = doc.find_element_by_id(root, "c2").unwrap();
     let c2_styles = resolve_cascade(c2_id, &doc, &[]);
     assert_eq!(
         c2_styles.get("display"),
         Some(&Value::Display(crate::values::Display::InlineBlock))
     );
-    assert_eq!(
-        c2_styles.get("width"),
-        Some(&Value::Length(Length::Px(500.0)))
-    );
-    assert_eq!(
-        c2_styles.get("height"),
-        Some(&Value::Length(Length::Px(250.0)))
-    );
+    assert_eq!(c2_styles.get("width"), None);
+    assert_eq!(c2_styles.get("height"), None);
 }
 
 #[test]

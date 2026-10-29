@@ -49,7 +49,14 @@ pub fn decode_data_uri(uri: &str) -> Option<DecodedImage> {
         // flex/grid layout collapse and violates the image sizing rules.
         let w = w_opt.unwrap_or(300.0).max(1.0) as u32;
         let h = h_opt.unwrap_or(150.0).max(1.0) as u32;
-        return crate::svg::render_svg(&svg_str, w, h, mango_core::Color::BLACK);
+        let (mut render_w, mut render_h) = (w, h);
+        if (render_w as u64).saturating_mul(render_h as u64) > 16 * 1024 * 1024 {
+            let max_dim = 2048.0f32;
+            let scale = (max_dim / (w as f32).max(h as f32)).min(1.0);
+            render_w = ((w as f32) * scale).max(1.0) as u32;
+            render_h = ((h as f32) * scale).max(1.0) as u32;
+        }
+        return crate::svg::render_svg(&svg_str, render_w, render_h, mango_core::Color::BLACK);
     }
 
     if is_base64 {
@@ -78,14 +85,25 @@ pub fn decode_image_bytes(bytes: &[u8]) -> Option<DecodedImage> {
         if trimmed.starts_with("data:") {
             return decode_data_uri(trimmed);
         }
-        if trimmed.starts_with("<svg") || trimmed.starts_with("<?xml") {
+        let is_svg = trimmed.starts_with("<svg")
+            || trimmed.starts_with("<?xml")
+            || trimmed.starts_with("<!DOCTYPE")
+            || trimmed.starts_with("<!doctype")
+            || (trimmed.starts_with('<') && trimmed.contains("<svg"));
+        if is_svg {
             let (w_opt, h_opt) = crate::svg::get_svg_intrinsic_dimensions(trimmed);
             let w = w_opt.unwrap_or(300.0).max(1.0) as u32;
             let h = h_opt.unwrap_or(150.0).max(1.0) as u32;
-            if (w as u64).saturating_mul(h as u64) > MAX_DECODED_PIXELS {
-                return None;
+            let (mut render_w, mut render_h) = (w, h);
+            if (render_w as u64).saturating_mul(render_h as u64) > MAX_DECODED_PIXELS {
+                let max_dim = 2048.0f32;
+                let scale = (max_dim / (w as f32).max(h as f32)).min(1.0);
+                render_w = ((w as f32) * scale).max(1.0) as u32;
+                render_h = ((h as f32) * scale).max(1.0) as u32;
             }
-            if let Some(svg_img) = crate::svg::render_svg(trimmed, w, h, mango_core::Color::BLACK) {
+            if let Some(svg_img) =
+                crate::svg::render_svg(trimmed, render_w, render_h, mango_core::Color::BLACK)
+            {
                 return Some(svg_img);
             }
         }
@@ -278,7 +296,7 @@ pub fn decode_animated_image_bytes(bytes: &[u8]) -> Option<AnimatedImage> {
     })
 }
 
-fn percent_decode(input: &str) -> String {
+pub fn percent_decode(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let bytes = input.as_bytes();
     let mut i = 0;

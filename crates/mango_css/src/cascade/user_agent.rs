@@ -124,6 +124,7 @@ pub fn user_agent_stylesheet() -> &'static Stylesheet {
             table {
                 display: table;
                 border-collapse: separate;
+                border-spacing: 2px;
                 text-align: left;
             }
             caption {
@@ -197,19 +198,12 @@ pub fn user_agent_stylesheet() -> &'static Stylesheet {
             }
             video {
                 display: inline-block;
-                width: 300px;
-                height: 150px;
-                box-sizing: border-box;
             }
             canvas {
                 display: inline-block;
-                width: 300px;
-                height: 150px;
-                box-sizing: border-box;
             }
             audio {
                 display: none;
-                box-sizing: border-box;
             }
             audio[controls] {
                 display: inline-block;

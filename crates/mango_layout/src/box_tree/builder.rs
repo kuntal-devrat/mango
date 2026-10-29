@@ -338,22 +338,22 @@ pub fn build_box_tree_with_maps(
                             || c.tag_name.as_deref() == Some("th")
                     });
                     if all_cells {
-                        let mut anon_row_style = (*styled_node.style).clone();
-                        anon_row_style.display = Display::TableRow;
+                        let anon_row_style =
+                            create_anonymous_table_style(&styled_node.style, Display::TableRow);
                         let mut anon_row =
                             LayoutBox::new_anonymous_block(Some(anon_row_style.into()));
                         anon_row.children = std::mem::take(seq);
                         out.push(anon_row);
                     } else {
                         // Non-table content: wrap in anonymous table cell, then anonymous table row
-                        let mut anon_cell_style = (*styled_node.style).clone();
-                        anon_cell_style.display = Display::TableCell;
+                        let anon_cell_style =
+                            create_anonymous_table_style(&styled_node.style, Display::TableCell);
                         let mut anon_cell =
                             LayoutBox::new_anonymous_block(Some(anon_cell_style.into()));
                         anon_cell.children = std::mem::take(seq);
 
-                        let mut anon_row_style = (*styled_node.style).clone();
-                        anon_row_style.display = Display::TableRow;
+                        let anon_row_style =
+                            create_anonymous_table_style(&styled_node.style, Display::TableRow);
                         let mut anon_row =
                             LayoutBox::new_anonymous_block(Some(anon_row_style.into()));
                         anon_row.children.push(anon_cell);
@@ -482,4 +482,38 @@ fn propagate_link_target(box_node: &mut LayoutBox, href: &str, frame: Option<&st
     for child in &mut box_node.children {
         propagate_link_target(child, href, frame);
     }
+}
+
+fn create_anonymous_table_style(
+    parent_style: &mango_css::ComputedStyle,
+    display: Display,
+) -> mango_css::ComputedStyle {
+    let mut style = parent_style.clone();
+    style.display = display;
+    // Per CSS 2.1 § 17.2.1, anonymous table boxes inherit only inheritable properties.
+    // Non-inheritable properties take their initial values:
+    style.background_color = mango_core::Color::TRANSPARENT;
+    style.background_image = None;
+    style.background_layers = Vec::new();
+    style.border_top_width = 0.0;
+    style.border_right_width = 0.0;
+    style.border_bottom_width = 0.0;
+    style.border_left_width = 0.0;
+    style.padding_top = mango_css::values::Length::Px(0.0);
+    style.padding_right = mango_css::values::Length::Px(0.0);
+    style.padding_bottom = mango_css::values::Length::Px(0.0);
+    style.padding_left = mango_css::values::Length::Px(0.0);
+    style.margin_top = mango_css::values::Length::Px(0.0);
+    style.margin_right = mango_css::values::Length::Px(0.0);
+    style.margin_bottom = mango_css::values::Length::Px(0.0);
+    style.margin_left = mango_css::values::Length::Px(0.0);
+    style.width = mango_css::values::Length::Auto;
+    style.height = mango_css::values::Length::Auto;
+    style.min_width = mango_css::values::Length::Auto;
+    style.max_width = mango_css::values::Length::Auto;
+    style.min_height = mango_css::values::Length::Auto;
+    style.max_height = mango_css::values::Length::Auto;
+    style.box_shadow = None;
+    style.box_shadows = Vec::new();
+    style
 }

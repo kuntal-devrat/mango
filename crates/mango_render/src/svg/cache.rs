@@ -318,17 +318,19 @@ pub fn get_svg_intrinsic_dimensions(svg_xml: &str) -> (Option<f32>, Option<f32>)
     };
 
     match (doc.width, doc.height, doc.view_box) {
-        (Some(w), Some(h), _) => return (Some(w), Some(h)),
-        (Some(w), None, Some((_, _, vb_w, vb_h))) if vb_h > 0.0 => {
+        (Some(w), Some(h), _) if w > 0.0 && h > 0.0 => return (Some(w), Some(h)),
+        (Some(w), None, Some((_, _, vb_w, vb_h))) if w > 0.0 && vb_h > 0.0 => {
             return (Some(w), Some(w / (vb_w / vb_h)));
         }
-        (None, Some(h), Some((_, _, vb_w, vb_h))) if vb_h > 0.0 => {
+        (None, Some(h), Some((_, _, vb_w, vb_h))) if h > 0.0 && vb_h > 0.0 => {
             return (Some(h * (vb_w / vb_h)), Some(h));
         }
-        (Some(w), None, _) => return (Some(w), None),
-        (None, Some(h), _) => return (None, Some(h)),
-        (None, None, Some((_, _, vb_w, vb_h))) => return (Some(vb_w), Some(vb_h)),
-        (None, None, None) => {}
+        (Some(w), None, _) if w > 0.0 => return (Some(w), None),
+        (None, Some(h), _) if h > 0.0 => return (None, Some(h)),
+        (None, None, Some((_, _, vb_w, vb_h))) if vb_w > 0.0 && vb_h > 0.0 => {
+            return (Some(vb_w), Some(vb_h));
+        }
+        _ => {}
     }
     for child in &doc.children {
         if let SvgNode::Use {

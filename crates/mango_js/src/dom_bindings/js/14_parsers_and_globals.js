@@ -469,8 +469,13 @@
             get scrollingElement() { return this.documentElement || this.body || null; },
             implementation: Object.create(DOMImplementation.prototype),
             nodeType: 9, nodeName: '#document',
-            createElement: function(t) { var el = _wrapElement(_origCE(t)); if (el) { el._ownerDocument = doc; el.ownerDocument = doc; } return el; },
-            createElementNS: function(ns, t) { var el = _wrapElement(_origCE(t)); if (el) { el._ownerDocument = doc; el.ownerDocument = doc; } return el; },
+            createElement: function(t) {
+                if (doc._isXml) return _createElementXML(doc, t);
+                var el = (typeof document !== 'undefined' && document.createElement) ? document.createElement(t) : (typeof _origCE === 'function' ? _wrapElement(_origCE(t)) : null);
+                if (el) { el._ownerDocument = doc; el.ownerDocument = doc; }
+                return el;
+            },
+            createElementNS: function(ns, t) { return _createElementNS(doc, ns, t); },
             createTextNode: function(t) { var tn = _wrapElement(_origCTN(t)); if (tn) { tn._ownerDocument = doc; tn.ownerDocument = doc; } return tn; },
             createDocumentFragment: function() { var f = _wrapElement(_createFragment()); if (f) { f._ownerDocument = doc; f.ownerDocument = doc; } return f; },
             createComment: function(t) { var c = document.createComment(t); if (c) { c._ownerDocument = doc; c.ownerDocument = doc; } return c; },
@@ -603,7 +608,10 @@
             return _createElementNS(this, ns, tag);
         };
         globalThis.Document.prototype.createElement = function(tag) {
-            return this._isXml ? _createElementXML(this, tag) : ((typeof document !== 'undefined' && document.createElement) ? document.createElement(tag) : null);
+            if (this._isXml) return _createElementXML(this, tag);
+            var el = (typeof document !== 'undefined' && document.createElement) ? document.createElement(tag) : (typeof _origCE === 'function' ? _wrapElement(_origCE(tag)) : null);
+            if (el) { el._ownerDocument = this; el.ownerDocument = this; }
+            return el;
         };
     }
 
@@ -611,9 +619,12 @@
         globalThis.Element.prototype.getAttributeNode = function(name) {
             var val = this.getAttribute(name);
             if (val === null) return null;
-            var attr = document.createAttribute(name);
+            var doc = this.ownerDocument || (typeof document !== 'undefined' ? document : null);
+            var attr = (doc && typeof doc.createAttribute === 'function') ? doc.createAttribute(name) : ((typeof document !== 'undefined' && document.createAttribute) ? document.createAttribute(name) : { name: name, value: val, nodeType: 2 });
             attr.value = val;
             attr.ownerElement = this;
+            attr.ownerDocument = doc;
+            attr._ownerDocument = doc;
             return attr;
         };
         globalThis.Element.prototype.getAttributeNodeNS = function(ns, localName) {

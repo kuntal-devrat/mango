@@ -142,20 +142,20 @@ fn calculate_raw_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
     }
 
     if let Some(s) = box_node.style.as_ref() {
+        let is_pct_resolvable =
+            matches!(s.width, mango_css::values::Length::Percent(_)) && max_width > 0.0;
         if !matches!(
             s.width,
             mango_css::values::Length::Auto | mango_css::values::Length::Percent(_)
-        ) {
+        ) || is_pct_resolvable
+        {
             let font_size = s.font_size;
             let root_font_size = s.root_font_size;
             let raw_w =
                 s.width
                     .to_px_with_viewport(font_size, root_font_size, max_width, max_width);
             let mut w = raw_w;
-            if !matches!(
-                s.max_width,
-                mango_css::values::Length::Auto | mango_css::values::Length::Percent(_)
-            ) {
+            if !matches!(s.max_width, mango_css::values::Length::Auto) {
                 let max_w = s.max_width.to_px_with_viewport(
                     font_size,
                     root_font_size,
@@ -164,10 +164,7 @@ fn calculate_raw_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                 );
                 w = w.min(max_w);
             }
-            if !matches!(
-                s.min_width,
-                mango_css::values::Length::Auto | mango_css::values::Length::Percent(_)
-            ) {
+            if !matches!(s.min_width, mango_css::values::Length::Auto) {
                 let min_w = s.min_width.to_px_with_viewport(
                     font_size,
                     root_font_size,
@@ -185,18 +182,25 @@ fn calculate_raw_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
         ) {
             let font_size = s.font_size;
             let root_font_size = s.root_font_size;
-            let is_row = matches!(
+            let is_vertical_wm = s.writing_mode.is_vertical();
+            let is_flex_dir_row = matches!(
                 s.flex_direction,
                 mango_css::values::FlexDirection::Row
                     | mango_css::values::FlexDirection::RowReverse
             );
+            let is_row = if is_vertical_wm {
+                !is_flex_dir_row
+            } else {
+                is_flex_dir_row
+            };
             if is_row {
-                let col_gap = s.column_gap.to_px_with_viewport(
-                    font_size,
-                    root_font_size,
-                    max_width,
-                    max_width,
-                );
+                let gap_prop = if is_flex_dir_row {
+                    &s.column_gap
+                } else {
+                    &s.row_gap
+                };
+                let col_gap =
+                    gap_prop.to_px_with_viewport(font_size, root_font_size, max_width, max_width);
                 let mut sum_w = 0.0f32;
                 let mut count = 0;
                 for child in &box_node.children {
@@ -275,18 +279,24 @@ fn calculate_raw_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                 };
 
                 if is_multiline && target_content_h > 0.0 {
-                    let row_gap = s.row_gap.to_px_with_viewport(
+                    let gap_v = if is_flex_dir_row {
+                        &s.column_gap
+                    } else {
+                        &s.row_gap
+                    };
+                    let gap_h = if is_flex_dir_row {
+                        &s.row_gap
+                    } else {
+                        &s.column_gap
+                    };
+                    let row_gap = gap_v.to_px_with_viewport(
                         font_size,
                         root_font_size,
                         target_content_h,
                         target_content_h,
                     );
-                    let col_gap = s.column_gap.to_px_with_viewport(
-                        font_size,
-                        root_font_size,
-                        max_width,
-                        max_width,
-                    );
+                    let col_gap =
+                        gap_h.to_px_with_viewport(font_size, root_font_size, max_width, max_width);
                     let mut num_cols = 0;
                     let mut sum_w = 0.0f32;
                     let mut curr_col_h = 0.0f32;
@@ -610,6 +620,7 @@ fn calculate_raw_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
     }
 
     let mut measured = 0.0f32;
+    let mut current_float_line_w = 0.0f32;
     for child in &box_node.children {
         let pos = child
             .style
@@ -622,7 +633,18 @@ fn calculate_raw_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
         ) {
             continue;
         }
-        match &child.box_type {
+        let is_float = child
+            .style
+            .as_ref()
+            .map(|s| s.float != mango_css::values::Float::None)
+            .unwrap_or(false);
+        let clear = child
+            .style
+            .as_ref()
+            .map(|s| s.clear)
+            .unwrap_or(mango_css::values::Clear::None);
+
+        let child_outer_w = match &child.box_type {
             crate::box_model::BoxType::TextNode(text) => {
                 let style = child.style.as_ref().or(box_node.style.as_ref());
                 let (font_size, is_bold, family_name, letter_spacing) = if let Some(s) = style {
@@ -640,14 +662,13 @@ fn calculate_raw_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                     mango_render::FontWeight::Regular
                 };
                 let family = mango_render::FontFamily::from_css_name(&family_name);
-                let w = crate::inline_flow::measure_text_width_with_style_and_spacing(
+                crate::inline_flow::measure_text_width_with_style_and_spacing(
                     text,
                     font_size,
                     weight,
                     family,
                     letter_spacing,
-                );
-                measured = measured.max(w);
+                )
             }
             crate::box_model::BoxType::ReplacedElement {
                 intrinsic_width, ..
@@ -700,7 +721,7 @@ fn calculate_raw_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                     } else {
                         (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
                     };
-                measured = measured.max(w + p_left + p_right + b_left + b_right + m_left + m_right);
+                w + p_left + p_right + b_left + b_right + m_left + m_right
             }
             _ => {
                 let child_w = calculate_shrink_to_fit_width(child, max_width);
@@ -724,9 +745,19 @@ fn calculate_raw_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                 } else {
                     (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
                 };
-                measured =
-                    measured.max(child_w + p_left + p_right + b_left + b_right + m_left + m_right);
+                child_w + p_left + p_right + b_left + b_right + m_left + m_right
             }
+        };
+
+        if is_float {
+            if clear != mango_css::values::Clear::None {
+                current_float_line_w = 0.0;
+            }
+            current_float_line_w += child_outer_w;
+            measured = measured.max(current_float_line_w);
+        } else {
+            current_float_line_w = 0.0;
+            measured = measured.max(child_outer_w);
         }
     }
     measured.min(max_width)

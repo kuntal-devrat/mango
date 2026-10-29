@@ -85,13 +85,37 @@ pub fn build_iframe_element_with_maps(
     // 2. If `src` is `data:text/html,...`, decode and lay out
     // 3. If `src` is a relative local file and base_dir is known, read and lay out
     let inner_html = if let Some(ref doc_html) = srcdoc {
-        Some(doc_html.clone())
+        Some((doc_html.clone(), None))
     } else if src.starts_with("data:text/html") {
-        decode_data_uri_html(&src)
+        decode_data_uri_html(&src).map(|h| (h, None))
     } else if let Some(base_dir) = crate::style_tree::current_document_base_dir() {
-        let candidate = base_dir.join(&src);
+        let clean_src = if let Some(idx) = src.find("{{location[path]}}/") {
+            let rest = &src[idx + "{{location[path]}}/".len()..];
+            rest.strip_prefix("../").unwrap_or(rest)
+        } else if let Some(idx) = src.find("{{location[path]}}") {
+            let rest = &src[idx + "{{location[path]}}".len()..];
+            rest.strip_prefix("/../")
+                .or_else(|| rest.strip_prefix('/'))
+                .unwrap_or(rest)
+        } else if let Some(r) = src.rfind("}}/") {
+            &src[r + 3..]
+        } else {
+            src.as_str()
+        };
+        let clean_src = clean_src.split(['?', '#']).next().unwrap_or(clean_src);
+        let candidate = base_dir.join(clean_src);
         if candidate.exists() {
-            std::fs::read_to_string(&candidate).ok()
+            let p = candidate.parent().map(std::path::Path::to_path_buf);
+            std::fs::read_to_string(&candidate).ok().map(|h| (h, p))
+        } else if clean_src.starts_with('/') {
+            let trimmed = clean_src.trim_start_matches('/');
+            let cand = base_dir.join(trimmed);
+            if cand.exists() {
+                let p = cand.parent().map(std::path::Path::to_path_buf);
+                std::fs::read_to_string(&cand).ok().map(|h| (h, p))
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -99,7 +123,11 @@ pub fn build_iframe_element_with_maps(
         None
     };
 
-    if let Some(html) = inner_html {
+    if let Some((html, child_base_dir)) = inner_html {
+        let prev_base_dir = crate::style_tree::current_document_base_dir();
+        if let Some(cbd) = child_base_dir {
+            crate::style_tree::set_current_document_base_dir(Some(cbd));
+        }
         let (saved_vw, saved_vh) = mango_css::get_current_viewport();
         let inner_doc = mango_html::parse_html(&html);
         if let Some(inner_styled_root) = crate::style_tree::build_style_tree_with_size(
@@ -120,6 +148,7 @@ pub fn build_iframe_element_with_maps(
             b.children.push(inner_box);
         }
         mango_css::set_current_viewport(saved_vw, saved_vh);
+        crate::style_tree::set_current_document_base_dir(prev_base_dir);
     } else {
         // Fallback content inside <iframe>...</iframe> for older/unsupported frame markup
         for child in &styled_node.children {

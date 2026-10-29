@@ -355,7 +355,12 @@ pub(crate) fn parse_color_str(s: &str) -> Option<Color> {
 }
 
 pub(crate) fn parse_length(val: &str) -> Option<f32> {
-    parse_length_with_ref(val, 0.0)
+    let s = val.trim();
+    if s.ends_with('%') {
+        None
+    } else {
+        parse_length_with_ref(val, 0.0)
+    }
 }
 
 pub(crate) fn parse_length_with_ref(val: &str, ref_size: f32) -> Option<f32> {

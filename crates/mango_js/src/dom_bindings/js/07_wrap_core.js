@@ -107,10 +107,24 @@
             get localName() {
                 if (this._localName !== undefined) return this._localName;
                 var t = this.tagName;
-                return t ? t.toLowerCase() : t;
+                if (!t) return t;
+                var colon = t.indexOf(':');
+                var local = colon !== -1 ? t.substring(colon + 1) : t;
+                var doc = this.ownerDocument || (typeof document !== 'undefined' ? document : null);
+                if (doc && !doc._isXml && (this.namespaceURI === 'http://www.w3.org/1999/xhtml' || !this.namespaceURI)) {
+                    return local.toLowerCase();
+                }
+                return local;
             },
             get prefix() {
-                return (this._prefix !== undefined) ? this._prefix : null;
+                if (this._prefix !== undefined) return this._prefix;
+                var t = this.tagName;
+                if (!t) return null;
+                var colon = t.indexOf(':');
+                if (colon !== -1) {
+                    return t.substring(0, colon);
+                }
+                return null;
             },
             get namespaceURI() {
                 if (this._namespaceURI !== undefined) return this._namespaceURI;

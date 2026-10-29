@@ -199,44 +199,35 @@ pub fn is_valid_property_value(property_name: &str, value: &Value) -> bool {
             Value::Keyword(k) | Value::String(k) => {
                 let lower = k.to_ascii_lowercase();
                 let items: Vec<_> = lower.split_whitespace().collect();
-                if items.len() > 4 || items.is_empty() {
-                    false
-                } else if items.len() == 1 && items[0] == "none" {
-                    true
+                if items.len() == 1 {
+                    matches!(items[0], "none" | "block" | "block-start" | "block-end")
+                } else if items.len() == 2 {
+                    (items[0] == "block-start" && items[1] == "block-end")
+                        || (items[0] == "block-end" && items[1] == "block-start")
                 } else {
-                    items.iter().all(|item| {
-                        matches!(
-                            *item,
-                            "block"
-                                | "block-start"
-                                | "block-end"
-                                | "inline"
-                                | "inline-start"
-                                | "inline-end"
-                        )
-                    }) && items.windows(2).all(|pair| pair[0] != pair[1])
+                    false
                 }
             }
-            Value::List(list) if !list.is_empty() && list.len() <= 4 => list
-                .iter()
-                .map(|item| match item {
-                    Value::Keyword(k) | Value::String(k) => Some(k.to_ascii_lowercase()),
-                    _ => None,
-                })
-                .collect::<Option<Vec<_>>>()
-                .is_some_and(|items| {
-                    items.iter().all(|item| {
-                        matches!(
-                            item.as_str(),
-                            "block"
-                                | "block-start"
-                                | "block-end"
-                                | "inline"
-                                | "inline-start"
-                                | "inline-end"
-                        )
-                    }) && items.windows(2).all(|pair| pair[0] != pair[1])
-                }),
+            Value::List(list) if list.len() == 1 => match &list[0] {
+                Value::Keyword(k) | Value::String(k) => {
+                    matches!(
+                        k.to_ascii_lowercase().as_str(),
+                        "none" | "block" | "block-start" | "block-end"
+                    )
+                }
+                _ => false,
+            },
+            Value::List(list) if list.len() == 2 => {
+                let a = match &list[0] {
+                    Value::Keyword(k) | Value::String(k) => k.to_ascii_lowercase(),
+                    _ => return false,
+                };
+                let b = match &list[1] {
+                    Value::Keyword(k) | Value::String(k) => k.to_ascii_lowercase(),
+                    _ => return false,
+                };
+                (a == "block-start" && b == "block-end") || (a == "block-end" && b == "block-start")
+            }
             _ => false,
         },
 

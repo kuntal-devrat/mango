@@ -218,46 +218,125 @@ pub(crate) fn calculate_block_width(box_node: &mut LayoutBox, containing_block: 
             (container_width - total_non_content_h - margin_left - margin_right).max(0.0)
         }
     } else {
-        let raw_w = style.width.to_px_with_viewport(
-            font_size,
-            root_font_size,
-            container_width,
-            container_height,
+        let is_width_content = matches!(
+            style.width,
+            Length::MinContent | Length::MaxContent | Length::FitContent | Length::Content
         );
-        if style.box_sizing == BoxSizing::BorderBox {
-            (raw_w - total_non_content_h).max(0.0)
+        if is_width_content {
+            let mut memo = std::collections::HashMap::new();
+            let resolved_h = if style.height != Length::Auto {
+                let rh = style.height.to_px_with_viewport(
+                    font_size,
+                    root_font_size,
+                    container_height,
+                    container_height,
+                );
+                if rh > 0.0 { Some(rh) } else { None }
+            } else {
+                None
+            };
+            let (intrinsic_min, intrinsic_max) =
+                crate::table_flow::measure_box_content_intrinsic_widths_with_height(
+                    box_node,
+                    font_size,
+                    mango_render::FontWeight::Regular,
+                    mango_render::FontFamily::SansSerif,
+                    &mut memo,
+                    resolved_h,
+                );
+            match style.width {
+                Length::MinContent => (intrinsic_min - total_non_content_h).max(0.0),
+                Length::MaxContent | Length::Content => {
+                    (intrinsic_max - total_non_content_h).max(0.0)
+                }
+                Length::FitContent => {
+                    let avail =
+                        (container_width - total_non_content_h - margin_left - margin_right)
+                            .max(0.0);
+                    let max_c = (intrinsic_max - total_non_content_h).max(0.0);
+                    let min_c = (intrinsic_min - total_non_content_h).max(0.0);
+                    avail.min(max_c).max(min_c)
+                }
+                _ => (container_width - total_non_content_h).max(0.0),
+            }
         } else {
-            raw_w.max(0.0)
+            let raw_w = style.width.to_px_with_viewport(
+                font_size,
+                root_font_size,
+                container_width,
+                container_height,
+            );
+            if style.box_sizing == BoxSizing::BorderBox {
+                (raw_w - total_non_content_h).max(0.0)
+            } else {
+                raw_w.max(0.0)
+            }
         }
     };
 
     // Apply min-width and max-width clamping (CSS 2.1 § 10.4)
     let mut clamped_w = tentative_width;
     if style.max_width != Length::Auto {
-        let raw_max = style.max_width.to_px_with_viewport(
-            font_size,
-            root_font_size,
-            container_width,
-            container_height,
-        );
-        let max_content_w = if style.box_sizing == BoxSizing::BorderBox {
-            (raw_max - total_non_content_h).max(0.0)
+        let max_content_w = if matches!(
+            style.max_width,
+            Length::MinContent | Length::MaxContent | Length::FitContent | Length::Content
+        ) {
+            let mut memo = std::collections::HashMap::new();
+            let (c_min, c_max) = crate::table_flow::measure_box_content_intrinsic_widths(
+                box_node,
+                font_size,
+                mango_render::FontWeight::Regular,
+                mango_render::FontFamily::SansSerif,
+                &mut memo,
+            );
+            match style.max_width {
+                Length::MinContent => (c_min - total_non_content_h).max(0.0),
+                _ => (c_max - total_non_content_h).max(0.0),
+            }
         } else {
-            raw_max
+            let raw_max = style.max_width.to_px_with_viewport(
+                font_size,
+                root_font_size,
+                container_width,
+                container_height,
+            );
+            if style.box_sizing == BoxSizing::BorderBox {
+                (raw_max - total_non_content_h).max(0.0)
+            } else {
+                raw_max
+            }
         };
         clamped_w = clamped_w.min(max_content_w);
     }
     if style.min_width != Length::Auto {
-        let raw_min = style.min_width.to_px_with_viewport(
-            font_size,
-            root_font_size,
-            container_width,
-            container_height,
-        );
-        let min_content_w = if style.box_sizing == BoxSizing::BorderBox {
-            (raw_min - total_non_content_h).max(0.0)
+        let min_content_w = if matches!(
+            style.min_width,
+            Length::MinContent | Length::MaxContent | Length::FitContent | Length::Content
+        ) {
+            let mut memo = std::collections::HashMap::new();
+            let (c_min, c_max) = crate::table_flow::measure_box_content_intrinsic_widths(
+                box_node,
+                font_size,
+                mango_render::FontWeight::Regular,
+                mango_render::FontFamily::SansSerif,
+                &mut memo,
+            );
+            match style.min_width {
+                Length::MaxContent | Length::Content => (c_max - total_non_content_h).max(0.0),
+                _ => (c_min - total_non_content_h).max(0.0),
+            }
         } else {
-            raw_min
+            let raw_min = style.min_width.to_px_with_viewport(
+                font_size,
+                root_font_size,
+                container_width,
+                container_height,
+            );
+            if style.box_sizing == BoxSizing::BorderBox {
+                (raw_min - total_non_content_h).max(0.0)
+            } else {
+                raw_min
+            }
         };
         clamped_w = clamped_w.max(min_content_w);
     }
@@ -281,8 +360,8 @@ pub(crate) fn calculate_block_width(box_node: &mut LayoutBox, containing_block: 
             margin_left = underflow.max(0.0);
         } else if is_margin_right_auto {
             margin_right = underflow.max(0.0);
-        } else if is_width_auto && clamped_w == tentative_width {
-            // Normal in-flow block with auto width expands to fill container, margin-right absorbs 0
+        } else if (is_width_auto || style.width.is_content()) && clamped_w == tentative_width {
+            // Normal in-flow block with auto/content width, margin-right absorbs 0
         } else {
             let cb_wm = containing_block.writing_mode;
             let cb_dir = containing_block.direction;
@@ -321,6 +400,14 @@ fn in_flow_block_children_bottom(box_node: &LayoutBox) -> Option<f32> {
             .map(|s| s.position)
             .unwrap_or(Position::Static);
         if matches!(position, Position::Absolute | Position::Fixed) {
+            continue;
+        }
+        if child
+            .style
+            .as_ref()
+            .map(|s| s.float != Float::None)
+            .unwrap_or(false)
+        {
             continue;
         }
         let child_bottom = if parent_has_bottom_strut {

@@ -4,11 +4,9 @@ use mango_css::{Stylesheet, parse_stylesheet};
 use mango_html::dom::{Document, NodeData, NodeId};
 use mango_net::{FetchedDocument, ResourceLoader, Url};
 
-use super::super::types::{
-    MAX_CONCURRENT_FETCHES, PreparedDocument, SUBRESOURCE_FETCH_TIMEOUT, ScriptToRun,
-};
+use super::super::types::{PreparedDocument, SUBRESOURCE_FETCH_TIMEOUT, ScriptToRun};
 use super::super::welcome::preprocess_wikipedia_appearance_html;
-use super::resources::{collect_image_sources, load_web_fonts};
+use super::resources::{collect_image_sources, load_web_fonts_async};
 /// Prepares a fetched document on a background worker thread: parsing HTML, prefetching
 /// external stylesheets, web fonts, and scripts, so the main UI thread never blocks on I/O.
 pub fn prepare_document_pipeline(
@@ -116,7 +114,7 @@ fn prepare_document_pipeline_internal(
     // preparation below will fetch and parse every stylesheet exactly once.
     // This is deferral, not stylesheet filtering; the final document still
     // receives the complete author stylesheet set.
-    if !is_progressive && !should_cancel() {
+    if !should_cancel() {
         load_stylesheets_parallel_cancellable(
             loader,
             &final_url,
@@ -136,7 +134,7 @@ fn prepare_document_pipeline_internal(
             }
         }
     }
-    if !is_progressive && !import_links.is_empty() && !should_cancel() {
+    if !import_links.is_empty() && !should_cancel() {
         load_stylesheets_parallel_cancellable(
             loader,
             &final_url,
@@ -148,8 +146,16 @@ fn prepare_document_pipeline_internal(
     }
 
     if !is_progressive && !should_cancel() {
-        load_web_fonts(loader, Some(&final_url), &cached_stylesheets);
-        load_web_fonts(loader, Some(&final_url), &inline_sheets);
+        load_web_fonts_async(
+            loader.clone(),
+            Some(final_url.clone()),
+            cached_stylesheets.clone(),
+        );
+        load_web_fonts_async(
+            loader.clone(),
+            Some(final_url.clone()),
+            inline_sheets.clone(),
+        );
     }
 
     let mut raw_scripts = Vec::new();
@@ -167,56 +173,51 @@ fn prepare_document_pipeline_internal(
         }
     }
 
-    // Bounded parallel script prefetch: at most MAX_CONCURRENT_FETCHES in
-    // flight, per-fetch timeout, epoch abandonment between batches. Sequence
-    // numbers (idx) preserve document order regardless of completion order.
+    // High-throughput parallel script prefetch across the worker pool:
+    // Dispatches all discovered external scripts concurrently to avoid lock-step chunk stalls.
     let mut fetched_scripts: std::collections::HashMap<
         usize,
         Result<String, mango_net::NetworkError>,
     > = std::collections::HashMap::new();
     if !to_fetch.is_empty() && !should_cancel() {
-        for chunk in to_fetch.chunks(MAX_CONCURRENT_FETCHES) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let total = to_fetch.len();
+        for (idx, src, nonce) in &to_fetch {
+            let tx = tx.clone();
+            let loader = loader.clone();
+            let base = final_url.clone();
+            let src = src.clone();
+            let nonce = nonce.clone();
+            let idx = *idx;
+            crate::browser::types::spawn_fetch_task(move || {
+                let res = loader.fetch_script_with_nonce(&base, &src, nonce.as_deref());
+                if let Err(ref err) = res {
+                    log::warn!("Background fetch_script error for {src}: {err}");
+                }
+                let _ = tx.send((idx, res));
+            });
+        }
+        drop(tx);
+        for _ in 0..total {
             if should_cancel() {
                 break;
             }
-            let (tx, rx) = std::sync::mpsc::channel();
-            let n = chunk.len();
-            for (idx, src, nonce) in chunk.iter() {
-                let tx = tx.clone();
-                let loader = loader.clone();
-                let base = final_url.clone();
-                let src = src.clone();
-                let nonce = nonce.clone();
-                let idx = *idx;
-                crate::browser::types::spawn_fetch_task(move || {
-                    let res = loader.fetch_script_with_nonce(&base, &src, nonce.as_deref());
-                    if let Err(ref err) = res {
-                        log::warn!("Background fetch_script error for {src}: {err}");
-                    }
-                    let _ = tx.send((idx, res));
-                });
-            }
-            drop(tx);
-            for _ in 0..n {
-                if should_cancel() {
-                    break;
+            match rx.recv_timeout(SCRIPT_FETCH_TIMEOUT + std::time::Duration::from_millis(500)) {
+                Ok((idx, res)) => {
+                    log::info!("Fetched script {idx} (ok: {})", res.is_ok());
+                    fetched_scripts.insert(idx, res);
                 }
-                match rx.recv_timeout(SCRIPT_FETCH_TIMEOUT + std::time::Duration::from_millis(500))
-                {
-                    Ok((idx, res)) => {
-                        log::info!("Fetched script {idx} (ok: {})", res.is_ok());
-                        fetched_scripts.insert(idx, res);
-                    }
-                    Err(err) => {
-                        log::warn!("rx.recv_timeout failed: {err}");
-                    }
+                Err(err) => {
+                    log::warn!("rx.recv_timeout failed: {err}");
+                    break;
                 }
             }
         }
     }
 
-    // Prefetch transitive ES module imports for any fetched modules
+    // Prefetch transitive ES module imports concurrently across the worker pool
     if !should_cancel() {
+        let mut transitive_imports = Vec::new();
         for (idx, res) in fetched_scripts.iter() {
             if let Ok(code) = res {
                 if let Some(s) = raw_scripts.get(*idx) {
@@ -230,16 +231,32 @@ fn prepare_document_pipeline_internal(
                             if let Ok(resolved) = module_base.resolve(&import_path) {
                                 let key = resolved.as_str();
                                 if loader.cache().get(&key).is_none() {
-                                    let _ = loader.fetch_script_with_nonce(
-                                        &module_base,
-                                        &import_path,
-                                        None,
-                                    );
+                                    transitive_imports.push((module_base.clone(), import_path));
                                 }
                             }
                         }
                     }
                 }
+            }
+        }
+
+        if !transitive_imports.is_empty() && !should_cancel() {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let total = transitive_imports.len();
+            for (module_base, import_path) in transitive_imports {
+                let tx = tx.clone();
+                let loader = loader.clone();
+                crate::browser::types::spawn_fetch_task(move || {
+                    let res = loader.fetch_script_with_nonce(&module_base, &import_path, None);
+                    let _ = tx.send(res);
+                });
+            }
+            drop(tx);
+            for _ in 0..total {
+                if should_cancel() {
+                    break;
+                }
+                let _ = rx.recv_timeout(SCRIPT_FETCH_TIMEOUT);
             }
         }
     }
@@ -526,39 +543,28 @@ fn load_stylesheets_parallel_cancellable(
     // sequence numbers (idx) restore document order.
     let mut results_map: std::collections::HashMap<usize, Result<String, mango_net::NetworkError>> =
         std::collections::HashMap::new();
-    for chunk in to_fetch
-        .iter()
-        .enumerate()
-        .collect::<Vec<_>>()
-        .chunks(MAX_CONCURRENT_FETCHES)
-    {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let total = to_fetch.len();
+    for (idx, (href, _)) in to_fetch.iter().enumerate() {
+        let tx = tx.clone();
+        let loader = loader.clone();
+        let base = base_url.clone();
+        let href = href.clone();
+        crate::browser::types::spawn_fetch_task(move || {
+            let res = loader.fetch_stylesheet(&base, &href);
+            let _ = tx.send((idx, res));
+        });
+    }
+    drop(tx);
+    for _ in 0..total {
         if should_cancel() {
             break;
         }
-        let (tx, rx) = std::sync::mpsc::channel();
-        let n = chunk.len();
-        for (idx, (href, _)) in chunk.iter() {
-            let tx = tx.clone();
-            let loader = loader.clone();
-            let base = base_url.clone();
-            let href = (*href).clone();
-            let idx = *idx;
-            crate::browser::types::spawn_fetch_task(move || {
-                let res = loader.fetch_stylesheet(&base, &href);
-                let _ = tx.send((idx, res));
-            });
-        }
-        drop(tx);
-        for _ in 0..n {
-            if should_cancel() {
-                break;
+        match rx.recv_timeout(SUBRESOURCE_FETCH_TIMEOUT + std::time::Duration::from_secs(2)) {
+            Ok((idx, res)) => {
+                results_map.insert(idx, res);
             }
-            match rx.recv_timeout(SUBRESOURCE_FETCH_TIMEOUT + std::time::Duration::from_secs(2)) {
-                Ok((idx, res)) => {
-                    results_map.insert(idx, res);
-                }
-                Err(_) => break,
-            }
+            Err(_) => break,
         }
     }
 
@@ -632,41 +638,26 @@ fn load_imported_stylesheets_parallel_cancellable(
             break;
         }
 
-        // Bounded fan-out preserving order via sequence numbers.
+        // Fan-out to worker pool preserving order via sequence numbers.
         let mut results: Vec<(usize, Url, Result<String, mango_net::NetworkError>)> = Vec::new();
-        for chunk in to_fetch
-            .into_iter()
-            .enumerate()
-            .collect::<Vec<_>>()
-            .chunks(MAX_CONCURRENT_FETCHES)
-        {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let total = to_fetch.len();
+        for (idx, (base, href, resolved)) in to_fetch.into_iter().enumerate() {
+            let tx = tx.clone();
+            let loader = loader.clone();
+            crate::browser::types::spawn_fetch_task(move || {
+                let res = loader.fetch_stylesheet(&base, &href);
+                let _ = tx.send((idx, resolved, res));
+            });
+        }
+        drop(tx);
+        for _ in 0..total {
             if should_cancel() {
                 break;
             }
-            let (tx, rx) = std::sync::mpsc::channel();
-            let n = chunk.len();
-            for (idx, (base, href, resolved)) in chunk.iter() {
-                let tx = tx.clone();
-                let loader = loader.clone();
-                let base = (*base).clone();
-                let href = (*href).clone();
-                let resolved = (*resolved).clone();
-                let idx = *idx;
-                crate::browser::types::spawn_fetch_task(move || {
-                    let res = loader.fetch_stylesheet(&base, &href);
-                    let _ = tx.send((idx, resolved, res));
-                });
-            }
-            drop(tx);
-            for _ in 0..n {
-                if should_cancel() {
-                    break;
-                }
-                match rx.recv_timeout(SUBRESOURCE_FETCH_TIMEOUT + std::time::Duration::from_secs(2))
-                {
-                    Ok(item) => results.push(item),
-                    Err(_) => break,
-                }
+            match rx.recv_timeout(SUBRESOURCE_FETCH_TIMEOUT + std::time::Duration::from_secs(2)) {
+                Ok(item) => results.push(item),
+                Err(_) => break,
             }
         }
 

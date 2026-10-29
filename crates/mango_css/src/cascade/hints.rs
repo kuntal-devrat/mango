@@ -83,15 +83,17 @@ pub(crate) fn collect_presentational_hints(
         }
     }
 
-    // width
-    if let Some(w) = elem.get_attribute("width")
+    // width (canvas width/height attributes define coordinate space, not CSS presentational hints)
+    if tag != "canvas"
+        && let Some(w) = elem.get_attribute("width")
         && let Some(dim) = parse_presentational_dimension(w)
     {
         push_hint(matched_decls, source_order, "width", dim);
     }
 
     // height
-    if let Some(h) = elem.get_attribute("height")
+    if tag != "canvas"
+        && let Some(h) = elem.get_attribute("height")
         && let Some(dim) = parse_presentational_dimension(h)
     {
         push_hint(matched_decls, source_order, "height", dim);
