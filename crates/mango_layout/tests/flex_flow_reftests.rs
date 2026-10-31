@@ -1,10 +1,14 @@
+fn wpt_flexbox_path(rel: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/wpt/upstream/css/css-flexbox")
+        .join(rel)
+}
+
 #[test]
 fn test_flexbox_inline_negative_margin() {
-    let test_html = std::fs::read_to_string(
-        "/home/pika/Documents/mango/tests/wpt/upstream/css/css-flexbox/flex-inline.html",
-    )
-    .unwrap();
-    let ref_html = std::fs::read_to_string("/home/pika/Documents/mango/tests/wpt/upstream/css/css-flexbox/reference/flex-inline-ref.html").unwrap();
+    let test_html = std::fs::read_to_string(wpt_flexbox_path("flex-inline.html")).unwrap();
+    let ref_html =
+        std::fs::read_to_string(wpt_flexbox_path("reference/flex-inline-ref.html")).unwrap();
     let doc = mango_html::parse_html(&test_html);
     let (box_t, _) = mango_layout::layout_document_with_scroll_xy(
         &doc,
@@ -30,8 +34,12 @@ fn test_flexbox_inline_negative_margin() {
 
 #[test]
 fn test_flex_vertical_align_effect() {
-    let test_html = std::fs::read_to_string("/home/pika/Documents/mango/tests/wpt/upstream/css/css-flexbox/flex-vertical-align-effect.html").unwrap();
-    let ref_html = std::fs::read_to_string("/home/pika/Documents/mango/tests/wpt/upstream/css/css-flexbox/reference/flex-vertical-align-effect.html").unwrap();
+    let test_html =
+        std::fs::read_to_string(wpt_flexbox_path("flex-vertical-align-effect.html")).unwrap();
+    let ref_html = std::fs::read_to_string(wpt_flexbox_path(
+        "reference/flex-vertical-align-effect.html",
+    ))
+    .unwrap();
 
     let doc_t = mango_html::parse_html(&test_html);
     let (box_t, _) = mango_layout::layout_document_with_scroll_xy(
@@ -69,8 +77,14 @@ fn test_flex_vertical_align_effect() {
 
 #[test]
 fn test_flexbox_baseline_multi_line_vert_001() {
-    let test_html = std::fs::read_to_string("/home/pika/Documents/mango/tests/wpt/upstream/css/css-flexbox/flexbox-baseline-multi-line-vert-001.html").unwrap();
-    let ref_html = std::fs::read_to_string("/home/pika/Documents/mango/tests/wpt/upstream/css/css-flexbox/flexbox-baseline-multi-line-vert-001-ref.html").unwrap();
+    let test_html = std::fs::read_to_string(wpt_flexbox_path(
+        "flexbox-baseline-multi-line-vert-001.html",
+    ))
+    .unwrap();
+    let ref_html = std::fs::read_to_string(wpt_flexbox_path(
+        "flexbox-baseline-multi-line-vert-001-ref.html",
+    ))
+    .unwrap();
     let doc_t = mango_html::parse_html(&test_html);
     let (box_t, _) = mango_layout::layout_document_with_scroll_xy(
         &doc_t,
@@ -117,11 +131,10 @@ fn test_flexbox_baseline_multi_line_vert_001() {
 
 #[test]
 fn test_negative_margins_001() {
-    let test_html = std::fs::read_to_string(
-        "/home/pika/Documents/mango/tests/wpt/upstream/css/css-flexbox/negative-margins-001.html",
-    )
-    .unwrap();
-    let ref_html = std::fs::read_to_string("/home/pika/Documents/mango/tests/wpt/upstream/css/css-flexbox/reference/negative-margins-001-ref.html").unwrap();
+    let test_html = std::fs::read_to_string(wpt_flexbox_path("negative-margins-001.html")).unwrap();
+    let ref_html =
+        std::fs::read_to_string(wpt_flexbox_path("reference/negative-margins-001-ref.html"))
+            .unwrap();
     let doc_t = mango_html::parse_html(&test_html);
     let (box_t, _) = mango_layout::layout_document_with_scroll_xy(
         &doc_t,
@@ -148,8 +161,14 @@ fn test_negative_margins_001() {
 
 #[test]
 fn test_flexbox_baseline_multi_item_horiz_001a() {
-    let test_html = std::fs::read_to_string("/home/pika/Documents/mango/tests/wpt/upstream/css/css-flexbox/flexbox-baseline-multi-item-horiz-001a.html").unwrap();
-    let ref_html = std::fs::read_to_string("/home/pika/Documents/mango/tests/wpt/upstream/css/css-flexbox/flexbox-baseline-multi-item-horiz-001-ref.html").unwrap();
+    let test_html = std::fs::read_to_string(wpt_flexbox_path(
+        "flexbox-baseline-multi-item-horiz-001a.html",
+    ))
+    .unwrap();
+    let ref_html = std::fs::read_to_string(wpt_flexbox_path(
+        "flexbox-baseline-multi-item-horiz-001-ref.html",
+    ))
+    .unwrap();
     let doc_t = mango_html::parse_html(&test_html);
     let (box_t, _) = mango_layout::layout_document_with_scroll_xy(
         &doc_t,
@@ -205,8 +224,10 @@ fn test_flexbox_baseline_multi_item_horiz_001a() {
 
 #[test]
 fn test_flexbox_baseline_nested_001() {
-    let test_html = std::fs::read_to_string("/home/pika/Documents/mango/tests/wpt/upstream/css/css-flexbox/flexbox-baseline-nested-001.html").unwrap();
-    let ref_html = std::fs::read_to_string("/home/pika/Documents/mango/tests/wpt/upstream/css/css-flexbox/flexbox-baseline-nested-001-ref.html").unwrap();
+    let test_html =
+        std::fs::read_to_string(wpt_flexbox_path("flexbox-baseline-nested-001.html")).unwrap();
+    let ref_html =
+        std::fs::read_to_string(wpt_flexbox_path("flexbox-baseline-nested-001-ref.html")).unwrap();
     let doc_t = mango_html::parse_html(&test_html);
     let (box_t, _) = mango_layout::layout_document_with_scroll_xy(
         &doc_t,
