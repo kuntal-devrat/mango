@@ -266,19 +266,22 @@ fn collect_hoisted_stacking_contexts<'a>(
         child_offset_y -= parent.scroll_offset_y;
     }
     for child in &parent.children {
-        let is_item = parent_is_fg && !child.is_out_of_flow();
-        let is_sc = creates_stacking_context(child, is_item);
-        if is_sc {
+        if child.is_out_of_flow() {
+            continue;
+        }
+        let is_item = parent_is_fg;
+        let should_hoist = is_item && child.style.as_ref().and_then(|s| s.z_index).is_some();
+        if should_hoist {
             *orig_idx_counter += 1;
             out.push(PaintItem {
                 child,
-                is_flex_or_grid_item: is_item,
+                is_flex_or_grid_item: true,
                 is_sc: true,
                 orig_idx: *orig_idx_counter,
                 offset_x: child_offset_x,
                 offset_y: child_offset_y,
             });
-        } else {
+        } else if !creates_stacking_context(child, is_item) {
             collect_hoisted_stacking_contexts(
                 child,
                 child_offset_x,
@@ -372,13 +375,14 @@ pub(crate) fn paint_children_and_scrollbars(
         for (idx, child) in box_node.children.iter().enumerate() {
             let is_item = is_flex_or_grid && !child.is_out_of_flow();
             let is_sc = creates_stacking_context(child, is_item);
-            if is_sc {
+            let should_hoist = is_item && child.style.as_ref().and_then(|s| s.z_index).is_some();
+            if should_hoist {
                 continue;
             }
             items.push(PaintItem {
                 child,
                 is_flex_or_grid_item: is_item,
-                is_sc: false,
+                is_sc,
                 orig_idx: idx,
                 offset_x,
                 offset_y,
@@ -731,7 +735,7 @@ pub(crate) fn paint_children_and_scrollbars(
                     color: track_color,
                 });
 
-                let thumb_h = ((pad_h / content_h) * pad_h).clamp(16.0, pad_h);
+                let thumb_h = ((pad_h / content_h) * pad_h).clamp(16.0f32.min(pad_h), pad_h);
                 let max_scroll = (content_h - pad_h).max(1.0);
                 let scroll_ratio = (box_node.scroll_offset_y.abs() / max_scroll).clamp(0.0, 1.0);
                 let thumb_y = track_y + scroll_ratio * (track_h - thumb_h);
@@ -771,7 +775,7 @@ pub(crate) fn paint_children_and_scrollbars(
                     color: track_color,
                 });
 
-                let thumb_w = ((pad_w / content_w) * pad_w).clamp(16.0, track_w);
+                let thumb_w = ((pad_w / content_w) * pad_w).clamp(16.0f32.min(track_w), track_w);
                 let max_scroll = (content_w - pad_w).max(1.0);
                 let scroll_ratio = (box_node.scroll_offset_x.abs() / max_scroll).clamp(0.0, 1.0);
                 let thumb_x = track_x + scroll_ratio * (track_w - thumb_w);

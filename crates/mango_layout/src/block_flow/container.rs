@@ -628,6 +628,7 @@ pub(crate) fn layout_block_children(
                 flex_cb.content.origin.y = cursor_y - child.dimensions.margin.top;
                 let mut flex_float_ctx = FloatContext::new();
                 crate::flex_flow::layout_flex(child, &flex_cb, &mut flex_float_ctx);
+                layout_positioned_children_with_cb(child, &child_cb, &mut flex_float_ctx);
             } else if child_disp == Some(Display::Grid) || child_disp == Some(Display::InlineGrid) {
                 let mut grid_cb = container_dims;
                 grid_cb.content.origin.x = child_origin_x;

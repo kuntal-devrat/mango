@@ -42,7 +42,7 @@ pub fn position_flex_items_on_line(params: LinePlacementParams) {
         style,
         is_row,
         is_reverse,
-        is_container_main_definite: _,
+        is_container_main_definite,
         container_x,
         container_y,
         container_main_size,
@@ -435,7 +435,8 @@ pub fn position_flex_items_on_line(params: LinePlacementParams) {
             let is_container_strictly_definite = if is_row {
                 true
             } else {
-                style.height != Length::Auto && !matches!(style.height, Length::Percent(_))
+                is_container_main_definite
+                    || (style.height != Length::Auto && !matches!(style.height, Length::Percent(_)))
                     || (matches!(style.height, Length::Percent(_)) && container_height > 0.0)
             };
             if !is_row && !is_container_strictly_definite && !is_item_basis_definite {

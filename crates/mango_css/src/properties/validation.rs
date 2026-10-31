@@ -205,17 +205,11 @@ pub fn is_valid_property_value(property_name: &str, value: &Value) -> bool {
                     let mut has_b = false;
                     let mut has_bs = false;
                     let mut has_be = false;
-                    let mut has_i = false;
-                    let mut has_is = false;
-                    let mut has_ie = false;
                     for &item in items {
                         match item {
                             "block" if !has_b && !has_bs && !has_be => has_b = true,
-                            "inline" if !has_i && !has_is && !has_ie => has_i = true,
                             "block-start" if !has_b && !has_bs => has_bs = true,
                             "block-end" if !has_b && !has_be => has_be = true,
-                            "inline-start" if !has_i && !has_is => has_is = true,
-                            "inline-end" if !has_i && !has_ie => has_ie = true,
                             _ => return false,
                         }
                     }
@@ -229,14 +223,12 @@ pub fn is_valid_property_value(property_name: &str, value: &Value) -> bool {
                     validate_items(&items)
                 }
                 Value::Display(Display::Block) => true,
-                Value::Display(Display::Inline) => true,
                 Value::List(list) => {
                     let parts: Vec<String> = list
                         .iter()
                         .filter_map(|v| match v {
                             Value::Keyword(k) | Value::String(k) => Some(k.to_ascii_lowercase()),
                             Value::Display(Display::Block) => Some("block".to_string()),
-                            Value::Display(Display::Inline) => Some("inline".to_string()),
                             _ => None,
                         })
                         .collect();

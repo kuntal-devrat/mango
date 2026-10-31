@@ -28,10 +28,7 @@ pub(crate) fn creates_stacking_context(box_node: &LayoutBox, is_flex_or_grid_ite
         return true;
     }
     if let Some(s) = &box_node.style {
-        matches!(
-            s.position,
-            mango_css::values::Position::Fixed | mango_css::values::Position::Sticky
-        ) || (s.position != mango_css::values::Position::Static && s.z_index.is_some())
+        s.position != mango_css::values::Position::Static
             || (is_flex_or_grid_item && s.z_index.is_some())
             || s.opacity < 1.0
             || !s.transform.is_identity()

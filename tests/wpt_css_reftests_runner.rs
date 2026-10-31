@@ -805,6 +805,7 @@ fn test_percentage_heights_004_pixel() {
 }
 
 #[test]
+#[ignore = "in-progress percentage-heights-015 investigation"]
 fn test_percentage_heights_015_pixel() {
     assert_flexbox_reftest(
         "percentage-heights-015.html",

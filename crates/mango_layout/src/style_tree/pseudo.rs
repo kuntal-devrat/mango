@@ -109,13 +109,17 @@ pub fn create_pseudo_styled_node(
     if parts.len() == 1 {
         match parts.into_iter().next() {
             Some(PseudoPart::Text(text)) => {
-                let mut pseudo_node = StyledNode::new(None, style.clone());
-                let mut inline_style = style;
-                inline_style.display = Display::Inline;
-                pseudo_node
-                    .children
-                    .push(StyledNode::with_text(None, inline_style, text));
-                Some(pseudo_node)
+                if style.display == Display::Inline {
+                    Some(StyledNode::with_text(None, style, text))
+                } else {
+                    let mut pseudo_node = StyledNode::new(None, style.clone());
+                    let mut inline_style = style;
+                    inline_style.display = Display::Inline;
+                    pseudo_node
+                        .children
+                        .push(StyledNode::with_text(None, inline_style, text));
+                    Some(pseudo_node)
+                }
             }
             Some(PseudoPart::Image(url)) => {
                 let mut img_style = style;

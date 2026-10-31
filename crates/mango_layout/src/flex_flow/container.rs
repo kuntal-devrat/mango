@@ -607,15 +607,18 @@ pub fn layout_flex(
         .iter()
         .map(|m| m.base_main.clamp(m.min_main, m.max_main.max(m.min_main)))
         .sum();
+    let is_multiline = style.flex_wrap != mango_css::values::FlexWrap::NoWrap;
+    let is_clamped_by_max =
+        max_main_size.is_finite() && !is_multiline && sum_hypothetical > max_main_size;
     let is_container_main_definite = if is_row {
         !(is_vertical_wm && is_width_auto)
             || (min_main_size > 0.0 && sum_hypothetical < min_main_size)
-            || (max_main_size.is_finite() && sum_hypothetical > max_main_size)
+            || is_clamped_by_max
     } else {
         content_height > 0.0
             || (style.height != Length::Auto && !is_percent_indefinite)
             || (min_main_size > 0.0 && sum_hypothetical < min_main_size)
-            || (max_main_size.is_finite() && sum_hypothetical > max_main_size)
+            || is_clamped_by_max
     };
     let container_main_size = if is_row {
         if is_vertical_wm && is_width_auto {
@@ -627,8 +630,14 @@ pub fn layout_flex(
         } else {
             content_width.max(min_main_size).min(max_main_size)
         }
-    } else if content_height > 0.0 {
-        content_height.max(min_main_size).min(max_main_size)
+    } else if content_height > 0.0 || is_clamped_by_max {
+        (if content_height > 0.0 {
+            content_height
+        } else {
+            max_main_size
+        })
+        .max(min_main_size)
+        .min(max_main_size)
     } else if max_main_size.is_finite() {
         max_main_size
     } else {
