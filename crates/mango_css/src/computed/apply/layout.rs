@@ -251,7 +251,8 @@ pub(crate) fn apply_layout_property(style: &mut ComputedStyle, prop: &str, val: 
                 "flex-start" | "start" => style.align_items = AlignItems::FlexStart,
                 "flex-end" | "end" => style.align_items = AlignItems::FlexEnd,
                 "stretch" => style.align_items = AlignItems::Stretch,
-                "baseline" => style.align_items = AlignItems::Baseline,
+                "baseline" | "first baseline" => style.align_items = AlignItems::Baseline,
+                "last baseline" => style.align_items = AlignItems::LastBaseline,
                 "safe center" => style.align_items = AlignItems::SafeCenter,
                 "safe flex-start" => style.align_items = AlignItems::SafeFlexStart,
                 "safe flex-end" => style.align_items = AlignItems::SafeFlexEnd,
@@ -260,21 +261,26 @@ pub(crate) fn apply_layout_property(style: &mut ComputedStyle, prop: &str, val: 
                 _ => {}
             },
             Value::List(list) => {
-                let s = list
+                let parts: Vec<String> = list
                     .iter()
                     .filter_map(|v| match v {
-                        Value::Keyword(k) => Some(k.as_str()),
+                        Value::Keyword(k) => Some(k.to_ascii_lowercase()),
+                        Value::AlignItems(AlignItems::Baseline) => Some("baseline".to_string()),
+                        Value::AlignItems(AlignItems::LastBaseline) => {
+                            Some("last baseline".to_string())
+                        }
                         _ => None,
                     })
-                    .collect::<Vec<_>>()
-                    .join(" ")
-                    .to_ascii_lowercase();
+                    .collect();
+                let s = parts.join(" ");
                 match s.as_str() {
                     "safe center" => style.align_items = AlignItems::SafeCenter,
                     "safe flex-start" => style.align_items = AlignItems::SafeFlexStart,
                     "safe flex-end" => style.align_items = AlignItems::SafeFlexEnd,
                     "safe start" => style.align_items = AlignItems::SafeStart,
                     "safe end" => style.align_items = AlignItems::SafeEnd,
+                    "baseline" | "first baseline" => style.align_items = AlignItems::Baseline,
+                    "last baseline" => style.align_items = AlignItems::LastBaseline,
                     _ => {}
                 }
             }
@@ -289,6 +295,7 @@ pub(crate) fn apply_layout_property(style: &mut ComputedStyle, prop: &str, val: 
                     AlignItems::FlexEnd => AlignSelf::FlexEnd,
                     AlignItems::Center => AlignSelf::Center,
                     AlignItems::Baseline => AlignSelf::Baseline,
+                    AlignItems::LastBaseline => AlignSelf::LastBaseline,
                     AlignItems::SafeCenter => AlignSelf::SafeCenter,
                     AlignItems::SafeFlexStart => AlignSelf::SafeFlexStart,
                     AlignItems::SafeFlexEnd => AlignSelf::SafeFlexEnd,
@@ -307,7 +314,8 @@ pub(crate) fn apply_layout_property(style: &mut ComputedStyle, prop: &str, val: 
                 "flex-start" | "start" => style.align_self = AlignSelf::FlexStart,
                 "flex-end" | "end" => style.align_self = AlignSelf::FlexEnd,
                 "stretch" => style.align_self = AlignSelf::Stretch,
-                "baseline" => style.align_self = AlignSelf::Baseline,
+                "baseline" | "first baseline" => style.align_self = AlignSelf::Baseline,
+                "last baseline" => style.align_self = AlignSelf::LastBaseline,
                 "safe center" => style.align_self = AlignSelf::SafeCenter,
                 "safe flex-start" => style.align_self = AlignSelf::SafeFlexStart,
                 "safe flex-end" => style.align_self = AlignSelf::SafeFlexEnd,
@@ -316,21 +324,30 @@ pub(crate) fn apply_layout_property(style: &mut ComputedStyle, prop: &str, val: 
                 _ => {}
             },
             Value::List(list) => {
-                let s = list
+                let parts: Vec<String> = list
                     .iter()
                     .filter_map(|v| match v {
-                        Value::Keyword(k) => Some(k.as_str()),
+                        Value::Keyword(k) => Some(k.to_ascii_lowercase()),
+                        Value::AlignItems(AlignItems::Baseline) => Some("baseline".to_string()),
+                        Value::AlignItems(AlignItems::LastBaseline) => {
+                            Some("last baseline".to_string())
+                        }
+                        Value::AlignSelf(AlignSelf::Baseline) => Some("baseline".to_string()),
+                        Value::AlignSelf(AlignSelf::LastBaseline) => {
+                            Some("last baseline".to_string())
+                        }
                         _ => None,
                     })
-                    .collect::<Vec<_>>()
-                    .join(" ")
-                    .to_ascii_lowercase();
+                    .collect();
+                let s = parts.join(" ");
                 match s.as_str() {
                     "safe center" => style.align_self = AlignSelf::SafeCenter,
                     "safe flex-start" => style.align_self = AlignSelf::SafeFlexStart,
                     "safe flex-end" => style.align_self = AlignSelf::SafeFlexEnd,
                     "safe start" => style.align_self = AlignSelf::SafeStart,
                     "safe end" => style.align_self = AlignSelf::SafeEnd,
+                    "baseline" | "first baseline" => style.align_self = AlignSelf::Baseline,
+                    "last baseline" => style.align_self = AlignSelf::LastBaseline,
                     _ => {}
                 }
             }

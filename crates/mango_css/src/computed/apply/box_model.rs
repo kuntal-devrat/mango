@@ -716,15 +716,21 @@ pub(crate) fn apply_box_model_property(style: &mut ComputedStyle, prop: &str, va
             Value::Keyword(k) | Value::String(k) => {
                 if k == "block-start block-end" || k == "block-end block-start" {
                     style.margin_trim = "block".to_string();
+                } else if k == "inline-start inline-end" || k == "inline-end inline-start" {
+                    style.margin_trim = "inline".to_string();
                 } else {
                     style.margin_trim = k.clone();
                 }
             }
+            Value::Display(Display::Block) => style.margin_trim = "block".to_string(),
+            Value::Display(Display::Inline) => style.margin_trim = "inline".to_string(),
             Value::List(list) => {
                 let parts: Vec<String> = list
                     .iter()
                     .filter_map(|v| match v {
                         Value::Keyword(k) | Value::String(k) => Some(k.clone()),
+                        Value::Display(Display::Block) => Some("block".to_string()),
+                        Value::Display(Display::Inline) => Some("inline".to_string()),
                         _ => None,
                     })
                     .collect();
@@ -733,11 +739,15 @@ pub(crate) fn apply_box_model_property(style: &mut ComputedStyle, prop: &str, va
                         || (parts[0] == "block-end" && parts[1] == "block-start"))
                 {
                     style.margin_trim = "block".to_string();
+                } else if parts.len() == 2
+                    && ((parts[0] == "inline-start" && parts[1] == "inline-end")
+                        || (parts[0] == "inline-end" && parts[1] == "inline-start"))
+                {
+                    style.margin_trim = "inline".to_string();
                 } else {
                     style.margin_trim = parts.join(" ");
                 }
             }
-            Value::Display(Display::Block) => style.margin_trim = "block".to_string(),
             _ => {}
         },
         "opacity" => match val {

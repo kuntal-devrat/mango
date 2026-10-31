@@ -28,7 +28,10 @@ pub(crate) fn creates_stacking_context(box_node: &LayoutBox, is_flex_or_grid_ite
         return true;
     }
     if let Some(s) = &box_node.style {
-        s.position != mango_css::values::Position::Static
+        matches!(
+            s.position,
+            mango_css::values::Position::Fixed | mango_css::values::Position::Sticky
+        ) || (s.position != mango_css::values::Position::Static && s.z_index.is_some())
             || (is_flex_or_grid_item && s.z_index.is_some())
             || s.opacity < 1.0
             || !s.transform.is_identity()
@@ -70,6 +73,8 @@ pub(crate) fn paint_layer_of(box_node: &LayoutBox, is_flex_or_grid_item: bool) -
                 Some(z) if z > 0 => PaintLayer::PositiveZ(z),
                 _ => PaintLayer::ZeroOrAutoZ,
             }
+        } else if s.position != mango_css::values::Position::Static {
+            PaintLayer::ZeroOrAutoZ
         } else if s.float != mango_css::values::Float::None {
             PaintLayer::Float
         } else if box_node.is_inline() || is_flex_or_grid_item {

@@ -43,6 +43,28 @@ pub(crate) fn layout_vertical_inline_children(
         400.0
     };
 
+    let text_align = container
+        .style
+        .as_ref()
+        .map(|s| match s.text_align {
+            mango_css::values::TextAlign::Start => {
+                if s.direction == mango_css::values::Direction::Rtl {
+                    mango_css::values::TextAlign::Right
+                } else {
+                    mango_css::values::TextAlign::Left
+                }
+            }
+            mango_css::values::TextAlign::End => {
+                if s.direction == mango_css::values::Direction::Rtl {
+                    mango_css::values::TextAlign::Left
+                } else {
+                    mango_css::values::TextAlign::Right
+                }
+            }
+            other => other,
+        })
+        .unwrap_or(mango_css::values::TextAlign::Left);
+
     let col_count_opt = container.style.as_ref().and_then(|s| s.column_count);
     let col_width_opt = container
         .style
@@ -180,6 +202,13 @@ pub(crate) fn layout_vertical_inline_children(
         }
     };
 
+    let is_nowrap = container.style.as_ref().is_some_and(|s| {
+        matches!(
+            s.white_space,
+            mango_css::values::WhiteSpace::Nowrap | mango_css::values::WhiteSpace::Pre
+        )
+    });
+
     for atom in atoms {
         if matches!(atom.kind, InlineAtomKind::LineBreak { .. }) {
             strip_trailing_space(&mut cur_line_boxes, &mut cur_y);
@@ -213,7 +242,7 @@ pub(crate) fn layout_vertical_inline_children(
                         letter_spacing_px,
                     )
                     .max(1.0);
-                    if cur_y + space_adv > container_y + max_col_h {
+                    if !is_nowrap && cur_y + space_adv > container_y + max_col_h {
                         continue;
                     }
                     let mut box_node =
@@ -242,7 +271,10 @@ pub(crate) fn layout_vertical_inline_children(
                     })
                     .sum();
 
-                if cur_y + word_adv > container_y + max_col_h && !cur_line_boxes.is_empty() {
+                if !is_nowrap
+                    && cur_y + word_adv > container_y + max_col_h
+                    && !cur_line_boxes.is_empty()
+                {
                     strip_trailing_space(&mut cur_line_boxes, &mut cur_y);
                     lines.push(VertLine {
                         boxes: std::mem::take(&mut cur_line_boxes),
@@ -262,7 +294,10 @@ pub(crate) fn layout_vertical_inline_children(
                     )
                     .max(1.0);
 
-                    if cur_y + glyph_adv > container_y + max_col_h && !cur_line_boxes.is_empty() {
+                    if !is_nowrap
+                        && cur_y + glyph_adv > container_y + max_col_h
+                        && !cur_line_boxes.is_empty()
+                    {
                         strip_trailing_space(&mut cur_line_boxes, &mut cur_y);
                         lines.push(VertLine {
                             boxes: std::mem::take(&mut cur_line_boxes),
@@ -283,7 +318,8 @@ pub(crate) fn layout_vertical_inline_children(
             }
             InlineAtomKind::AtomicBox(mut atomic_box) => {
                 let adv = atomic_box.dimensions.margin_box().height().max(16.0);
-                if cur_y + adv > container_y + max_col_h && !cur_line_boxes.is_empty() {
+                if !is_nowrap && cur_y + adv > container_y + max_col_h && !cur_line_boxes.is_empty()
+                {
                     lines.push(VertLine {
                         boxes: std::mem::take(&mut cur_line_boxes),
                         height: cur_y - container_y,
@@ -294,7 +330,7 @@ pub(crate) fn layout_vertical_inline_children(
                 cur_line_boxes.push(*atomic_box);
                 cur_y += adv;
             }
-            InlineAtomKind::OutOfFlow(oof) => {
+            InlineAtomKind::OutOfFlow(oof) | InlineAtomKind::Float(oof) => {
                 let mut placed = *oof;
                 placed.dimensions.content.origin = Point::new(0.0, cur_y);
                 placed.containing_inline_id = atom.owner_inline_id;
@@ -440,21 +476,19 @@ pub(crate) fn layout_vertical_inline_children(
         }
 
         // Compute segment bounds along vertical inline axis
-        let mut seg_bounds = Vec::new();
-        if is_rtl {
-            let mut cur_top = container_y + eff_col_h - line.height;
-            for &(_, _, _, seg_h) in &seg_ranges {
-                let seg_bottom = cur_top + seg_h;
-                seg_bounds.push((cur_top, seg_bottom));
-                cur_top = seg_bottom;
-            }
+        let mut cur_top = if text_align == mango_css::values::TextAlign::Center {
+            container_y + (eff_col_h - line.height).max(0.0) / 2.0
+        } else if is_rtl {
+            container_y + eff_col_h - line.height
         } else {
-            let mut cur_top = container_y;
-            for &(_, _, _, seg_h) in &seg_ranges {
-                let seg_bottom = cur_top + seg_h;
-                seg_bounds.push((cur_top, seg_bottom));
-                cur_top = seg_bottom;
-            }
+            container_y
+        };
+
+        let mut seg_bounds = Vec::new();
+        for &(_, _, _, seg_h) in &seg_ranges {
+            let seg_bottom = cur_top + seg_h;
+            seg_bounds.push((cur_top, seg_bottom));
+            cur_top = seg_bottom;
         }
 
         for (seg_i, &(s_idx, e_idx, seg_rtl, _)) in seg_ranges.iter().enumerate() {
@@ -588,7 +622,25 @@ pub(crate) fn layout_vertical_inline_children(
     }
 
     if is_width_auto || container.dimensions.content.size.width <= 0.0 {
-        container.dimensions.content.size.width = total_width;
+        let mut w = total_width;
+        if let Some(s) = &container.style {
+            let fs = s.font_size;
+            let rfs = s.root_font_size;
+            if s.max_width != mango_css::values::Length::Auto {
+                let mw =
+                    s.max_width
+                        .to_px_with_viewport(fs, rfs, container_width, container_height);
+                let max_content_w = if s.box_sizing == mango_css::values::BoxSizing::BorderBox {
+                    (mw - container.dimensions.padding.horizontal()
+                        - container.dimensions.border.horizontal())
+                    .max(0.0)
+                } else {
+                    mw
+                };
+                w = w.min(max_content_w);
+            }
+        }
+        container.dimensions.content.size.width = w;
     }
 
     super::container::resolve_inline_containing_blocks(

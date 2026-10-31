@@ -49,6 +49,7 @@ pub fn resolve_item_cross_size(
         AlignSelf::SafeFlexEnd => AlignItems::SafeFlexEnd,
         AlignSelf::SafeStart => AlignItems::SafeStart,
         AlignSelf::SafeEnd => AlignItems::SafeEnd,
+        AlignSelf::LastBaseline => AlignItems::LastBaseline,
     };
 
     let has_cross_auto_margin = if is_row {

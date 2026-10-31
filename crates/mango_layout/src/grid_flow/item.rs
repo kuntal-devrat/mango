@@ -251,6 +251,7 @@ pub fn position_grid_items_in_cells(
                 AlignSelf::SafeFlexEnd => AlignItems::SafeFlexEnd,
                 AlignSelf::SafeStart => AlignItems::SafeStart,
                 AlignSelf::SafeEnd => AlignItems::SafeEnd,
+                AlignSelf::LastBaseline => AlignItems::LastBaseline,
             };
 
             match item_align {

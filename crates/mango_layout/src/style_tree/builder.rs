@@ -643,6 +643,20 @@ pub fn build_styled_node<'a>(
             style.position = mango_css::values::Position::Static;
             style.float = mango_css::values::Float::None;
             style.clear = mango_css::values::Clear::None;
+            // vertical-align only applies to inline-level elements. If the parent is a block-level container (such as a <td>),
+            // vertical-align does not inherit to the inline formatting context and defaults to Baseline.
+            // If the parent is an inline element, the text participates in that inline box's vertical alignment.
+            let is_parent_inline = parent_style
+                .map(|s| {
+                    matches!(
+                        s.display,
+                        Display::Inline | Display::Ruby | Display::RubyBase | Display::RubyText
+                    )
+                })
+                .unwrap_or(false);
+            if !is_parent_inline {
+                style.vertical_align = mango_css::values::VerticalAlign::Baseline;
+            }
             // CSS rule: Raw text nodes do not have backgrounds, borders, or box-shadows
             style.background_image = None;
             style.background_color = mango_core::Color::TRANSPARENT;

@@ -214,6 +214,22 @@ pub(crate) fn calculate_block_width(box_node: &mut LayoutBox, containing_block: 
                 }
             };
             (effective_h * ratio).max(1.0)
+        } else if containing_block.writing_mode.is_vertical() {
+            if style.overflow_y == mango_css::values::Overflow::Scroll
+                && box_node.children.is_empty()
+            {
+                6.0
+            } else {
+                let mut memo = std::collections::HashMap::new();
+                let (_, max_w) = crate::table_flow::measure_box_content_intrinsic_widths(
+                    box_node,
+                    font_size,
+                    mango_render::FontWeight::Regular,
+                    mango_render::FontFamily::SansSerif,
+                    &mut memo,
+                );
+                (max_w - total_non_content_h).max(0.0)
+            }
         } else {
             (container_width - total_non_content_h - margin_left - margin_right).max(0.0)
         }
@@ -570,16 +586,37 @@ pub(crate) fn calculate_block_height(box_node: &mut LayoutBox, containing_block:
                 box_node.dimensions.content.size.height = 64.0;
             }
             _ => {
-                if let Some(bottom) = in_flow_block_children_bottom(box_node) {
+                if containing_block.writing_mode.is_vertical()
+                    && !matches!(style.position, Position::Absolute | Position::Fixed)
+                    && style.float == Float::None
+                    && containing_block.content.height() > 0.0
+                {
+                    box_node.dimensions.content.size.height =
+                        (containing_block.content.height() - non_content_v).max(0.0);
+                } else if let Some(bottom) = in_flow_block_children_bottom(box_node) {
                     box_node.dimensions.content.size.height =
                         (bottom - box_node.dimensions.content.y()).max(0.0);
                 }
             }
         }
+    } else if containing_block.writing_mode.is_vertical()
+        && !matches!(style.position, Position::Absolute | Position::Fixed)
+        && style.float == Float::None
+        && containing_block.content.height() > 0.0
+    {
+        box_node.dimensions.content.size.height =
+            (containing_block.content.height() - non_content_v).max(0.0);
     } else if let Some(bottom) = in_flow_block_children_bottom(box_node) {
         // Auto height from in-flow *block* children.
         box_node.dimensions.content.size.height =
             (bottom - box_node.dimensions.content.y()).max(0.0);
+    }
+
+    if box_node.dimensions.content.size.height == 0.0
+        && style.overflow_x == mango_css::values::Overflow::Scroll
+        && style.height == Length::Auto
+    {
+        box_node.dimensions.content.size.height = 6.0;
     }
 
     // In CSS 2.1 §10.6.7: Auto heights for BFC roots must enclose all floating descendants

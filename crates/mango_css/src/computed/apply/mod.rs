@@ -73,14 +73,38 @@ pub fn apply_cascaded_properties(
     // CSS 2.1 § 9.7: If position is absolute/fixed, or float is not none, display is blockified.
     style.original_display = style.display;
     let is_out_of_flow = matches!(style.position, Position::Absolute | Position::Fixed);
-    let is_floating = style.float != Float::None;
-    if is_out_of_flow || is_floating {
+
+    // CSS Flexbox §3 & CSS Grid §4.2:
+    // If the parent is a flex or grid container, in-flow children are flex/grid items.
+    // Their display is blockified, and float/clear compute to none.
+    let is_flex_or_grid_child = parent_style
+        .map(|p| {
+            matches!(
+                p.display,
+                Display::Flex | Display::InlineFlex | Display::Grid | Display::InlineGrid
+            )
+        })
+        .unwrap_or(false);
+
+    if is_flex_or_grid_child && !is_out_of_flow {
         style.display = match style.display {
             Display::Inline | Display::InlineBlock => Display::Block,
             Display::InlineFlex => Display::Flex,
             Display::InlineGrid => Display::Grid,
             other => other,
         };
+        style.float = Float::None;
+        style.clear = crate::values::Clear::None;
+    } else {
+        let is_floating = style.float != Float::None;
+        if is_out_of_flow || is_floating {
+            style.display = match style.display {
+                Display::Inline | Display::InlineBlock => Display::Block,
+                Display::InlineFlex => Display::Flex,
+                Display::InlineGrid => Display::Grid,
+                other => other,
+            };
+        }
     }
 
     // CSS 2.1 § 8.5.1: If the border style is 'none' or 'hidden', the computed border width is zero.

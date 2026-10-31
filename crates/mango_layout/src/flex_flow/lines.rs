@@ -13,8 +13,8 @@ use super::metrics::ItemMetric;
 pub fn build_flex_lines(
     item_metrics: &[ItemMetric],
     style: &ComputedStyle,
-    is_container_main_definite: bool,
-    container_main_size: f32,
+    can_wrap_main: bool,
+    wrap_main_size: f32,
     main_gap: f32,
 ) -> Vec<Vec<usize>> {
     let n = item_metrics.len();
@@ -48,11 +48,11 @@ pub fn build_flex_lines(
                 main_gap
             };
 
-            let can_wrap = is_container_main_definite && container_main_size.is_finite();
+            let can_wrap = can_wrap_main && wrap_main_size.is_finite();
             if can_wrap
                 && !current_line.is_empty()
                 && !is_collapsed
-                && (current_line_main + item_gap + outer_item_main > container_main_size + 0.5)
+                && (current_line_main + item_gap + outer_item_main > wrap_main_size + 0.5)
             {
                 lines.push(std::mem::take(&mut current_line));
                 current_line_main = 0.0;
@@ -75,16 +75,16 @@ pub fn build_flex_lines(
 
     // CSS Flexbox Level 2 Line Balancing Algorithm (§ 9.7)
     // 1. Initial greedy line count calculation
-    let greedy_line_count = if is_container_main_definite {
+    let greedy_line_count = if can_wrap_main && wrap_main_size.is_finite() {
         let mut count = 0;
         let mut cur_line_main = 0.0f32;
         let mut cur_line_items = 0;
 
         for &size in &floored_outer_sizes {
             let gap = if cur_line_items == 0 { 0.0 } else { main_gap };
-            let overflows_previous = cur_line_items > 0 && cur_line_main > container_main_size;
+            let overflows_previous = cur_line_items > 0 && cur_line_main > wrap_main_size;
             let will_overflow =
-                cur_line_items > 0 && (cur_line_main + gap + size > container_main_size + 0.5);
+                cur_line_items > 0 && (cur_line_main + gap + size > wrap_main_size + 0.5);
 
             if overflows_previous || will_overflow {
                 count += 1;
@@ -116,8 +116,8 @@ pub fn build_flex_lines(
 
     // 3. Dynamic programming to partition n items into target_k contiguous lines
     // minimizing the sum of squared errors across lines: (target_w - line_size)^2
-    let target_w = if is_container_main_definite {
-        container_main_size
+    let target_w = if can_wrap_main && wrap_main_size.is_finite() {
+        wrap_main_size
     } else {
         0.0
     };
@@ -132,9 +132,9 @@ pub fn build_flex_lines(
         if to - from == 1 {
             // A single item always fits on a line even if it overflows on its own
             true
-        } else if is_container_main_definite {
+        } else if can_wrap_main && wrap_main_size.is_finite() {
             let l_size = calc_line_size(from, to);
-            l_size <= container_main_size + 0.5
+            l_size <= wrap_main_size + 0.5
         } else {
             true
         }
@@ -203,9 +203,10 @@ pub fn build_flex_lines(
         let mut cur_size = 0.0f32;
         for (i, &size) in floored_outer_sizes.iter().enumerate() {
             let gap = if cur.is_empty() { 0.0 } else { main_gap };
-            if is_container_main_definite
+            if can_wrap_main
+                && wrap_main_size.is_finite()
                 && !cur.is_empty()
-                && (cur_size + gap + size > container_main_size + 0.5)
+                && (cur_size + gap + size > wrap_main_size + 0.5)
             {
                 lines.push(std::mem::take(&mut cur));
                 cur_size = 0.0;

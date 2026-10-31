@@ -18,6 +18,7 @@ mod tests;
 
 pub use bfc::establishes_bfc;
 pub use container::{layout_block, layout_block_contents};
+pub(crate) use floats::layout_single_float;
 pub use intrinsic::calculate_shrink_to_fit_width;
 pub use margins::{collapse_margins, is_empty_block_collapsing_through};
 pub(crate) use positioned::{apply_relative_offset, shift_descendants};

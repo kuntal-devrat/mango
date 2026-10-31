@@ -5,6 +5,14 @@ use crate::box_tree::LayoutBox;
 
 use super::metrics::ItemMetric;
 
+pub struct LineCrossMetrics {
+    pub cross_sizes: Vec<f32>,
+    pub first_ascents: Vec<f32>,
+    pub last_ascents: Vec<f32>,
+    pub first_group_crosses: Vec<f32>,
+    pub last_group_crosses: Vec<f32>,
+}
+
 pub fn compute_line_cross_sizes(
     lines: &[Vec<usize>],
     item_metrics: &[ItemMetric],
@@ -15,15 +23,30 @@ pub fn compute_line_cross_sizes(
     container_cross_size: f32,
     min_cross_size: f32,
     max_cross_size: f32,
-) -> (Vec<f32>, Vec<f32>) {
+) -> LineCrossMetrics {
     let mut line_cross_sizes: Vec<f32> = Vec::with_capacity(lines.len());
     let mut line_baseline_ascents: Vec<f32> = Vec::with_capacity(lines.len());
+    let mut line_last_baseline_ascents: Vec<f32> = Vec::with_capacity(lines.len());
+    let mut line_first_group_crosses: Vec<f32> = Vec::with_capacity(lines.len());
+    let mut line_last_group_crosses: Vec<f32> = Vec::with_capacity(lines.len());
 
     for line in lines {
         let mut max_ascent = 0.0f32;
         let mut max_descent = 0.0f32;
         let mut max_non_baseline_cross = 0.0f32;
         let mut has_baseline = false;
+
+        let mut max_last_ascent = 0.0f32;
+        let mut max_last_descent = 0.0f32;
+        let mut has_last_baseline = false;
+
+        let mut non_collapsed_max_ascent = 0.0f32;
+        let mut non_collapsed_max_descent = 0.0f32;
+        let mut has_non_collapsed_baseline = false;
+
+        let mut non_collapsed_max_last_ascent = 0.0f32;
+        let mut non_collapsed_max_last_descent = 0.0f32;
+        let mut has_non_collapsed_last_baseline = false;
 
         for &idx in line {
             let m = &item_metrics[idx];
@@ -36,6 +59,7 @@ pub fn compute_line_cross_sizes(
                 AlignSelf::FlexEnd => AlignItems::FlexEnd,
                 AlignSelf::Center => AlignItems::Center,
                 AlignSelf::Baseline => AlignItems::Baseline,
+                AlignSelf::LastBaseline => AlignItems::LastBaseline,
                 AlignSelf::SafeCenter => AlignItems::SafeCenter,
                 AlignSelf::SafeFlexStart => AlignItems::SafeFlexStart,
                 AlignSelf::SafeFlexEnd => AlignItems::SafeFlexEnd,
@@ -50,28 +74,85 @@ pub fn compute_line_cross_sizes(
                 let descent = (outer_cross - ascent).max(0.0);
                 max_ascent = max_ascent.max(ascent);
                 max_descent = max_descent.max(descent);
+
+                if !m.is_collapsed {
+                    has_non_collapsed_baseline = true;
+                    non_collapsed_max_ascent = non_collapsed_max_ascent.max(ascent);
+                    non_collapsed_max_descent = non_collapsed_max_descent.max(descent);
+                }
+            } else if is_row && align == AlignItems::LastBaseline {
+                has_last_baseline = true;
+                let ascent = m.last_baseline_ascent;
+                let descent = (outer_cross - ascent).max(0.0);
+                max_last_ascent = max_last_ascent.max(ascent);
+                max_last_descent = max_last_descent.max(descent);
+
+                if !m.is_collapsed {
+                    has_non_collapsed_last_baseline = true;
+                    non_collapsed_max_last_ascent = non_collapsed_max_last_ascent.max(ascent);
+                    non_collapsed_max_last_descent = non_collapsed_max_last_descent.max(descent);
+                }
             } else {
                 max_non_baseline_cross = max_non_baseline_cross.max(outer_cross);
             }
         }
 
+        let first_group_cross = if has_baseline {
+            max_ascent + max_descent
+        } else {
+            0.0
+        };
+        let last_group_cross = if has_last_baseline {
+            max_last_ascent + max_last_descent
+        } else {
+            0.0
+        };
+
         let mut l_cross = if !is_wrap && container_cross_size > 0.0 {
             container_cross_size
-        } else if has_baseline {
-            max_non_baseline_cross.max(max_ascent + max_descent)
         } else {
             max_non_baseline_cross
+                .max(first_group_cross)
+                .max(last_group_cross)
         };
 
         if !is_wrap {
             l_cross = l_cross.max(min_cross_size).min(max_cross_size);
         }
 
+        let non_collapsed_first_group_cross = if has_non_collapsed_baseline {
+            non_collapsed_max_ascent + non_collapsed_max_descent
+        } else {
+            0.0
+        };
+        let non_collapsed_last_group_cross = if has_non_collapsed_last_baseline {
+            non_collapsed_max_last_ascent + non_collapsed_max_last_descent
+        } else {
+            0.0
+        };
+
         line_cross_sizes.push(l_cross);
-        line_baseline_ascents.push(if has_baseline { max_ascent } else { 0.0 });
+        line_baseline_ascents.push(if has_non_collapsed_baseline {
+            non_collapsed_max_ascent
+        } else {
+            0.0
+        });
+        line_last_baseline_ascents.push(if has_non_collapsed_last_baseline {
+            non_collapsed_max_last_ascent
+        } else {
+            0.0
+        });
+        line_first_group_crosses.push(non_collapsed_first_group_cross);
+        line_last_group_crosses.push(non_collapsed_last_group_cross);
     }
 
-    (line_cross_sizes, line_baseline_ascents)
+    LineCrossMetrics {
+        cross_sizes: line_cross_sizes,
+        first_ascents: line_baseline_ascents,
+        last_ascents: line_last_baseline_ascents,
+        first_group_crosses: line_first_group_crosses,
+        last_group_crosses: line_last_group_crosses,
+    }
 }
 
 pub fn compute_align_content_spacing(
@@ -95,8 +176,16 @@ pub fn compute_align_content_spacing(
         0.0
     };
 
+    let is_wrap_reverse = style.flex_wrap == mango_css::values::FlexWrap::WrapReverse;
     if free_cross > 0.0 && is_wrap {
         match style.align_content {
+            AlignContent::Normal if line_count == 1 => {
+                if is_wrap_reverse {
+                    (free_cross, cross_gap)
+                } else {
+                    (0.0, cross_gap)
+                }
+            }
             AlignContent::Normal | AlignContent::Stretch => {
                 let extra_per_line = free_cross / line_count as f32;
                 for size in line_cross_sizes.iter_mut() {
@@ -104,8 +193,20 @@ pub fn compute_align_content_spacing(
                 }
                 (0.0, cross_gap)
             }
-            AlignContent::FlexStart => (0.0, cross_gap),
-            AlignContent::FlexEnd => (free_cross, cross_gap),
+            AlignContent::FlexStart => {
+                if is_wrap_reverse {
+                    (free_cross, cross_gap)
+                } else {
+                    (0.0, cross_gap)
+                }
+            }
+            AlignContent::FlexEnd => {
+                if is_wrap_reverse {
+                    (0.0, cross_gap)
+                } else {
+                    (free_cross, cross_gap)
+                }
+            }
             AlignContent::Center => (free_cross / 2.0, cross_gap),
             AlignContent::SpaceBetween => {
                 if line_count > 1 {
@@ -161,7 +262,7 @@ pub fn compute_justify_content_spacing(
             m.final_main + m.pad_main + m.border_main + m.margin_main
         })
         .sum();
-    let remaining_free = if is_container_main_definite {
+    let remaining_free = if is_container_main_definite || container_main_size > 0.0 {
         (container_main_size - final_line_main - total_gaps).max(0.0)
     } else {
         0.0

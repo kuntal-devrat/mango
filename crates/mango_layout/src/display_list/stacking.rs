@@ -266,22 +266,19 @@ fn collect_hoisted_stacking_contexts<'a>(
         child_offset_y -= parent.scroll_offset_y;
     }
     for child in &parent.children {
-        if child.is_out_of_flow() {
-            continue;
-        }
-        let is_item = parent_is_fg;
-        let should_hoist = is_item && child.style.as_ref().and_then(|s| s.z_index).is_some();
-        if should_hoist {
+        let is_item = parent_is_fg && !child.is_out_of_flow();
+        let is_sc = creates_stacking_context(child, is_item);
+        if is_sc {
             *orig_idx_counter += 1;
             out.push(PaintItem {
                 child,
-                is_flex_or_grid_item: true,
+                is_flex_or_grid_item: is_item,
                 is_sc: true,
                 orig_idx: *orig_idx_counter,
                 offset_x: child_offset_x,
                 offset_y: child_offset_y,
             });
-        } else if !creates_stacking_context(child, is_item) {
+        } else {
             collect_hoisted_stacking_contexts(
                 child,
                 child_offset_x,
@@ -375,14 +372,13 @@ pub(crate) fn paint_children_and_scrollbars(
         for (idx, child) in box_node.children.iter().enumerate() {
             let is_item = is_flex_or_grid && !child.is_out_of_flow();
             let is_sc = creates_stacking_context(child, is_item);
-            let should_hoist = is_item && child.style.as_ref().and_then(|s| s.z_index).is_some();
-            if should_hoist {
+            if is_sc {
                 continue;
             }
             items.push(PaintItem {
                 child,
                 is_flex_or_grid_item: is_item,
-                is_sc,
+                is_sc: false,
                 orig_idx: idx,
                 offset_x,
                 offset_y,
@@ -684,11 +680,7 @@ pub(crate) fn paint_children_and_scrollbars(
     }
 
     // Paint container scrollbars if overflow is scroll or auto with overflowing content
-    if !is_root_or_body
-        && box_node.is_scroll_container()
-        && pad_box.width() > 10.0
-        && pad_box.height() > 10.0
-    {
+    if !is_root_or_body && box_node.is_scroll_container() {
         let scrollbar_width = style.map(|s| s.scrollbar_width).unwrap_or_default();
         if scrollbar_width != mango_css::values::ScrollbarWidth::None {
             let (track_thickness, thumb_inset) = match scrollbar_width {
@@ -719,9 +711,18 @@ pub(crate) fn paint_children_and_scrollbars(
             } else {
                 false
             };
-            if has_v_scroll && pad_h > 20.0 {
+            let is_v_scrollbar_on_left = style.is_some_and(|s| {
+                s.writing_mode == mango_css::values::WritingMode::VerticalRl
+                    || (s.writing_mode == mango_css::values::WritingMode::HorizontalTb
+                        && s.direction == mango_css::values::Direction::Rtl)
+            });
+            if has_v_scroll && pad_h >= track_thickness && pad_w >= track_thickness {
                 let track_w = track_thickness;
-                let track_x = pad_box.right() - track_w;
+                let track_x = if is_v_scrollbar_on_left {
+                    pad_box.x()
+                } else {
+                    pad_box.right() - track_w
+                };
                 let track_y = pad_box.y();
                 let track_h = pad_h;
 
@@ -754,10 +755,15 @@ pub(crate) fn paint_children_and_scrollbars(
             } else {
                 false
             };
-            if has_h_scroll && pad_w > 20.0 {
+            if has_h_scroll && pad_w >= track_thickness && pad_h >= track_thickness {
                 let track_h = track_thickness;
                 let track_y = pad_box.bottom() - track_h;
-                let track_x = pad_box.x();
+                let track_x = pad_box.x()
+                    + if has_v_scroll && is_v_scrollbar_on_left {
+                        track_thickness
+                    } else {
+                        0.0
+                    };
                 let track_w = pad_w - if has_v_scroll { track_thickness } else { 0.0 };
 
                 list.push(DisplayCommand::FillRect {

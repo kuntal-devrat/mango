@@ -26,6 +26,9 @@ pub struct LinePlacementParams<'a> {
     pub content_width: f32,
     pub line_cross_size: f32,
     pub line_baseline_ascent: f32,
+    pub line_last_baseline_ascent: f32,
+    pub line_baseline_cross: f32,
+    pub line_last_baseline_cross: f32,
     pub cross_cursor: f32,
     pub main_cursor: f32,
     pub item_spacing: f32,
@@ -47,12 +50,44 @@ pub fn position_flex_items_on_line(params: LinePlacementParams) {
         content_width,
         line_cross_size,
         line_baseline_ascent,
+        line_last_baseline_ascent,
+        line_baseline_cross,
+        line_last_baseline_cross,
         cross_cursor,
         mut main_cursor,
         item_spacing,
     } = params;
 
     let item_indices: Vec<usize> = line.to_vec();
+
+    let line_main_size: f32 = line
+        .iter()
+        .map(|&idx| {
+            let m = &item_metrics[idx];
+            m.final_main + m.pad_main + m.border_main + m.margin_main
+        })
+        .sum::<f32>()
+        + if line.len() > 1 {
+            (line.len() - 1) as f32 * item_spacing
+        } else {
+            0.0
+        };
+    let is_vertical_wm = style.writing_mode.is_vertical();
+    let is_main_rtl = if is_row {
+        (is_vertical_wm
+            && matches!(
+                style.writing_mode,
+                WritingMode::VerticalRl | WritingMode::SidewaysRl
+            ))
+            || (!is_vertical_wm && style.direction == mango_css::values::Direction::Rtl)
+    } else {
+        false
+    };
+    let effective_main = if is_main_rtl {
+        container_main_size
+    } else {
+        container_main_size.max(line_main_size)
+    };
 
     for &metric_idx in &item_indices {
         let m = &item_metrics[metric_idx];
@@ -66,6 +101,7 @@ pub fn position_flex_items_on_line(params: LinePlacementParams) {
             AlignSelf::FlexEnd => AlignItems::FlexEnd,
             AlignSelf::Center => AlignItems::Center,
             AlignSelf::Baseline => AlignItems::Baseline,
+            AlignSelf::LastBaseline => AlignItems::LastBaseline,
             AlignSelf::SafeCenter => AlignItems::SafeCenter,
             AlignSelf::SafeFlexStart => AlignItems::SafeFlexStart,
             AlignSelf::SafeFlexEnd => AlignItems::SafeFlexEnd,
@@ -240,11 +276,33 @@ pub fn position_flex_items_on_line(params: LinePlacementParams) {
                 }
                 AlignItems::Baseline => {
                     if is_row && line_baseline_ascent > 0.0 {
-                        (line_baseline_ascent - m.baseline_ascent).max(0.0)
-                    } else if is_cross_reversed {
+                        let base_offset = (line_baseline_ascent - m.baseline_ascent).max(0.0);
+                        if is_cross_reversed {
+                            let group_free = (line_cross_size - line_baseline_cross).max(0.0);
+                            group_free + base_offset
+                        } else {
+                            base_offset
+                        }
+                    } else if is_cross_reversed && is_row {
                         free
                     } else {
                         0.0
+                    }
+                }
+                AlignItems::LastBaseline => {
+                    if is_row && line_last_baseline_ascent > 0.0 {
+                        let base_offset =
+                            (line_last_baseline_ascent - m.last_baseline_ascent).max(0.0);
+                        if !is_cross_reversed {
+                            let group_free = (line_cross_size - line_last_baseline_cross).max(0.0);
+                            group_free + base_offset
+                        } else {
+                            base_offset
+                        }
+                    } else if is_cross_reversed {
+                        0.0
+                    } else {
+                        free
                     }
                 }
                 AlignItems::FlexEnd | AlignItems::SafeFlexEnd | AlignItems::SafeEnd => {
@@ -278,18 +336,20 @@ pub fn position_flex_items_on_line(params: LinePlacementParams) {
         let pre_h = child.dimensions.content.size.height;
 
         let (target_w, target_h, new_x, new_y) = if is_row {
-            let x = if is_reverse {
-                container_x + container_main_size - main_cursor - item_outer_main
-                    + child.dimensions.margin.left
-                    + child.dimensions.border.left
-                    + child.dimensions.padding.left
+            let x = if is_main_rtl {
+                if is_reverse {
+                    container_x + container_main_size - main_cursor - item_outer_main
+                } else {
+                    container_x + container_main_size - line_main_size.max(container_main_size)
+                        + main_cursor
+                }
+            } else if is_reverse {
+                container_x + effective_main - main_cursor - item_outer_main
             } else {
-                container_x
-                    + main_cursor
-                    + child.dimensions.margin.left
-                    + child.dimensions.border.left
-                    + child.dimensions.padding.left
-            };
+                container_x + main_cursor
+            } + child.dimensions.margin.left
+                + child.dimensions.border.left
+                + child.dimensions.padding.left;
             let y = container_y
                 + cross_cursor
                 + cross_offset
@@ -309,7 +369,7 @@ pub fn position_flex_items_on_line(params: LinePlacementParams) {
                 + child.dimensions.border.left
                 + child.dimensions.padding.left;
             let y = if is_reverse {
-                container_y + container_main_size - main_cursor - item_outer_main
+                container_y + effective_main - main_cursor - item_outer_main
                     + child.dimensions.margin.top
                     + child.dimensions.border.top
                     + child.dimensions.padding.top
@@ -356,8 +416,6 @@ pub fn position_flex_items_on_line(params: LinePlacementParams) {
                 child.dimensions.content.size.width = item_cross;
             }
             let mut item_cb_dims = child.dimensions;
-            item_cb_dims.content.origin.x = 0.0;
-            item_cb_dims.content.origin.y = 0.0;
             let is_item_basis_definite = child
                 .style
                 .as_ref()
@@ -458,19 +516,9 @@ pub fn finalize_container_height(params: ContainerFinalizeParams) {
     );
 
     if !is_height_content && !is_percent_indefinite {
-        let h = style.height.to_px_with_viewport(
-            font_size,
-            root_font_size,
-            container_height,
-            container_height,
-        );
-        if style.box_sizing == BoxSizing::BorderBox {
-            container.dimensions.content.size.height =
-                (h - pad_top - pad_bottom - border_top - border_bottom).max(0.0);
-        } else {
-            container.dimensions.content.size.height = h;
-        }
+        container.dimensions.content.size.height = content_height.max(0.0);
     } else if content_height > 0.0 {
+        container.dimensions.content.size.height = content_height.max(0.0);
         container.dimensions.content.size.height = content_height;
     } else if is_row {
         container.dimensions.content.size.height = (cross_cursor - cross_gap).max(0.0);
@@ -770,6 +818,7 @@ pub fn calculate_abspos_static_positions(
             AlignSelf::FlexEnd => AlignItems::FlexEnd,
             AlignSelf::Center => AlignItems::Center,
             AlignSelf::Baseline => AlignItems::Baseline,
+            AlignSelf::LastBaseline => AlignItems::LastBaseline,
             AlignSelf::SafeCenter => AlignItems::SafeCenter,
             AlignSelf::SafeFlexStart => AlignItems::SafeFlexStart,
             AlignSelf::SafeFlexEnd => AlignItems::SafeFlexEnd,
@@ -785,6 +834,7 @@ pub fn calculate_abspos_static_positions(
             | AlignItems::FlexStart
             | AlignItems::Stretch
             | AlignItems::Baseline
+            | AlignItems::LastBaseline
             | AlignItems::SafeFlexStart
             | AlignItems::SafeStart => {
                 if is_cross_reversed {

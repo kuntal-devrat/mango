@@ -333,6 +333,11 @@ fn test_bfc_child_float_avoidance() {
     layout_block(&mut root, &containing_block, &mut float_ctx);
 
     let bfc_res = &root.children[1];
+    eprintln!(
+        "BFC X: {}, Y: {}",
+        bfc_res.dimensions.content.x(),
+        bfc_res.dimensions.content.y()
+    );
     // bfc_child starts to the right of float_left (x >= 150)
     assert!(bfc_res.dimensions.content.x() >= 150.0);
     assert_eq!(bfc_res.dimensions.content.y(), 0.0);

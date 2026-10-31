@@ -209,25 +209,36 @@ pub(crate) fn fill_rounded_rect(
     clip: mango_core::Rect,
     blend_mode: mango_css::values::BlendMode,
 ) {
+    let x0 = rect.x().round();
+    let y0 = rect.y().round();
+    let x1 = (rect.x() + rect.width()).round();
+    let y1 = (rect.y() + rect.height()).round();
+    let w = (x1 - x0).max(0.0);
+    let h = (y1 - y0).max(0.0);
+    if w <= 0.0 || h <= 0.0 {
+        return;
+    }
+    let snapped = mango_core::Rect::new(x0, y0, w, h);
+
     if radii[0] == 0.0 && radii[1] == 0.0 && radii[2] == 0.0 && radii[3] == 0.0 {
-        let r = intersect_rect(clip, *rect);
+        let r = intersect_rect(clip, snapped);
         if r.width() > 0.0 && r.height() > 0.0 {
-            let x0 = r.x().round() as i32;
-            let y0 = r.y().round() as i32;
-            let x1 = (r.x() + r.width()).round() as i32;
-            let y1 = (r.y() + r.height()).round() as i32;
-            let w = (x1 - x0).max(0) as u32;
-            let h = (y1 - y0).max(0) as u32;
-            if w > 0 && h > 0 {
+            let rx0 = r.x().round() as i32;
+            let ry0 = r.y().round() as i32;
+            let rx1 = (r.x() + r.width()).round() as i32;
+            let ry1 = (r.y() + r.height()).round() as i32;
+            let rw = (rx1 - rx0).max(0) as u32;
+            let rh = (ry1 - ry0).max(0) as u32;
+            if rw > 0 && rh > 0 {
                 fill_rect_mode(
-                    buffer, buf_width, buf_height, x0, y0, w, h, color, blend_mode,
+                    buffer, buf_width, buf_height, rx0, ry0, rw, rh, color, blend_mode,
                 );
             }
         }
         return;
     }
     fill_rounded_rect_clipped(
-        buffer, buf_width, buf_height, rect, color, radii, None, clip, blend_mode,
+        buffer, buf_width, buf_height, &snapped, color, radii, None, clip, blend_mode,
     );
 }
 

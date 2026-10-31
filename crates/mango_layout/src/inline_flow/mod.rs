@@ -3,6 +3,7 @@
 //! Implements CSS 2.1 §9.4.2: Inline formatting contexts.
 
 pub mod atom;
+pub mod baseline;
 pub mod collector;
 pub mod container;
 pub mod containing_block;

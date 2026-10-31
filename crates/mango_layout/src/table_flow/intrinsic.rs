@@ -216,7 +216,7 @@ fn measure_box_intrinsic_widths_internal(
             let line = if preserves_spaces {
                 raw_line
             } else {
-                raw_line.trim()
+                raw_line.trim_matches(|c: char| c.is_ascii_whitespace())
             };
             let line_w = crate::inline_flow::measure_text_width_with_style_and_spacing(
                 line,
@@ -229,7 +229,10 @@ fn measure_box_intrinsic_widths_internal(
                 max_line_w = line_w;
             }
             if !is_nowrap {
-                for word in line.split_whitespace() {
+                for word in line.split(|c: char| c.is_ascii_whitespace()) {
+                    if word.is_empty() {
+                        continue;
+                    }
                     let word_w = crate::inline_flow::measure_text_width_with_style_and_spacing(
                         word,
                         font_size,
@@ -263,10 +266,14 @@ fn measure_box_intrinsic_widths_internal(
                 .get_attribute("_mango_selected_text")
                 .or_else(|| node.get_attribute("value"))
                 .unwrap_or("Select...");
-            let pad_h = node.dimensions.padding.left
-                + node.dimensions.padding.right
-                + node.dimensions.border.left
-                + node.dimensions.border.right;
+            let pad_h = if let Some(s) = node.style.as_ref() {
+                s.padding_left.to_px(s.font_size, s.root_font_size, 0.0)
+                    + s.padding_right.to_px(s.font_size, s.root_font_size, 0.0)
+                    + s.border_left_width
+                    + s.border_right_width
+            } else {
+                node.dimensions.padding.horizontal() + node.dimensions.border.horizontal()
+            };
             let text_w =
                 crate::inline_flow::measure_text_width_with_style(text, font_size, weight, family);
             let arrow_space = if node
@@ -310,10 +317,14 @@ fn measure_box_intrinsic_widths_internal(
             if itype == "checkbox" || itype == "radio" {
                 return 16.0;
             }
-            let pad_h = node.dimensions.padding.left
-                + node.dimensions.padding.right
-                + node.dimensions.border.left
-                + node.dimensions.border.right;
+            let pad_h = if let Some(s) = node.style.as_ref() {
+                s.padding_left.to_px(s.font_size, s.root_font_size, 0.0)
+                    + s.padding_right.to_px(s.font_size, s.root_font_size, 0.0)
+                    + s.border_left_width
+                    + s.border_right_width
+            } else {
+                node.dimensions.padding.horizontal() + node.dimensions.border.horizontal()
+            };
             if itype == "submit" || itype == "button" || itype == "reset" {
                 let val = node.get_attribute("value").unwrap_or("Submit");
                 let text_w = crate::inline_flow::measure_text_width_with_style(
@@ -325,7 +336,7 @@ fn measure_box_intrinsic_widths_internal(
                 .get_attribute("size")
                 .and_then(|s| s.trim().parse::<f32>().ok())
                 .unwrap_or(20.0);
-            (size * (font_size * 0.55) + pad_h + 8.0).max(60.0)
+            (size * (font_size * 0.55) + 8.0).max(60.0)
         });
         let res = (fixed_w, fixed_w);
         memo.insert(key, res);
@@ -672,7 +683,8 @@ fn measure_box_intrinsic_widths_internal(
         if is_row {
             if is_balanced && flex_line_count.unwrap_or(0) > 1 {
                 let k = flex_line_count.unwrap() as usize;
-                max_w = balance_intrinsic_max_content(&child_max_widths, k, col_gap);
+                max_w =
+                    super::balance::balance_intrinsic_max_content(&child_max_widths, k, col_gap);
             } else if child_count > 1 {
                 let total_gap = (child_count - 1) as f32 * col_gap;
                 max_w += total_gap;
@@ -696,6 +708,32 @@ fn measure_box_intrinsic_widths_internal(
         if is_nowrap {
             min_w = min_w.max(max_w);
         }
+        let is_editable = node
+            .get_attribute("contenteditable")
+            .is_some_and(|v| v != "false")
+            || node.get_attribute("_mango_contenteditable") == Some("true");
+        if is_editable && child_count == 0 && is_vertical_wm {
+            let line_h = node
+                .style
+                .as_ref()
+                .map(|s| {
+                    let family = crate::inline_flow::shaping::font_family_for(s);
+                    let weight = crate::inline_flow::shaping::font_weight_for(s);
+                    crate::inline_flow::shaping::used_line_height(s, family, weight)
+                })
+                .unwrap_or(font_size);
+            min_w = min_w.max(line_h);
+            max_w = max_w.max(line_h);
+        }
+        if node
+            .style
+            .as_ref()
+            .is_some_and(|s| s.overflow_y == mango_css::values::Overflow::Scroll)
+        {
+            min_w += 6.0;
+            max_w += 6.0;
+        }
+        super::balance::apply_min_max_width_bounds(node, font_size, &mut min_w, &mut max_w);
         let non_content_h = get_node_horizontal_spacing(node, font_size);
         let res = (
             min_w.max(0.0) + non_content_h,
@@ -710,8 +748,14 @@ fn measure_box_intrinsic_widths_internal(
         node.style.as_ref().map(|s| s.display),
         Some(Display::Grid) | Some(Display::InlineGrid)
     ) {
-        let (grid_min_w, grid_max_w) =
+        let (mut grid_min_w, mut grid_max_w) =
             crate::grid_flow::measure_grid_intrinsic_widths(node, font_size);
+        super::balance::apply_min_max_width_bounds(
+            node,
+            font_size,
+            &mut grid_min_w,
+            &mut grid_max_w,
+        );
         let non_content_h = get_node_horizontal_spacing(node, font_size);
         let res = (grid_min_w + non_content_h, grid_max_w + non_content_h);
         memo.insert(key, res);
@@ -852,8 +896,18 @@ fn measure_box_intrinsic_widths_internal(
                 })
                 .unwrap_or(false);
 
+        let is_vertical = node
+            .style
+            .as_ref()
+            .map(|s| s.writing_mode.is_vertical())
+            .unwrap_or(false);
+
         if is_child_inline {
-            current_line_max += c_max;
+            if is_vertical {
+                current_line_max = current_line_max.max(c_max);
+            } else {
+                current_line_max += c_max;
+            }
         } else {
             max_w = max_w.max(current_line_max);
             current_line_max = 0.0;
@@ -861,6 +915,14 @@ fn measure_box_intrinsic_widths_internal(
         }
     }
     max_w = max_w.max(current_line_max);
+    if node
+        .style
+        .as_ref()
+        .is_some_and(|s| s.overflow_y == mango_css::values::Overflow::Scroll)
+    {
+        min_w += 6.0;
+        max_w += 6.0;
+    }
     let is_nowrap = node.style.as_ref().is_some_and(|s| {
         matches!(
             s.white_space,
@@ -869,6 +931,16 @@ fn measure_box_intrinsic_widths_internal(
     });
     if is_nowrap {
         min_w = min_w.max(max_w);
+    }
+    if let Some(style) = &node.style {
+        if !ignore_own_explicit_width {
+            match style.width {
+                Length::MinContent => max_w = min_w,
+                Length::MaxContent | Length::Content => min_w = max_w,
+                _ => {}
+            }
+        }
+        super::balance::apply_min_max_width_bounds(node, font_size, &mut min_w, &mut max_w);
     }
     let non_content_h = get_node_horizontal_spacing(node, font_size);
     let res = (min_w + non_content_h, max_w + non_content_h);
@@ -895,65 +967,3 @@ fn child_style_height(node: &LayoutBox, containing_height: Option<f32>) -> f32 {
 }
 
 pub use super::cells::cell_intrinsic_metrics;
-
-fn balance_intrinsic_max_content(sizes: &[f32], k: usize, gap: f32) -> f32 {
-    let n = sizes.len();
-    if n == 0 {
-        return 0.0;
-    }
-    if k <= 1 || n <= 1 {
-        let total: f32 = sizes.iter().sum();
-        let gaps = if n > 1 { (n - 1) as f32 * gap } else { 0.0 };
-        return total + gaps;
-    }
-    let k = k.min(n);
-
-    let calc_len = |from: usize, to: usize| -> f32 {
-        let items: f32 = sizes[from..to].iter().sum();
-        let gaps = (to - from - 1) as f32 * gap;
-        items + gaps
-    };
-
-    // dp[m][j] = (min_max_len: f32, counts: Vec<usize>)
-    let mut dp: Vec<Vec<Option<(f32, Vec<usize>)>>> = vec![vec![None; n + 1]; k + 1];
-
-    for j in 1..=(n - k + 1) {
-        dp[1][j] = Some((calc_len(0, j), vec![j]));
-    }
-
-    for m in 2..=k {
-        for j in m..=(n - k + m) {
-            let mut best: Option<(f32, Vec<usize>)> = None;
-            for p in (m - 1)..j {
-                if let Some((prev_max, prev_counts)) = &dp[m - 1][p] {
-                    let cur_len = calc_len(p, j);
-                    let candidate_max = prev_max.max(cur_len);
-                    let mut candidate_counts = prev_counts.clone();
-                    candidate_counts.push(j - p);
-
-                    let is_better = match &best {
-                        None => true,
-                        Some((best_max, best_counts)) => {
-                            if candidate_max < *best_max - 1e-3 {
-                                true
-                            } else if (candidate_max - *best_max).abs() <= 1e-3 {
-                                candidate_counts > *best_counts
-                            } else {
-                                false
-                            }
-                        }
-                    };
-                    if is_better {
-                        best = Some((candidate_max, candidate_counts));
-                    }
-                }
-            }
-            dp[m][j] = best;
-        }
-    }
-
-    dp[k][n]
-        .as_ref()
-        .map(|(val, _)| *val)
-        .unwrap_or_else(|| sizes.iter().sum::<f32>() + (n - 1) as f32 * gap)
-}

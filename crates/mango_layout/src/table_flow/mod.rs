@@ -11,6 +11,7 @@
 //! - Recursive nested table intrinsic width measurement
 //! - Table row and cell percentage height resolution with vertical surplus distribution
 
+pub mod balance;
 pub mod cells;
 pub mod collapse;
 pub mod columns;
