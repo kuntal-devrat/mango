@@ -138,103 +138,43 @@ pub fn layout_flex(
         && style.top != Length::Auto
         && style.bottom != Length::Auto
         && container.dimensions.content.size.height > 0.0;
+    let cb_h = containing_block.content.height();
+    let c_h = container.dimensions.content.size.height;
     let is_pre_resolved_height = is_pos_stretched_h
-        || (container.dimensions.content.size.height > 0.0
-            && containing_block.content.height() > 0.0
-            && ((containing_block.content.height()
-                - total_non_content_v
-                - container.dimensions.content.size.height)
-                .abs()
-                < 1.0
-                || (containing_block.content.height() - container.dimensions.content.size.height)
-                    .abs()
-                    < 1.0));
+        || (!is_height_content
+            && c_h > 0.0
+            && cb_h > 0.0
+            && ((cb_h - total_non_content_v - c_h).abs() < 1.0 || (cb_h - c_h).abs() < 1.0));
 
-    let content_height = if !is_height_content && !is_percent_indefinite {
+    let (specified_content_height, content_height) = if is_pre_resolved_height {
+        let ch = container.dimensions.content.size.height;
+        (ch, ch)
+    } else if !is_height_content && !is_percent_indefinite {
         let raw_h = style.height.to_px_with_viewport(
             font_size,
             root_font_size,
             container_height,
             container_height,
         );
-        if style.box_sizing == BoxSizing::BorderBox {
+        let h = if style.box_sizing == BoxSizing::BorderBox {
             (raw_h - total_non_content_v).max(0.0)
         } else {
             raw_h
-        }
-    } else if is_pre_resolved_height {
-        container.dimensions.content.size.height
-    } else if is_vertical_wm && containing_block.writing_mode == WritingMode::HorizontalTb {
-        let mut sum_h = 0.0f32;
-        let mut max_h = 0.0f32;
-        for c in &container.children {
-            let cs = c.style.as_ref();
-            let c_fs = cs.map(|s| s.font_size).unwrap_or(font_size);
-            let c_rfs = cs.map(|s| s.root_font_size).unwrap_or(root_font_size);
-            let ch = if let Some(cs) = cs {
-                let h = if cs.height != Length::Auto {
-                    cs.height
-                        .to_px_with_viewport(c_fs, c_rfs, container_height, container_height)
-                } else {
-                    let mut child_clone = c.clone();
-                    let c_w = if cs.width != Length::Auto {
-                        cs.width
-                            .to_px_with_viewport(c_fs, c_rfs, container_width, container_height)
-                    } else {
-                        container_width
-                    };
-                    child_clone.dimensions.content.size.width = c_w;
-                    let item_cb = Dimensions::new(mango_core::Rect::new(0.0, 0.0, c_w, 0.0));
-                    let mut item_float_ctx = FloatContext::new();
-                    crate::flex_flow::item::layout_flex_item(
-                        &mut child_clone,
-                        &item_cb,
-                        &mut item_float_ctx,
-                        c_fs,
-                    );
-                    child_clone.dimensions.content.size.height.max(c_fs * 1.3)
-                };
-                let p_top = cs
-                    .padding_top
-                    .to_px_with_viewport(c_fs, c_rfs, 0.0, container_height);
-                let p_bot =
-                    cs.padding_bottom
-                        .to_px_with_viewport(c_fs, c_rfs, 0.0, container_height);
-                let m_top = cs
-                    .margin_top
-                    .to_px_with_viewport(c_fs, c_rfs, 0.0, container_height);
-                let m_bot =
-                    cs.margin_bottom
-                        .to_px_with_viewport(c_fs, c_rfs, 0.0, container_height);
-                h + p_top + p_bot + cs.border_top_width + cs.border_bottom_width + m_top + m_bot
-            } else {
-                c.dimensions.margin_box().height()
-            };
-            sum_h += ch;
-            max_h = max_h.max(ch);
-        }
-        let gap_prop = if is_flex_dir_row {
-            &style.column_gap
-        } else {
-            &style.row_gap
         };
-        let gap_val =
-            gap_prop.to_px_with_viewport(font_size, root_font_size, 0.0, container_height);
-        let count = container.children.len();
-        if count > 1 && gap_val > 0.0 {
-            sum_h += (count - 1) as f32 * gap_val;
-        }
-        let (_, vp_h) = mango_css::get_current_viewport();
-        let avail_h = if containing_block.content.height() > 0.0 {
-            containing_block.content.height()
+        let avail_h = if style.overflow_x == mango_css::values::Overflow::Scroll {
+            (h - 6.0).max(0.0)
         } else {
-            vp_h
+            h
         };
-        let max_content_h = if is_flex_dir_row { sum_h } else { max_h };
-        let min_content_h = max_h;
-        avail_h.min(max_content_h).max(min_content_h)
+        (h, avail_h)
+    } else if is_vertical_wm
+        && containing_block.writing_mode.is_vertical()
+        && containing_block.content.height() > 0.0
+    {
+        let h = (containing_block.content.height() - total_non_content_v).max(0.0);
+        (h, h)
     } else {
-        0.0
+        (0.0, 0.0)
     };
 
     let is_inline_flex = style.display == Display::InlineFlex;
@@ -272,7 +212,6 @@ pub fn layout_flex(
     let is_pre_resolved_width = is_pos_stretched_w
         || (is_floating && container.dimensions.content.size.width > 0.0)
         || (!is_inline_flex
-            && is_width_auto
             && container.dimensions.content.size.width > 0.0
             && ((containing_block.content.width()
                 - total_non_content_h
@@ -293,9 +232,7 @@ pub fn layout_flex(
             margin_right = 0.0;
         }
         let avail = (container_width - total_non_content_h - margin_left - margin_right).max(0.0);
-        if is_inline_flex
-            || (is_vertical_wm && containing_block.writing_mode == WritingMode::HorizontalTb)
-        {
+        if is_inline_flex || is_vertical_wm {
             let max_c = (intrinsic_max - total_non_content_h).max(0.0);
             let min_c = (intrinsic_min - total_non_content_h).max(0.0);
             avail.min(max_c).max(min_c)
@@ -322,10 +259,15 @@ pub fn layout_flex(
             container_width,
             container_height,
         );
-        if style.box_sizing == BoxSizing::BorderBox {
+        let w = if style.box_sizing == BoxSizing::BorderBox {
             (raw_w - total_non_content_h).max(0.0)
         } else {
             raw_w
+        };
+        if style.overflow_y == mango_css::values::Overflow::Scroll {
+            (w - 6.0).max(0.0)
+        } else {
+            w
         }
     };
 
@@ -487,8 +429,23 @@ pub fn layout_flex(
     container.dimensions.content.origin = Point::new(container_x, container_y);
 
     if container.children.is_empty() {
-        let mut final_h = if is_height_content {
+        let is_editable = container
+            .get_attribute("contenteditable")
+            .is_some_and(|v| v != "false")
+            || container.get_attribute("_mango_contenteditable") == Some("true");
+        let default_line_h = if is_editable {
+            let family = crate::inline_flow::shaping::font_family_for(&style);
+            let weight = crate::inline_flow::shaping::font_weight_for(&style);
+            crate::inline_flow::shaping::used_line_height(&style, family, weight)
+        } else {
             0.0
+        };
+        let mut final_h = if is_height_content {
+            if !is_vertical_wm && is_editable {
+                default_line_h
+            } else {
+                0.0
+            }
         } else {
             content_height
         };
@@ -521,6 +478,10 @@ pub fn layout_flex(
             final_h = final_h.min(max_content_h);
         }
         container.dimensions.content.size.height = final_h;
+        if is_vertical_wm && is_editable {
+            container.dimensions.content.size.width =
+                container.dimensions.content.size.width.max(default_line_h);
+        }
         return;
     }
 
@@ -629,11 +590,15 @@ pub fn layout_flex(
             container_height,
             container_height,
         );
-        if style.box_sizing == BoxSizing::BorderBox {
+        let mut max_h = if style.box_sizing == BoxSizing::BorderBox {
             (raw_max - total_non_content_v).max(0.0)
         } else {
             raw_max
+        };
+        if style.overflow_x == mango_css::values::Overflow::Scroll {
+            max_h = (max_h - 6.0).max(0.0);
         }
+        max_h
     } else {
         f32::INFINITY
     };
@@ -642,12 +607,18 @@ pub fn layout_flex(
         .iter()
         .map(|m| m.base_main.clamp(m.min_main, m.max_main.max(m.min_main)))
         .sum();
+    let is_multiline = style.flex_wrap != mango_css::values::FlexWrap::NoWrap;
+    let is_clamped_by_max =
+        max_main_size.is_finite() && !is_multiline && sum_hypothetical > max_main_size;
     let is_container_main_definite = if is_row {
         !(is_vertical_wm && is_width_auto)
+            || (min_main_size > 0.0 && sum_hypothetical < min_main_size)
+            || is_clamped_by_max
     } else {
         content_height > 0.0
             || (style.height != Length::Auto && !is_percent_indefinite)
             || (min_main_size > 0.0 && sum_hypothetical < min_main_size)
+            || is_clamped_by_max
     };
     let container_main_size = if is_row {
         if is_vertical_wm && is_width_auto {
@@ -659,8 +630,14 @@ pub fn layout_flex(
         } else {
             content_width.max(min_main_size).min(max_main_size)
         }
-    } else if content_height > 0.0 {
-        content_height.max(min_main_size).min(max_main_size)
+    } else if content_height > 0.0 || is_clamped_by_max {
+        (if content_height > 0.0 {
+            content_height
+        } else {
+            max_main_size
+        })
+        .max(min_main_size)
+        .min(max_main_size)
     } else if max_main_size.is_finite() {
         max_main_size
     } else {
@@ -675,11 +652,19 @@ pub fn layout_flex(
         is_container_main_definite,
     );
 
+    let (wrap_main_size, can_wrap_main) = if is_container_main_definite {
+        (container_main_size, true)
+    } else if max_main_size.is_finite() {
+        (max_main_size, true)
+    } else {
+        (f32::INFINITY, false)
+    };
+
     let lines = build_flex_lines(
         &item_metrics,
         &style,
-        is_container_main_definite,
-        container_main_size,
+        can_wrap_main,
+        wrap_main_size,
         main_gap,
     );
 
@@ -706,6 +691,8 @@ pub fn layout_flex(
         }
     } else if is_vertical_wm && is_width_auto {
         0.0
+    } else if style.overflow_y == mango_css::values::Overflow::Scroll {
+        (content_width - 6.0).max(0.0)
     } else {
         content_width
     };
@@ -778,7 +765,7 @@ pub fn layout_flex(
 
     let cross_gap = resolve_flex_cross_gap(&style, is_row, container_cross_size, container_height);
 
-    let (mut line_cross_sizes, line_baseline_ascents) = compute_line_cross_sizes(
+    let line_metrics = compute_line_cross_sizes(
         &lines,
         &item_metrics,
         container,
@@ -789,6 +776,7 @@ pub fn layout_flex(
         min_cross_size,
         max_cross_size,
     );
+    let mut line_cross_sizes = line_metrics.cross_sizes;
 
     let (cross_cursor, line_spacing) = compute_align_content_spacing(
         &mut line_cross_sizes,
@@ -882,7 +870,10 @@ pub fn layout_flex(
             container_height,
             content_width,
             line_cross_size,
-            line_baseline_ascent: line_baseline_ascents[line_idx],
+            line_baseline_ascent: line_metrics.first_ascents[line_idx],
+            line_last_baseline_ascent: line_metrics.last_ascents[line_idx],
+            line_baseline_cross: line_metrics.first_group_crosses[line_idx],
+            line_last_baseline_cross: line_metrics.last_group_crosses[line_idx],
             cross_cursor: line_cross_cursor,
             main_cursor,
             item_spacing,
@@ -909,7 +900,7 @@ pub fn layout_flex(
         font_size,
         root_font_size,
         container_height,
-        content_height,
+        content_height: specified_content_height,
         cross_cursor: normal_cross_cursor,
         cross_gap,
         container_y,
@@ -942,42 +933,16 @@ pub fn layout_flex(
     // 9. Lay out out-of-flow positioned children
     layout_positioned_children_with_cb(container, containing_block, float_ctx);
 
+    // CSS Flexbox §8.5: Record flex container first-line baseline
+    super::metrics::record_flex_container_baseline(
+        container,
+        &lines,
+        &line_metrics.first_ascents,
+        is_row,
+        is_wrap_reverse,
+        style.font_size,
+    );
+
     // Initial scroll position for reverse flow directions (CSS Flexbox §5.1 & CSS Overflow 3 §2.2)
-    if container.is_scroll_container()
-        && container.scroll_offset_x == 0.0
-        && container.scroll_offset_y == 0.0
-    {
-        let (max_x, max_y) = container.max_scroll();
-        let is_rtl = style.direction == Direction::Rtl;
-        match style.writing_mode {
-            WritingMode::HorizontalTb => match style.flex_direction {
-                FlexDirection::RowReverse => {
-                    container.scroll_offset_x = if is_rtl { -max_x } else { max_x };
-                }
-                FlexDirection::ColumnReverse => {
-                    container.scroll_offset_y = max_y;
-                }
-                _ => {}
-            },
-            WritingMode::VerticalRl => match style.flex_direction {
-                FlexDirection::RowReverse => {
-                    container.scroll_offset_y = if is_rtl { -max_y } else { max_y };
-                }
-                FlexDirection::ColumnReverse => {
-                    container.scroll_offset_x = -max_x;
-                }
-                _ => {}
-            },
-            WritingMode::VerticalLr | WritingMode::SidewaysLr => match style.flex_direction {
-                FlexDirection::RowReverse => {
-                    container.scroll_offset_y = if is_rtl { -max_y } else { max_y };
-                }
-                FlexDirection::ColumnReverse => {
-                    container.scroll_offset_x = max_x;
-                }
-                _ => {}
-            },
-            _ => {}
-        }
-    }
+    super::metrics::init_reverse_scroll_position(container, &style);
 }

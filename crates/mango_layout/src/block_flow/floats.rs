@@ -12,46 +12,6 @@ use super::positioned::{
 };
 use super::sizing::{calculate_block_height, calculate_block_width};
 
-pub(crate) fn has_floats_recursive(box_node: &LayoutBox) -> bool {
-    box_node.children.iter().any(|c| {
-        c.style.as_ref().is_some_and(|s| s.float != Float::None)
-            || (c.is_inline() && has_floats_recursive(c))
-    })
-}
-
-pub(crate) fn extract_floats_from_children(
-    children: &mut Vec<LayoutBox>,
-    parent_link: Option<&str>,
-    parent_frame: Option<&str>,
-) -> Vec<LayoutBox> {
-    let mut extracted_floats = Vec::new();
-    let mut retained_children = Vec::new();
-
-    for mut child in children.drain(..) {
-        let is_float =
-            !child.is_text() && child.style.as_ref().is_some_and(|s| s.float != Float::None);
-        if is_float {
-            if child.link_target.is_none() {
-                child.link_target = parent_link.map(|s| s.to_string());
-                child.link_frame = parent_frame.map(|s| s.to_string());
-            }
-            extracted_floats.push(child);
-        } else if child.is_inline() && has_floats_recursive(&child) {
-            let child_link = child.link_target.as_deref().or(parent_link);
-            let child_frame = child.link_frame.as_deref().or(parent_frame);
-            let inner_floats =
-                extract_floats_from_children(&mut child.children, child_link, child_frame);
-            extracted_floats.extend(inner_floats);
-            retained_children.push(child);
-        } else {
-            retained_children.push(child);
-        }
-    }
-
-    *children = retained_children;
-    extracted_floats
-}
-
 /// Lays out a floated element, positions it against the active FloatContext,
 /// shifts its descendants, and registers its margin box into the FloatContext.
 pub(crate) fn layout_single_float(

@@ -706,23 +706,81 @@ impl CssParser {
                         }
                         if !only_idents || idents.is_empty() {
                             None
-                        } else if idents.len() == 1 {
-                            match idents[0].as_str() {
-                                "none" | "block" | "block-start" | "block-end" => {
-                                    Some(Value::Keyword(idents[0].clone()))
-                                }
-                                _ => None,
-                            }
-                        } else if idents.len() == 2 {
-                            if (idents[0] == "block-start" && idents[1] == "block-end")
-                                || (idents[0] == "block-end" && idents[1] == "block-start")
-                            {
-                                Some(Value::Keyword("block".to_string()))
-                            } else {
-                                None
-                            }
+                        } else if idents.len() == 1 && idents[0] == "none" {
+                            Some(Value::Keyword("none".to_string()))
                         } else {
-                            None
+                            let mut has_block = false;
+                            let mut has_block_start = false;
+                            let mut has_block_end = false;
+                            let mut has_inline = false;
+                            let mut has_inline_start = false;
+                            let mut has_inline_end = false;
+                            let mut valid = true;
+
+                            for id in &idents {
+                                match id.as_str() {
+                                    "block" if !has_block && !has_block_start && !has_block_end => {
+                                        has_block = true;
+                                    }
+                                    "inline"
+                                        if !has_inline && !has_inline_start && !has_inline_end =>
+                                    {
+                                        has_inline = true;
+                                    }
+                                    "block-start" if !has_block && !has_block_start => {
+                                        has_block_start = true;
+                                    }
+                                    "block-end" if !has_block && !has_block_end => {
+                                        has_block_end = true;
+                                    }
+                                    "inline-start" if !has_inline && !has_inline_start => {
+                                        has_inline_start = true;
+                                    }
+                                    "inline-end" if !has_inline && !has_inline_end => {
+                                        has_inline_end = true;
+                                    }
+                                    _ => {
+                                        valid = false;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if !valid {
+                                None
+                            } else {
+                                if has_block_start && has_block_end {
+                                    has_block = true;
+                                    has_block_start = false;
+                                    has_block_end = false;
+                                }
+                                if has_inline_start && has_inline_end {
+                                    has_inline = true;
+                                    has_inline_start = false;
+                                    has_inline_end = false;
+                                }
+                                let mut parts = Vec::new();
+                                if has_block {
+                                    parts.push("block");
+                                }
+                                if has_block_start {
+                                    parts.push("block-start");
+                                }
+                                if has_block_end {
+                                    parts.push("block-end");
+                                }
+                                if has_inline {
+                                    parts.push("inline");
+                                }
+                                if has_inline_start {
+                                    parts.push("inline-start");
+                                }
+                                if has_inline_end {
+                                    parts.push("inline-end");
+                                }
+
+                                Some(Value::Keyword(parts.join(" ")))
+                            }
                         }
                     }
                     _ => {

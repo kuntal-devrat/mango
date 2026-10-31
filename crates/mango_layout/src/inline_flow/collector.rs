@@ -105,6 +105,16 @@ fn collect_inline_atoms_internal(
         }
     }
     if style.float != mango_css::values::Float::None {
+        let box_clone = box_node.clone();
+        out.push(InlineAtom {
+            kind: InlineAtomKind::Float(Box::new(box_clone)),
+            style: style.clone(),
+            width: 0.0,
+            height: 0.0,
+            link_target: link_target.map(|s| s.to_string()),
+            link_frame: link_frame.map(|s| s.to_string()),
+            owner_inline_id: next_owner_id,
+        });
         return;
     }
     // `position` is not inherited. Text nodes can carry a cloned computed

@@ -9,7 +9,7 @@ use crate::float::FloatContext;
 use crate::inline_flow::layout_inline_children;
 
 use super::bfc::establishes_bfc;
-use super::floats::{extract_floats_from_children, has_floats_recursive, layout_single_float};
+use super::floats::layout_single_float;
 use super::margins::{
     calculate_block_position, collapse_margins, collapsed_margin_top_for_box,
     is_empty_block_collapsing_through,
@@ -193,35 +193,6 @@ pub(crate) fn layout_block_children(
     let has_inlines = box_node.children.iter().any(|c| c.is_inline());
 
     if has_inlines {
-        let has_any_floats = has_floats_recursive(box_node);
-        if has_any_floats {
-            let container_dims = box_node.dimensions;
-            let parent_link = box_node.link_target.clone();
-            let parent_frame = box_node.link_frame.clone();
-            let mut floats = extract_floats_from_children(
-                &mut box_node.children,
-                parent_link.as_deref(),
-                parent_frame.as_deref(),
-            );
-
-            let mut float_bottom = container_dims.content.y();
-            for float_child in &mut floats {
-                layout_single_float(
-                    float_child,
-                    &container_dims,
-                    container_dims.content.y(),
-                    float_ctx,
-                );
-                float_bottom = float_bottom.max(float_child.dimensions.margin_box().bottom());
-            }
-
-            let inline_height = layout_inline_children(box_node, float_ctx);
-            box_node.children.extend(floats);
-            box_node.dimensions.content.size.height =
-                inline_height.max(float_bottom - container_dims.content.y());
-            return;
-        }
-
         // Container establishes an inline formatting context
         let inline_height = layout_inline_children(box_node, float_ctx);
         box_node.dimensions.content.size.height = inline_height;
@@ -293,11 +264,41 @@ pub(crate) fn layout_block_children(
             }
         }
 
+        let is_vert_wm = box_node
+            .style
+            .as_ref()
+            .map(|s| s.writing_mode.is_vertical())
+            .unwrap_or(false);
+        let is_vert_rl = box_node
+            .style
+            .as_ref()
+            .map(|s| {
+                matches!(
+                    s.writing_mode,
+                    WritingMode::VerticalRl | WritingMode::SidewaysRl
+                )
+            })
+            .unwrap_or(false);
+        let mut cursor_x = if is_vert_rl {
+            box_node.dimensions.content.right()
+        } else {
+            box_node.dimensions.content.x()
+        };
         let mut cursor_y = box_node.dimensions.content.y();
         let mut prev_margin_bottom = 0.0f32;
         let mut in_flow_count = 0;
 
         let mut container_dims = box_node.dimensions;
+        if let Some(s) = &box_node.style {
+            if s.overflow_y == mango_css::values::Overflow::Scroll {
+                container_dims.content.size.width =
+                    (container_dims.content.size.width - 6.0).max(0.0);
+            }
+            if s.overflow_x == mango_css::values::Overflow::Scroll {
+                container_dims.content.size.height =
+                    (container_dims.content.size.height - 6.0).max(0.0);
+            }
+        }
         if container_dims.content.size.height == 0.0
             && let Some(style) = &box_node.style
         {
@@ -339,16 +340,15 @@ pub(crate) fn layout_block_children(
                     {
                         container_dims.content.size.height =
                             (container_dims.content.size.width / ratio).max(0.0);
-                    } else if style.writing_mode != WritingMode::HorizontalTb {
+                    } else if style.writing_mode != WritingMode::HorizontalTb
+                        && !matches!(style.position, Position::Absolute | Position::Fixed)
+                        && style.float == Float::None
+                        && containing_block.content.height() > 0.0
+                    {
                         // In vertical writing modes, the inline axis is vertical (height)
-                        // An in-flow block box with height: auto expands to fill containing block height
-                        let eff_h = if containing_block.content.height() > 0.0 {
-                            containing_block.content.height()
-                        } else {
-                            let (_, vp_h) = mango_css::get_current_viewport();
-                            vp_h
-                        };
-                        container_dims.content.size.height = (eff_h - non_v).max(0.0);
+                        // An in-flow block box with height: auto expands to fill definite containing block height
+                        container_dims.content.size.height =
+                            (containing_block.content.height() - non_v).max(0.0);
                     }
                 }
             }
@@ -445,7 +445,6 @@ pub(crate) fn layout_block_children(
             in_flow_count += 1;
 
             // Position child
-            let child_establishes_bfc = establishes_bfc(child);
             let is_right_aligned = matches!(
                 box_node.style.as_ref().map(|s| s.writing_mode),
                 Some(WritingMode::VerticalRl | WritingMode::SidewaysRl)
@@ -453,63 +452,123 @@ pub(crate) fn layout_block_children(
                 == Some(WritingMode::HorizontalTb)
                 && box_node.style.as_ref().map(|s| s.direction) == Some(Direction::Rtl));
 
-            let mut child_x = if is_right_aligned {
-                container_dims.content.right()
-                    - child.dimensions.border_box().width()
-                    - child.dimensions.margin.right
-                    + child.dimensions.border.left
-                    + child.dimensions.padding.left
-            } else {
-                container_dims.content.x()
-                    + child.dimensions.margin.left
-                    + child.dimensions.border.left
-                    + child.dimensions.padding.left
-            };
+            let child_establishes_bfc = establishes_bfc(child);
+            if child_establishes_bfc && float_ctx.has_floats() && !is_vert_wm {
+                let mut current_y = cursor_y;
+                let child_w = child.dimensions.border_box().width()
+                    + if is_right_aligned {
+                        child.dimensions.margin.right.max(0.0)
+                    } else {
+                        child.dimensions.margin.left.max(0.0)
+                    };
+                let is_auto_w = child
+                    .style
+                    .as_ref()
+                    .map(|s| s.width == Length::Auto)
+                    .unwrap_or(false);
 
-            if child_establishes_bfc {
-                let (min_x, max_x) = float_ctx.available_span(
-                    cursor_y,
-                    child.dimensions.margin_box().height().max(1.0),
-                    container_dims.content.x(),
-                    container_dims.content.width(),
-                );
-                let avail_w = max_x - min_x;
-                let child_box_w =
-                    child.dimensions.border_box().width() + child.dimensions.margin.left;
-                if child_box_w > avail_w
-                    && (min_x > container_dims.content.x()
-                        || max_x < container_dims.content.right())
-                {
-                    cursor_y = float_ctx.apply_clearance(cursor_y, Clear::Both);
-                } else if min_x > container_dims.content.x() {
-                    child_x = min_x
-                        + child.dimensions.margin.left
-                        + child.dimensions.border.left
-                        + child.dimensions.padding.left;
+                loop {
+                    let (min_x, max_x) = float_ctx.available_span(
+                        current_y,
+                        0.0,
+                        container_dims.content.x(),
+                        container_dims.content.width(),
+                    );
+                    let avail_w = (max_x - min_x).max(0.0);
+                    if !is_auto_w && child_w > avail_w + 0.001 {
+                        if let Some(next_y) = float_ctx.next_vertical_opportunity(current_y) {
+                            current_y = next_y;
+                            continue;
+                        }
+                    }
+                    cursor_y = current_y;
+                    break;
+                }
+
+                if is_auto_w {
+                    let (min_x, max_x) = float_ctx.available_span(
+                        cursor_y,
+                        0.0,
+                        container_dims.content.x(),
+                        container_dims.content.width(),
+                    );
+                    let non_content_h = child.dimensions.padding.horizontal()
+                        + child.dimensions.border.horizontal()
+                        + child.dimensions.margin.horizontal();
+                    let avail_w = (max_x - min_x).max(0.0);
+                    child.dimensions.content.size.width = (avail_w - non_content_h).max(0.0);
                 }
             }
 
-            let is_bottom_aligned = match box_node.style.as_ref().map(|s| s.writing_mode) {
-                Some(WritingMode::VerticalLr | WritingMode::VerticalRl) => {
-                    box_node.style.as_ref().map(|s| s.direction) == Some(Direction::Rtl)
-                }
-                Some(WritingMode::SidewaysLr) => {
-                    box_node.style.as_ref().map(|s| s.direction) == Some(Direction::Ltr)
-                }
-                Some(WritingMode::SidewaysRl) => {
-                    box_node.style.as_ref().map(|s| s.direction) == Some(Direction::Rtl)
-                }
-                _ => false,
-            };
-
-            let child_y = if is_bottom_aligned && container_dims.content.height() > 0.0 {
-                container_dims.content.bottom()
-                    - child.dimensions.border_box().height()
-                    - child.dimensions.margin.bottom
+            let (child_x, child_y) = if is_vert_wm {
+                let cx = if is_vert_rl {
+                    cursor_x - child.dimensions.margin.right - child.dimensions.border_box().width()
+                        + child.dimensions.border.left
+                        + child.dimensions.padding.left
+                } else {
+                    cursor_x
+                        + child.dimensions.margin.left
+                        + child.dimensions.border.left
+                        + child.dimensions.padding.left
+                };
+                let cy = container_dims.content.y()
+                    + child.dimensions.margin.top
                     + child.dimensions.border.top
-                    + child.dimensions.padding.top
+                    + child.dimensions.padding.top;
+                (cx, cy)
             } else {
-                cursor_y + child.dimensions.border.top + child.dimensions.padding.top
+                let cx = if is_right_aligned {
+                    let (_min_x, max_x) = if child_establishes_bfc && float_ctx.has_floats() {
+                        float_ctx.available_span(
+                            cursor_y,
+                            0.0,
+                            container_dims.content.x(),
+                            container_dims.content.width(),
+                        )
+                    } else {
+                        (container_dims.content.x(), container_dims.content.right())
+                    };
+                    max_x - child.dimensions.border_box().width() - child.dimensions.margin.right
+                        + child.dimensions.border.left
+                        + child.dimensions.padding.left
+                } else {
+                    let (min_x, _max_x) = if child_establishes_bfc && float_ctx.has_floats() {
+                        float_ctx.available_span(
+                            cursor_y,
+                            0.0,
+                            container_dims.content.x(),
+                            container_dims.content.width(),
+                        )
+                    } else {
+                        (container_dims.content.x(), container_dims.content.right())
+                    };
+                    min_x
+                        + child.dimensions.margin.left
+                        + child.dimensions.border.left
+                        + child.dimensions.padding.left
+                };
+                let is_bottom_aligned = match box_node.style.as_ref().map(|s| s.writing_mode) {
+                    Some(WritingMode::VerticalLr | WritingMode::VerticalRl) => {
+                        box_node.style.as_ref().map(|s| s.direction) == Some(Direction::Rtl)
+                    }
+                    Some(WritingMode::SidewaysLr) => {
+                        box_node.style.as_ref().map(|s| s.direction) == Some(Direction::Ltr)
+                    }
+                    Some(WritingMode::SidewaysRl) => {
+                        box_node.style.as_ref().map(|s| s.direction) == Some(Direction::Rtl)
+                    }
+                    _ => false,
+                };
+                let cy = if is_bottom_aligned && container_dims.content.height() > 0.0 {
+                    container_dims.content.bottom()
+                        - child.dimensions.border_box().height()
+                        - child.dimensions.margin.bottom
+                        + child.dimensions.border.top
+                        + child.dimensions.padding.top
+                } else {
+                    cursor_y + child.dimensions.border.top + child.dimensions.padding.top
+                };
+                (cx, cy)
             };
             child.dimensions.content.origin = Point::new(child_x, child_y);
 
@@ -552,18 +611,30 @@ pub(crate) fn layout_block_children(
 
             // Lay out child recursively
             let child_disp = child.style.as_ref().map(|s| s.display);
+            let child_origin_x = child_x
+                - child.dimensions.margin.left
+                - child.dimensions.border.left
+                - child.dimensions.padding.left;
             if child_disp == Some(Display::Table) || child.tag_name.as_deref() == Some("table") {
                 let mut table_cb = container_dims;
+                table_cb.content.origin.x = child_origin_x;
                 table_cb.content.origin.y = cursor_y - child.dimensions.margin.top;
                 let mut table_float_ctx = FloatContext::new();
                 crate::table_flow::layout_table(child, &table_cb, &mut table_float_ctx);
                 layout_positioned_children_with_cb(child, &child_cb, &mut table_float_ctx);
             } else if matches!(child_disp, Some(Display::Flex) | Some(Display::InlineFlex)) {
+                let mut flex_cb = container_dims;
+                flex_cb.content.origin.x = child_origin_x;
+                flex_cb.content.origin.y = cursor_y - child.dimensions.margin.top;
                 let mut flex_float_ctx = FloatContext::new();
-                crate::flex_flow::layout_flex(child, &container_dims, &mut flex_float_ctx);
+                crate::flex_flow::layout_flex(child, &flex_cb, &mut flex_float_ctx);
+                layout_positioned_children_with_cb(child, &child_cb, &mut flex_float_ctx);
             } else if child_disp == Some(Display::Grid) || child_disp == Some(Display::InlineGrid) {
+                let mut grid_cb = container_dims;
+                grid_cb.content.origin.x = child_origin_x;
+                grid_cb.content.origin.y = cursor_y - child.dimensions.margin.top;
                 let mut grid_float_ctx = FloatContext::new();
-                crate::grid_flow::layout_grid(child, &container_dims, &mut grid_float_ctx);
+                crate::grid_flow::layout_grid(child, &grid_cb, &mut grid_float_ctx);
             } else if child_establishes_bfc {
                 let mut inner_float_ctx = FloatContext::new();
                 layout_block_children(child, &child_cb, &mut inner_float_ctx);
@@ -586,7 +657,14 @@ pub(crate) fn layout_block_children(
             }
 
             // Advance cursor
-            if is_empty_block_collapsing_through(child) {
+            if is_vert_wm {
+                let child_w = child.dimensions.margin_box().width();
+                if is_vert_rl {
+                    cursor_x -= child_w;
+                } else {
+                    cursor_x += child_w;
+                }
+            } else if is_empty_block_collapsing_through(child) {
                 let collapsed =
                     collapse_margins(child.dimensions.margin.top, child.dimensions.margin.bottom);
                 child.dimensions.margin.top = collapsed;
@@ -597,6 +675,21 @@ pub(crate) fn layout_block_children(
                 cursor_y = in_flow_bottom;
                 prev_margin_bottom = child.dimensions.margin.bottom;
             }
+        }
+
+        if is_vert_wm
+            && box_node
+                .style
+                .as_ref()
+                .map(|s| s.width == Length::Auto)
+                .unwrap_or(true)
+        {
+            let w = if is_vert_rl {
+                box_node.dimensions.content.right() - cursor_x
+            } else {
+                cursor_x - box_node.dimensions.content.x()
+            };
+            box_node.dimensions.content.size.width = w.max(0.0);
         }
 
         let parent_height_is_auto = box_node

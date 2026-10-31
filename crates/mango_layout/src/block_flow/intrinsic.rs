@@ -58,6 +58,13 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
     let effective_max_width = max_w_bound.map_or(max_width, |mw| max_width.min(mw));
     let measured = calculate_raw_shrink_to_fit_width(box_node, effective_max_width);
     let mut final_w = measured;
+    if box_node
+        .style
+        .as_ref()
+        .is_some_and(|s| s.overflow_y == mango_css::values::Overflow::Scroll)
+    {
+        final_w += 6.0;
+    }
     if let Some(mw) = max_w_bound {
         final_w = final_w.min(mw);
     }
@@ -65,6 +72,24 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
         final_w = final_w.max(mw);
     }
     final_w
+}
+
+fn get_form_control_pad_border_h(box_node: &LayoutBox, max_width: f32) -> f32 {
+    if let Some(s) = box_node.style.as_ref()
+        && s.box_sizing == BoxSizing::BorderBox
+    {
+        let fs = s.font_size;
+        let rfs = s.root_font_size;
+        let pl = s
+            .padding_left
+            .to_px_with_viewport(fs, rfs, max_width, max_width);
+        let pr = s
+            .padding_right
+            .to_px_with_viewport(fs, rfs, max_width, max_width);
+        pl + pr + s.border_left_width + s.border_right_width
+    } else {
+        0.0
+    }
 }
 
 fn calculate_raw_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f32 {
@@ -93,7 +118,7 @@ fn calculate_raw_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
         let text_to_measure = if preserves_spaces {
             text.as_str()
         } else {
-            text.trim()
+            text.trim_matches(|c: char| c.is_ascii_whitespace())
         };
         let w = crate::inline_flow::measure_text_width_with_style(
             text_to_measure,
@@ -102,7 +127,10 @@ fn calculate_raw_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
             family,
         );
         let mut min_w = 0.0f32;
-        for word in text_to_measure.split_whitespace() {
+        for word in text_to_measure.split(|c: char| c.is_ascii_whitespace()) {
+            if word.is_empty() {
+                continue;
+            }
             let ww =
                 crate::inline_flow::measure_text_width_with_style(word, font_size, weight, family);
             min_w = min_w.max(ww);
@@ -142,13 +170,10 @@ fn calculate_raw_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
     }
 
     if let Some(s) = box_node.style.as_ref() {
-        let is_pct_resolvable =
-            matches!(s.width, mango_css::values::Length::Percent(_)) && max_width > 0.0;
         if !matches!(
             s.width,
             mango_css::values::Length::Auto | mango_css::values::Length::Percent(_)
-        ) || is_pct_resolvable
-        {
+        ) {
             let font_size = s.font_size;
             let root_font_size = s.root_font_size;
             let raw_w =
@@ -495,7 +520,11 @@ fn calculate_raw_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
             "input" => {
                 let input_type = box_node.get_attribute("type").unwrap_or("text");
                 match input_type {
-                    "checkbox" | "radio" => return 16.0f32.min(max_width),
+                    "checkbox" | "radio" => {
+                        let base_w = 16.0f32.min(max_width);
+                        let pb = get_form_control_pad_border_h(box_node, max_width);
+                        return (base_w - pb).max(0.0);
+                    }
                     "submit" | "button" => {
                         let val = box_node.get_attribute("value").unwrap_or("Submit");
                         let style = box_node.style.as_ref();
@@ -518,11 +547,17 @@ fn calculate_raw_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                         return w.min(max_width);
                     }
                     _ => {
+                        let font_size =
+                            box_node.style.as_ref().map(|s| s.font_size).unwrap_or(13.0);
                         let size_attr = box_node
                             .get_attribute("size")
-                            .and_then(|s| s.parse::<f32>().ok())
+                            .and_then(|s| s.trim().parse::<f32>().ok())
                             .unwrap_or(20.0);
-                        return (size_attr * 8.0 + 16.0).min(max_width);
+                        let base_w = (size_attr * (font_size * 0.55) + 8.0)
+                            .max(60.0)
+                            .min(max_width);
+                        let pb = get_form_control_pad_border_h(box_node, max_width);
+                        return (base_w - pb).max(0.0);
                     }
                 }
             }
@@ -532,9 +567,15 @@ fn calculate_raw_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
                     .or_else(|| box_node.get_attribute("value"))
                     .unwrap_or("Select...");
                 let w = crate::inline_flow::measure_text_width(text, 13.0) + 32.0;
-                return w.max(80.0).min(max_width);
+                let base_w = w.max(80.0).min(max_width);
+                let pb = get_form_control_pad_border_h(box_node, max_width);
+                return (base_w - pb).max(0.0);
             }
-            "textarea" => return 220.0f32.min(max_width),
+            "textarea" => {
+                let base_w = 220.0f32.min(max_width);
+                let pb = get_form_control_pad_border_h(box_node, max_width);
+                return (base_w - pb).max(0.0);
+            }
             "button" => {
                 let mut content_w = 0.0f32;
                 let style = box_node.style.as_ref();

@@ -1,6 +1,6 @@
 //! Validation of CSS property names and values according to W3C specifications.
 
-use crate::values::{Length, Value};
+use crate::values::{Display, Length, Value};
 
 /// Returns true if `val` is a valid CSS-wide keyword.
 #[inline]
@@ -195,41 +195,53 @@ pub fn is_valid_property_value(property_name: &str, value: &Value) -> bool {
             single => is_valid_margin_val(single),
         },
 
-        "margin-trim" => match value {
-            Value::Keyword(k) | Value::String(k) => {
-                let lower = k.to_ascii_lowercase();
-                let items: Vec<_> = lower.split_whitespace().collect();
-                if items.len() == 1 {
-                    matches!(items[0], "none" | "block" | "block-start" | "block-end")
-                } else if items.len() == 2 {
-                    (items[0] == "block-start" && items[1] == "block-end")
-                        || (items[0] == "block-end" && items[1] == "block-start")
-                } else {
+        "margin-trim" => {
+            let validate_items = |items: &[&str]| -> bool {
+                if items.is_empty() {
                     false
+                } else if items.len() == 1 && items[0] == "none" {
+                    true
+                } else {
+                    let mut has_b = false;
+                    let mut has_bs = false;
+                    let mut has_be = false;
+                    for &item in items {
+                        match item {
+                            "block" if !has_b && !has_bs && !has_be => has_b = true,
+                            "block-start" if !has_b && !has_bs => has_bs = true,
+                            "block-end" if !has_b && !has_be => has_be = true,
+                            _ => return false,
+                        }
+                    }
+                    true
                 }
-            }
-            Value::List(list) if list.len() == 1 => match &list[0] {
+            };
+            match value {
                 Value::Keyword(k) | Value::String(k) => {
-                    matches!(
-                        k.to_ascii_lowercase().as_str(),
-                        "none" | "block" | "block-start" | "block-end"
-                    )
+                    let lower = k.to_ascii_lowercase();
+                    let items: Vec<&str> = lower.split_whitespace().collect();
+                    validate_items(&items)
+                }
+                Value::Display(Display::Block) => true,
+                Value::List(list) => {
+                    let parts: Vec<String> = list
+                        .iter()
+                        .filter_map(|v| match v {
+                            Value::Keyword(k) | Value::String(k) => Some(k.to_ascii_lowercase()),
+                            Value::Display(Display::Block) => Some("block".to_string()),
+                            _ => None,
+                        })
+                        .collect();
+                    if parts.len() != list.len() {
+                        false
+                    } else {
+                        let str_parts: Vec<&str> = parts.iter().map(|s| s.as_str()).collect();
+                        validate_items(&str_parts)
+                    }
                 }
                 _ => false,
-            },
-            Value::List(list) if list.len() == 2 => {
-                let a = match &list[0] {
-                    Value::Keyword(k) | Value::String(k) => k.to_ascii_lowercase(),
-                    _ => return false,
-                };
-                let b = match &list[1] {
-                    Value::Keyword(k) | Value::String(k) => k.to_ascii_lowercase(),
-                    _ => return false,
-                };
-                (a == "block-start" && b == "block-end") || (a == "block-end" && b == "block-start")
             }
-            _ => false,
-        },
+        }
 
         "z-index" => match value {
             Value::Keyword(k) if k.eq_ignore_ascii_case("auto") => true,

@@ -720,11 +720,13 @@ pub(crate) fn apply_box_model_property(style: &mut ComputedStyle, prop: &str, va
                     style.margin_trim = k.clone();
                 }
             }
+            Value::Display(Display::Block) => style.margin_trim = "block".to_string(),
             Value::List(list) => {
                 let parts: Vec<String> = list
                     .iter()
                     .filter_map(|v| match v {
                         Value::Keyword(k) | Value::String(k) => Some(k.clone()),
+                        Value::Display(Display::Block) => Some("block".to_string()),
                         _ => None,
                     })
                     .collect();
@@ -737,7 +739,6 @@ pub(crate) fn apply_box_model_property(style: &mut ComputedStyle, prop: &str, va
                     style.margin_trim = parts.join(" ");
                 }
             }
-            Value::Display(Display::Block) => style.margin_trim = "block".to_string(),
             _ => {}
         },
         "opacity" => match val {

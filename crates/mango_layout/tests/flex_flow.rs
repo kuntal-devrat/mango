@@ -496,12 +496,10 @@ fn test_flex_baseline_alignment() {
         }
     "#;
     let container = layout_html_flex(html, css, 400.0, 400.0);
-    // Baseline ascent = font_size * 0.8:
-    // small: 10 * 0.8 = 8.0px
-    // large: 30 * 0.8 = 24.0px
-    // Max baseline ascent = 24.0px.
-    // small item must be pushed down by (24.0 - 8.0) = 16.0px so their baselines match!
-    assert_eq!(container.children[0].dimensions.content.y(), 16.0);
+    // Real font metrics with half-leading (replacing old fs * 0.8 approximation):
+    // large (30px) ascent is ~27.046px, small (10px) ascent is ~8.374px.
+    // small item must be pushed down by (27.046 - 8.374) = ~18.672px so their baselines match!
+    assert_eq!(container.children[0].dimensions.content.y(), 18.671875);
     assert_eq!(container.children[1].dimensions.content.y(), 0.0);
 }
 
@@ -782,4 +780,63 @@ fn test_flex_wrap_reverse_line_stacking() {
     assert_eq!(container.children[2].dimensions.content.y(), 5.0);
     assert_eq!(container.children[1].dimensions.content.y(), 50.0);
     assert_eq!(container.children[0].dimensions.content.y(), 95.0);
+}
+
+#[test]
+fn test_column_reverse_multiline_item_position() {
+    let html = r#"
+        <div id="target">
+            <div class="short"></div>
+            <div class="tall"></div>
+        </div>
+    "#;
+    let css = r#"
+        #target {
+            display: flex;
+            flex-flow: column-reverse wrap;
+            align-content: flex-start;
+            align-items: flex-start;
+            width: 200px;
+            max-height: 100px;
+            margin: 0;
+            border: 0;
+            padding: 0;
+        }
+        #target > div {
+            width: 50px;
+        }
+        .short { height: 40px; }
+        .tall { height: 80px; }
+    "#;
+    let container = layout_html_flex(html, css, 800.0, 600.0);
+    assert_eq!(container.dimensions.content.size.height, 80.0);
+    assert_eq!(container.children[0].dimensions.content.x(), 0.0);
+    assert_eq!(container.children[0].dimensions.content.y(), 40.0);
+    assert_eq!(container.children[0].dimensions.content.size.width, 50.0);
+    assert_eq!(container.children[0].dimensions.content.size.height, 40.0);
+    assert_eq!(container.children[1].dimensions.content.x(), 50.0);
+    assert_eq!(container.children[1].dimensions.content.y(), 0.0);
+    assert_eq!(container.children[1].dimensions.content.size.width, 50.0);
+    assert_eq!(container.children[1].dimensions.content.size.height, 80.0);
+}
+
+#[test]
+fn test_flexible_order_dimensions() {
+    let test_html = r#"<div class="box"><div class="red">A</div><div class="blue">B</div><div class="black">C</div></div>"#;
+    let test_css = r#"
+        .box { margin:0 auto; background:#CCC; border-radius:5px; width:600px; display:flex; flex-flow:row; }
+        .box div { text-align:center; }
+        .box .red { order:-2; flex:0 1 auto; width:200px; background:#F00; }
+        .box .blue { order:-4; flex:0 1 auto; width:200px; background:#00F; }
+        .box .black { order:-1; flex:0 1 auto; width:200px; background:#000; color:#FFF; }
+    "#;
+    let container = layout_html_flex(test_html, test_css, 800.0, 600.0);
+    assert_eq!(container.dimensions.content.origin.x, 100.0);
+    assert_eq!(container.dimensions.content.size.width, 600.0);
+    assert_eq!(container.children[0].dimensions.content.origin.x, 100.0);
+    assert_eq!(container.children[0].dimensions.content.size.width, 200.0);
+    assert_eq!(container.children[1].dimensions.content.origin.x, 300.0);
+    assert_eq!(container.children[1].dimensions.content.size.width, 200.0);
+    assert_eq!(container.children[2].dimensions.content.origin.x, 500.0);
+    assert_eq!(container.children[2].dimensions.content.size.width, 200.0);
 }

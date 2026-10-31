@@ -70,6 +70,8 @@ pub(crate) fn paint_layer_of(box_node: &LayoutBox, is_flex_or_grid_item: bool) -
                 Some(z) if z > 0 => PaintLayer::PositiveZ(z),
                 _ => PaintLayer::ZeroOrAutoZ,
             }
+        } else if s.position != mango_css::values::Position::Static {
+            PaintLayer::ZeroOrAutoZ
         } else if s.float != mango_css::values::Float::None {
             PaintLayer::Float
         } else if box_node.is_inline() || is_flex_or_grid_item {

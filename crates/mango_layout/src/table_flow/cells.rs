@@ -335,26 +335,71 @@ pub fn position_rows_and_cells(
 
         cell.dimensions.content.size.height = allocated_h.max(1.0);
 
-        // Vertical alignment inside table cell
-        let mut va_dy = 0.0;
-        if extra_h > 0.5 {
-            let va = cell
+        // Vertical alignment inside table cell (block axis alignment)
+        let is_vertical_wm = cell
+            .style
+            .as_ref()
+            .map(|s| s.writing_mode.is_vertical())
+            .unwrap_or(false);
+
+        let va = cell
+            .style
+            .as_ref()
+            .map(|s| s.vertical_align)
+            .unwrap_or(VerticalAlign::Middle);
+
+        let (va_dx, va_dy) = if is_vertical_wm {
+            let natural_w = cell
+                .children
+                .iter()
+                .map(|c| c.dimensions.margin_box().width())
+                .fold(0.0f32, f32::max);
+            let extra_w = (cell.dimensions.content.size.width - natural_w).max(0.0);
+            let shift_x = if extra_w > 0.5 {
+                match va {
+                    VerticalAlign::Top | VerticalAlign::Baseline => 0.0,
+                    VerticalAlign::Middle => extra_w / 2.0,
+                    VerticalAlign::Bottom => extra_w,
+                    _ => 0.0,
+                }
+            } else {
+                0.0
+            };
+            let ta = cell
                 .style
                 .as_ref()
-                .map(|s| s.vertical_align)
-                .unwrap_or(VerticalAlign::Middle);
-
-            va_dy = match va {
-                VerticalAlign::Top => 0.0,
-                VerticalAlign::Middle => extra_h / 2.0,
-                VerticalAlign::Bottom => extra_h,
-                VerticalAlign::Baseline => 0.0,
-                _ => 0.0,
+                .map(|s| s.text_align)
+                .unwrap_or(mango_css::values::TextAlign::Left);
+            let shift_y = if extra_h > 0.5 {
+                match ta {
+                    mango_css::values::TextAlign::Center => extra_h / 2.0,
+                    mango_css::values::TextAlign::Right | mango_css::values::TextAlign::End => {
+                        extra_h
+                    }
+                    _ => 0.0,
+                }
+            } else {
+                0.0
             };
-        }
 
-        if dx.abs() > 0.001 || (dy + va_dy).abs() > 0.001 {
-            crate::block_flow::shift_descendants(cell, dx, dy + va_dy);
+            (shift_x, shift_y)
+        } else {
+            let shift_y = if extra_h > 0.5 {
+                match va {
+                    VerticalAlign::Top => 0.0,
+                    VerticalAlign::Middle => extra_h / 2.0,
+                    VerticalAlign::Bottom => extra_h,
+                    VerticalAlign::Baseline => 0.0,
+                    _ => 0.0,
+                }
+            } else {
+                0.0
+            };
+            (0.0, shift_y)
+        };
+
+        if (dx + va_dx).abs() > 0.001 || (dy + va_dy).abs() > 0.001 {
+            crate::block_flow::shift_descendants(cell, dx + va_dx, dy + va_dy);
         }
     }
 

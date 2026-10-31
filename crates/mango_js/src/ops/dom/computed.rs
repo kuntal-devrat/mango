@@ -681,6 +681,7 @@ pub fn op_mango_get_computed_style(
         mango_css::values::AlignItems::SafeFlexEnd => "safe flex-end",
         mango_css::values::AlignItems::SafeStart => "safe start",
         mango_css::values::AlignItems::SafeEnd => "safe end",
+        mango_css::values::AlignItems::LastBaseline => "last baseline",
     };
     map.insert("align-items".to_string(), ai_str.to_string());
 
@@ -696,6 +697,7 @@ pub fn op_mango_get_computed_style(
         mango_css::values::AlignSelf::SafeFlexEnd => "safe flex-end",
         mango_css::values::AlignSelf::SafeStart => "safe start",
         mango_css::values::AlignSelf::SafeEnd => "safe end",
+        mango_css::values::AlignSelf::LastBaseline => "last baseline",
     };
     map.insert("align-self".to_string(), as_str.to_string());
 

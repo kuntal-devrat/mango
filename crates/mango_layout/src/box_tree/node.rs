@@ -267,8 +267,16 @@ impl LayoutBox {
     }
 
     #[inline]
+    pub fn is_floating(&self) -> bool {
+        self.style
+            .as_ref()
+            .map(|s| s.float != mango_css::values::Float::None)
+            .unwrap_or(false)
+    }
+
+    #[inline]
     pub fn is_in_flow_block(&self) -> bool {
-        self.is_block() && !self.is_out_of_flow()
+        self.is_block() && !self.is_out_of_flow() && !self.is_floating()
     }
 
     #[inline]

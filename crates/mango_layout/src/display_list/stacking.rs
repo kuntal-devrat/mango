@@ -684,11 +684,7 @@ pub(crate) fn paint_children_and_scrollbars(
     }
 
     // Paint container scrollbars if overflow is scroll or auto with overflowing content
-    if !is_root_or_body
-        && box_node.is_scroll_container()
-        && pad_box.width() > 10.0
-        && pad_box.height() > 10.0
-    {
+    if !is_root_or_body && box_node.is_scroll_container() {
         let scrollbar_width = style.map(|s| s.scrollbar_width).unwrap_or_default();
         if scrollbar_width != mango_css::values::ScrollbarWidth::None {
             let (track_thickness, thumb_inset) = match scrollbar_width {
@@ -719,9 +715,18 @@ pub(crate) fn paint_children_and_scrollbars(
             } else {
                 false
             };
-            if has_v_scroll && pad_h > 20.0 {
+            let is_v_scrollbar_on_left = style.is_some_and(|s| {
+                s.writing_mode == mango_css::values::WritingMode::VerticalRl
+                    || (s.writing_mode == mango_css::values::WritingMode::HorizontalTb
+                        && s.direction == mango_css::values::Direction::Rtl)
+            });
+            if has_v_scroll && pad_h >= track_thickness && pad_w >= track_thickness {
                 let track_w = track_thickness;
-                let track_x = pad_box.right() - track_w;
+                let track_x = if is_v_scrollbar_on_left {
+                    pad_box.x()
+                } else {
+                    pad_box.right() - track_w
+                };
                 let track_y = pad_box.y();
                 let track_h = pad_h;
 
@@ -730,7 +735,7 @@ pub(crate) fn paint_children_and_scrollbars(
                     color: track_color,
                 });
 
-                let thumb_h = ((pad_h / content_h) * pad_h).clamp(16.0, pad_h);
+                let thumb_h = ((pad_h / content_h) * pad_h).clamp(16.0f32.min(pad_h), pad_h);
                 let max_scroll = (content_h - pad_h).max(1.0);
                 let scroll_ratio = (box_node.scroll_offset_y.abs() / max_scroll).clamp(0.0, 1.0);
                 let thumb_y = track_y + scroll_ratio * (track_h - thumb_h);
@@ -754,10 +759,15 @@ pub(crate) fn paint_children_and_scrollbars(
             } else {
                 false
             };
-            if has_h_scroll && pad_w > 20.0 {
+            if has_h_scroll && pad_w >= track_thickness && pad_h >= track_thickness {
                 let track_h = track_thickness;
                 let track_y = pad_box.bottom() - track_h;
-                let track_x = pad_box.x();
+                let track_x = pad_box.x()
+                    + if has_v_scroll && is_v_scrollbar_on_left {
+                        track_thickness
+                    } else {
+                        0.0
+                    };
                 let track_w = pad_w - if has_v_scroll { track_thickness } else { 0.0 };
 
                 list.push(DisplayCommand::FillRect {
@@ -765,7 +775,7 @@ pub(crate) fn paint_children_and_scrollbars(
                     color: track_color,
                 });
 
-                let thumb_w = ((pad_w / content_w) * pad_w).clamp(16.0, track_w);
+                let thumb_w = ((pad_w / content_w) * pad_w).clamp(16.0f32.min(track_w), track_w);
                 let max_scroll = (content_w - pad_w).max(1.0);
                 let scroll_ratio = (box_node.scroll_offset_x.abs() / max_scroll).clamp(0.0, 1.0);
                 let thumb_x = track_x + scroll_ratio * (track_w - thumb_w);

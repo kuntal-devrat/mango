@@ -418,6 +418,29 @@ pub fn resolve_item_main_size(
     (explicit_main, is_main_explicit)
 }
 
+fn measure_flex_child_intrinsic_height(
+    child: &LayoutBox,
+    cross_size: f32,
+    c_fs: f32,
+    c_root_fs: f32,
+    container_height: f32,
+) -> f32 {
+    let mut temp_child = child.clone();
+    let item_w = if let Some(s) = child.style.as_ref()
+        && s.width != Length::Auto
+    {
+        s.width
+            .to_px_with_viewport(c_fs, c_root_fs, cross_size, container_height)
+    } else {
+        cross_size
+    };
+    temp_child.dimensions.content.size.width = item_w;
+    let item_cb = Dimensions::new(Rect::new(0.0, 0.0, item_w, 0.0));
+    let mut item_float_ctx = FloatContext::new();
+    layout_flex_item(&mut temp_child, &item_cb, &mut item_float_ctx, c_fs);
+    temp_child.dimensions.content.size.height
+}
+
 pub fn resolve_item_base_and_limits(
     child: &mut LayoutBox,
     is_row: bool,
@@ -534,12 +557,47 @@ pub fn resolve_item_base_and_limits(
 
     if is_row {
         if child_style.max_width != Length::Auto {
-            let max_w = child_style.max_width.to_px_with_viewport(
-                c_fs,
-                c_root_fs,
-                content_width,
-                container_height,
-            );
+            let max_w = match child_style.max_width {
+                Length::MinContent => {
+                    let mut memo = HashMap::new();
+                    let (c_min, _) = crate::table_flow::measure_box_intrinsic_widths(
+                        child,
+                        c_fs,
+                        mango_render::FontWeight::Regular,
+                        mango_render::FontFamily::SansSerif,
+                        &mut memo,
+                    );
+                    c_min
+                }
+                Length::MaxContent | Length::Content => {
+                    let mut memo = HashMap::new();
+                    let (_, c_max) = crate::table_flow::measure_box_intrinsic_widths(
+                        child,
+                        c_fs,
+                        mango_render::FontWeight::Regular,
+                        mango_render::FontFamily::SansSerif,
+                        &mut memo,
+                    );
+                    c_max
+                }
+                Length::FitContent => {
+                    let mut memo = HashMap::new();
+                    let (c_min, c_max) = crate::table_flow::measure_box_intrinsic_widths(
+                        child,
+                        c_fs,
+                        mango_render::FontWeight::Regular,
+                        mango_render::FontFamily::SansSerif,
+                        &mut memo,
+                    );
+                    content_width.min(c_max).max(c_min)
+                }
+                _ => child_style.max_width.to_px_with_viewport(
+                    c_fs,
+                    c_root_fs,
+                    content_width,
+                    container_height,
+                ),
+            };
             let max_content_w = if child_style.box_sizing == BoxSizing::BorderBox {
                 (max_w - pad_main - border_main).max(0.0)
             } else {
@@ -548,18 +606,56 @@ pub fn resolve_item_base_and_limits(
             max_main = max_content_w;
         }
         if child_style.min_width != Length::Auto {
-            let min_w = child_style.min_width.to_px_with_viewport(
-                c_fs,
-                c_root_fs,
-                content_width,
-                container_height,
-            );
+            let min_w = match child_style.min_width {
+                Length::MinContent => {
+                    let mut memo = HashMap::new();
+                    let (c_min, _) = crate::table_flow::measure_box_intrinsic_widths(
+                        child,
+                        c_fs,
+                        mango_render::FontWeight::Regular,
+                        mango_render::FontFamily::SansSerif,
+                        &mut memo,
+                    );
+                    c_min
+                }
+                Length::MaxContent | Length::Content => {
+                    let mut memo = HashMap::new();
+                    let (_, c_max) = crate::table_flow::measure_box_intrinsic_widths(
+                        child,
+                        c_fs,
+                        mango_render::FontWeight::Regular,
+                        mango_render::FontFamily::SansSerif,
+                        &mut memo,
+                    );
+                    c_max
+                }
+                Length::FitContent => {
+                    let mut memo = HashMap::new();
+                    let (c_min, c_max) = crate::table_flow::measure_box_intrinsic_widths(
+                        child,
+                        c_fs,
+                        mango_render::FontWeight::Regular,
+                        mango_render::FontFamily::SansSerif,
+                        &mut memo,
+                    );
+                    content_width.min(c_max).max(c_min)
+                }
+                _ => child_style.min_width.to_px_with_viewport(
+                    c_fs,
+                    c_root_fs,
+                    content_width,
+                    container_height,
+                ),
+            };
             let min_content_w = if child_style.box_sizing == BoxSizing::BorderBox {
                 (min_w - pad_main - border_main).max(0.0)
             } else {
                 min_w
             };
             min_main = min_content_w;
+            if min_main > max_main {
+                max_main = min_main;
+            }
         } else if child_style.overflow_x == Overflow::Visible {
             let auto_min = match &child.box_type {
                 BoxType::ReplacedElement {
@@ -639,12 +735,31 @@ pub fn resolve_item_base_and_limits(
             let is_percent_indefinite =
                 child_style.max_height.has_percent() && container_height <= 0.0;
             if !is_percent_indefinite {
-                let max_h = child_style.max_height.to_px_with_viewport(
-                    c_fs,
-                    c_root_fs,
-                    container_height,
-                    container_height,
-                );
+                let max_h = match child_style.max_height {
+                    Length::MinContent
+                    | Length::MaxContent
+                    | Length::FitContent
+                    | Length::Content => {
+                        let measured_h = measure_flex_child_intrinsic_height(
+                            child,
+                            cross_size,
+                            c_fs,
+                            c_root_fs,
+                            container_height,
+                        );
+                        if child_style.box_sizing == BoxSizing::BorderBox {
+                            measured_h + pad_main + border_main
+                        } else {
+                            measured_h
+                        }
+                    }
+                    _ => child_style.max_height.to_px_with_viewport(
+                        c_fs,
+                        c_root_fs,
+                        container_height,
+                        container_height,
+                    ),
+                };
                 let max_content_h = if child_style.box_sizing == BoxSizing::BorderBox {
                     (max_h - pad_main - border_main).max(0.0)
                 } else {
@@ -657,18 +772,40 @@ pub fn resolve_item_base_and_limits(
             let is_percent_indefinite =
                 child_style.min_height.has_percent() && container_height <= 0.0;
             if !is_percent_indefinite {
-                let min_h = child_style.min_height.to_px_with_viewport(
-                    c_fs,
-                    c_root_fs,
-                    container_height,
-                    container_height,
-                );
+                let min_h = match child_style.min_height {
+                    Length::MinContent
+                    | Length::MaxContent
+                    | Length::FitContent
+                    | Length::Content => {
+                        let measured_h = measure_flex_child_intrinsic_height(
+                            child,
+                            cross_size,
+                            c_fs,
+                            c_root_fs,
+                            container_height,
+                        );
+                        if child_style.box_sizing == BoxSizing::BorderBox {
+                            measured_h + pad_main + border_main
+                        } else {
+                            measured_h
+                        }
+                    }
+                    _ => child_style.min_height.to_px_with_viewport(
+                        c_fs,
+                        c_root_fs,
+                        container_height,
+                        container_height,
+                    ),
+                };
                 let min_content_h = if child_style.box_sizing == BoxSizing::BorderBox {
                     (min_h - pad_main - border_main).max(0.0)
                 } else {
                     min_h
                 };
                 min_main = min_content_h;
+                if min_main > max_main {
+                    max_main = min_main;
+                }
             }
         } else if child_style.overflow_y == Overflow::Visible {
             let auto_min = match &child.box_type {

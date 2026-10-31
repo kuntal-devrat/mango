@@ -151,7 +151,8 @@ pub fn user_agent_stylesheet() -> &'static Stylesheet {
             }
             td, th {
                 display: table-cell;
-                padding: 4px 8px;
+                vertical-align: middle;
+                padding: 1px;
             }
             th {
                 font-weight: bold;

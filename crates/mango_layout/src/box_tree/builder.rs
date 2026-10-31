@@ -267,7 +267,8 @@ pub fn build_box_tree_with_maps(
                 if is_ws {
                     continue;
                 }
-                let mut anon = LayoutBox::new_anonymous_block(Some(styled_node.style.clone()));
+                let anon_style = create_anonymous_box_style(&styled_node.style, Display::Block);
+                let mut anon = LayoutBox::new_anonymous_block(Some(anon_style.into()));
                 anon.is_independent_formatting_context = true;
                 child.is_independent_formatting_context = false;
                 anon.children.push(child);
@@ -339,7 +340,7 @@ pub fn build_box_tree_with_maps(
                     });
                     if all_cells {
                         let anon_row_style =
-                            create_anonymous_table_style(&styled_node.style, Display::TableRow);
+                            create_anonymous_box_style(&styled_node.style, Display::TableRow);
                         let mut anon_row =
                             LayoutBox::new_anonymous_block(Some(anon_row_style.into()));
                         anon_row.children = std::mem::take(seq);
@@ -347,13 +348,13 @@ pub fn build_box_tree_with_maps(
                     } else {
                         // Non-table content: wrap in anonymous table cell, then anonymous table row
                         let anon_cell_style =
-                            create_anonymous_table_style(&styled_node.style, Display::TableCell);
+                            create_anonymous_box_style(&styled_node.style, Display::TableCell);
                         let mut anon_cell =
                             LayoutBox::new_anonymous_block(Some(anon_cell_style.into()));
                         anon_cell.children = std::mem::take(seq);
 
                         let anon_row_style =
-                            create_anonymous_table_style(&styled_node.style, Display::TableRow);
+                            create_anonymous_box_style(&styled_node.style, Display::TableRow);
                         let mut anon_row =
                             LayoutBox::new_anonymous_block(Some(anon_row_style.into()));
                         anon_row.children.push(anon_cell);
@@ -406,7 +407,9 @@ pub fn build_box_tree_with_maps(
                     final_children.push(child);
                 } else if child.is_inline() {
                     let anon = current_anonymous.get_or_insert_with(|| {
-                        LayoutBox::new_anonymous_block(Some(styled_node.style.clone()))
+                        let anon_style =
+                            create_anonymous_box_style(&styled_node.style, Display::Block);
+                        LayoutBox::new_anonymous_block(Some(anon_style.into()))
                     });
                     anon.children.push(child);
                 } else {
@@ -484,7 +487,7 @@ fn propagate_link_target(box_node: &mut LayoutBox, href: &str, frame: Option<&st
     }
 }
 
-fn create_anonymous_table_style(
+fn create_anonymous_box_style(
     parent_style: &mango_css::ComputedStyle,
     display: Display,
 ) -> mango_css::ComputedStyle {

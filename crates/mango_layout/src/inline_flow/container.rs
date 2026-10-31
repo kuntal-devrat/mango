@@ -354,6 +354,18 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
     let mut atom_queue: std::collections::VecDeque<InlineAtom> = atoms.into();
 
     while let Some(atom) = atom_queue.pop_front() {
+        if let InlineAtomKind::Float(mut float_box) = atom.kind {
+            let container_dims = container.dimensions;
+            crate::block_flow::layout_single_float(
+                &mut float_box,
+                &container_dims,
+                current_y,
+                float_ctx,
+            );
+            positioned_boxes.push(*float_box);
+            continue;
+        }
+
         if let InlineAtomKind::LineBreak { is_br } = atom.kind {
             let (min_x, max_x) =
                 float_ctx.available_span(current_y, atom.height, container_x, layout_width);
@@ -368,6 +380,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
                 &mut positioned_boxes,
                 true,
                 block_start_x,
+                container.style.as_deref(),
             );
             let step_h = line_h.max(atom.height);
             if is_br {
@@ -511,6 +524,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
                     &mut positioned_boxes,
                     false,
                     block_start_x,
+                    container.style.as_deref(),
                 );
                 current_y += line_h;
                 is_first_line = false;
@@ -603,6 +617,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
                             &mut positioned_boxes,
                             false,
                             block_start_x,
+                            container.style.as_deref(),
                         );
                         current_y += line_h;
                         is_first_line = false;
@@ -662,6 +677,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
                 &mut positioned_boxes,
                 false,
                 block_start_x,
+                container.style.as_deref(),
             );
             current_y += line_h;
             is_first_line = false;
@@ -721,6 +737,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
             &mut positioned_boxes,
             true,
             block_start_x,
+            container.style.as_deref(),
         );
         current_y += line_h;
     }
@@ -790,7 +807,7 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
         positioned_boxes = fragmented_boxes;
     }
 
-    let total_height = if resolved_cols > 1 {
+    let mut total_height = if resolved_cols > 1 {
         if container_height > 0.0 {
             container_height
         } else {
@@ -800,6 +817,9 @@ pub fn layout_inline_children(container: &mut LayoutBox, float_ctx: &mut FloatCo
     } else {
         current_y - container_y
     };
+    if let Some(fb) = float_ctx.max_bottom() {
+        total_height = total_height.max((fb - container_y).max(0.0));
+    }
     container.children = positioned_boxes;
     total_height
 }

@@ -1,11 +1,11 @@
 use mango_core::EdgeSizes;
 use mango_css::computed::ComputedStyle;
-use mango_css::values::{Display, Position};
+use mango_css::values::{Direction, Display, FlexDirection, Position, WritingMode};
 
 use crate::box_tree::LayoutBox;
 
 use super::cross::resolve_item_cross_size;
-use super::item::find_first_baseline_ascent;
+use super::item::{find_first_baseline_ascent, find_last_baseline_ascent};
 use super::sizing::{resolve_item_base_and_limits, resolve_item_main_size};
 
 #[derive(Debug, Clone)]
@@ -18,6 +18,7 @@ pub struct ItemMetric {
     pub max_main: f32,
     pub cross: f32,
     pub baseline_ascent: f32,
+    pub last_baseline_ascent: f32,
     pub flex_grow: f32,
     pub flex_shrink: f32,
     pub pad_main: f32,
@@ -103,23 +104,16 @@ pub fn measure_item_metrics(
         );
 
         let is_collapsed = child_style.visibility == mango_css::values::Visibility::Collapse;
-        let is_wrap = container_style.flex_wrap.is_wrap();
 
         if is_collapsed {
-            if is_wrap {
-                if is_row {
-                    child.dimensions.padding = EdgeSizes::new(p_top, 0.0, p_bottom, 0.0);
-                    child.dimensions.border = EdgeSizes::new(b_top, 0.0, b_bottom, 0.0);
-                    child.dimensions.margin = EdgeSizes::new(m_top, 0.0, m_bottom, 0.0);
-                } else {
-                    child.dimensions.padding = EdgeSizes::new(0.0, p_right, 0.0, p_left);
-                    child.dimensions.border = EdgeSizes::new(0.0, b_right, 0.0, b_left);
-                    child.dimensions.margin = EdgeSizes::new(0.0, m_right, 0.0, m_left);
-                }
+            if is_row {
+                child.dimensions.padding = EdgeSizes::new(p_top, 0.0, p_bottom, 0.0);
+                child.dimensions.border = EdgeSizes::new(b_top, 0.0, b_bottom, 0.0);
+                child.dimensions.margin = EdgeSizes::new(m_top, 0.0, m_bottom, 0.0);
             } else {
-                child.dimensions.padding = EdgeSizes::all(0.0);
-                child.dimensions.border = EdgeSizes::all(0.0);
-                child.dimensions.margin = EdgeSizes::all(0.0);
+                child.dimensions.padding = EdgeSizes::new(0.0, p_right, 0.0, p_left);
+                child.dimensions.border = EdgeSizes::new(0.0, b_right, 0.0, b_left);
+                child.dimensions.margin = EdgeSizes::new(0.0, m_right, 0.0, m_left);
             }
         } else {
             child.dimensions.padding = EdgeSizes::new(p_top, p_right, p_bottom, p_left);
@@ -130,14 +124,10 @@ pub fn measure_item_metrics(
         let (pad_main, pad_cross) = if is_collapsed {
             (
                 0.0,
-                if is_wrap {
-                    if is_row {
-                        p_top + p_bottom
-                    } else {
-                        p_left + p_right
-                    }
+                if is_row {
+                    p_top + p_bottom
                 } else {
-                    0.0
+                    p_left + p_right
                 },
             )
         } else if is_row {
@@ -148,14 +138,10 @@ pub fn measure_item_metrics(
         let (border_main, border_cross) = if is_collapsed {
             (
                 0.0,
-                if is_wrap {
-                    if is_row {
-                        b_top + b_bottom
-                    } else {
-                        b_left + b_right
-                    }
+                if is_row {
+                    b_top + b_bottom
                 } else {
-                    0.0
+                    b_left + b_right
                 },
             )
         } else if is_row {
@@ -166,14 +152,10 @@ pub fn measure_item_metrics(
         let (margin_main, margin_cross) = if is_collapsed {
             (
                 0.0,
-                if is_wrap {
-                    if is_row {
-                        m_top + m_bottom
-                    } else {
-                        m_left + m_right
-                    }
+                if is_row {
+                    m_top + m_bottom
                 } else {
-                    0.0
+                    m_left + m_right
                 },
             )
         } else if is_row {
@@ -197,26 +179,22 @@ pub fn measure_item_metrics(
             margin_cross,
         );
 
-        let cross_size = if is_collapsed && !is_wrap {
-            0.0
-        } else {
-            resolve_item_cross_size(
-                child,
-                is_row,
-                explicit_main,
-                content_width,
-                container_height,
-                c_fs,
-                c_root_fs,
-                pad_main,
-                border_main,
-                margin_main,
-                pad_cross,
-                border_cross,
-                margin_cross,
-                container_style,
-            )
-        };
+        let cross_size = resolve_item_cross_size(
+            child,
+            is_row,
+            explicit_main,
+            content_width,
+            container_height,
+            c_fs,
+            c_root_fs,
+            pad_main,
+            border_main,
+            margin_main,
+            pad_cross,
+            border_cross,
+            margin_cross,
+            container_style,
+        );
 
         let (base_main, min_main, max_main) = if is_collapsed {
             (0.0, 0.0, 0.0)
@@ -237,12 +215,20 @@ pub fn measure_item_metrics(
             )
         };
 
-        let baseline_ascent = if is_collapsed {
-            0.0
-        } else if is_row {
-            m_top + b_top + p_top + find_first_baseline_ascent(child, c_fs)
+        let baseline_ascent = if is_row {
+            let nat = find_first_baseline_ascent(child, c_fs);
+            m_top + b_top + p_top + nat.unwrap_or_else(|| child.dimensions.content.height())
         } else {
-            m_left + b_left + p_left + find_first_baseline_ascent(child, c_fs)
+            let nat = find_first_baseline_ascent(child, c_fs);
+            m_left + b_left + p_left + nat.unwrap_or_else(|| child.dimensions.content.width())
+        };
+
+        let last_baseline_ascent = if is_row {
+            let nat = find_last_baseline_ascent(child, c_fs);
+            m_top + b_top + p_top + nat.unwrap_or_else(|| child.dimensions.content.height())
+        } else {
+            let nat = find_last_baseline_ascent(child, c_fs);
+            m_left + b_left + p_left + nat.unwrap_or_else(|| child.dimensions.content.width())
         };
 
         item_metrics.push(ItemMetric {
@@ -258,6 +244,7 @@ pub fn measure_item_metrics(
             max_main,
             cross: cross_size,
             baseline_ascent,
+            last_baseline_ascent,
             flex_grow: if is_collapsed {
                 0.0
             } else {
@@ -278,4 +265,104 @@ pub fn measure_item_metrics(
     }
 
     item_metrics
+}
+
+pub(crate) fn init_reverse_scroll_position(container: &mut LayoutBox, style: &ComputedStyle) {
+    if container.is_scroll_container()
+        && container.scroll_offset_x == 0.0
+        && container.scroll_offset_y == 0.0
+    {
+        let (max_x, max_y) = container.max_scroll();
+        let is_rtl = style.direction == Direction::Rtl;
+        match style.writing_mode {
+            WritingMode::HorizontalTb => match style.flex_direction {
+                FlexDirection::RowReverse => {
+                    container.scroll_offset_x = if is_rtl { -max_x } else { max_x };
+                }
+                FlexDirection::ColumnReverse => {
+                    container.scroll_offset_y = max_y;
+                }
+                _ => {}
+            },
+            WritingMode::VerticalRl => match style.flex_direction {
+                FlexDirection::RowReverse => {
+                    container.scroll_offset_y = if is_rtl { -max_y } else { max_y };
+                }
+                FlexDirection::ColumnReverse => {
+                    container.scroll_offset_x = -max_x;
+                }
+                _ => {}
+            },
+            WritingMode::VerticalLr | WritingMode::SidewaysLr => match style.flex_direction {
+                FlexDirection::RowReverse => {
+                    container.scroll_offset_y = if is_rtl { -max_y } else { max_y };
+                }
+                FlexDirection::ColumnReverse => {
+                    container.scroll_offset_x = max_x;
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+}
+
+pub(crate) fn record_flex_container_baseline(
+    container: &mut LayoutBox,
+    lines: &[Vec<usize>],
+    first_ascents: &[f32],
+    is_row: bool,
+    is_wrap_reverse: bool,
+    font_size: f32,
+) {
+    if is_row && !lines.is_empty() {
+        let baseline_line_idx = if !first_ascents.is_empty() && first_ascents[0] > 0.0 {
+            0
+        } else if is_wrap_reverse {
+            lines.len() - 1
+        } else {
+            0
+        };
+
+        let target_line = &lines[baseline_line_idx];
+        if !target_line.is_empty() {
+            let line_top = target_line
+                .iter()
+                .map(|&idx| {
+                    container.children[idx].dimensions.margin_box().y()
+                        - container.dimensions.content.y()
+                })
+                .fold(f32::INFINITY, f32::min);
+            let line_offset = if line_top.is_finite() {
+                line_top.max(0.0)
+            } else {
+                0.0
+            };
+            let first_baseline =
+                if !first_ascents.is_empty() && first_ascents[baseline_line_idx] > 0.0 {
+                    line_offset + first_ascents[baseline_line_idx]
+                } else {
+                    target_line
+                        .iter()
+                        .find_map(|&idx| {
+                            let child = &container.children[idx];
+                            super::item::find_first_baseline_ascent(child, font_size).map(|b| {
+                                let top_offset =
+                                    child.dimensions.content.y() - container.dimensions.content.y();
+                                top_offset + b
+                            })
+                        })
+                        .unwrap_or(0.0)
+                };
+            if first_baseline > 0.0 {
+                container
+                    .attributes
+                    .retain(|(k, _)| k != "_mango_flex_first_baseline");
+                container.attributes.push((
+                    "_mango_flex_first_baseline".to_string(),
+                    first_baseline.to_string(),
+                ));
+            }
+        }
+    }
 }

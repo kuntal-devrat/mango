@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use mango_core::{EdgeSizes, Point, Rect};
 use mango_css::computed::ComputedStyle;
-use mango_css::values::{Display, Overflow, Position, TextAlign};
+use mango_css::values::{Display, TextAlign};
 
 use crate::box_model::BoxType;
 use crate::box_tree::LayoutBox;
@@ -16,66 +16,7 @@ use super::shaping::{
 
 /// Computes the distance from the top margin edge of an inline-block to the baseline
 /// of its last in-flow line box, adhering to CSS 2.1 §10.8.1.
-pub(crate) fn find_inline_block_last_baseline_from_top(box_: &LayoutBox) -> Option<f32> {
-    if let Some(s) = &box_.style
-        && (s.overflow_x != Overflow::Visible || s.overflow_y != Overflow::Visible)
-    {
-        return None;
-    }
-
-    if matches!(box_.box_type, BoxType::TextNode(_)) {
-        let fs = box_.style.as_ref().map(|s| s.font_size).unwrap_or(16.0);
-        let family = font_family_for(box_.style.as_deref().unwrap_or(&ComputedStyle::default()));
-        let weight = font_weight_for(box_.style.as_deref().unwrap_or(&ComputedStyle::default()));
-        let (ascent, _, _) = mango_render::font::font_manager().font_metrics(family, weight, fs);
-        return Some(ascent);
-    }
-
-    let is_flex = matches!(
-        box_.style.as_ref().map(|s| s.display),
-        Some(Display::Flex) | Some(Display::InlineFlex)
-    );
-
-    let check_child = |child: &LayoutBox| -> Option<f32> {
-        let is_in_flow = child
-            .style
-            .as_ref()
-            .map(|s| matches!(s.position, Position::Static | Position::Relative))
-            .unwrap_or(true);
-        let is_visible_disp = child
-            .style
-            .as_ref()
-            .map(|s| s.display != Display::None)
-            .unwrap_or(true);
-
-        if is_in_flow
-            && is_visible_disp
-            && let Some(child_baseline) = find_inline_block_last_baseline_from_top(child)
-        {
-            let top_offset = (child.dimensions.content.y() - box_.dimensions.content.y()).max(0.0);
-            let margin_top = box_.dimensions.margin.top
-                + box_.dimensions.border.top
-                + box_.dimensions.padding.top;
-            return Some(margin_top + top_offset + child_baseline);
-        }
-        None
-    };
-
-    if is_flex {
-        for child in &box_.children {
-            if let Some(b) = check_child(child) {
-                return Some(b);
-            }
-        }
-    } else {
-        for child in box_.children.iter().rev() {
-            if let Some(b) = check_child(child) {
-                return Some(b);
-            }
-        }
-    }
-    None
-}
+pub use super::baseline::find_inline_block_last_baseline_from_top;
 
 pub(crate) fn finalize_line(
     line_atoms: &[InlineAtom],
@@ -86,6 +27,7 @@ pub(crate) fn finalize_line(
     out: &mut Vec<LayoutBox>,
     is_last_line: bool,
     block_start_x: f32,
+    container_style: Option<&ComputedStyle>,
 ) -> f32 {
     if line_atoms.is_empty() {
         return 16.0;
@@ -97,7 +39,10 @@ pub(crate) fn finalize_line(
     while i > 0 {
         let idx = i - 1;
         let atom = &line_atoms[idx];
-        if matches!(atom.kind, InlineAtomKind::OutOfFlow(_)) {
+        if matches!(
+            atom.kind,
+            InlineAtomKind::OutOfFlow(_) | InlineAtomKind::Float(_)
+        ) {
             i -= 1;
             continue;
         }
@@ -111,7 +56,10 @@ pub(crate) fn finalize_line(
 
     let mut leading_space_indices = std::collections::HashSet::new();
     for (idx, atom) in line_atoms.iter().enumerate() {
-        if matches!(atom.kind, InlineAtomKind::OutOfFlow(_)) {
+        if matches!(
+            atom.kind,
+            InlineAtomKind::OutOfFlow(_) | InlineAtomKind::Float(_)
+        ) {
             continue;
         }
         if atom.is_space()
@@ -148,9 +96,23 @@ pub(crate) fn finalize_line(
         .map(|a| a.height)
         .fold(0.0f32, f32::max);
 
-    // CSS 2.1 §10.8: Calculate unified baseline and total line box height across all inline boxes and text runs
-    let mut max_above = 0.0f32;
-    let mut max_below = 0.0f32;
+    // CSS 2.1 §10.8: Calculate unified baseline and total line box height across all inline boxes and text runs.
+    // Each line box starts with a zero-width inline box with the containing element's font and line height
+    // properties ("the strut"), which participates in baseline determination.
+    let strut_style =
+        container_style.or_else(|| atoms_for_metrics.first().map(|a| a.style.as_ref()));
+    let (mut max_above, mut max_below) = if let Some(s) = strut_style {
+        let family = font_family_for(s);
+        let weight = font_weight_for(s);
+        let (ascent, descent, _) =
+            mango_render::font::font_manager().font_metrics(family, weight, s.font_size);
+        let lh = used_line_height(s, family, weight);
+        let natural_h = ascent + descent;
+        let half_leading = (lh - natural_h) / 2.0;
+        (half_leading + ascent, half_leading + descent)
+    } else {
+        (0.0, 0.0)
+    };
 
     for &atom in &atoms_for_metrics {
         match &atom.kind {
@@ -167,8 +129,31 @@ pub(crate) fn finalize_line(
                 let half_leading = (lh - natural_h) / 2.0;
                 let above = half_leading + ascent;
                 let below = half_leading + descent;
-                max_above = max_above.max(above);
-                max_below = max_below.max(below);
+                match atom.style.vertical_align {
+                    mango_css::values::VerticalAlign::Baseline => {
+                        max_above = max_above.max(above);
+                        max_below = max_below.max(below);
+                    }
+                    mango_css::values::VerticalAlign::Middle => {
+                        let x_mid = atom.style.font_size * 0.25;
+                        max_above = max_above.max(above * 0.5 + x_mid);
+                        max_below = max_below.max((below * 0.5 - x_mid).max(0.0));
+                    }
+                    mango_css::values::VerticalAlign::Super => {
+                        max_above = max_above.max(above + ascent * 0.35);
+                        max_below = max_below.max(below);
+                    }
+                    mango_css::values::VerticalAlign::Sub => {
+                        max_above = max_above.max(above);
+                        max_below = max_below.max(below + descent * 0.5);
+                    }
+                    mango_css::values::VerticalAlign::Top
+                    | mango_css::values::VerticalAlign::TextTop
+                    | mango_css::values::VerticalAlign::Bottom
+                    | mango_css::values::VerticalAlign::TextBottom => {
+                        // Elements aligned to top/bottom do not participate in baseline determination.
+                    }
+                }
             }
             InlineAtomKind::AtomicBox(atomic_box) => {
                 if atomic_box.tag_name.as_deref() == Some("ruby") {
@@ -203,8 +188,17 @@ pub(crate) fn finalize_line(
                             max_above = max_above.max(atom.height * 0.5 + x_mid);
                             max_below = max_below.max((atom.height * 0.5 - x_mid).max(0.0));
                         }
-                        _ => {
-                            max_above = max_above.max(atom.height);
+                        mango_css::values::VerticalAlign::Super => {
+                            max_above = max_above.max(atom.height + 4.0);
+                        }
+                        mango_css::values::VerticalAlign::Sub => {
+                            max_above = max_above.max((atom.height - 4.0).max(0.0));
+                        }
+                        mango_css::values::VerticalAlign::Top
+                        | mango_css::values::VerticalAlign::TextTop
+                        | mango_css::values::VerticalAlign::Bottom
+                        | mango_css::values::VerticalAlign::TextBottom => {
+                            // Elements aligned to top/bottom do not participate in baseline determination.
                         }
                     }
                 }
@@ -218,14 +212,28 @@ pub(crate) fn finalize_line(
         max_below = min_line_height * 0.2;
     }
     let baseline_from_line_top = max_above;
-    let actual_line_height = if line_atoms
-        .iter()
-        .all(|a| matches!(a.kind, InlineAtomKind::OutOfFlow(_)))
-    {
+    let mut actual_line_height = if line_atoms.iter().all(|a| {
+        matches!(
+            a.kind,
+            InlineAtomKind::OutOfFlow(_) | InlineAtomKind::Float(_)
+        )
+    }) {
         0.0
     } else {
         (max_above + max_below).max(min_line_height).max(1.0)
     };
+
+    for &atom in &atoms_for_metrics {
+        if matches!(
+            atom.style.vertical_align,
+            mango_css::values::VerticalAlign::Top
+                | mango_css::values::VerticalAlign::TextTop
+                | mango_css::values::VerticalAlign::Bottom
+                | mango_css::values::VerticalAlign::TextBottom
+        ) {
+            actual_line_height = actual_line_height.max(atom.height);
+        }
+    }
 
     let is_rtl = atoms_for_metrics
         .first()
@@ -309,20 +317,25 @@ pub(crate) fn finalize_line(
             // Top of this run's inline box: the line baseline minus its own ascent.
             let text_top = line_y + baseline_from_line_top - ascent;
 
+            let family = font_family_for(&run.style);
+            let weight = font_weight_for(&run.style);
+            let lh = used_line_height(&run.style, family, weight);
+            let half_leading = (lh - natural_h) / 2.0;
+
             let run_y = match run.style.vertical_align {
                 mango_css::values::VerticalAlign::Baseline => text_top,
-                mango_css::values::VerticalAlign::Top => line_y,
+                mango_css::values::VerticalAlign::Top => line_y + half_leading,
                 mango_css::values::VerticalAlign::Bottom => {
-                    line_y + (actual_line_height - natural_h).max(0.0)
+                    line_y + (actual_line_height - lh).max(0.0) + half_leading
                 }
                 mango_css::values::VerticalAlign::Middle => {
                     line_y + baseline_from_line_top - (ascent * 0.5) - (natural_h * 0.5)
                 }
                 mango_css::values::VerticalAlign::Super => text_top - (ascent * 0.35),
                 mango_css::values::VerticalAlign::Sub => text_top + (descent * 0.5),
-                mango_css::values::VerticalAlign::TextTop => text_top,
+                mango_css::values::VerticalAlign::TextTop => line_y + half_leading,
                 mango_css::values::VerticalAlign::TextBottom => {
-                    line_y + (actual_line_height - natural_h).max(0.0)
+                    line_y + (actual_line_height - lh).max(0.0) + half_leading
                 }
             };
 
@@ -631,6 +644,9 @@ pub(crate) fn finalize_line(
                     flush_text_runs(&mut runs, out);
                 }
                 InlineAtomKind::LineBreak { .. } => {
+                    flush_text_runs(&mut runs, out);
+                }
+                InlineAtomKind::Float(_) => {
                     flush_text_runs(&mut runs, out);
                 }
                 InlineAtomKind::OutOfFlow(oof) => {

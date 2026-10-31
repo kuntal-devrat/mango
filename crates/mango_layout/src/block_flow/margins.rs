@@ -1,5 +1,5 @@
 use mango_core::Point;
-use mango_css::values::{Clear, Display, Float, Length, Position};
+use mango_css::values::{Clear, Length, Position};
 
 use crate::box_tree::LayoutBox;
 use crate::dimensions::Dimensions;
@@ -132,21 +132,13 @@ pub(crate) fn collapsed_margin_top_for_box(
         return my_margin_top;
     }
 
+    // If the box establishes an IFC or has an inline-level child, line boxes intervene (CSS 2.1 § 8.3.1)
+    if layout_box.children.iter().any(|c| c.is_inline()) {
+        return my_margin_top;
+    }
+
     for child in &layout_box.children {
-        let child_pos = child
-            .style
-            .as_ref()
-            .map(|s| s.position)
-            .unwrap_or(Position::Static);
-        if matches!(child_pos, Position::Absolute | Position::Fixed) {
-            continue;
-        }
-        let child_float = child.style.as_ref().map(|s| s.float).unwrap_or(Float::None);
-        if child_float != Float::None {
-            continue;
-        }
-        let child_disp = child.style.as_ref().map(|s| s.display);
-        if child_disp == Some(Display::None) {
+        if !child.is_in_flow_block() {
             continue;
         }
         let child_collapsed = collapsed_margin_top_for_box(child, container_dims);
