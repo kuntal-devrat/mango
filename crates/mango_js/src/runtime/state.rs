@@ -125,6 +125,17 @@ impl JsRuntime {
         self.document.borrow()
     }
 
+    /// Returns a mutable borrowed reference to the current DOM document.
+    pub fn document_mut(&mut self) -> std::cell::RefMut<'_, Document> {
+        self.document.borrow_mut()
+    }
+
+    /// Takes the set of dirty nodes tracked by the DOM document and clears the DOM dirty flag.
+    pub fn take_dirty_nodes(&mut self) -> std::collections::HashSet<mango_html::dom::NodeId> {
+        self.clear_dom_dirty();
+        self.document.borrow_mut().take_dirty_nodes()
+    }
+
     /// Sets or clears the active target fragment identifier for `:target` CSS selector matching.
     pub fn set_target_id(&mut self, target_id: Option<String>) {
         self.document.borrow_mut().set_target_id(target_id);

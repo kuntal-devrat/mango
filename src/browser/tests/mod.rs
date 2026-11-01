@@ -24,5 +24,6 @@ mod actor_lifecycle;
 mod anchor_and_scroll;
 mod core;
 mod forms_radio;
+mod incremental_actor;
 mod interactions;
 mod pickers_lifecycle;

@@ -16,6 +16,7 @@ pub(crate) mod effects;
 pub(crate) mod image;
 pub(crate) mod shadows;
 pub(crate) mod shapes;
+pub(crate) mod simd;
 pub(crate) mod text;
 
 #[cfg(test)]
