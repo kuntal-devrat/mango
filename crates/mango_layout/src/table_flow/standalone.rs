@@ -16,24 +16,31 @@ pub fn calculate_table_width(table_box: &mut LayoutBox, containing_block: &Dimen
         mango_css::get_current_viewport().1
     };
     let font_size = style.font_size;
-    let pad_top =
-        style
-            .padding_top
-            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
-    let pad_right =
-        style
-            .padding_right
-            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
-    let pad_bottom = style.padding_bottom.to_px_with_viewport(
+    let root_font_size = style.root_font_size;
+    let pad_top = style.padding_top.to_px_with_viewport(
         font_size,
-        16.0,
+        root_font_size,
         container_width,
         container_height,
     );
-    let pad_left =
-        style
-            .padding_left
-            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
+    let pad_right = style.padding_right.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
+    let pad_bottom = style.padding_bottom.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
+    let pad_left = style.padding_left.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
 
     let border_top = style.border_top_width;
     let border_right = style.border_right_width;
@@ -44,22 +51,30 @@ pub fn calculate_table_width(table_box: &mut LayoutBox, containing_block: &Dimen
     table_box.dimensions.border =
         EdgeSizes::new(border_top, border_right, border_bottom, border_left);
 
-    let margin_top =
-        style
-            .margin_top
-            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
-    let margin_bottom =
-        style
-            .margin_bottom
-            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
-    let mut margin_left =
-        style
-            .margin_left
-            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
-    let mut margin_right =
-        style
-            .margin_right
-            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
+    let margin_top = style.margin_top.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
+    let margin_bottom = style.margin_bottom.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
+    let mut margin_left = style.margin_left.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
+    let mut margin_right = style.margin_right.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
 
     let total_non_content_h = pad_left + pad_right + border_left + border_right;
 
@@ -92,7 +107,12 @@ pub fn calculate_table_width(table_box: &mut LayoutBox, containing_block: &Dimen
             }
         }
         ref len => {
-            let px = len.to_px_with_viewport(font_size, 16.0, container_width, container_height);
+            let px = len.to_px_with_viewport(
+                font_size,
+                root_font_size,
+                container_width,
+                container_height,
+            );
             match style.box_sizing {
                 BoxSizing::ContentBox => px,
                 BoxSizing::BorderBox => (px - total_non_content_h).max(0.0),
@@ -100,10 +120,12 @@ pub fn calculate_table_width(table_box: &mut LayoutBox, containing_block: &Dimen
         }
     };
 
-    let min_w =
-        style
-            .min_width
-            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
+    let min_w = style.min_width.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
     if min_w > 0.0 {
         let min_content_w = match style.box_sizing {
             BoxSizing::ContentBox => min_w,
@@ -111,10 +133,12 @@ pub fn calculate_table_width(table_box: &mut LayoutBox, containing_block: &Dimen
         };
         content_width = content_width.max(min_content_w);
     }
-    let max_w =
-        style
-            .max_width
-            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
+    let max_w = style.max_width.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
     if max_w > 0.0 && style.max_width != Length::Auto {
         let max_content_w = match style.box_sizing {
             BoxSizing::ContentBox => max_w,

@@ -1,9 +1,26 @@
 use mango_html::parse_html;
 use mango_js::JsRuntime;
 
+fn get_youtube_scratch_dir() -> Option<std::path::PathBuf> {
+    if let Ok(dir) = std::env::var("YOUTUBE_SCRATCH_DIR") {
+        let p = std::path::PathBuf::from(dir);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    None
+}
+
 #[test]
 #[ignore]
 fn test_youtube_kevlar_base_execution() {
+    let scratch_dir = match get_youtube_scratch_dir() {
+        Some(d) => d,
+        None => {
+            println!("Skipping: YOUTUBE_SCRATCH_DIR not set or does not exist");
+            return;
+        }
+    };
     let html = "<html><head><title>YouTube</title></head><body><ytd-app></ytd-app></body></html>";
     let doc = parse_html(html);
     let mut rt = JsRuntime::new(doc, 1280.0, 900.0);
@@ -25,7 +42,7 @@ fn test_youtube_kevlar_base_execution() {
     "#;
     rt.eval(pre_instrument).unwrap();
 
-    let script_path = "/home/pikasu/.gemini/antigravity/brain/fadd5a55-27b9-4582-a5fd-554f7d0c4800/scratch/youtube_kevlar_base.js";
+    let script_path = scratch_dir.join("youtube_kevlar_base.js");
     let script = match std::fs::read_to_string(script_path) {
         Ok(s) => s,
         Err(e) => {
@@ -57,8 +74,21 @@ fn test_youtube_kevlar_base_execution() {
 #[test]
 #[ignore]
 fn test_youtube_full_hydration() {
-    let html_path = "/home/pikasu/.gemini/antigravity/brain/fadd5a55-27b9-4582-a5fd-554f7d0c4800/scratch/youtube.html";
-    let html = std::fs::read_to_string(html_path).expect("read youtube.html");
+    let scratch_dir = match get_youtube_scratch_dir() {
+        Some(d) => d,
+        None => {
+            println!("Skipping: YOUTUBE_SCRATCH_DIR not set or does not exist");
+            return;
+        }
+    };
+    let html_path = scratch_dir.join("youtube.html");
+    let html = match std::fs::read_to_string(html_path) {
+        Ok(h) => h,
+        Err(_) => {
+            println!("Skipping: youtube.html not found");
+            return;
+        }
+    };
     let doc = parse_html(&html);
 
     fn collect_scripts_from_doc(
@@ -85,8 +115,8 @@ fn test_youtube_full_hydration() {
 
     let mut rt = JsRuntime::new_with_url(doc, 1280.0, 900.0, "https://www.youtube.com/");
 
-    let _kevlar_code = std::fs::read_to_string("/home/pikasu/.gemini/antigravity/brain/fadd5a55-27b9-4582-a5fd-554f7d0c4800/scratch/youtube_kevlar_base.js")
-        .expect("read kevlar_base.js");
+    let _kevlar_code =
+        std::fs::read_to_string(scratch_dir.join("youtube_kevlar_base.js")).unwrap_or_default();
 
     println!("Running scripts from youtube.html in sequence...");
     for (idx, (src, body)) in script_list.into_iter().enumerate() {
@@ -99,17 +129,17 @@ fn test_youtube_full_hydration() {
                 .next_back()
                 .unwrap();
             let path = if src.contains("kevlar_base_module") {
-                "/home/pikasu/.gemini/antigravity/brain/fadd5a55-27b9-4582-a5fd-554f7d0c4800/scratch/youtube_kevlar_base.js".to_string()
+                scratch_dir.join("youtube_kevlar_base.js")
             } else {
-                format!(
-                    "/home/pikasu/.gemini/antigravity/brain/fadd5a55-27b9-4582-a5fd-554f7d0c4800/scratch/{}",
-                    filename
-                )
+                scratch_dir.join(filename)
             };
             if let Ok(c) = std::fs::read_to_string(&path) {
                 (filename.to_string(), c)
             } else {
-                println!("  [Script #{idx}] Skipping external: {src} (not found at {path})");
+                println!(
+                    "  [Script #{idx}] Skipping external: {src} (not found at {:?})",
+                    path
+                );
                 continue;
             }
         } else {

@@ -458,7 +458,16 @@ mod tests {
 
     #[test]
     fn test_companion_headers_parsing() {
-        let temp_dir = std::env::temp_dir().join("mango_wpt_server_test");
+        let unique_id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!(
+            "mango_wpt_server_test_{}_{}_{:?}",
+            std::process::id(),
+            unique_id,
+            std::thread::current().id()
+        ));
         let _ = std::fs::create_dir_all(&temp_dir);
         let headers_file = temp_dir.join("empty.css.headers");
         std::fs::write(

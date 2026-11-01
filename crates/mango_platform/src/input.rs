@@ -122,6 +122,33 @@ impl MangoKey {
             _ => MangoKey::Unknown,
         }
     }
+
+    /// Returns the standard W3C KeyboardEvent `key` attribute value for this key.
+    pub fn to_w3c_key(&self) -> String {
+        match self {
+            MangoKey::Escape => "Escape".to_string(),
+            MangoKey::Enter => "Enter".to_string(),
+            MangoKey::Tab => "Tab".to_string(),
+            MangoKey::Backspace => "Backspace".to_string(),
+            MangoKey::Delete => "Delete".to_string(),
+            MangoKey::ArrowUp => "ArrowUp".to_string(),
+            MangoKey::ArrowDown => "ArrowDown".to_string(),
+            MangoKey::ArrowLeft => "ArrowLeft".to_string(),
+            MangoKey::ArrowRight => "ArrowRight".to_string(),
+            MangoKey::Home => "Home".to_string(),
+            MangoKey::End => "End".to_string(),
+            MangoKey::PageUp => "PageUp".to_string(),
+            MangoKey::PageDown => "PageDown".to_string(),
+            MangoKey::F1 => "F1".to_string(),
+            MangoKey::F3 => "F3".to_string(),
+            MangoKey::F5 => "F5".to_string(),
+            MangoKey::F11 => "F11".to_string(),
+            MangoKey::F12 => "F12".to_string(),
+            MangoKey::Space => " ".to_string(),
+            MangoKey::Char(c) => c.to_string(),
+            MangoKey::Unknown => "Unidentified".to_string(),
+        }
+    }
 }
 
 /// A mouse button event.
