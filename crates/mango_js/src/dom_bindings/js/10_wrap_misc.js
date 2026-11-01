@@ -766,8 +766,8 @@
         var pNode = (pId !== null && typeof _getCachedWrapper === 'function') ? _getCachedWrapper(pId) : (targetEl._parentNode || null);
         var pDoc = targetEl._ownerDocument || targetEl.ownerDocument || (pNode ? (pNode._ownerDocument || pNode.ownerDocument) : null);
         if (!targetEl._creationRealm) {
-            targetEl._creationRealm = (targetEl._ownerDocument && (targetEl._ownerDocument._creationRealm || targetEl._ownerDocument.defaultView))
-                || (pNode && (pNode._creationRealm || (pDoc && (pDoc._creationRealm || pDoc.defaultView))))
+            targetEl._creationRealm = (pNode && pNode._lastInnerHTMLRealm)
+                || (targetEl._ownerDocument && (targetEl._ownerDocument._creationRealm || targetEl._ownerDocument.defaultView))
                 || (pDoc && (pDoc._creationRealm || pDoc.defaultView))
                 || (typeof globalThis !== 'undefined' ? globalThis : null);
         }

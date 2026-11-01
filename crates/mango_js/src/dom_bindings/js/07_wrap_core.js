@@ -42,6 +42,8 @@
             },
             get innerHTML() { return _getInnerHTML(this._nodeId); },
             set innerHTML(val) {
+                var curDoc = this.ownerDocument || this._ownerDocument || (typeof document !== 'undefined' ? document : null);
+                this._lastInnerHTMLRealm = (curDoc && (curDoc._creationRealm || curDoc.defaultView)) ? (curDoc._creationRealm || curDoc.defaultView) : (typeof globalThis !== 'undefined' ? globalThis : null);
                 var oldKids = this.childNodes ? Array.prototype.slice.call(this.childNodes) : [];
                 for (var i = 0; i < oldKids.length; i++) {
                     var k = oldKids[i];
