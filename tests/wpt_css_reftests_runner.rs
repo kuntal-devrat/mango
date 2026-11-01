@@ -920,3 +920,13 @@ fn test_scrollbars_pixel() {
     );
     assert_eq!(diff_count, 0);
 }
+
+#[test]
+fn test_upstream_w3c_css_grid_reftests() {
+    let results = run_upstream_wpt_reftests(Some("css-grid"));
+    if results.is_empty() {
+        return;
+    }
+    let (_passed, _total) =
+        report_reftest_results("UPSTREAM W3C CSS-GRID REFTEST REPORT", &results);
+}

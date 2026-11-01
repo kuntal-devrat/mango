@@ -18,6 +18,7 @@ pub fn format_grid_item(
     span_w: f32,
     container_height: f32,
     parent_subgrid_cols: Option<&[f32]>,
+    parent_subgrid_rows: Option<&[f32]>,
 ) -> f32 {
     let child_style = child.style.clone().unwrap_or_default();
     let c_fs = child_style.font_size;
@@ -101,7 +102,7 @@ pub fn format_grid_item(
             &item_cb,
             &mut item_float_ctx,
             parent_subgrid_cols,
-            None,
+            parent_subgrid_rows,
         );
     } else if child_display == Some(Display::Flex) {
         crate::flex_flow::layout_flex(child, &item_cb, &mut item_float_ctx);
