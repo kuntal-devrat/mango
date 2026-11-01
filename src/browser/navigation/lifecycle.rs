@@ -173,7 +173,10 @@ impl BrowserChrome {
         // Replacing a background tab's contents drops its document without
         // going through navigation cleanup; release any canvas backing stores
         // owned by the old document first.
-        if let Some(old) = tab.contents.take() {
+        if let Some(mut old) = tab.contents.take() {
+            if let Some(mut actor) = old.renderer_actor.take() {
+                actor.shutdown();
+            }
             if let Some(doc) = &old.cached_document {
                 mango_render::remove_canvases_for_document(doc.id());
             }

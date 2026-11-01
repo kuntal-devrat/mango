@@ -759,38 +759,22 @@ fn run_single_script(
             }
         }
         ScriptToRun::External { src, is_module, .. } => {
-            let Some(base) = base_url else {
-                if !is_mod {
-                    let _ = rt.execute_script(
-                        "if (typeof globalThis.__setCurrentScript === 'function') globalThis.__setCurrentScript(null);",
-                    );
-                }
-                return;
-            };
-            let Ok(resolved) = base.resolve(src) else {
-                if !is_mod {
-                    let _ = rt.execute_script(
-                        "if (typeof globalThis.__setCurrentScript === 'function') globalThis.__setCurrentScript(null);",
-                    );
-                }
-                return;
-            };
-            let key = resolved.to_string();
-            let script_code = if let Some(c) = cache {
-                c.get(&key)
-                    .map(|entry| String::from_utf8_lossy(&entry.body).into_owned())
-            } else {
-                None
-            };
-            if let Some(code) = script_code {
-                let to = script_timeout(code.len());
-                let res = if *is_module {
-                    rt.execute_module_with_name_and_timeout(&key, &code, to)
-                } else {
-                    rt.execute_script_with_name_and_timeout(&key, &code, to)
-                };
-                if let Err(e) = res {
-                    log::warn!("Isolated renderer external script error ({src}): {e}");
+            if let Some(resolved) = base_url.and_then(|b| b.resolve(src).ok()) {
+                let key = resolved.to_string();
+                let script_code = cache.and_then(|c| {
+                    c.get(&key)
+                        .map(|entry| String::from_utf8_lossy(&entry.body).into_owned())
+                });
+                if let Some(code) = script_code {
+                    let to = script_timeout(code.len());
+                    let res = if *is_module {
+                        rt.execute_module_with_name_and_timeout(&key, &code, to)
+                    } else {
+                        rt.execute_script_with_name_and_timeout(&key, &code, to)
+                    };
+                    if let Err(e) = res {
+                        log::warn!("Isolated renderer external script error ({src}): {e}");
+                    }
                 }
             }
         }

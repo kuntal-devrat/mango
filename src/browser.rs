@@ -501,7 +501,16 @@ impl Drop for BrowserChrome {
     fn drop(&mut self) {
         self.persist_profile();
         self.js_runtime = None;
-        while let Some(tab) = self.tabs.pop() {
+        if let Some(mut renderer) = self.renderer_actor.take() {
+            renderer.shutdown();
+        }
+        self.nav_actor.shutdown();
+        while let Some(mut tab) = self.tabs.pop() {
+            if let Some(mut contents) = tab.contents.take() {
+                if let Some(mut renderer) = contents.renderer_actor.take() {
+                    renderer.shutdown();
+                }
+            }
             drop(tab);
         }
     }

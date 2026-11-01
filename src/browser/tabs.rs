@@ -170,6 +170,9 @@ impl BrowserChrome {
             mango_render::remove_canvases_for_document(doc.id());
         }
         if closing_active {
+            if let Some(mut actor) = self.renderer_actor.take() {
+                actor.shutdown();
+            }
             if let Some(doc) = &self.cached_document {
                 mango_render::remove_canvases_for_document(doc.id());
             }
@@ -201,7 +204,11 @@ impl BrowserChrome {
             }
         }
         let mut closed_tab = self.tabs.remove(idx);
-        closed_tab.contents = None;
+        if let Some(mut contents) = closed_tab.contents.take() {
+            if let Some(mut actor) = contents.renderer_actor.take() {
+                actor.shutdown();
+            }
+        }
         closed_tab.clear_history();
         if self.active_tab_idx >= self.tabs.len() || closing_active {
             self.active_tab_idx = self.active_tab_idx.min(self.tabs.len() - 1);
