@@ -624,7 +624,10 @@
                     else if (doc.documentElement) doc.documentElement.textContent = jsRes;
                 }
                 doc.readyState = 'complete';
-                doc.defaultView = _getIframeContentWindow(iframe);
+                var win = _getIframeContentWindow(iframe);
+                doc.defaultView = win;
+                doc._creationRealm = win;
+                if (doc.implementation) doc.implementation._ownerDocument = doc;
                 doc.contentType = mime;
                 doc._contentType = mime;
                 if (typeof globalThis.Document !== 'undefined') {

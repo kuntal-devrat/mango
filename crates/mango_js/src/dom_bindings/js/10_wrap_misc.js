@@ -762,24 +762,34 @@
         var tag = targetEl.localName ? targetEl.localName.toLowerCase() : (targetEl.tagName ? targetEl.tagName.toLowerCase() : '');
         if (tag.indexOf(':') !== -1) tag = tag.split(':')[1];
         var nt = targetEl.nodeType;
-        if (typeof globalThis !== 'undefined') {
-            if (nt === 11 && globalThis.DocumentFragment) {
-                Object.setPrototypeOf(targetEl, globalThis.DocumentFragment.prototype);
-            } else if (nt === 9 && globalThis.Document) {
-                Object.setPrototypeOf(targetEl, globalThis.Document.prototype);
-            } else if (nt === 3 && globalThis.Text) {
-                Object.setPrototypeOf(targetEl, globalThis.Text.prototype);
-            } else if (nt === 8 && globalThis.Comment) {
-                if (targetEl._isPI && globalThis.ProcessingInstruction) {
-                    Object.setPrototypeOf(targetEl, globalThis.ProcessingInstruction.prototype);
+        var pId = (typeof _getParentNode === 'function' && targetEl._nodeId !== undefined) ? _getParentNode(targetEl._nodeId) : null;
+        var pNode = (pId !== null && typeof _getCachedWrapper === 'function') ? _getCachedWrapper(pId) : (targetEl._parentNode || null);
+        var pDoc = targetEl._ownerDocument || targetEl.ownerDocument || (pNode ? (pNode._ownerDocument || pNode.ownerDocument) : null);
+        if (!targetEl._creationRealm) {
+            targetEl._creationRealm = (targetEl._ownerDocument && (targetEl._ownerDocument._creationRealm || targetEl._ownerDocument.defaultView))
+                || (pNode && (pNode._creationRealm || (pDoc && (pDoc._creationRealm || pDoc.defaultView))))
+                || (pDoc && (pDoc._creationRealm || pDoc.defaultView))
+                || (typeof globalThis !== 'undefined' ? globalThis : null);
+        }
+        var realm = targetEl._creationRealm || (typeof globalThis !== 'undefined' ? globalThis : null);
+        if (realm) {
+            if (nt === 11 && (realm.DocumentFragment || globalThis.DocumentFragment)) {
+                Object.setPrototypeOf(targetEl, (realm.DocumentFragment || globalThis.DocumentFragment).prototype);
+            } else if (nt === 9 && (realm.Document || globalThis.Document)) {
+                Object.setPrototypeOf(targetEl, (realm.Document || globalThis.Document).prototype);
+            } else if (nt === 3 && (realm.Text || globalThis.Text)) {
+                Object.setPrototypeOf(targetEl, (realm.Text || globalThis.Text).prototype);
+            } else if (nt === 8 && (realm.Comment || globalThis.Comment)) {
+                if (targetEl._isPI && (realm.ProcessingInstruction || globalThis.ProcessingInstruction)) {
+                    Object.setPrototypeOf(targetEl, (realm.ProcessingInstruction || globalThis.ProcessingInstruction).prototype);
                 } else {
-                    Object.setPrototypeOf(targetEl, globalThis.Comment.prototype);
+                    Object.setPrototypeOf(targetEl, (realm.Comment || globalThis.Comment).prototype);
                 }
-            } else if (nt === 7 && globalThis.ProcessingInstruction) {
-                Object.setPrototypeOf(targetEl, globalThis.ProcessingInstruction.prototype);
-            } else if (nt === 10 && globalThis.DocumentType) {
+            } else if (nt === 7 && (realm.ProcessingInstruction || globalThis.ProcessingInstruction)) {
+                Object.setPrototypeOf(targetEl, (realm.ProcessingInstruction || globalThis.ProcessingInstruction).prototype);
+            } else if (nt === 10 && (realm.DocumentType || globalThis.DocumentType)) {
                 delete targetEl.name;
-                Object.setPrototypeOf(targetEl, globalThis.DocumentType.prototype);
+                Object.setPrototypeOf(targetEl, (realm.DocumentType || globalThis.DocumentType).prototype);
             } else {
                 var customCtor = (globalThis.customElements && globalThis.customElements.get) ? globalThis.customElements.get(tag) : null;
                 if (customCtor && customCtor.prototype) {

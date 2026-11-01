@@ -401,6 +401,7 @@
         doc._childNodes = [];
         doc.implementation = Object.create(DOMImplementation.prototype);
         doc.implementation._document = doc;
+        doc.implementation._ownerDocument = doc;
         doc._documentElement = null; doc.documentElement = null;
         doc._doctype = null; doc.doctype = null;
         doc.defaultView = null; doc._defaultView = null;
@@ -478,6 +479,8 @@
         return doc;
     };
     DOMImplementation.prototype.createHTMLDocument = function(title) {
+        var ownerDoc = this._document || this._ownerDocument;
+        var creationRealm = (ownerDoc && (ownerDoc._creationRealm || ownerDoc.defaultView)) ? (ownerDoc._creationRealm || ownerDoc.defaultView) : null;
         var doctype = this.createDocumentType('html', '', '');
         var head = _wrapElement(_origCE('head'));
         var body = _wrapElement(_origCE('body'));
@@ -493,6 +496,7 @@
         }
         var doc = {
             title: title !== undefined ? String(title) : '',
+            _creationRealm: creationRealm,
             contentType: 'text/html', compatMode: 'CSS1Compat', _compatMode: 'CSS1Compat',
             characterSet: 'UTF-8', _characterSet: 'UTF-8', charset: 'UTF-8', inputEncoding: 'UTF-8', location: null,
             _childNodes: [doctype, html], _doctype: doctype, doctype: doctype,
@@ -544,13 +548,17 @@
             createElement: function(t) {
                 if (doc._isXml) return _createElementXML(doc, t);
                 var el = (typeof document !== 'undefined' && document.createElement) ? document.createElement(t) : (typeof _origCE === 'function' ? _wrapElement(_origCE(t)) : null);
-                if (el) { el._ownerDocument = doc; el.ownerDocument = doc; }
+                if (el) { el._ownerDocument = doc; el.ownerDocument = doc; if (doc._creationRealm) el._creationRealm = doc._creationRealm; }
                 return el;
             },
-            createElementNS: function(ns, t) { return _createElementNS(doc, ns, t); },
-            createTextNode: function(t) { var tn = _wrapElement(_origCTN(t)); if (tn) { tn._ownerDocument = doc; tn.ownerDocument = doc; } return tn; },
-            createDocumentFragment: function() { var f = _wrapElement(_createFragment()); if (f) { f._ownerDocument = doc; f.ownerDocument = doc; } return f; },
-            createComment: function(t) { var c = document.createComment(t); if (c) { c._ownerDocument = doc; c.ownerDocument = doc; } return c; },
+            createElementNS: function(ns, t) {
+                var el = _createElementNS(doc, ns, t);
+                if (el && doc._creationRealm) el._creationRealm = doc._creationRealm;
+                return el;
+            },
+            createTextNode: function(t) { var tn = _wrapElement(_origCTN(t)); if (tn) { tn._ownerDocument = doc; tn.ownerDocument = doc; if (doc._creationRealm) tn._creationRealm = doc._creationRealm; } return tn; },
+            createDocumentFragment: function() { var f = _wrapElement(_createFragment()); if (f) { f._ownerDocument = doc; f.ownerDocument = doc; if (doc._creationRealm) f._creationRealm = doc._creationRealm; } return f; },
+            createComment: function(t) { var c = (typeof document !== 'undefined' && document.createComment) ? document.createComment(t) : null; if (c) { c._ownerDocument = doc; c.ownerDocument = doc; if (doc._creationRealm) c._creationRealm = doc._creationRealm; } return c; },
             createRange: function() { return document.createRange(); },
             createTreeWalker: function(root, whatToShow, filter) { return document.createTreeWalker(root, whatToShow, filter); },
             createNodeIterator: function(root, whatToShow, filter) { return document.createNodeIterator(root, whatToShow, filter); },
@@ -570,6 +578,7 @@
         if (titleEl) { titleEl._ownerDocument = doc; titleEl.ownerDocument = doc; }
         if (titleTn) { titleTn._ownerDocument = doc; titleTn.ownerDocument = doc; }
         doc.implementation._document = doc;
+        doc.implementation._ownerDocument = doc;
         if (typeof globalThis.Document !== 'undefined') {
             Object.setPrototypeOf(doc, globalThis.Document.prototype);
         }

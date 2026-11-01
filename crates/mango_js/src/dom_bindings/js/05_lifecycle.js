@@ -44,11 +44,6 @@
 
     function _invokeConnectedCallback(node, visited) {
         if (!node || typeof node !== 'object' || node.nodeType !== 1) return;
-        var hasCustomRegistry = (typeof globalThis !== 'undefined' && globalThis.customElements && globalThis.customElements._registry);
-        var hasCustomElements = hasCustomRegistry && Object.keys(globalThis.customElements._registry).length > 0;
-        if (!hasCustomElements && !node.connectedCallback && !node.attached && !node.polymerController && !node.shadowRoot && !node._shadowRoot && !node._shadowRootInstance) {
-            return;
-        }
         if (!visited) visited = new Set();
         if (visited.has(node)) return;
         visited.add(node);
@@ -151,11 +146,6 @@
 
     function _invokeDisconnectedCallback(node, visited) {
         if (!node || typeof node !== 'object') return;
-        var hasCustomRegistry = (typeof globalThis !== 'undefined' && globalThis.customElements && globalThis.customElements._registry);
-        var hasCustomElements = hasCustomRegistry && Object.keys(globalThis.customElements._registry).length > 0;
-        if (!hasCustomElements && !node.disconnectedCallback && !node.detached && !node.polymerController && !node.shadowRoot && !node._shadowRoot && !node._shadowRootInstance) {
-            return;
-        }
         if (!visited) visited = new Set();
         if (visited.has(node)) return;
         visited.add(node);

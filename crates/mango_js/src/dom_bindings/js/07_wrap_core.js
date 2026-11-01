@@ -430,6 +430,10 @@
                     this.setAttribute("value", (val === null || val === undefined) ? "" : String(val));
                     return;
                 }
+                if (tag === 'progress' || tag === 'meter') {
+                    this.setAttribute("value", (val === null || val === undefined) ? "0" : String(val));
+                    return;
+                }
                 if (_getAttribute(this._nodeId, "data-mango-default-value") === null) {
                     var initVal = _getAttribute(this._nodeId, "value");
                     _setAttribute(this._nodeId, "data-mango-default-value", initVal === null ? "" : initVal);
