@@ -171,7 +171,9 @@ pub fn resolve_item_cross_size(
                         *intrinsic_height
                     }
                 }
-                _ if let Some(fc_h) = super::sizing::form_control_intrinsic_height(child) => fc_h,
+                _ if super::sizing::form_control_intrinsic_height(child).is_some() => {
+                    super::sizing::form_control_intrinsic_height(child).unwrap()
+                }
                 _ => {
                     let item_w = if explicit_main > 0.0 {
                         explicit_main
@@ -307,6 +309,7 @@ pub fn resolve_item_cross_size(
     } {
         w
     } else {
+        #[allow(clippy::nonminimal_bool)]
         if !is_wrap
             && matches!(item_align, AlignItems::Normal | AlignItems::Stretch)
             && !has_cross_auto_margin
