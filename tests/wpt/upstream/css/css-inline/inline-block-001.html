@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>CSS Inline: Basic inline-block boxes</title>
+  <link rel="help" href="https://www.w3.org/TR/css-inline-3/#inline-boxes">
+  <link rel="match" href="inline-block-001-ref.html">
+  <style>
+    .container {
+      font-size: 0;
+      line-height: 0;
+    }
+    .box {
+      display: inline-block;
+      width: 100px;
+      height: 80px;
+    }
+    .b1 { background: #0000ff; }
+    .b2 { background: #00ff00; }
+    .b3 { background: #ff0000; }
+  </style>
+</head>
+<body style="margin: 0;">
+  <div class="container">
+    <div class="box b1"></div>
+    <div class="box b2"></div>
+    <div class="box b3"></div>
+  </div>
+</body>
+</html>

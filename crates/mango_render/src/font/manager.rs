@@ -310,6 +310,9 @@ impl FontManager {
         weight: FontWeight,
         font_size: f32,
     ) -> (f32, f32, f32) {
+        if font_size <= 0.0 {
+            return (0.0, 0.0, 0.0);
+        }
         let font = self.select_font(family, weight);
         let px_size = font_size.max(1.0);
         if let Some(lm) = font.horizontal_line_metrics(px_size) {
@@ -661,6 +664,9 @@ impl FontManager {
         family: FontFamily,
         letter_spacing: f32,
     ) -> (f32, f32) {
+        if font_size <= 0.0 || text.is_empty() {
+            return (0.0, 0.0);
+        }
         let primary_font = self.select_font(family, weight);
         let reg_font = self.select_font(family, FontWeight::Regular);
         let is_synth_bold = weight == FontWeight::Bold;
@@ -726,6 +732,9 @@ impl FontManager {
         weight: FontWeight,
         family: FontFamily,
     ) -> f32 {
+        if font_size <= 0.0 {
+            return 0.0;
+        }
         if super::emoji::is_zero_width_or_format(ch) {
             return 0.0;
         }

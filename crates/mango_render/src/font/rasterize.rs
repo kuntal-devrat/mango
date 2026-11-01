@@ -205,6 +205,9 @@ impl FontManager {
         letter_spacing: f32,
         clip: mango_core::Rect,
     ) {
+        if font_size <= 0.0 || text.is_empty() {
+            return;
+        }
         let primary_font = self.select_font(family, weight);
         let px_size = font_size.max(1.0);
 
@@ -407,6 +410,9 @@ impl FontManager {
         letter_spacing: f32,
         clip: mango_core::Rect,
     ) {
+        if font_size <= 0.0 || text.is_empty() {
+            return;
+        }
         let primary_font = self.select_font(family, weight);
         let px_size = font_size.max(1.0);
 
@@ -589,7 +595,7 @@ impl FontManager {
         let gw = gradient_rect.width().max(1.0) as u32;
         let gh = gradient_rect.height().max(1.0) as u32;
         let grad_pixels = gradient.rasterize(gw, gh);
-        if grad_pixels.is_empty() {
+        if grad_pixels.is_empty() || font_size <= 0.0 || text.is_empty() {
             return;
         }
 

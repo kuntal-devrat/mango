@@ -48,8 +48,11 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    /// Sets raw text mode for elements like `<script>` or `<style>`.
+    /// Sets raw text mode for elements like `<script>` or `<style>`, and RCDATA mode for `<textarea>` / `<title>`.
     pub fn set_raw_text_mode(&mut self, tag_name: &str) {
+        if tag_name.eq_ignore_ascii_case("textarea") && self.peek() == Some('\n') {
+            self.advance();
+        }
         self.state = State::RawText {
             tag: tag_name.to_ascii_lowercase(),
         };

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>CSS Tables: Colspan spanning two columns</title>
+  <link rel="help" href="https://www.w3.org/TR/CSS22/tables.html#table-columns">
+  <link rel="match" href="table-colspan-001-ref.html">
+  <style>
+    table {
+      border-spacing: 0;
+      margin: 0;
+      padding: 0;
+      width: 200px;
+    }
+    td {
+      padding: 0;
+      height: 40px;
+    }
+    .span-cell {
+      background: #ff00ff;
+      width: 200px;
+    }
+    .c1 { background: #0000ff; width: 100px; }
+    .c2 { background: #00ff00; width: 100px; }
+  </style>
+</head>
+<body style="margin: 0;">
+  <table>
+    <tr>
+      <td colspan="2" class="span-cell"></td>
+    </tr>
+    <tr>
+      <td class="c1"></td>
+      <td class="c2"></td>
+    </tr>
+  </table>
+</body>
+</html>
