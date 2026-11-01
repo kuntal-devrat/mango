@@ -193,11 +193,62 @@
             },
             get htmlFor() { return this.getAttribute('for') || ''; },
             set htmlFor(val) { this.setAttribute('for', String(val)); },
+            get httpEquiv() { return this.getAttribute('http-equiv') || ''; },
+            set httpEquiv(val) { this.setAttribute('http-equiv', String(val)); },
+            get data() {
+                var tag = (this.tagName || '').toLowerCase();
+                if (tag === 'object') {
+                    var raw = this.getAttribute('data');
+                    if (raw === null || raw === undefined) return '';
+                    try {
+                        var base = (typeof window !== 'undefined' && window.location && window.location.href)
+                            ? window.location.href
+                            : ((typeof document !== 'undefined' && document.location && document.location.href)
+                                ? document.location.href
+                                : 'http://localhost/');
+                        return new URL(raw, base).href;
+                    } catch(e) {
+                        return String(raw);
+                    }
+                }
+                var nt = this.nodeType;
+                if (nt === 3 || nt === 4 || nt === 7 || nt === 8) {
+                    if (this._nodeValue !== undefined && this._nodeValue !== null) return this._nodeValue;
+                    if (this._data !== undefined && this._data !== null) return this._data;
+                    if (this._nodeId !== undefined && typeof _getNodeValue === 'function') {
+                        var v = _getNodeValue(this._nodeId);
+                        if (v !== null && v !== undefined) return v;
+                    }
+                    return '';
+                }
+                return this._data !== undefined ? this._data : (this.getAttribute ? (this.getAttribute('data') || '') : '');
+            },
+            set data(val) {
+                var tag = (this.tagName || '').toLowerCase();
+                if (tag === 'object') {
+                    this.setAttribute('data', String(val));
+                    return;
+                }
+                var nt = this.nodeType;
+                if (nt === 3 || nt === 4 || nt === 7 || nt === 8) {
+                    var str = (val === null) ? '' : String(val);
+                    this._nodeValue = str;
+                    this._data = str;
+                    if (this._nodeId !== undefined && typeof _setNodeValue === 'function') {
+                        _setNodeValue(this._nodeId, str);
+                    }
+                    return;
+                }
+                this._data = String(val);
+            },
             get contentDocument() {
                 return (typeof _getIframeContentDocument === 'function') ? _getIframeContentDocument(this) : (this._contentDocument || null);
             },
             get contentWindow() {
                 return (typeof _getIframeContentWindow === 'function') ? _getIframeContentWindow(this) : (this._contentWindow || null);
+            },
+            getSVGDocument: function() {
+                return this.contentDocument || null;
             },
             appendChild: function(child) {
                 if (arguments.length < 1) throw new TypeError("Failed to execute 'appendChild' on 'Node': 1 argument required");

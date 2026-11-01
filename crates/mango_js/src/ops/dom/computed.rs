@@ -226,6 +226,17 @@ pub fn op_mango_get_computed_style(
         map.insert("line-height".to_string(), "normal".to_string());
     }
 
+    let ws_str = match style.white_space {
+        mango_css::values::WhiteSpace::Normal => "normal",
+        mango_css::values::WhiteSpace::Nowrap => "nowrap",
+        mango_css::values::WhiteSpace::Pre => "pre",
+        mango_css::values::WhiteSpace::PreWrap => "pre-wrap",
+        mango_css::values::WhiteSpace::PreLine => "pre-line",
+        mango_css::values::WhiteSpace::BreakSpaces => "break-spaces",
+    };
+    map.insert("white-space".to_string(), ws_str.to_string());
+    map.insert("whiteSpace".to_string(), ws_str.to_string());
+
     // Text decoration & typography
     let td_line = style.text_decoration.to_css_string();
     let td_style = style.text_decoration_style.as_str().to_string();

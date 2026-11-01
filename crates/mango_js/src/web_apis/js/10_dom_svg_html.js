@@ -761,6 +761,19 @@
             configurable: true,
             enumerable: true
         });
+        globalThis.HTMLIFrameElement.prototype.getSVGDocument = function() {
+            return this.contentDocument || null;
+        };
+    }
+    if (globalThis.HTMLObjectElement && globalThis.HTMLObjectElement.prototype) {
+        Object.defineProperty(globalThis.HTMLObjectElement.prototype, 'contentDocument', {
+            get: function() { return (typeof _getIframeContentDocument === 'function') ? _getIframeContentDocument(this) : (this._contentDocument || null); },
+            configurable: true,
+            enumerable: true
+        });
+        globalThis.HTMLObjectElement.prototype.getSVGDocument = function() {
+            return this.contentDocument || null;
+        };
     }
     Object.defineProperty(globalThis.Document.prototype, 'scrollingElement', {
         get: function() {

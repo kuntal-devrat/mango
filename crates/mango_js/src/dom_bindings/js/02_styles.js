@@ -71,6 +71,8 @@
             if (!p) return "";
             var kebab = String(p).trim().replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
             kebab = WEBKIT_ALIASES[kebab] || kebab;
+            if (kebab === 'css-float') kebab = 'float';
+            if (kebab === 'css-float') kebab = 'float';
             if (kebab === 'all') {
                 return base._all || (base._props && base._props['all']) || "";
             }
@@ -201,8 +203,7 @@
             }
             if (base._props && base._props[kebab] !== undefined) return String(base._props[kebab]);
             var camel = kebab.replace(/-([a-z])/g, function(g) { return g[1].toUpperCase(); });
-            if (base[camel] !== undefined && typeof base[camel] !== 'function') return String(base[camel]);
-            if (base[kebab] !== undefined && typeof base[kebab] !== 'function') return String(base[kebab]);
+            if (base._props && base._props[camel] !== undefined) return String(base._props[camel]);
             return "";
         };
 
@@ -214,6 +215,7 @@
             if (!p) return;
             var kebab = String(p).trim().replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
             kebab = WEBKIT_ALIASES[kebab] || kebab;
+            if (kebab === 'css-float') kebab = 'float';
             var camel = kebab.replace(/-([a-z])/g, function(g) { return g[1].toUpperCase(); });
             var sVal = (v === null || v === undefined) ? "" : String(v).trim();
             if (!base._props) base._props = {};
@@ -332,6 +334,7 @@
             if (!p) return "";
             var kebab = String(p).trim().replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
             kebab = WEBKIT_ALIASES[kebab] || kebab;
+            if (kebab === 'css-float') kebab = 'float';
             var prev = base.getPropertyValue(kebab);
             base.setProperty(kebab, "");
             return prev;
@@ -388,6 +391,13 @@
             enumerable: false
         });
 
+        Object.defineProperty(base, 'cssFloat', {
+            get: function() { return base.getPropertyValue('float'); },
+            set: function(v) { base.setProperty('float', v); },
+            configurable: true,
+            enumerable: true
+        });
+
         var rawStyle = null;
         if (el && typeof el.getAttribute === 'function') {
             rawStyle = el.getAttribute("style");
@@ -416,8 +426,15 @@
         return new Proxy(base, {
             get: function(target, prop, receiver) {
                 if (typeof prop === 'string') {
+                    if (prop.startsWith('_')) {
+                        return target[prop];
+                    }
+                    if (prop === 'cssFloat') {
+                        return target.getPropertyValue('float');
+                    }
                     if (prop in target && typeof target[prop] === 'function') return target[prop];
                     var kebab = prop.replace(/([A-Z])/g, '-$1').toLowerCase();
+                    if (kebab === 'css-float') kebab = 'float';
                     var val = target.getPropertyValue(kebab);
                     if (val !== "") return val;
                     if (target._props && target._props[prop] !== undefined) return target._props[prop];
@@ -441,6 +458,10 @@
             set: function(target, prop, value, receiver) {
                 if (prop === 'cssText') {
                     target.cssText = value;
+                    return true;
+                }
+                if (prop === 'cssFloat') {
+                    target.setProperty('float', value);
                     return true;
                 }
                 if (typeof prop === 'string') {

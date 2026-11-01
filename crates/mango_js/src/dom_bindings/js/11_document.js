@@ -703,4 +703,51 @@
         try { globalThis._mangoWrap = _scrollAwareWrapElement; globalThis._wrapElement = _scrollAwareWrapElement; } catch(e) {}
     }
 
+    var _docWriteLastScript = null;
+    var _docWriteLastNode = null;
+
+    function _documentWrite(doc, args, addNewline) {
+        var str = Array.prototype.join.call(args, '');
+        if (addNewline) str += '\n';
+        if (!str) return;
+        var cur = (doc === document && typeof document !== 'undefined') ? document.currentScript : null;
+        var parent = (cur && cur.parentNode) ? cur.parentNode : (doc.body || doc.documentElement || doc);
+        var frag = (typeof _createFragment === 'function') ? _wrapElement(_createFragment()) : (doc.createDocumentFragment ? doc.createDocumentFragment() : null);
+        if (frag) {
+            frag.innerHTML = str;
+            var lastChild = frag.lastChild;
+            if (cur && cur.parentNode) {
+                var ref;
+                if (_docWriteLastScript === cur && _docWriteLastNode && _docWriteLastNode.parentNode === cur.parentNode) {
+                    ref = _docWriteLastNode.nextSibling;
+                } else {
+                    ref = cur.nextSibling;
+                }
+                if (ref) {
+                    cur.parentNode.insertBefore(frag, ref);
+                } else {
+                    cur.parentNode.appendChild(frag);
+                }
+                _docWriteLastScript = cur;
+                _docWriteLastNode = lastChild || cur;
+            } else if (parent && parent.appendChild) {
+                parent.appendChild(frag);
+            }
+        }
+        if (typeof _syncWindowNamedProperties === 'function') {
+            _syncWindowNamedProperties();
+        }
+    }
+    globalThis._documentWrite = _documentWrite;
+
+    document.write = function() {
+        _documentWrite(this, arguments, false);
+    };
+    document.writeln = function() {
+        _documentWrite(this, arguments, true);
+    };
+    document.open = function() { return this; };
+    document.close = function() { return this; };
+
+
 

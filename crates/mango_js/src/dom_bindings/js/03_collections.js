@@ -127,6 +127,7 @@
             }
         });
     }
+    try { globalThis._createHTMLCollection = _createHTMLCollection; } catch(e) {}
 
     function _createNodeList(getItemsFn) {
         var proto = (typeof globalThis.NodeList !== 'undefined') ? globalThis.NodeList.prototype : Object.prototype;
@@ -190,4 +191,5 @@
             }
         });
     }
+    try { globalThis._createHTMLCollection = _createHTMLCollection; } catch(e) {}
 

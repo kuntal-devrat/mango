@@ -145,6 +145,24 @@
         event.defaultPrevented = !!event.defaultPrevented;
         event._stopped = false;
         event._stopImmediate = false;
+        if (typeof event.preventDefault !== 'function') {
+            event.preventDefault = function() {
+                if (this.cancelable !== false) {
+                    this.defaultPrevented = true;
+                }
+            };
+        }
+        if (typeof event.stopPropagation !== 'function') {
+            event.stopPropagation = function() {
+                this._stopped = true;
+            };
+        }
+        if (typeof event.stopImmediatePropagation !== 'function') {
+            event.stopImmediatePropagation = function() {
+                this._stopImmediate = true;
+                this._stopped = true;
+            };
+        }
 
         // HTML5 Popover auto light-dismiss
         if ((type === 'click' || type === 'pointerdown') && globalThis._popoverStack && globalThis._popoverStack.length > 0) {

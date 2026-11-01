@@ -126,7 +126,7 @@
     globalThis._liveRanges = _liveRanges;
 
     function Range() {
-        this.startContainer = (typeof document !== 'undefined') ? (document.body || document) : null;
+        this.startContainer = (typeof document !== 'undefined') ? document : null;
         this.startOffset = 0;
         this.endContainer = this.startContainer;
         this.endOffset = 0;

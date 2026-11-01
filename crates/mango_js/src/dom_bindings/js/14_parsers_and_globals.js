@@ -107,7 +107,19 @@
         return _wrapElement(_origCC(arguments.length === 0 ? '' : String(text)));
     };
     document.createEvent = function(type) {
-        var evt = (typeof globalThis.Event !== 'undefined') ? new globalThis.Event(type || "") : { type: type || "" };
+        var lower = String(type || "").toLowerCase();
+        var evt;
+        if ((lower === 'uievent' || lower === 'uievents') && typeof globalThis.UIEvent === 'function') {
+            evt = new globalThis.UIEvent("");
+        } else if ((lower === 'mouseevent' || lower === 'mouseevents') && typeof globalThis.MouseEvent === 'function') {
+            evt = new globalThis.MouseEvent("");
+        } else if ((lower === 'customevent' || lower === 'customevents') && typeof globalThis.CustomEvent === 'function') {
+            evt = new globalThis.CustomEvent("");
+        } else if (typeof globalThis.Event !== 'undefined') {
+            evt = new globalThis.Event(type || "");
+        } else {
+            evt = { type: type || "" };
+        }
         evt.initEvent = function(t, b, c) {
             this.type = String(t);
             this.bubbles = !!b;
@@ -119,10 +131,29 @@
             this.cancelable = !!c;
             this.detail = detail;
         };
-        evt.initMouseEvent = function(t, b, c) {
+        evt.initUIEvent = function(t, b, c, view, detail) {
             this.type = String(t);
             this.bubbles = !!b;
             this.cancelable = !!c;
+            this.view = view || null;
+            this.detail = (detail !== undefined) ? Number(detail) : 0;
+        };
+        evt.initMouseEvent = function(t, b, c, view, detail, sx, sy, cx, cy, ctrl, alt, shift, meta, button, rel) {
+            this.type = String(t);
+            this.bubbles = !!b;
+            this.cancelable = !!c;
+            this.view = view || null;
+            this.detail = (detail !== undefined) ? Number(detail) : 0;
+            this.screenX = sx || 0;
+            this.screenY = sy || 0;
+            this.clientX = cx || 0;
+            this.clientY = cy || 0;
+            this.ctrlKey = !!ctrl;
+            this.altKey = !!alt;
+            this.shiftKey = !!shift;
+            this.metaKey = !!meta;
+            this.button = button || 0;
+            this.relatedTarget = rel || null;
         };
         return evt;
     };
@@ -465,6 +496,47 @@
             contentType: 'text/html', compatMode: 'CSS1Compat', _compatMode: 'CSS1Compat',
             characterSet: 'UTF-8', _characterSet: 'UTF-8', charset: 'UTF-8', inputEncoding: 'UTF-8', location: null,
             _childNodes: [doctype, html], _doctype: doctype, doctype: doctype,
+            get childNodes() {
+                var self = this;
+                return (typeof _createNodeList === 'function') ? _createNodeList(function() { return self._childNodes || []; }) : (self._childNodes || []);
+            },
+            get firstChild() { return (this._childNodes && this._childNodes.length > 0) ? this._childNodes[0] : null; },
+            get lastChild() { return (this._childNodes && this._childNodes.length > 0) ? this._childNodes[this._childNodes.length - 1] : null; },
+            appendChild: function(c) {
+                if (typeof _ensurePreInsertionValidity === 'function') _ensurePreInsertionValidity(this, c, null);
+                if (!c) return c;
+                if (c.nodeType === 11) {
+                    var fKids = c.childNodes ? Array.prototype.slice.call(c.childNodes) : (c._childNodes ? Array.prototype.slice.call(c._childNodes) : []);
+                    for (var fi = 0; fi < fKids.length; fi++) this.appendChild(fKids[fi]);
+                    return c;
+                }
+                if (!this._childNodes) this._childNodes = [];
+                this._childNodes.push(c);
+                c._ownerDocument = this; c.ownerDocument = this; c._parentNode = this; c.parentNode = this;
+                if (c.nodeType === 1 && !this._documentElement) { this._documentElement = c; this.documentElement = c; }
+                else if (c.nodeType === 10 && !this._doctype) { this._doctype = c; this.doctype = c; }
+                return c;
+            },
+            removeChild: function(c) {
+                if (typeof _defaultRemoveChild === 'function') return _defaultRemoveChild(this, c);
+                var idx = this._childNodes ? this._childNodes.indexOf(c) : -1;
+                if (idx !== -1) { this._childNodes.splice(idx, 1); c._parentNode = null; c.parentNode = null; }
+                if (this._documentElement === c || this.documentElement === c) { this._documentElement = null; this.documentElement = null; }
+                if (this._doctype === c || this.doctype === c) { this._doctype = null; this.doctype = null; }
+                return c;
+            },
+            insertBefore: function(n, r) {
+                if (typeof _ensurePreInsertionValidity === 'function') _ensurePreInsertionValidity(this, n, r);
+                if (!r) return this.appendChild(n);
+                if (!n) return n;
+                if (!this._childNodes) this._childNodes = [];
+                var idx = this._childNodes.indexOf(r);
+                if (idx === -1) return this.appendChild(n);
+                this._childNodes.splice(idx, 0, n);
+                n._ownerDocument = this; n.ownerDocument = this; n._parentNode = this; n.parentNode = this;
+                if (n.nodeType === 1 && !this._documentElement) { this._documentElement = n; this.documentElement = n; }
+                return n;
+            },
             _documentElement: html, documentElement: html, body: body, head: head, defaultView: null, _defaultView: null,
             get scrollingElement() { return this.documentElement || this.body || null; },
             implementation: Object.create(DOMImplementation.prototype),

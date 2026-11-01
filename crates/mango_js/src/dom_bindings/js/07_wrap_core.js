@@ -436,7 +436,9 @@
                 }
                 var str = (val === null || val === undefined) ? "" : String(val);
                 _setAttribute(this._nodeId, "data-mango-value", str);
-                _setAttribute(this._nodeId, "value", str);
+                if (tag === 'button') {
+                    _setAttribute(this._nodeId, "value", str);
+                }
             },
             get defaultValue() {
                 var tag = (this.tagName || '').toLowerCase();
@@ -529,6 +531,14 @@
                 if (tag === 'output') return 'output';
                 if (tag === 'fieldset') return 'fieldset';
                 if (tag === 'select') return this.multiple ? 'select-multiple' : 'select-one';
+                if (tag === 'button') {
+                    var bt = _getAttribute(this._nodeId, "type");
+                    if (bt !== null && bt !== '') {
+                        var btl = String(bt).toLowerCase();
+                        if (btl === 'submit' || btl === 'reset' || btl === 'button') return btl;
+                    }
+                    return 'submit';
+                }
                 var t = _getAttribute(this._nodeId, "type");
                 if (t !== null && t !== '') return String(t).toLowerCase();
                 return tag === 'textarea' ? 'textarea' : 'text';
