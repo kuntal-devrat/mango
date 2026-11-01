@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>CSS Inline: Vertical alignment top</title>
+  <link rel="help" href="https://www.w3.org/TR/css-inline-3/#vertical-align-property">
+  <link rel="match" href="vertical-align-001-ref.html">
+  <style>
+    .container {
+      height: 100px;
+      font-size: 0;
+      line-height: 0;
+    }
+    .box {
+      display: inline-block;
+      vertical-align: top;
+      width: 100px;
+    }
+    .tall {
+      height: 100px;
+      background: #0000ff;
+    }
+    .short {
+      height: 50px;
+      background: #00ff00;
+    }
+  </style>
+</head>
+<body style="margin: 0;">
+  <div class="container">
+    <div class="box tall"></div>
+    <div class="box short"></div>
+  </div>
+</body>
+</html>

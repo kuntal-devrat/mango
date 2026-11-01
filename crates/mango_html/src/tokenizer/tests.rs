@@ -126,3 +126,32 @@ fn test_style_cdata_parsing() {
     let text = doc.text_content(doc.root());
     assert!(text.contains("div { color: green; }"));
 }
+
+#[test]
+fn test_rcdata_title_and_textarea_entity_decoding() {
+    let html = "<!doctype html><html><head><title>&quot;Mango &amp; Dillo &#9733;&quot; &copy; 2026</title></head><body><textarea>\nLine 1 &amp; &lt;b&gt;tag&lt;/b&gt; &#65;</textarea></body></html>";
+    let doc = crate::parse_html(html);
+
+    let title_node = doc
+        .find_element_by_tag(doc.root(), "title")
+        .expect("title element");
+    let title_text = doc.text_content(title_node);
+    assert_eq!(title_text, "\"Mango & Dillo ★\" © 2026");
+
+    let textarea_node = doc
+        .find_element_by_tag(doc.root(), "textarea")
+        .expect("textarea element");
+    let textarea_text = doc.text_content(textarea_node);
+    assert_eq!(textarea_text, "Line 1 & <b>tag</b> A");
+}
+
+#[test]
+fn test_rcdata_unclosed_legacy_entities() {
+    let html = "<title>Tom &amp Jerry &copy 2026</title>";
+    let doc = crate::parse_html(html);
+    let title_node = doc
+        .find_element_by_tag(doc.root(), "title")
+        .expect("title element");
+    let title_text = doc.text_content(title_node);
+    assert_eq!(title_text, "Tom & Jerry © 2026");
+}

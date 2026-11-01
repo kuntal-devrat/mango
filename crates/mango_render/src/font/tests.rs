@@ -513,3 +513,34 @@ fn test_variation_selector_and_zero_width_metrics() {
     );
     assert_eq!(w1, w2);
 }
+
+#[test]
+fn test_zero_and_negative_font_size_metrics() {
+    let fm = font_manager();
+    let (w0, h0) = fm.measure_text(
+        "Hello World",
+        0.0,
+        FontWeight::Regular,
+        FontFamily::SansSerif,
+    );
+    assert_eq!(w0, 0.0);
+    assert_eq!(h0, 0.0);
+
+    let (wn, hn) = fm.measure_text(
+        "Hello World",
+        -10.0,
+        FontWeight::Regular,
+        FontFamily::SansSerif,
+    );
+    assert_eq!(wn, 0.0);
+    assert_eq!(hn, 0.0);
+
+    let adv = fm.measure_char_width(' ', 0.0, FontWeight::Regular, FontFamily::SansSerif);
+    assert_eq!(adv, 0.0);
+
+    let (ascent, descent, line_gap) =
+        fm.font_metrics(FontFamily::SansSerif, FontWeight::Regular, 0.0);
+    assert_eq!(ascent, 0.0);
+    assert_eq!(descent, 0.0);
+    assert_eq!(line_gap, 0.0);
+}

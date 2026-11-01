@@ -337,10 +337,21 @@ pub fn decode_entities(input: &str) -> String {
             result.push('&');
             result.push_str(&entity_content);
             result.push(';');
-        } else {
-            // Not a complete entity
+        } else if !entity_content.is_empty() {
+            // Entities without trailing semicolon (WHATWG legacy entity references)
+            if let Some(numeric_part) = entity_content.strip_prefix('#') {
+                if let Some(decoded_ch) = resolve_numeric_entity(numeric_part) {
+                    result.push(decoded_ch);
+                    continue;
+                }
+            } else if let Some(replacement) = resolve_named_entity(&entity_content) {
+                result.push_str(replacement);
+                continue;
+            }
             result.push('&');
             result.push_str(&entity_content);
+        } else {
+            result.push('&');
         }
     }
 

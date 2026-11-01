@@ -61,7 +61,10 @@ fn test_renderer_actor_incremental_dom_mutation_and_frame_ready() {
     }
 
     // Mutate an attribute via execute_script -> triggers incremental style invalidation
-    renderer.execute_script("document.getElementById('item').className = 'urgent'; document.title = 'Updated Title';".to_string());
+    renderer.execute_script(
+        "document.getElementById('item').className = 'urgent'; document.title = 'Updated Title';"
+            .to_string(),
+    );
 
     // Wait for second frame
     let second = renderer
@@ -88,7 +91,12 @@ fn test_renderer_actor_incremental_viewport_resize() {
         <body><div style="width: 100%; height: 50px;">Full width bar</div></body>
     </html>"#;
 
-    renderer.load_document(test_payload("https://example.com/resize", html, 800.0, 600.0));
+    renderer.load_document(test_payload(
+        "https://example.com/resize",
+        html,
+        800.0,
+        600.0,
+    ));
 
     let first = renderer
         .result_rx
@@ -123,7 +131,12 @@ fn test_renderer_actor_incremental_tree_growth() {
         <body><div id="container">Original child</div></body>
     </html>"#;
 
-    renderer.load_document(test_payload("https://example.com/growth", html, 800.0, 600.0));
+    renderer.load_document(test_payload(
+        "https://example.com/growth",
+        html,
+        800.0,
+        600.0,
+    ));
 
     let first = renderer
         .result_rx
@@ -132,12 +145,15 @@ fn test_renderer_actor_incremental_tree_growth() {
     assert!(matches!(first, RendererResult::FrameReady(_)));
 
     // Append child to DOM tree
-    renderer.execute_script(r#"
+    renderer.execute_script(
+        r#"
         var p = document.createElement("p");
         p.textContent = "New dynamically appended paragraph";
         document.body.appendChild(p);
         document.title = "Growth Done";
-    "#.to_string());
+    "#
+        .to_string(),
+    );
 
     let second = renderer
         .result_rx

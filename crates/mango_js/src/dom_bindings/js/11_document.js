@@ -546,6 +546,33 @@
                 get: function() { return _getIframeContentDocument(iframe); },
                 configurable: true
             });
+            if (globalThis.Text && globalThis.CharacterData) {
+                win.Text = function(data) {
+                    var t = Object.create(win.Text.prototype);
+                    t.nodeType = 3;
+                    t.nodeName = "#text";
+                    t.ownerDocument = win.document;
+                    t.data = data === undefined ? "" : String(data);
+                    return t;
+                };
+                win.Text.prototype = Object.create(globalThis.CharacterData.prototype);
+                win.Text.prototype.constructor = win.Text;
+                win.Text.prototype.splitText = globalThis.Text.prototype.splitText;
+                var wtDesc = Object.getOwnPropertyDescriptor(globalThis.Text.prototype, 'wholeText');
+                if (wtDesc) Object.defineProperty(win.Text.prototype, 'wholeText', wtDesc);
+            }
+            if (globalThis.Comment && globalThis.CharacterData) {
+                win.Comment = function(data) {
+                    var c = Object.create(win.Comment.prototype);
+                    c.nodeType = 8;
+                    c.nodeName = "#comment";
+                    c.ownerDocument = win.document;
+                    c.data = data === undefined ? "" : String(data);
+                    return c;
+                };
+                win.Comment.prototype = Object.create(globalThis.CharacterData.prototype);
+                win.Comment.prototype.constructor = win.Comment;
+            }
             iframe._contentWindow = win;
         }
         return iframe._contentWindow;
