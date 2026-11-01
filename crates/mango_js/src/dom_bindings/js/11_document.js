@@ -312,6 +312,40 @@
         enumerable: true
     });
     if (globalThis.Document && globalThis.Document.prototype) {
+        Object.defineProperty(globalThis.Document.prototype, 'body', {
+            get: function() {
+                var de = this.documentElement;
+                if (!de) return null;
+                var kids = de.childNodes || de._childNodes || [];
+                for (var i = 0; i < kids.length; i++) {
+                    var k = kids[i];
+                    if (k && k.nodeType === 1) {
+                        var tag = (k.tagName || k.nodeName || '').toLowerCase();
+                        if (tag === 'body' || tag === 'frameset') return k;
+                    }
+                }
+                return null;
+            },
+            configurable: true,
+            enumerable: true
+        });
+        Object.defineProperty(globalThis.Document.prototype, 'head', {
+            get: function() {
+                var de = this.documentElement;
+                if (!de) return null;
+                var kids = de.childNodes || de._childNodes || [];
+                for (var i = 0; i < kids.length; i++) {
+                    var k = kids[i];
+                    if (k && k.nodeType === 1) {
+                        var tag = (k.tagName || k.nodeName || '').toLowerCase();
+                        if (tag === 'head') return k;
+                    }
+                }
+                return null;
+            },
+            configurable: true,
+            enumerable: true
+        });
         Object.defineProperty(globalThis.Document.prototype, 'scrollingElement', {
             get: function() {
                 if (this.compatMode === 'BackCompat') return this.body || null;

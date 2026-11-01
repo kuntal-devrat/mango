@@ -1,8 +1,10 @@
     function _getNodeIndex(node) {
-        if (!node || !node.parentNode) return 0;
-        var siblings = node.parentNode.childNodes || [];
+        if (!node) return 0;
+        var p = node.parentNode || node._parentNode;
+        if (!p) return 0;
+        var siblings = p.childNodes || p._childNodes || [];
         for (var i = 0; i < siblings.length; i++) {
-            if (siblings[i] === node || (siblings[i]._nodeId !== undefined && siblings[i]._nodeId === node._nodeId)) {
+            if (siblings[i] === node || (siblings[i]._nodeId !== undefined && node._nodeId !== undefined && siblings[i]._nodeId === node._nodeId)) {
                 return i;
             }
         }
@@ -11,71 +13,78 @@
 
     function _getNodeLength(node) {
         if (!node) return 0;
-        if (node.nodeType === 3 || node.nodeType === 8) {
-            return (node.nodeValue !== null && node.nodeValue !== undefined) ? String(node.nodeValue).length : (node.textContent || '').length;
+        if (node.nodeType === 3 || node.nodeType === 4 || node.nodeType === 8) {
+            return (node.nodeValue !== null && node.nodeValue !== undefined) ? String(node.nodeValue).length : (node.data ? String(node.data).length : (node.textContent || '').length);
         }
-        return (node.childNodes || []).length;
+        return (node.childNodes || node._childNodes || []).length;
     }
 
     function _getCommonAncestor(a, b) {
         if (!a || !b) return a || b || document;
-        if (a === b || (a._nodeId !== undefined && a._nodeId === b._nodeId)) return a;
+        if (a === b || (a._nodeId !== undefined && b._nodeId !== undefined && a._nodeId === b._nodeId)) return a;
         var aAncestors = [];
         var cur = a;
         while (cur) {
             aAncestors.push(cur);
-            cur = cur.parentNode;
+            cur = cur.parentNode || cur._parentNode;
         }
         cur = b;
         while (cur) {
             for (var i = 0; i < aAncestors.length; i++) {
-                if (aAncestors[i] === cur || (aAncestors[i]._nodeId !== undefined && aAncestors[i]._nodeId === cur._nodeId)) {
+                if (aAncestors[i] === cur || (aAncestors[i]._nodeId !== undefined && cur._nodeId !== undefined && aAncestors[i]._nodeId === cur._nodeId)) {
                     return cur;
                 }
             }
-            cur = cur.parentNode;
+            cur = cur.parentNode || cur._parentNode;
         }
         return (typeof document !== 'undefined') ? document : a;
     }
 
     function _isDescendantOf(node, ancestor) {
-        var cur = node ? node.parentNode : null;
+        var cur = node ? (node.parentNode || node._parentNode) : null;
         while (cur) {
-            if (cur === ancestor || (cur._nodeId !== undefined && cur._nodeId === ancestor._nodeId)) return true;
-            cur = cur.parentNode;
+            if (cur === ancestor || (cur._nodeId !== undefined && ancestor && ancestor._nodeId !== undefined && cur._nodeId === ancestor._nodeId)) return true;
+            cur = cur.parentNode || cur._parentNode;
         }
         return false;
     }
 
+    function _isInclusiveAncestor(ancestor, node) {
+        if (!ancestor || !node) return false;
+        if (ancestor === node || (ancestor._nodeId !== undefined && node._nodeId !== undefined && ancestor._nodeId === node._nodeId)) return true;
+        return _isDescendantOf(node, ancestor);
+    }
+
     function _comparePoints(nodeA, offsetA, nodeB, offsetB) {
-        if (nodeA === nodeB || (nodeA && nodeB && nodeA._nodeId !== undefined && nodeA._nodeId === nodeB._nodeId)) {
+        if (!nodeA || !nodeB) return 0;
+        if (nodeA === nodeB || (nodeA._nodeId !== undefined && nodeB._nodeId !== undefined && nodeA._nodeId === nodeB._nodeId)) {
             return offsetA < offsetB ? -1 : (offsetA > offsetB ? 1 : 0);
         }
         if (_isDescendantOf(nodeB, nodeA)) {
             var child = nodeB;
-            while (child.parentNode && child.parentNode !== nodeA && !(child.parentNode._nodeId !== undefined && child.parentNode._nodeId === nodeA._nodeId)) {
-                child = child.parentNode;
+            while (child && (child.parentNode || child._parentNode) !== nodeA && !(child.parentNode && child.parentNode._nodeId !== undefined && nodeA._nodeId !== undefined && child.parentNode._nodeId === nodeA._nodeId)) {
+                child = child.parentNode || child._parentNode;
             }
             var idx = _getNodeIndex(child);
-            return idx < offsetA ? 1 : -1;
+            return offsetA <= idx ? -1 : 1;
         }
         if (_isDescendantOf(nodeA, nodeB)) {
             var child = nodeA;
-            while (child.parentNode && child.parentNode !== nodeB && !(child.parentNode._nodeId !== undefined && child.parentNode._nodeId === nodeB._nodeId)) {
-                child = child.parentNode;
+            while (child && (child.parentNode || child._parentNode) !== nodeB && !(child.parentNode && child.parentNode._nodeId !== undefined && nodeB._nodeId !== undefined && child.parentNode._nodeId === nodeB._nodeId)) {
+                child = child.parentNode || child._parentNode;
             }
             var idx = _getNodeIndex(child);
-            return offsetB <= idx ? 1 : -1;
+            return idx < offsetB ? -1 : 1;
         }
         var common = _getCommonAncestor(nodeA, nodeB);
         if (!common) return 0;
         var childA = nodeA;
-        while (childA.parentNode && childA.parentNode !== common && !(childA.parentNode._nodeId !== undefined && childA.parentNode._nodeId === common._nodeId)) {
-            childA = childA.parentNode;
+        while (childA && (childA.parentNode || childA._parentNode) !== common && !(childA.parentNode && childA.parentNode._nodeId !== undefined && common._nodeId !== undefined && childA.parentNode._nodeId === common._nodeId)) {
+            childA = childA.parentNode || childA._parentNode;
         }
         var childB = nodeB;
-        while (childB.parentNode && childB.parentNode !== common && !(childB.parentNode._nodeId !== undefined && childB.parentNode._nodeId === common._nodeId)) {
-            childB = childB.parentNode;
+        while (childB && (childB.parentNode || childB._parentNode) !== common && !(childB.parentNode && childB.parentNode._nodeId !== undefined && common._nodeId !== undefined && childB.parentNode._nodeId === common._nodeId)) {
+            childB = childB.parentNode || childB._parentNode;
         }
         var idxA = _getNodeIndex(childA);
         var idxB = _getNodeIndex(childB);
@@ -151,8 +160,14 @@
     };
 
     Range.prototype.setStart = function(node, offset) {
-        if (!node) throw new Error("TypeError: Node must not be null");
+        if (!node) throw new TypeError("Failed to execute 'setStart' on 'Range': parameter 1 is not of type 'Node'.");
         offset = Math.max(0, parseInt(offset, 10) || 0);
+        var nodeRoot = node.getRootNode ? node.getRootNode() : (node.ownerDocument || document);
+        var currentRoot = this.startContainer ? (this.startContainer.getRootNode ? this.startContainer.getRootNode() : (this.startContainer.ownerDocument || document)) : null;
+        if (currentRoot && nodeRoot !== currentRoot) {
+            this.endContainer = node;
+            this.endOffset = offset;
+        }
         this.startContainer = node;
         this.startOffset = offset;
         if (!this.endContainer || _comparePoints(this.startContainer, this.startOffset, this.endContainer, this.endOffset) > 0) {
@@ -163,8 +178,14 @@
     };
 
     Range.prototype.setEnd = function(node, offset) {
-        if (!node) throw new Error("TypeError: Node must not be null");
+        if (!node) throw new TypeError("Failed to execute 'setEnd' on 'Range': parameter 1 is not of type 'Node'.");
         offset = Math.max(0, parseInt(offset, 10) || 0);
+        var nodeRoot = node.getRootNode ? node.getRootNode() : (node.ownerDocument || document);
+        var currentRoot = this.startContainer ? (this.startContainer.getRootNode ? this.startContainer.getRootNode() : (this.startContainer.ownerDocument || document)) : null;
+        if (currentRoot && nodeRoot !== currentRoot) {
+            this.startContainer = node;
+            this.startOffset = offset;
+        }
         this.endContainer = node;
         this.endOffset = offset;
         if (!this.startContainer || _comparePoints(this.startContainer, this.startOffset, this.endContainer, this.endOffset) > 0) {
@@ -239,105 +260,201 @@
         return r;
     };
 
-    Range.prototype.deleteContents = function() {
-        if (this.collapsed) return;
-        var isSame = (this.startContainer === this.endContainer || (this.startContainer && this.endContainer && this.startContainer._nodeId !== undefined && this.startContainer._nodeId === this.endContainer._nodeId));
-        if (isSame) {
-            if (this.startContainer.nodeType === 3 || this.startContainer.nodeType === 8) {
-                var s = this.startContainer.nodeValue || '';
-                this.startContainer.nodeValue = s.substring(0, this.startOffset) + s.substring(this.endOffset);
-            } else if (this.startContainer.childNodes) {
-                var kids = Array.prototype.slice.call(this.startContainer.childNodes);
-                for (var i = this.startOffset; i < this.endOffset && i < kids.length; i++) {
-                    this.startContainer.removeChild(kids[i]);
-                }
+    function _isContained(node, range) {
+        return _comparePoints(range.startContainer, range.startOffset, node, 0) <= 0 &&
+               _comparePoints(node, _getNodeLength(node), range.endContainer, range.endOffset) <= 0;
+    }
+
+    function _extractRangeContents(range, cloneOnly) {
+        var sc = range.startContainer, so = range.startOffset;
+        var ec = range.endContainer, eo = range.endOffset;
+        var ownerDoc = sc ? (sc.ownerDocument || sc._ownerDocument || (sc.nodeType === 9 ? sc : document)) : document;
+        var frag = ownerDoc.createDocumentFragment ? ownerDoc.createDocumentFragment() : _wrapElement(_createFragment());
+        if (range.collapsed) return frag;
+
+        var isSame = (sc === ec || (sc && ec && sc._nodeId !== undefined && sc._nodeId === ec._nodeId));
+        if (isSame && (sc.nodeType === 3 || sc.nodeType === 4 || sc.nodeType === 8)) {
+            var clone = sc.cloneNode(false);
+            var str = (sc.data || sc.nodeValue || '').substring(so, eo);
+            clone.nodeValue = str;
+            if (clone.data !== undefined) clone.data = str;
+            frag.appendChild(clone);
+            if (!cloneOnly) {
+                var full = sc.data || sc.nodeValue || '';
+                var remaining = full.substring(0, so) + full.substring(eo);
+                sc.nodeValue = remaining;
+                if (sc.data !== undefined) sc.data = remaining;
             }
-        } else {
-            if (this.startContainer.nodeType === 3) {
-                var s1 = this.startContainer.nodeValue || '';
-                this.startContainer.nodeValue = s1.substring(0, this.startOffset);
+            return frag;
+        }
+
+        var common = range.commonAncestorContainer || _getCommonAncestor(sc, ec);
+        var firstPartiallyContained = null;
+        if (!_isInclusiveAncestor(sc, ec)) {
+            var cur = sc;
+            while (cur && (cur.parentNode || cur._parentNode) !== common && !(cur.parentNode && cur.parentNode._nodeId !== undefined && common._nodeId !== undefined && cur.parentNode._nodeId === common._nodeId)) {
+                cur = cur.parentNode || cur._parentNode;
             }
-            if (this.endContainer.nodeType === 3) {
-                var s2 = this.endContainer.nodeValue || '';
-                this.endContainer.nodeValue = s2.substring(this.endOffset);
+            firstPartiallyContained = cur;
+        }
+
+        var lastPartiallyContained = null;
+        if (!_isInclusiveAncestor(ec, sc)) {
+            var cur = ec;
+            while (cur && (cur.parentNode || cur._parentNode) !== common && !(cur.parentNode && cur.parentNode._nodeId !== undefined && common._nodeId !== undefined && cur.parentNode._nodeId === common._nodeId)) {
+                cur = cur.parentNode || cur._parentNode;
+            }
+            lastPartiallyContained = cur;
+        }
+
+        var commonKids = common.childNodes ? Array.prototype.slice.call(common.childNodes) : (common._childNodes ? Array.prototype.slice.call(common._childNodes) : []);
+        var containedChildren = [];
+        for (var i = 0; i < commonKids.length; i++) {
+            var k = commonKids[i];
+            if (k && _isContained(k, range)) {
+                containedChildren.push(k);
             }
         }
-        this.collapse(true);
+
+        var newOffset = 0;
+        if (firstPartiallyContained) {
+            newOffset = _getNodeIndex(firstPartiallyContained) + 1;
+        } else if (containedChildren.length > 0) {
+            newOffset = _getNodeIndex(containedChildren[0]);
+        }
+
+        if (firstPartiallyContained) {
+            if (firstPartiallyContained.nodeType === 3 || firstPartiallyContained.nodeType === 4 || firstPartiallyContained.nodeType === 8) {
+                var clone = firstPartiallyContained.cloneNode(false);
+                var full = firstPartiallyContained.data || firstPartiallyContained.nodeValue || '';
+                clone.nodeValue = full.substring(so);
+                if (clone.data !== undefined) clone.data = clone.nodeValue;
+                frag.appendChild(clone);
+                if (!cloneOnly) {
+                    firstPartiallyContained.nodeValue = full.substring(0, so);
+                    if (firstPartiallyContained.data !== undefined) firstPartiallyContained.data = firstPartiallyContained.nodeValue;
+                }
+            } else {
+                var clone = firstPartiallyContained.cloneNode(false);
+                frag.appendChild(clone);
+                var subrange = new Range();
+                subrange.setStart(sc, so);
+                subrange.setEnd(firstPartiallyContained, _getNodeLength(firstPartiallyContained));
+                var subfrag = _extractRangeContents(subrange, cloneOnly);
+                clone.appendChild(subfrag);
+            }
+        }
+
+        for (var j = 0; j < containedChildren.length; j++) {
+            var ck = containedChildren[j];
+            if (cloneOnly) {
+                frag.appendChild(ck.cloneNode(true));
+            } else {
+                frag.appendChild(ck);
+            }
+        }
+
+        if (lastPartiallyContained) {
+            if (lastPartiallyContained.nodeType === 3 || lastPartiallyContained.nodeType === 4 || lastPartiallyContained.nodeType === 8) {
+                var clone = lastPartiallyContained.cloneNode(false);
+                var full = lastPartiallyContained.data || lastPartiallyContained.nodeValue || '';
+                clone.nodeValue = full.substring(0, eo);
+                if (clone.data !== undefined) clone.data = clone.nodeValue;
+                frag.appendChild(clone);
+                if (!cloneOnly) {
+                    lastPartiallyContained.nodeValue = full.substring(eo);
+                    if (lastPartiallyContained.data !== undefined) lastPartiallyContained.data = lastPartiallyContained.nodeValue;
+                }
+            } else {
+                var clone = lastPartiallyContained.cloneNode(false);
+                frag.appendChild(clone);
+                var subrange = new Range();
+                subrange.setStart(lastPartiallyContained, 0);
+                subrange.setEnd(ec, eo);
+                var subfrag = _extractRangeContents(subrange, cloneOnly);
+                clone.appendChild(subfrag);
+            }
+        }
+
+        if (!cloneOnly) {
+            range.setStart(common, newOffset);
+            range.collapse(true);
+        }
+        return frag;
+    }
+
+    Range.prototype.deleteContents = function() {
+        _extractRangeContents(this, false);
     };
 
     Range.prototype.cloneContents = function() {
-        var frag = _wrapElement(_createFragment());
-        if (this.collapsed) return frag;
-        var isSame = (this.startContainer === this.endContainer || (this.startContainer && this.endContainer && this.startContainer._nodeId !== undefined && this.startContainer._nodeId === this.endContainer._nodeId));
-        if (isSame) {
-            if (this.startContainer.nodeType === 3 || this.startContainer.nodeType === 8) {
-                var s = (this.startContainer.nodeValue || '').substring(this.startOffset, this.endOffset);
-                frag.appendChild(_wrapElement(_origCTN(s)));
-            } else if (this.startContainer.childNodes) {
-                var kids = this.startContainer.childNodes;
-                for (var i = this.startOffset; i < this.endOffset && i < kids.length; i++) {
-                    if (kids[i] && kids[i].cloneNode) frag.appendChild(kids[i].cloneNode(true));
-                }
-            }
-        } else {
-            if (this.startContainer.nodeType === 3) {
-                var s1 = (this.startContainer.nodeValue || '').substring(this.startOffset);
-                frag.appendChild(_wrapElement(_origCTN(s1)));
-            }
-            if (this.endContainer.nodeType === 3) {
-                var s2 = (this.endContainer.nodeValue || '').substring(0, this.endOffset);
-                frag.appendChild(_wrapElement(_origCTN(s2)));
-            }
-        }
-        return frag;
+        return _extractRangeContents(this, true);
     };
 
     Range.prototype.extractContents = function() {
-        var frag = _wrapElement(_createFragment());
-        if (this.collapsed) return frag;
-        var isSame = (this.startContainer === this.endContainer || (this.startContainer && this.endContainer && this.startContainer._nodeId !== undefined && this.startContainer._nodeId === this.endContainer._nodeId));
-        if (isSame) {
-            if (this.startContainer.nodeType === 3 || this.startContainer.nodeType === 8) {
-                var s = (this.startContainer.nodeValue || '').substring(this.startOffset, this.endOffset);
-                frag.appendChild(_wrapElement(_origCTN(s)));
-                var full = this.startContainer.nodeValue || '';
-                this.startContainer.nodeValue = full.substring(0, this.startOffset) + full.substring(this.endOffset);
-            } else if (this.startContainer.childNodes) {
-                var kids = Array.prototype.slice.call(this.startContainer.childNodes);
-                for (var i = this.startOffset; i < this.endOffset && i < kids.length; i++) {
-                    if (kids[i]) frag.appendChild(kids[i]);
-                }
-            }
-        } else {
-            var fragClone = this.cloneContents();
-            this.deleteContents();
-            return fragClone;
-        }
-        this.collapse(true);
-        return frag;
+        return _extractRangeContents(this, false);
     };
 
     Range.prototype.insertNode = function(node) {
-        if (!node) throw new Error("TypeError: Node must not be null");
+        if (!node) throw new TypeError("Failed to execute 'insertNode' on 'Range': parameter 1 is not of type 'Node'.");
+        if (this.startContainer.nodeType === 7 || this.startContainer.nodeType === 8 ||
+            (this.startContainer.nodeType === 3 && !this.startContainer.parentNode) ||
+            this.startContainer === node) {
+            throw new DOMException("The node cannot be inserted at the specified point in the hierarchy.", "HierarchyRequestError");
+        }
+        var referenceNode = null;
         if (this.startContainer.nodeType === 3) {
-            var full = this.startContainer.nodeValue || '';
-            var before = full.substring(0, this.startOffset);
-            var after = full.substring(this.startOffset);
-            this.startContainer.nodeValue = before;
-            var afterNode = _wrapElement(_origCTN(after));
-            var p = this.startContainer.parentNode;
-            if (p) {
-                p.insertBefore(afterNode, this.startContainer.nextSibling);
-                p.insertBefore(node, afterNode);
-            }
+            referenceNode = this.startContainer;
         } else {
-            var ref = (this.startContainer.childNodes && this.startContainer.childNodes[this.startOffset]) || null;
-            this.startContainer.insertBefore(node, ref);
+            var scKids = this.startContainer.childNodes || this.startContainer._childNodes || [];
+            referenceNode = (this.startOffset < scKids.length) ? scKids[this.startOffset] : null;
+        }
+        var parent = referenceNode === null ? this.startContainer : (referenceNode.parentNode || referenceNode._parentNode);
+
+        if (this.startContainer.nodeType === 3) {
+            referenceNode = this.startContainer.splitText(this.startOffset);
+            parent = referenceNode.parentNode || referenceNode._parentNode;
+        }
+        if (node === referenceNode) {
+            referenceNode = referenceNode.nextSibling;
+        }
+        if (node.parentNode) {
+            node.parentNode.removeChild(node);
+        }
+        var newOffset = referenceNode === null ? _getNodeLength(parent) : _getNodeIndex(referenceNode);
+        var isFrag = node.nodeType === 11;
+        var nodeLen = isFrag ? (node.childNodes ? node.childNodes.length : 0) : 1;
+        newOffset += nodeLen;
+
+        parent.insertBefore(node, referenceNode);
+        if (this.collapsed) {
+            this.setEnd(parent, newOffset);
         }
     };
 
     Range.prototype.surroundContents = function(newParent) {
-        if (!newParent) throw new Error("TypeError: newParent must not be null");
+        if (!newParent) throw new TypeError("Failed to execute 'surroundContents' on 'Range': parameter 1 is not of type 'Node'.");
+        var npType = newParent.nodeType;
+        if (npType === 9 || npType === 10 || npType === 11) {
+            throw new DOMException("The node provided is invalid.", "InvalidNodeTypeError");
+        }
+        var sc = this.startContainer, ec = this.endContainer;
+        if (sc !== ec) {
+            if (_isPartiallyContained(sc, this) && sc.nodeType !== 3) {
+                throw new DOMException("The Range has partially contained non-Text boundary points.", "InvalidStateError");
+            }
+            if (_isPartiallyContained(ec, this) && ec.nodeType !== 3) {
+                throw new DOMException("The Range has partially contained non-Text boundary points.", "InvalidStateError");
+            }
+            var common = this.commonAncestorContainer || _getCommonAncestor(sc, ec);
+            var kids = common.childNodes || common._childNodes || [];
+            for (var i = 0; i < kids.length; i++) {
+                var k = kids[i];
+                if (k && k.nodeType !== 3 && _isPartiallyContained(k, this)) {
+                    throw new DOMException("The Range has partially contained non-Text nodes.", "InvalidStateError");
+                }
+            }
+        }
         var frag = this.extractContents();
         while (newParent.firstChild) newParent.removeChild(newParent.firstChild);
         this.insertNode(newParent);
@@ -365,27 +482,29 @@
         }
         var root = this.commonAncestorContainer || sc;
         if (root) {
-            var cur = root.firstChild;
-            while (cur) {
-                var curSameAsStart = (cur === sc || (cur && sc && cur._nodeId !== undefined && cur._nodeId === sc._nodeId));
-                var curSameAsEnd = (cur === ec || (cur && ec && cur._nodeId !== undefined && cur._nodeId === ec._nodeId));
-                if ((cur.nodeType === 3 || cur.nodeType === 4) && !curSameAsStart && !curSameAsEnd) {
-                    var curLen = _getNodeLength(cur);
-                    var afterStart = _comparePoints(cur, 0, sc, so) > 0;
-                    var beforeEnd = _comparePoints(cur, curLen, ec, eo) < 0;
-                    if (afterStart && beforeEnd) {
-                        s += (cur.data || cur.nodeValue || '');
+            function walkText(node) {
+                if (!node) return;
+                if (node.nodeType === 3 || node.nodeType === 4) {
+                    var sameStart = (node === sc || (sc && node._nodeId !== undefined && node._nodeId === sc._nodeId));
+                    var sameEnd = (node === ec || (ec && node._nodeId !== undefined && node._nodeId === ec._nodeId));
+                    if (!sameStart && !sameEnd) {
+                        var len = _getNodeLength(node);
+                        var afterStart = _comparePoints(sc, so, node, 0) <= 0;
+                        var beforeEnd = _comparePoints(node, len, ec, eo) <= 0;
+                        if (afterStart && beforeEnd) {
+                            s += (node.data || node.nodeValue || '');
+                        }
                     }
-                }
-                if (cur.firstChild && !(cur.nodeType === 3 || cur.nodeType === 4)) {
-                    cur = cur.firstChild;
                 } else {
-                    while (cur && cur !== root && !cur.nextSibling) {
-                        cur = cur.parentNode;
+                    var kids = node.childNodes || node._childNodes || [];
+                    for (var i = 0; i < kids.length; i++) {
+                        walkText(kids[i]);
                     }
-                    if (!cur || cur === root) break;
-                    cur = cur.nextSibling;
                 }
+            }
+            var rootKids = root.childNodes || root._childNodes || [];
+            for (var i = 0; i < rootKids.length; i++) {
+                walkText(rootKids[i]);
             }
         }
         if ((ec.nodeType === 3 || ec.nodeType === 4) && !isSame) {
