@@ -318,6 +318,9 @@
                 return null;
             };
             proto.setAttribute = function(n, v) {
+                if (String(n).toLowerCase() === 'style') {
+                    this._style = null;
+                }
                 if (this._nodeId !== undefined && typeof _setAttribute === 'function') {
                     _setAttribute(this._nodeId, String(n), String(v));
                 }
@@ -329,6 +332,9 @@
                 return false;
             };
             proto.removeAttribute = function(n) {
+                if (String(n).toLowerCase() === 'style') {
+                    this._style = null;
+                }
                 if (this._nodeId !== undefined && typeof _removeAttribute === 'function') {
                     _removeAttribute(this._nodeId, String(n));
                 }

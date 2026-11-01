@@ -235,7 +235,10 @@ impl JsRuntime {
                     if (typeof document.dispatchEvent === 'function') {
                         try { document.dispatchEvent(new Event("readystatechange")); } catch(e) {}
                     }
-                    if (typeof globalThis._invokeConnectedCallback === 'function' && document.body) {
+                    var hasCustom = (typeof globalThis !== 'undefined' && globalThis.customElements &&
+                        ((globalThis.customElements._registry && Object.keys(globalThis.customElements._registry).length > 0) ||
+                         (globalThis.customElements._definitions && Object.keys(globalThis.customElements._definitions).length > 0)));
+                    if ((hasCustom || (typeof globalThis !== 'undefined' && globalThis.Polymer)) && typeof globalThis._invokeConnectedCallback === 'function' && document.body) {
                         try { globalThis._invokeConnectedCallback(document.body); } catch(e) {}
                     }
                     if (document.body && (typeof window === 'undefined' || !window.onload)) {

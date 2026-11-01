@@ -7,6 +7,7 @@
 //!   and concurrent read/write coupling between script and layout.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use mango_core::{Point, Rect, Size};
 use mango_css::computed::ComputedStyle;
@@ -60,6 +61,7 @@ impl LayoutSnapshot {
 
         let mut box_rects = HashMap::new();
         crate::collect_box_rects(&root_box, &mut box_rects);
+        root_box.prune_raw_children();
 
         Self {
             root_box,
@@ -102,8 +104,10 @@ impl LayoutSnapshot {
         let display_list = build_display_list(root_box);
         let mut box_rects = HashMap::new();
         crate::collect_box_rects(root_box, &mut box_rects);
+        let mut root_box = root_box.clone();
+        root_box.prune_raw_children();
         Self {
-            root_box: root_box.clone(),
+            root_box,
             viewport,
             display_list,
             box_rects,
@@ -181,7 +185,7 @@ impl LayoutSnapshot {
     }
 
     /// Collects computed styles for all DOM-backed boxes in the tree.
-    pub fn collect_styles(&self) -> HashMap<u32, ComputedStyle> {
+    pub fn collect_styles(&self) -> HashMap<u32, Arc<ComputedStyle>> {
         let mut styles = HashMap::new();
         crate::collect_box_styles(&self.root_box, &mut styles);
         styles

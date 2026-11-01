@@ -81,7 +81,7 @@ pub struct RenderFramePayload {
     pub title: Option<String>,
     pub canvas_bg: Color,
     pub root_box: Option<LayoutBox>,
-    pub style_snapshot: HashMap<u32, ComputedStyle>,
+    pub style_snapshot: HashMap<u32, Arc<ComputedStyle>>,
     pub focused_control: Option<NodeId>,
     pub doc_mirror: Option<Document>,
 }
@@ -395,8 +395,9 @@ fn emit_frame(
         .ok()
         .filter(|s| !s.is_empty())
         .or_else(|| crate::browser::navigation::resources::extract_title(&doc_clone));
-    let (root, display_list, scrollable_height, canvas_bg) =
+    let (mut root, display_list, scrollable_height, canvas_bg) =
         incremental_state.compute_layout(&doc_clone, dirty_nodes, stylesheets, viewport_size);
+    root.prune_raw_children();
 
     *frame_seq = frame_seq.wrapping_add(1);
     let _ = result_tx.send(RendererResult::FrameReady(Box::new(RenderFramePayload {

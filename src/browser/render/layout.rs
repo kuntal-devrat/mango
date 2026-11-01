@@ -151,8 +151,9 @@ fn compute_layout(request: LayoutRequest) -> LayoutResult {
     media.viewport_width = request.viewport.width;
     media.viewport_height = request.viewport.height;
     let style_index = mango_layout::PageStyleIndex::from_stylesheets(stylesheets, media);
-    let (root_box, page_display_list) =
+    let (mut root_box, page_display_list) =
         layout_document_with_style_index(&request.document, &style_index, request.viewport);
+    root_box.prune_raw_children();
     let canvas_bg = canvas_background_color(&root_box);
     let scrollable_height = crate::scroll::compute_scrollable_height(Some(&root_box));
     let mut background_images = Vec::new();
@@ -272,6 +273,10 @@ impl BrowserChrome {
 
         self.canvas_bg = canvas_color;
         self.page_display_list = page_dl;
+        let mut root_box = root_box;
+        if !self.anim_state.is_animating() {
+            root_box.prune_raw_children();
+        }
         self.root_box = Some(root_box);
         let background_images = self.root_box.as_ref().map(|root| {
             let mut images = Vec::new();
@@ -385,7 +390,7 @@ impl BrowserChrome {
             return;
         };
 
-        let mut fresh: HashMap<u32, ComputedStyle> = HashMap::new();
+        let mut fresh: HashMap<u32, Arc<ComputedStyle>> = HashMap::new();
         mango_layout::collect_box_styles(root, &mut fresh);
         let previous = std::mem::take(&mut self.style_snapshot);
 
@@ -400,9 +405,11 @@ impl BrowserChrome {
             self.anim_state.sync_animations(node, &style);
             if mango_css::animation::has_transitions(&style)
                 && let Some(old) = previous.get(&node.raw())
-                && old != &style
+                && old.as_ref() != &style
             {
-                self.anim_state.transitions.retarget(node, old, &style);
+                self.anim_state
+                    .transitions
+                    .retarget(node, old.as_ref(), &style);
             }
         }
 

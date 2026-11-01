@@ -63,6 +63,15 @@ impl LayoutBox {
         }
     }
 
+    /// Recursively clears all retained `raw_children` subtrees in this box hierarchy,
+    /// freeing duplicate layout input copies once formatting passes have finished.
+    pub fn prune_raw_children(&mut self) {
+        self.raw_children = None;
+        for child in &mut self.children {
+            child.prune_raw_children();
+        }
+    }
+
     /// Marks this box and all descendants as clean after display list generation.
     pub fn mark_clean(&mut self) {
         self.is_dirty = false;

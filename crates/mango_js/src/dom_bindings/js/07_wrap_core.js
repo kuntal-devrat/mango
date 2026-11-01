@@ -42,6 +42,8 @@
             },
             get innerHTML() { return _getInnerHTML(this._nodeId); },
             set innerHTML(val) {
+                var curDoc = this.ownerDocument || this._ownerDocument || (typeof document !== 'undefined' ? document : null);
+                this._lastInnerHTMLRealm = (curDoc && (curDoc._creationRealm || curDoc.defaultView)) ? (curDoc._creationRealm || curDoc.defaultView) : (typeof globalThis !== 'undefined' ? globalThis : null);
                 var oldKids = this.childNodes ? Array.prototype.slice.call(this.childNodes) : [];
                 for (var i = 0; i < oldKids.length; i++) {
                     var k = oldKids[i];
@@ -430,13 +432,19 @@
                     this.setAttribute("value", (val === null || val === undefined) ? "" : String(val));
                     return;
                 }
+                if (tag === 'progress' || tag === 'meter') {
+                    this.setAttribute("value", (val === null || val === undefined) ? "0" : String(val));
+                    return;
+                }
                 if (_getAttribute(this._nodeId, "data-mango-default-value") === null) {
                     var initVal = _getAttribute(this._nodeId, "value");
                     _setAttribute(this._nodeId, "data-mango-default-value", initVal === null ? "" : initVal);
                 }
                 var str = (val === null || val === undefined) ? "" : String(val);
                 _setAttribute(this._nodeId, "data-mango-value", str);
-                _setAttribute(this._nodeId, "value", str);
+                if (tag === 'button') {
+                    _setAttribute(this._nodeId, "value", str);
+                }
             },
             get defaultValue() {
                 var tag = (this.tagName || '').toLowerCase();
@@ -529,6 +537,14 @@
                 if (tag === 'output') return 'output';
                 if (tag === 'fieldset') return 'fieldset';
                 if (tag === 'select') return this.multiple ? 'select-multiple' : 'select-one';
+                if (tag === 'button') {
+                    var bt = _getAttribute(this._nodeId, "type");
+                    if (bt !== null && bt !== '') {
+                        var btl = String(bt).toLowerCase();
+                        if (btl === 'submit' || btl === 'reset' || btl === 'button') return btl;
+                    }
+                    return 'submit';
+                }
                 var t = _getAttribute(this._nodeId, "type");
                 if (t !== null && t !== '') return String(t).toLowerCase();
                 return tag === 'textarea' ? 'textarea' : 'text';

@@ -18,6 +18,22 @@
     globalThis.Document.prototype.caretPositionFromPoint = function() { return null; };
     globalThis.Document.prototype.createRange        = function() { return (typeof document !== 'undefined' && document.createRange) ? document.createRange() : new globalThis.Range(); };
     globalThis.Document.prototype.getSelection      = function() { return (typeof document !== 'undefined' && document.getSelection) ? document.getSelection() : null; };
+    globalThis.Document.prototype.write             = function() {
+        if (typeof globalThis._documentWrite === 'function') {
+            globalThis._documentWrite(this, arguments, false);
+        } else if (typeof document !== 'undefined' && typeof document.write === 'function' && this === document) {
+            document.write.apply(document, arguments);
+        }
+    };
+    globalThis.Document.prototype.writeln           = function() {
+        if (typeof globalThis._documentWrite === 'function') {
+            globalThis._documentWrite(this, arguments, true);
+        } else if (typeof document !== 'undefined' && typeof document.writeln === 'function' && this === document) {
+            document.writeln.apply(document, arguments);
+        }
+    };
+    globalThis.Document.prototype.open              = function() { return this; };
+    globalThis.Document.prototype.close             = function() { return this; };
     Object.defineProperty(globalThis.Document.prototype, 'activeElement', {
         get: function() { return (typeof document !== 'undefined') ? document.activeElement : null; },
         set: function(val) { if (typeof document !== 'undefined') document.activeElement = val; },

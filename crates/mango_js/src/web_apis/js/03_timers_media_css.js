@@ -226,6 +226,16 @@
         configurable: true,
         enumerable: true
     });
+    Object.defineProperty(CSSStyleDeclaration.prototype, 'cssFloat', {
+        get: function() {
+            return this.getPropertyValue('float');
+        },
+        set: function(val) {
+            this.setProperty('float', val);
+        },
+        configurable: true,
+        enumerable: true
+    });
     CSSStyleDeclaration.prototype.item = function(index) {
         var i = Number(index);
         return (i >= 0 && i < this.length) ? this[i] : "";
@@ -340,6 +350,7 @@
             alignItems:       s.alignItems       || 'stretch',
             justifyContent:   s.justifyContent   || 'flex-start',
             cursor:           s.cursor           || 'auto',
+            whiteSpace:       (backendProps && (backendProps['white-space'] || backendProps.whiteSpace)) || s.whiteSpace || 'normal',
             overlay:          (el && el._overlayTransition === 'in') ? 'none' : ((el && (el.hasAttribute && (el.hasAttribute('data-mango-popover-open') || el.hasAttribute(':popover-open') || (el.tagName === 'DIALOG' && el.hasAttribute('open')) || el._overlayTransition === 'out'))) ? 'auto' : 'none')
         };
 

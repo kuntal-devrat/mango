@@ -5,6 +5,7 @@
 //! the `mango_js` V8-powered JavaScript engine for interactive DOM manipulation and timers.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use mango_core::Color;
 use mango_css::Stylesheet;
@@ -146,7 +147,7 @@ pub struct BrowserChrome {
     /// CSS transition and keyframes animation runtime state.
     pub(crate) anim_state: mango_css::AnimationState,
     /// Base (pre-animation) computed styles per DOM node, captured at layout time.
-    pub(crate) style_snapshot: HashMap<u32, ComputedStyle>,
+    pub(crate) style_snapshot: HashMap<u32, Arc<ComputedStyle>>,
     /// Shared cookie jar.
     pub(crate) cookie_jar: std::sync::Arc<std::sync::Mutex<mango_net::CookieJar>>,
     /// Profile file the cookie jar is persisted to.
@@ -311,6 +312,14 @@ impl BrowserChrome {
         mark_ui_thread();
         chrome.load_html_internal(initial_html, "about:welcome".to_string(), false);
         chrome
+    }
+
+    /// Returns the active JavaScript runtime's heap usage in bytes.
+    pub fn js_runtime_heap_size(&mut self) -> usize {
+        self.js_runtime
+            .as_mut()
+            .map(|rt| rt.heap_size_bytes())
+            .unwrap_or(0)
     }
 
     pub fn page_title(&self) -> &str {

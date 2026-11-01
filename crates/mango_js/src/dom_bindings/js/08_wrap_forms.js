@@ -134,7 +134,21 @@
             submit: function() {
                 var tag = (this.tagName || '').toLowerCase();
                 if (tag === 'form') {
-                    this.dispatchEvent({ type: 'submit', target: this });
+                    var sEvt;
+                    if (typeof globalThis.SubmitEvent === 'function') {
+                        try {
+                            sEvt = new globalThis.SubmitEvent('submit', { bubbles: true, cancelable: true });
+                        } catch(e) {
+                            sEvt = (typeof globalThis.Event === 'function')
+                                ? new globalThis.Event('submit', { bubbles: true, cancelable: true })
+                                : { type: 'submit', target: this, bubbles: true, cancelable: true };
+                        }
+                    } else if (typeof globalThis.Event === 'function') {
+                        sEvt = new globalThis.Event('submit', { bubbles: true, cancelable: true });
+                    } else {
+                        sEvt = { type: 'submit', target: this, bubbles: true, cancelable: true };
+                    }
+                    this.dispatchEvent(sEvt);
                 }
             },
             requestSubmit: function(submitter) {

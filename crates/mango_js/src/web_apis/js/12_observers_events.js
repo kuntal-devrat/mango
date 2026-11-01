@@ -477,6 +477,11 @@
         this.cancelBubble = true;
     };
     globalThis.Event.prototype.composedPath = function() { return []; };
+    globalThis.Event.prototype.initEvent = function(type, bubbles, cancelable) {
+        this.type = String(type || "");
+        this.bubbles = !!bubbles;
+        this.cancelable = !!cancelable;
+    };
     globalThis.Event.prototype.constructor = globalThis.Event;
 
     globalThis.UIEvent = function(type, dict) {
@@ -485,6 +490,11 @@
         this.detail = (dict && dict.detail) || 0;
     };
     globalThis.UIEvent.prototype = Object.create(globalThis.Event.prototype);
+    globalThis.UIEvent.prototype.initUIEvent = function(type, bubbles, cancelable, view, detail) {
+        this.initEvent(type, bubbles, cancelable);
+        this.view = view || null;
+        this.detail = (detail !== undefined) ? Number(detail) : 0;
+    };
     globalThis.UIEvent.prototype.constructor = globalThis.UIEvent;
 
     globalThis.MouseEvent = function(type, dict) {
