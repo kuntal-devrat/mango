@@ -157,8 +157,6 @@ pub(crate) fn fill_rect_mode(
     if color.a == 0 || w == 0 || h == 0 || buf_width == 0 || buf_height == 0 {
         return;
     }
-    let solid_pixel = color.to_rgb_u32();
-    let has_alpha = color.a < 255 || blend_mode != mango_css::values::BlendMode::Normal;
     let x0 = x.max(0);
     let y0 = y.max(0);
     let x1 = (x.saturating_add(w as i32)).clamp(0, buf_width as i32);
@@ -168,20 +166,21 @@ pub(crate) fn fill_rect_mode(
         return;
     }
 
-    let x_start = x0 as u32;
-    let y_start = y0 as u32;
-    let x_end = x1 as u32;
-    let y_end = y1 as u32;
+    let x_start = x0 as usize;
+    let y_start = y0 as usize;
+    let x_end = x1 as usize;
+    let y_end = y1 as usize;
+    let row_len = x_end - x_start;
 
     for py in y_start..y_end {
-        let row_offset = (py * buf_width) as usize;
-        for px in x_start..x_end {
-            let idx = row_offset + px as usize;
-            if idx < buffer.len() {
-                if has_alpha {
-                    buffer[idx] = blend_pixel_mode(color, buffer[idx], blend_mode);
-                } else {
-                    buffer[idx] = solid_pixel;
+        let row_offset = py * buf_width as usize + x_start;
+        let row_end = row_offset + row_len;
+        if row_end <= buffer.len() {
+            if blend_mode == mango_css::values::BlendMode::Normal {
+                super::simd::blend_span_normal(&mut buffer[row_offset..row_end], color);
+            } else {
+                for p in &mut buffer[row_offset..row_end] {
+                    *p = blend_pixel_mode(color, *p, blend_mode);
                 }
             }
         }

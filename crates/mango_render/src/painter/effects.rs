@@ -323,72 +323,46 @@ pub(crate) fn apply_filter_to_rect(
             }
             mango_css::values::FilterFunction::Brightness(factor) => {
                 for y in min_y..max_y {
-                    for x in min_x..max_x {
-                        let idx = (y * buf_width + x) as usize;
-                        let p = buffer[idx];
-                        let r = (((p >> 16) & 0xff) as f32 * factor).clamp(0.0, 255.0) as u32;
-                        let g = (((p >> 8) & 0xff) as f32 * factor).clamp(0.0, 255.0) as u32;
-                        let b = ((p & 0xff) as f32 * factor).clamp(0.0, 255.0) as u32;
-                        buffer[idx] = (p & 0xff000000) | (r << 16) | (g << 8) | b;
+                    let start = (y * buf_width + min_x) as usize;
+                    let end = (y * buf_width + max_x) as usize;
+                    if end <= buffer.len() {
+                        super::simd::apply_brightness_span(&mut buffer[start..end], *factor);
                     }
                 }
             }
             mango_css::values::FilterFunction::Contrast(factor) => {
                 for y in min_y..max_y {
-                    for x in min_x..max_x {
-                        let idx = (y * buf_width + x) as usize;
-                        let p = buffer[idx];
-                        let r = ((((p >> 16) & 0xff) as f32 - 128.0) * factor + 128.0)
-                            .clamp(0.0, 255.0) as u32;
-                        let g = ((((p >> 8) & 0xff) as f32 - 128.0) * factor + 128.0)
-                            .clamp(0.0, 255.0) as u32;
-                        let b =
-                            (((p & 0xff) as f32 - 128.0) * factor + 128.0).clamp(0.0, 255.0) as u32;
-                        buffer[idx] = (p & 0xff000000) | (r << 16) | (g << 8) | b;
+                    let start = (y * buf_width + min_x) as usize;
+                    let end = (y * buf_width + max_x) as usize;
+                    if end <= buffer.len() {
+                        super::simd::apply_contrast_span(&mut buffer[start..end], *factor);
                     }
                 }
             }
             mango_css::values::FilterFunction::Grayscale(factor) => {
-                let f = factor.clamp(0.0, 1.0);
                 for y in min_y..max_y {
-                    for x in min_x..max_x {
-                        let idx = (y * buf_width + x) as usize;
-                        let p = buffer[idx];
-                        let r = ((p >> 16) & 0xff) as f32;
-                        let g = ((p >> 8) & 0xff) as f32;
-                        let b = (p & 0xff) as f32;
-                        let gray = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-                        let out_r = (r + (gray - r) * f).round() as u32;
-                        let out_g = (g + (gray - g) * f).round() as u32;
-                        let out_b = (b + (gray - b) * f).round() as u32;
-                        buffer[idx] = (p & 0xff000000) | (out_r << 16) | (out_g << 8) | out_b;
+                    let start = (y * buf_width + min_x) as usize;
+                    let end = (y * buf_width + max_x) as usize;
+                    if end <= buffer.len() {
+                        super::simd::apply_grayscale_span(&mut buffer[start..end], *factor);
                     }
                 }
             }
             mango_css::values::FilterFunction::Invert(factor) => {
-                let f = factor.clamp(0.0, 1.0);
                 for y in min_y..max_y {
-                    for x in min_x..max_x {
-                        let idx = (y * buf_width + x) as usize;
-                        let p = buffer[idx];
-                        let r = ((p >> 16) & 0xff) as f32;
-                        let g = ((p >> 8) & 0xff) as f32;
-                        let b = (p & 0xff) as f32;
-                        let out_r = (r + ((255.0 - r) - r) * f).round() as u32;
-                        let out_g = (g + ((255.0 - g) - g) * f).round() as u32;
-                        let out_b = (b + ((255.0 - b) - b) * f).round() as u32;
-                        buffer[idx] = (p & 0xff000000) | (out_r << 16) | (out_g << 8) | out_b;
+                    let start = (y * buf_width + min_x) as usize;
+                    let end = (y * buf_width + max_x) as usize;
+                    if end <= buffer.len() {
+                        super::simd::apply_invert_span(&mut buffer[start..end], *factor);
                     }
                 }
             }
             mango_css::values::FilterFunction::Opacity(factor) => {
-                let f = factor.clamp(0.0, 1.0);
                 for y in min_y..max_y {
-                    for x in min_x..max_x {
-                        let idx = (y * buf_width + x) as usize;
-                        let p = buffer[idx];
-                        let a = (((p >> 24) & 0xff) as f32 * f).round() as u32;
-                        buffer[idx] = (a << 24) | (p & 0x00ffffff);
+                    let start = (y * buf_width + min_x) as usize;
+                    let end = (y * buf_width + max_x) as usize;
+                    if end <= buffer.len() {
+                        super::simd::apply_opacity_span(&mut buffer[start..end], *factor);
                     }
                 }
             }

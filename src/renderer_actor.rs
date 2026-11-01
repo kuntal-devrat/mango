@@ -24,6 +24,7 @@ use mango_ipc::{IpcEndpoint, IpcMessage};
 use mango_js::JsRuntime;
 use mango_js::web_apis::{SharedLocalStorage, SharedSessionStorage};
 use mango_layout::box_tree::LayoutBox;
+use mango_layout::style_tree::{PageStyleIndex, StyleInvalidator, StyledNode};
 use mango_net::{CookieJar, ResourceCache, Url};
 use mango_platform::input::{KeyEvent, KeyState, MouseButton};
 use mango_render::display_list::DisplayList;
@@ -216,16 +217,15 @@ fn script_timeout(code_len: usize) -> Duration {
 /// Collects `<script type="importmap">` definitions from document.
 fn collect_import_maps(doc: &Document, node_id: NodeId, out: &mut Vec<String>) {
     if let Some(node) = doc.get(node_id) {
-        if let NodeData::Element(elem) = &node.data {
-            if elem.tag_name.eq_ignore_ascii_case("script")
-                && elem
-                    .get_attribute("type")
-                    .is_some_and(|t| t.trim().eq_ignore_ascii_case("importmap"))
-            {
-                let content = doc.text_content(node_id);
-                if !content.trim().is_empty() {
-                    out.push(content);
-                }
+        if let NodeData::Element(elem) = &node.data
+            && elem.tag_name.eq_ignore_ascii_case("script")
+            && elem
+                .get_attribute("type")
+                .is_some_and(|t| t.trim().eq_ignore_ascii_case("importmap"))
+        {
+            let content = doc.text_content(node_id);
+            if !content.trim().is_empty() {
+                out.push(content);
             }
         }
         for child in doc.children(node_id) {
@@ -241,12 +241,14 @@ fn drain_renderer_js_effects(
     result_tx: &Sender<RendererResult>,
     ipc_ep: &IpcEndpoint,
 ) {
+    let resolve_url = |url: String| {
+        current_base_url
+            .and_then(|b| b.resolve(&url).ok())
+            .map(|u| u.to_string())
+            .unwrap_or(url)
+    };
     if let Some(url) = rt.take_pending_navigation() {
-        let nav_url = if let Some(base) = current_base_url {
-            base.resolve(&url).map(|u| u.to_string()).unwrap_or(url)
-        } else {
-            url
-        };
+        let nav_url = resolve_url(url);
         log::info!("Isolated renderer emitted navigation request: {}", nav_url);
         let _ = result_tx.send(RendererResult::NavigationRequested {
             url: nav_url.clone(),
@@ -254,13 +256,7 @@ fn drain_renderer_js_effects(
         let _ = ipc_ep.send(&IpcMessage::NavigationRequest { url: nav_url });
     }
     if let Some(open_req) = rt.take_pending_open_window() {
-        let nav_url = if let Some(base) = current_base_url {
-            base.resolve(&open_req.url)
-                .map(|u| u.to_string())
-                .unwrap_or(open_req.url)
-        } else {
-            open_req.url
-        };
+        let nav_url = resolve_url(open_req.url);
         let _ = result_tx.send(RendererResult::OpenWindow {
             url: nav_url.clone(),
             features: open_req.features.clone(),
@@ -271,11 +267,13 @@ fn drain_renderer_js_effects(
         });
     }
     for msg in rt.take_console_messages() {
+        use crate::devtools::ConsoleLevel as D;
+        use mango_js::console::ConsoleLevel as J;
         let lvl = match msg.level {
-            mango_js::console::ConsoleLevel::Log => crate::devtools::ConsoleLevel::Log,
-            mango_js::console::ConsoleLevel::Info => crate::devtools::ConsoleLevel::Info,
-            mango_js::console::ConsoleLevel::Warn => crate::devtools::ConsoleLevel::Warn,
-            mango_js::console::ConsoleLevel::Error => crate::devtools::ConsoleLevel::Error,
+            J::Log => D::Log,
+            J::Info => D::Info,
+            J::Warn => D::Warn,
+            J::Error => D::Error,
         };
         let _ = result_tx.send(RendererResult::ConsoleMessage {
             level: lvl,
@@ -288,23 +286,132 @@ fn drain_renderer_js_effects(
     }
 }
 
-/// Computes layout and display list for a document snapshot.
-fn compute_layout_snapshot(
-    doc: &Document,
+/// Tracks incrementally updated styles, invalidations, and cached layout state for the renderer actor.
+struct IncrementalRendererState {
+    style_index: Option<PageStyleIndex>,
+    styled_root: Option<StyledNode>,
+    invalidator: StyleInvalidator,
+    style_hash: u64,
+    last_viewport: Size,
+    doc_node_count: usize,
+}
+
+impl IncrementalRendererState {
+    fn new() -> Self {
+        Self {
+            style_index: None,
+            styled_root: None,
+            invalidator: StyleInvalidator::new(),
+            style_hash: 0,
+            last_viewport: Size::new(0.0, 0.0),
+            doc_node_count: 0,
+        }
+    }
+
+    fn compute_layout(
+        &mut self,
+        doc: &Document,
+        dirty_nodes: std::collections::HashSet<mango_html::dom::NodeId>,
+        stylesheets: &[Stylesheet],
+        viewport: Size,
+    ) -> (LayoutBox, DisplayList, f32, Color) {
+        let mut media = mango_css::current_media_environment();
+        media.viewport_width = viewport.width;
+        media.viewport_height = viewport.height;
+
+        let embedded = mango_layout::extract_style_elements(doc);
+        let mut hasher = std::hash::DefaultHasher::new();
+        for s in &embedded {
+            std::hash::Hash::hash(&s.rules.len(), &mut hasher);
+        }
+        let cur_hash = std::hash::Hasher::finish(&hasher);
+
+        let sheets_changed = self.style_index.is_none()
+            || cur_hash != self.style_hash
+            || self.last_viewport != viewport;
+        if sheets_changed {
+            self.style_hash = cur_hash;
+            self.last_viewport = viewport;
+            let mut all_sheets = stylesheets.to_vec();
+            all_sheets.extend(embedded);
+            self.style_index = Some(PageStyleIndex::from_stylesheets(all_sheets, media.clone()));
+            self.styled_root = None;
+        }
+
+        let style_index = self.style_index.as_ref().unwrap();
+        let cur_node_count = doc.live_node_count();
+
+        let styled_root = if let Some(ref mut root) = self.styled_root {
+            if cur_node_count != self.doc_node_count {
+                self.doc_node_count = cur_node_count;
+                let r = mango_layout::build_style_tree_with_cached_index(
+                    doc,
+                    style_index.index(),
+                    &media,
+                )
+                .unwrap_or_else(|| StyledNode::new(Some(doc.root()), ComputedStyle::default()));
+                self.styled_root = Some(r.clone());
+                r
+            } else if !dirty_nodes.is_empty() {
+                self.invalidator.mark_all_dirty(dirty_nodes);
+                let author_refs: Vec<&Stylesheet> = stylesheets.iter().collect();
+                self.invalidator
+                    .invalidate_and_update(root, doc, &author_refs);
+                root.clone()
+            } else {
+                root.clone()
+            }
+        } else {
+            self.doc_node_count = cur_node_count;
+            let root =
+                mango_layout::build_style_tree_with_cached_index(doc, style_index.index(), &media)
+                    .unwrap_or_else(|| StyledNode::new(Some(doc.root()), ComputedStyle::default()));
+            self.styled_root = Some(root.clone());
+            root
+        };
+
+        let (root_box, display_list) =
+            mango_layout::layout_styled_document(doc, styled_root, &media, 0.0, 0.0);
+        let canvas_bg = canvas_background_color(&root_box);
+        let scrollable_height = crate::scroll::compute_scrollable_height(Some(&root_box));
+        (root_box, display_list, scrollable_height, canvas_bg)
+    }
+}
+
+/// Computes layout incrementally and emits a `RenderFramePayload` to the browser process.
+fn emit_frame(
+    rt: &mut JsRuntime,
+    incremental_state: &mut IncrementalRendererState,
     stylesheets: &[Stylesheet],
-    viewport: Size,
-) -> (LayoutBox, DisplayList, f32, Color) {
-    let mut all_sheets = stylesheets.to_vec();
-    all_sheets.extend(mango_layout::extract_style_elements(doc));
-    let mut media = mango_css::current_media_environment();
-    media.viewport_width = viewport.width;
-    media.viewport_height = viewport.height;
-    let style_index = mango_layout::PageStyleIndex::from_stylesheets(all_sheets, media);
-    let (root_box, page_display_list) =
-        mango_layout::layout_document_with_style_index(doc, &style_index, viewport);
-    let canvas_bg = canvas_background_color(&root_box);
-    let scrollable_height = crate::scroll::compute_scrollable_height(Some(&root_box));
-    (root_box, page_display_list, scrollable_height, canvas_bg)
+    viewport_size: Size,
+    current_generation: u64,
+    frame_seq: &mut u64,
+    result_tx: &Sender<RendererResult>,
+) -> Option<String> {
+    let dirty_nodes = rt.take_dirty_nodes();
+    let doc_clone = rt.document_ref().clone();
+    let title = rt
+        .eval("document.title")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| crate::browser::navigation::resources::extract_title(&doc_clone));
+    let (root, display_list, scrollable_height, canvas_bg) =
+        incremental_state.compute_layout(&doc_clone, dirty_nodes, stylesheets, viewport_size);
+
+    *frame_seq = frame_seq.wrapping_add(1);
+    let _ = result_tx.send(RendererResult::FrameReady(Box::new(RenderFramePayload {
+        frame_id: *frame_seq,
+        generation: current_generation,
+        display_list,
+        scrollable_height,
+        title: title.clone(),
+        canvas_bg,
+        root_box: Some(root),
+        style_snapshot: HashMap::new(),
+        focused_control: None,
+        doc_mirror: Some(doc_clone),
+    })));
+    title
 }
 
 /// The isolated Renderer process main loop running on its own dedicated OS thread.
@@ -316,29 +423,25 @@ fn run_renderer_loop(
     ipc_ep: IpcEndpoint,
     is_busy: Arc<AtomicBool>,
 ) {
-    let mut js_rt: Option<JsRuntime> = None;
-    let mut current_stylesheets: Vec<Stylesheet> = Vec::new();
-    let mut current_url = String::new();
-    let mut current_base_url: Option<Url> = None;
+    let (mut js_rt, mut current_stylesheets) = (None::<JsRuntime>, Vec::<Stylesheet>::new());
+    let (mut current_url, mut current_base_url) = (String::new(), None::<Url>);
+    let (mut frame_seq, mut current_generation) = (0u64, 0u64);
     let mut viewport_size = Size::new(800.0, 600.0);
-    let mut frame_seq = 0u64;
-    let mut current_generation = 0u64;
     let mut pending_scripts = VecDeque::<ScriptToRun>::new();
     let mut cache_ref: Option<Arc<ResourceCache>> = None;
+    let mut incremental_state = IncrementalRendererState::new();
 
     // Send InitAck over IPC
     let _ = ipc_ep.send(&IpcMessage::InitAck { process_id });
 
     loop {
         // Poll command queue or process pending script/timer work
-        let has_pending = !pending_scripts.is_empty();
-        let next_timer = js_rt.as_ref().and_then(|rt| rt.next_timer_deadline());
-        let now = Instant::now();
-        let timeout = if has_pending {
+        let timeout = if !pending_scripts.is_empty() {
             Duration::from_millis(1)
-        } else if let Some(dl) = next_timer {
+        } else if let Some(dl) = js_rt.as_ref().and_then(|rt| rt.next_timer_deadline()) {
+            let now = Instant::now();
             if dl <= now {
-                Duration::from_millis(0)
+                Duration::ZERO
             } else {
                 (dl - now).min(Duration::from_millis(16))
             }
@@ -374,10 +477,11 @@ fn run_renderer_loop(
 
                 // Register import maps
                 let mut import_maps = Vec::new();
-                {
-                    let doc_snap = rt.document_ref();
-                    collect_import_maps(&doc_snap, doc_snap.root(), &mut import_maps);
-                }
+                collect_import_maps(
+                    &rt.document_ref(),
+                    rt.document_ref().root(),
+                    &mut import_maps,
+                );
                 for map_json in &import_maps {
                     rt.register_import_map(map_json);
                 }
@@ -397,15 +501,9 @@ fn run_renderer_loop(
                 };
 
                 // Partition scripts into synchronous and deferred/async
-                let mut sync_scripts = Vec::new();
-                let mut defer_async_scripts = Vec::new();
-                for s in scripts {
-                    if s.is_defer() || s.is_async() {
-                        defer_async_scripts.push(s);
-                    } else {
-                        sync_scripts.push(s);
-                    }
-                }
+                let (defer_async_scripts, sync_scripts): (Vec<_>, Vec<_>) = scripts
+                    .into_iter()
+                    .partition(|s| s.is_defer() || s.is_async());
 
                 // Run synchronous scripts on this isolated thread
                 for s in sync_scripts {
@@ -418,12 +516,7 @@ fn run_renderer_loop(
                 }
 
                 drain_renderer_js_effects(&mut rt, current_base_url.as_ref(), &result_tx, &ipc_ep);
-
-                // Queue deferred / async scripts
-                pending_scripts.clear();
-                for s in defer_async_scripts {
-                    pending_scripts.push_back(s);
-                }
+                pending_scripts = defer_async_scripts.into();
 
                 // If no scripts pending, dispatch DOMContentLoaded & load
                 if pending_scripts.is_empty() {
@@ -438,28 +531,16 @@ fn run_renderer_loop(
                 }
 
                 // Initial layout & display list calculation
-                let doc_clone = rt.document_ref().clone();
-                let title = rt
-                    .eval("document.title")
-                    .ok()
-                    .filter(|s| !s.is_empty())
-                    .or_else(|| crate::browser::navigation::resources::extract_title(&doc_clone));
-                let (root, display_list, scrollable_height, canvas_bg) =
-                    compute_layout_snapshot(&doc_clone, &current_stylesheets, viewport_size);
-
-                frame_seq = frame_seq.wrapping_add(1);
-                let _ = result_tx.send(RendererResult::FrameReady(Box::new(RenderFramePayload {
-                    frame_id: frame_seq,
-                    generation: current_generation,
-                    display_list,
-                    scrollable_height,
-                    title: title.clone(),
-                    canvas_bg,
-                    root_box: Some(root),
-                    style_snapshot: HashMap::new(),
-                    focused_control: None,
-                    doc_mirror: Some(doc_clone),
-                })));
+                incremental_state = IncrementalRendererState::new();
+                let title = emit_frame(
+                    &mut rt,
+                    &mut incremental_state,
+                    &current_stylesheets,
+                    viewport_size,
+                    current_generation,
+                    &mut frame_seq,
+                    &result_tx,
+                );
 
                 let _ = ipc_ep.send(&IpcMessage::DidCommitProvisionalLoad {
                     url: current_url.clone(),
@@ -483,36 +564,15 @@ fn run_renderer_loop(
                     }
                     drain_renderer_js_effects(rt, current_base_url.as_ref(), &result_tx, &ipc_ep);
                     if rt.is_dom_dirty() {
-                        let doc_clone = rt.document_ref().clone();
-                        let title = rt
-                            .eval("document.title")
-                            .ok()
-                            .filter(|s| !s.is_empty())
-                            .or_else(|| {
-                                crate::browser::navigation::resources::extract_title(&doc_clone)
-                            });
-                        let (root, display_list, scrollable_height, canvas_bg) =
-                            compute_layout_snapshot(
-                                &doc_clone,
-                                &current_stylesheets,
-                                viewport_size,
-                            );
-
-                        frame_seq = frame_seq.wrapping_add(1);
-                        let _ = result_tx.send(RendererResult::FrameReady(Box::new(
-                            RenderFramePayload {
-                                frame_id: frame_seq,
-                                generation: current_generation,
-                                display_list,
-                                scrollable_height,
-                                title,
-                                canvas_bg,
-                                root_box: Some(root),
-                                style_snapshot: HashMap::new(),
-                                focused_control: None,
-                                doc_mirror: Some(doc_clone),
-                            },
-                        )));
+                        emit_frame(
+                            rt,
+                            &mut incremental_state,
+                            &current_stylesheets,
+                            viewport_size,
+                            current_generation,
+                            &mut frame_seq,
+                            &result_tx,
+                        );
                     }
                     is_busy.store(false, Ordering::Release);
                 }
@@ -534,31 +594,15 @@ fn run_renderer_loop(
                     let _ = rt.execute_script(&format!(
                         "if (typeof window !== 'undefined') {{ window.innerWidth = {width}; window.innerHeight = {height}; if (typeof window.dispatchEvent === 'function') window.dispatchEvent(new Event('resize')); }}"
                     ));
-                    let doc_clone = rt.document_ref().clone();
-                    let title = rt
-                        .eval("document.title")
-                        .ok()
-                        .filter(|s| !s.is_empty())
-                        .or_else(|| {
-                            crate::browser::navigation::resources::extract_title(&doc_clone)
-                        });
-                    let (root, display_list, scrollable_height, canvas_bg) =
-                        compute_layout_snapshot(&doc_clone, &current_stylesheets, viewport_size);
-
-                    frame_seq = frame_seq.wrapping_add(1);
-                    let _ =
-                        result_tx.send(RendererResult::FrameReady(Box::new(RenderFramePayload {
-                            frame_id: frame_seq,
-                            generation: current_generation,
-                            display_list,
-                            scrollable_height,
-                            title,
-                            canvas_bg,
-                            root_box: Some(root),
-                            style_snapshot: HashMap::new(),
-                            focused_control: None,
-                            doc_mirror: Some(doc_clone),
-                        })));
+                    emit_frame(
+                        rt,
+                        &mut incremental_state,
+                        &current_stylesheets,
+                        viewport_size,
+                        current_generation,
+                        &mut frame_seq,
+                        &result_tx,
+                    );
                     is_busy.store(false, Ordering::Release);
                 }
             }
@@ -576,31 +620,15 @@ fn run_renderer_loop(
                     ));
                     drain_renderer_js_effects(rt, current_base_url.as_ref(), &result_tx, &ipc_ep);
                     if rt.is_dom_dirty() {
-                        let doc_clone = rt.document_ref().clone();
-                        let title =
-                            crate::browser::navigation::resources::extract_title(&doc_clone);
-                        let (root, display_list, scrollable_height, canvas_bg) =
-                            compute_layout_snapshot(
-                                &doc_clone,
-                                &current_stylesheets,
-                                viewport_size,
-                            );
-
-                        frame_seq = frame_seq.wrapping_add(1);
-                        let _ = result_tx.send(RendererResult::FrameReady(Box::new(
-                            RenderFramePayload {
-                                frame_id: frame_seq,
-                                generation: current_generation,
-                                display_list,
-                                scrollable_height,
-                                title,
-                                canvas_bg,
-                                root_box: Some(root),
-                                style_snapshot: HashMap::new(),
-                                focused_control: None,
-                                doc_mirror: Some(doc_clone),
-                            },
-                        )));
+                        emit_frame(
+                            rt,
+                            &mut incremental_state,
+                            &current_stylesheets,
+                            viewport_size,
+                            current_generation,
+                            &mut frame_seq,
+                            &result_tx,
+                        );
                     }
                     is_busy.store(false, Ordering::Release);
                 }
@@ -650,36 +678,15 @@ fn run_renderer_loop(
 
                     // 4. If DOM mutated, re-compute layout and emit FrameReady
                     if mutated && rt.is_dom_dirty() {
-                        let doc_clone = rt.document_ref().clone();
-                        let title = rt
-                            .eval("document.title")
-                            .ok()
-                            .filter(|s| !s.is_empty())
-                            .or_else(|| {
-                                crate::browser::navigation::resources::extract_title(&doc_clone)
-                            });
-                        let (root, display_list, scrollable_height, canvas_bg) =
-                            compute_layout_snapshot(
-                                &doc_clone,
-                                &current_stylesheets,
-                                viewport_size,
-                            );
-
-                        frame_seq = frame_seq.wrapping_add(1);
-                        let _ = result_tx.send(RendererResult::FrameReady(Box::new(
-                            RenderFramePayload {
-                                frame_id: frame_seq,
-                                generation: current_generation,
-                                display_list,
-                                scrollable_height,
-                                title,
-                                canvas_bg,
-                                root_box: Some(root),
-                                style_snapshot: HashMap::new(),
-                                focused_control: None,
-                                doc_mirror: Some(doc_clone),
-                            },
-                        )));
+                        emit_frame(
+                            rt,
+                            &mut incremental_state,
+                            &current_stylesheets,
+                            viewport_size,
+                            current_generation,
+                            &mut frame_seq,
+                            &result_tx,
+                        );
                     }
 
                     is_busy.store(false, Ordering::Release);
@@ -701,6 +708,8 @@ fn run_single_script(
     cache: Option<&ResourceCache>,
 ) {
     let is_mod = script.is_module();
+    let clear_script = "if (typeof globalThis.__setCurrentScript === 'function') globalThis.__setCurrentScript(null);";
+
     if !is_mod {
         if let Some(node_id) = script.node_id() {
             let js_id = mango_html::node_id_to_js(node_id);
@@ -719,9 +728,7 @@ fn run_single_script(
             }
         }
     } else {
-        let _ = rt.execute_script(
-            "if (typeof globalThis.__setCurrentScript === 'function') globalThis.__setCurrentScript(null);",
-        );
+        let _ = rt.execute_script(clear_script);
     }
 
     match script {
@@ -759,30 +766,32 @@ fn run_single_script(
             }
         }
         ScriptToRun::External { src, is_module, .. } => {
-            if let Some(resolved) = base_url.and_then(|b| b.resolve(src).ok()) {
-                let key = resolved.to_string();
-                let script_code = cache.and_then(|c| {
-                    c.get(&key)
-                        .map(|entry| String::from_utf8_lossy(&entry.body).into_owned())
-                });
-                if let Some(code) = script_code {
-                    let to = script_timeout(code.len());
-                    let res = if *is_module {
-                        rt.execute_module_with_name_and_timeout(&key, &code, to)
-                    } else {
-                        rt.execute_script_with_name_and_timeout(&key, &code, to)
-                    };
-                    if let Err(e) = res {
-                        log::warn!("Isolated renderer external script error ({src}): {e}");
-                    }
+            let key = base_url
+                .and_then(|b| b.resolve(src).ok())
+                .map(|u| u.to_string())
+                .unwrap_or_else(|| src.clone());
+            let script_code = cache
+                .and_then(|c| c.get(&key))
+                .map(|entry| String::from_utf8_lossy(&entry.body).into_owned());
+
+            if let Some(code) = script_code {
+                let to = script_timeout(code.len());
+                let res = if *is_module {
+                    rt.execute_module_with_name_and_timeout(&key, &code, to)
+                } else {
+                    rt.execute_script_with_name_and_timeout(&key, &code, to)
+                };
+                if let Err(e) = res {
+                    log::warn!("Isolated renderer external script error ({src}): {e}");
                 }
+            } else if !is_mod {
+                let _ = rt.execute_script(clear_script);
+                return;
             }
         }
     }
 
     if !is_mod {
-        let _ = rt.execute_script(
-            "if (typeof globalThis.__setCurrentScript === 'function') globalThis.__setCurrentScript(null);",
-        );
+        let _ = rt.execute_script(clear_script);
     }
 }

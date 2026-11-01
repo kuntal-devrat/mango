@@ -205,7 +205,7 @@ pub fn layout_document_with_style_index(
     layout_styled_document(doc, styled_root, &env, 0.0, 0.0)
 }
 
-fn layout_styled_document(
+pub fn layout_styled_document(
     doc: &Document,
     styled_root: StyledNode,
     env: &mango_css::MediaEnvironment,
