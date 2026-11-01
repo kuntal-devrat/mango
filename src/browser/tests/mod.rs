@@ -20,6 +20,7 @@ pub(super) fn hit_control(browser: &BrowserChrome, x: f32, y: f32) -> mango_layo
         .expect("expected to hit a form control")
 }
 
+mod actor_lifecycle;
 mod anchor_and_scroll;
 mod core;
 mod forms_radio;
