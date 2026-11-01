@@ -119,6 +119,23 @@ impl AltSvcCache {
     pub fn supports_h3(&self, origin: &str) -> bool {
         self.get_h3_alternative(origin).is_some()
     }
+
+    /// Checks if HTTP/2 is advertised for this origin and returns `(target_host, port)`.
+    pub fn get_h2_alternative(&self, origin: &str) -> Option<(Option<String>, u16)> {
+        let key = origin.trim().to_ascii_lowercase();
+        let records = self.records.get(&key)?;
+        for record in records {
+            if record.alpn == "h2" || record.alpn.starts_with("h2-") {
+                return Some((record.host.clone(), record.port));
+            }
+        }
+        None
+    }
+
+    /// Returns whether the origin supports HTTP/2.
+    pub fn supports_h2(&self, origin: &str) -> bool {
+        self.get_h2_alternative(origin).is_some()
+    }
 }
 
 // ---------------------------------------------------------------------------

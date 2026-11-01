@@ -1,5 +1,6 @@
 use super::*;
 use crate::ResourceLoader;
+use crate::url::Url;
 use std::sync::Arc;
 
 #[test]
@@ -255,4 +256,110 @@ fn test_resource_loader_priority_and_http2_registration() {
         ResourceLoader::subresource_priority(crate::security::ResourceDirective::Image),
         SubresourcePriority::Image
     );
+}
+
+#[test]
+fn test_http2_multiplexed_batch_dispatch() {
+    let pool = Arc::new(std::sync::Mutex::new(Http2ConnectionPool::new()));
+    let reqs = vec![
+        MultiplexedRequest::get(
+            Url::parse("https://example.com/style.css").unwrap(),
+            SubresourcePriority::Style,
+        ),
+        MultiplexedRequest::get(
+            Url::parse("https://example.com/app.js").unwrap(),
+            SubresourcePriority::Script,
+        ),
+        MultiplexedRequest::get(
+            Url::parse("https://example.com/font.woff2").unwrap(),
+            SubresourcePriority::Font,
+        ),
+        MultiplexedRequest::get(
+            Url::parse("https://example.com/image.png").unwrap(),
+            SubresourcePriority::Image,
+        ),
+    ];
+
+    let stream_map = dispatch_multiplexed_batch(&pool, &reqs);
+    assert_eq!(stream_map.len(), 4);
+
+    // Stream 1 (CSS) must have priority weight 255
+    let (_, prio1) = stream_map.get(&1).unwrap();
+    assert_eq!(prio1.weight, 255);
+
+    // Stream 3 (JS) must have priority weight 219
+    let (_, prio3) = stream_map.get(&3).unwrap();
+    assert_eq!(prio3.weight, 219);
+
+    // Stream 5 (Font) must have priority weight 179
+    let (_, prio5) = stream_map.get(&5).unwrap();
+    assert_eq!(prio5.weight, 179);
+
+    // Stream 7 (Image) must have priority weight 99
+    let (_, prio7) = stream_map.get(&7).unwrap();
+    assert_eq!(prio7.weight, 99);
+}
+
+#[test]
+fn test_http2_stream_to_http_response_synthesis() {
+    let url = Url::parse("https://example.com/api/data").unwrap();
+    let mut response_headers = std::collections::HashMap::new();
+    response_headers.insert(":status".to_string(), "200".to_string());
+    response_headers.insert("content-type".to_string(), "application/json".to_string());
+    response_headers.insert("x-custom-h2".to_string(), "active".to_string());
+
+    let body = b"{\"multiplexed\": true}".to_vec();
+    let resp = stream_to_http_response(&url, &response_headers, body);
+
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.status_text, "OK");
+    assert_eq!(resp.version, HttpVersion::Http2);
+    assert_eq!(
+        resp.headers.get("content-type").unwrap(),
+        "application/json"
+    );
+    assert_eq!(resp.headers.get("x-custom-h2").unwrap(), "active");
+    assert_eq!(resp.body, b"{\"multiplexed\": true}");
+}
+
+#[test]
+fn test_http_client_alt_svc_recording_and_h2_active() {
+    let client = crate::http::HttpClient::new();
+    let url = Url::parse("https://example.org/resource").unwrap();
+    assert!(!client.is_http2_active_for(&url));
+
+    let mut headers = std::collections::HashMap::new();
+    headers.insert(
+        "alt-svc".to_string(),
+        r#"h2=":443"; ma=86400, h3=":443"; ma=86400"#.to_string(),
+    );
+
+    client.record_alt_svc(&url, &headers);
+    assert!(client.is_http2_active_for(&url));
+    assert!(
+        client
+            .alt_svc_cache
+            .lock()
+            .unwrap()
+            .supports_h2("https://example.org")
+    );
+}
+
+#[test]
+fn test_resource_loader_fetch_subresources_multiplexed() {
+    let loader = ResourceLoader::new();
+    let base = Url::parse("https://example.com/page.html").unwrap();
+    let subresources = [
+        ("data:text/css,body{margin:0}", SubresourcePriority::Style),
+        (
+            "data:application/javascript,console.log(1)",
+            SubresourcePriority::Script,
+        ),
+    ];
+
+    let results = loader.fetch_subresources_multiplexed(&base, &subresources);
+    assert_eq!(results.len(), 2);
+    assert!(results[0].is_ok());
+    assert!(results[1].is_ok());
+    assert_eq!(results[0].as_ref().unwrap(), b"body{margin:0}");
 }
