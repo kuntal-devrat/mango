@@ -50,14 +50,19 @@ impl ResourceLoader {
     /// Passing a shared jar lets the browser persist cookies across restarts
     /// and expose the same jar to `document.cookie`.
     pub fn with_cookie_jar(jar: Arc<std::sync::Mutex<crate::cookies::CookieJar>>) -> Self {
+        let pool = Arc::new(std::sync::Mutex::new(
+            crate::http2::Http2ConnectionPool::new(),
+        ));
         Self {
-            client: HttpClient::with_cookie_jar(jar),
+            client: HttpClient::with_http2_pool(
+                std::time::Duration::from_secs(30),
+                jar,
+                pool.clone(),
+            ),
             cache: Arc::new(ResourceCache::new()),
             hsts: Arc::new(std::sync::Mutex::new(crate::security::HstsStore::new())),
             csp_by_origin: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-            http2_pool: Arc::new(std::sync::Mutex::new(
-                crate::http2::Http2ConnectionPool::new(),
-            )),
+            http2_pool: pool,
         }
     }
 
@@ -450,9 +455,13 @@ impl ResourceLoader {
         }
 
         // 2. Fetch over network as subresource (is_top_level=false with initiator)
-        let resp = self
-            .client
-            .fetch_with_context(&resolved_url, Some(base_url), false, true)?;
+        let resp = self.client.fetch_with_context_and_priority(
+            &resolved_url,
+            Some(base_url),
+            false,
+            true,
+            crate::http2::SubresourcePriority::Style,
+        )?;
         if !resp.is_success() {
             return Err(NetworkError::HttpError(resp.status, resp.status_text));
         }
@@ -518,9 +527,13 @@ impl ResourceLoader {
         }
 
         // 2. Fetch over network as subresource (is_top_level=false with initiator)
-        let resp = self
-            .client
-            .fetch_with_context(&resolved_url, Some(base_url), false, true)?;
+        let resp = self.client.fetch_with_context_and_priority(
+            &resolved_url,
+            Some(base_url),
+            false,
+            true,
+            crate::http2::SubresourcePriority::Style,
+        )?;
         if !resp.is_success() {
             return Err(NetworkError::HttpError(resp.status, resp.status_text));
         }
@@ -582,9 +595,13 @@ impl ResourceLoader {
         }
 
         // 2. Fetch over network as subresource (is_top_level=false with initiator)
-        let resp: HttpResponse =
-            self.client
-                .fetch_with_context(&resolved_url, Some(base_url), false, true)?;
+        let resp: HttpResponse = self.client.fetch_with_context_and_priority(
+            &resolved_url,
+            Some(base_url),
+            false,
+            true,
+            crate::http2::SubresourcePriority::Image,
+        )?;
         if !resp.is_success() {
             return Err(NetworkError::HttpError(resp.status, resp.status_text));
         }
@@ -636,9 +653,13 @@ impl ResourceLoader {
         }
 
         // 2. Fetch over network as subresource (is_top_level=false with initiator)
-        let resp: HttpResponse =
-            self.client
-                .fetch_with_context(&resolved_url, Some(base_url), false, true)?;
+        let resp: HttpResponse = self.client.fetch_with_context_and_priority(
+            &resolved_url,
+            Some(base_url),
+            false,
+            true,
+            crate::http2::SubresourcePriority::Font,
+        )?;
         if !resp.is_success() {
             return Err(NetworkError::HttpError(resp.status, resp.status_text));
         }
@@ -674,6 +695,46 @@ impl ResourceLoader {
     /// Returns a cloned Arc handle to the underlying resource cache.
     pub fn cache_arc(&self) -> Arc<ResourceCache> {
         self.cache.clone()
+    }
+
+    /// Fetches multiple subresources concurrently multiplexed over HTTP/2 sessions with stream priority scheduling.
+    pub fn fetch_subresources_multiplexed(
+        &self,
+        base_url: &Url,
+        resources: &[(&str, crate::http2::SubresourcePriority)],
+    ) -> Vec<Result<Vec<u8>, NetworkError>> {
+        if resources.is_empty() {
+            return Vec::new();
+        }
+
+        let mut multiplexed_reqs = Vec::new();
+        for (src, prio) in resources {
+            if let Ok(resolved) = base_url.resolve(src) {
+                multiplexed_reqs.push(crate::http2::MultiplexedRequest::get(resolved, *prio));
+            }
+        }
+
+        // Dispatch batch across the HTTP/2 connection pool
+        let _stream_map =
+            crate::http2::dispatch_multiplexed_batch(&self.http2_pool, &multiplexed_reqs);
+
+        // Fetch each resource respecting cache and priority
+        let mut results = Vec::with_capacity(resources.len());
+        for (src, prio) in resources {
+            let res = match prio {
+                crate::http2::SubresourcePriority::Style => {
+                    self.fetch_stylesheet(base_url, src).map(|s| s.into_bytes())
+                }
+                crate::http2::SubresourcePriority::Script => {
+                    self.fetch_script(base_url, src).map(|s| s.into_bytes())
+                }
+                crate::http2::SubresourcePriority::Font => self.fetch_font_bytes(base_url, src),
+                _ => self.fetch_image_bytes(base_url, src),
+            };
+            results.push(res);
+        }
+
+        results
     }
 
     /// Executes the fast preload scanner on an HTML document (PRD 10.3)

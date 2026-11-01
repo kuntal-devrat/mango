@@ -17,6 +17,8 @@ pub struct HttpClient {
     pub referrer_policies:
         std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, String>>>,
     pub agent: std::sync::Arc<ureq::Agent>,
+    pub http2_pool: std::sync::Arc<std::sync::Mutex<crate::http2::Http2ConnectionPool>>,
+    pub alt_svc_cache: std::sync::Arc<std::sync::Mutex<crate::http2::AltSvcCache>>,
 }
 
 impl std::fmt::Debug for HttpClient {
@@ -42,13 +44,10 @@ impl HttpClient {
 
     /// Creates an HTTP client with a custom timeout.
     pub fn with_timeout(timeout: Duration) -> Self {
-        Self {
-            user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36".to_string(),
+        Self::with_timeout_and_cookie_jar(
             timeout,
-            cookie_jar: std::sync::Arc::new(std::sync::Mutex::new(CookieJar::new())),
-            referrer_policies: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-            agent: create_pooled_agent(timeout),
-        }
+            std::sync::Arc::new(std::sync::Mutex::new(CookieJar::new())),
+        )
     }
 
     /// Creates an HTTP client sharing an existing cookie jar.
@@ -61,12 +60,29 @@ impl HttpClient {
         timeout: Duration,
         cookie_jar: std::sync::Arc<std::sync::Mutex<CookieJar>>,
     ) -> Self {
+        Self::with_http2_pool(
+            timeout,
+            cookie_jar,
+            std::sync::Arc::new(std::sync::Mutex::new(
+                crate::http2::Http2ConnectionPool::new(),
+            )),
+        )
+    }
+
+    /// Creates an HTTP client sharing an existing cookie jar and HTTP/2 connection pool.
+    pub fn with_http2_pool(
+        timeout: Duration,
+        cookie_jar: std::sync::Arc<std::sync::Mutex<CookieJar>>,
+        http2_pool: std::sync::Arc<std::sync::Mutex<crate::http2::Http2ConnectionPool>>,
+    ) -> Self {
         Self {
             user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36".to_string(),
             timeout,
             cookie_jar,
             referrer_policies: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             agent: create_pooled_agent(timeout),
+            http2_pool,
+            alt_svc_cache: std::sync::Arc::new(std::sync::Mutex::new(crate::http2::AltSvcCache::new())),
         }
     }
 
@@ -107,6 +123,35 @@ impl HttpClient {
                 }
             }
         }
+    }
+
+    /// Records Alt-Svc headers from an HTTP response to upgrade subsequent connections.
+    pub fn record_alt_svc(&self, url: &Url, headers: &HashMap<String, String>) {
+        if let Some(alt_svc_hdr) = headers.get("alt-svc") {
+            let records = crate::http2::AltSvcCache::parse_alt_svc_header(alt_svc_hdr);
+            if !records.is_empty() {
+                let origin = url.origin();
+                if let Ok(mut cache) = self.alt_svc_cache.lock() {
+                    cache.add_records(&origin, records);
+                }
+            }
+        }
+    }
+
+    /// Checks whether HTTP/2 is active or advertised for the given target URL.
+    pub fn is_http2_active_for(&self, url: &Url) -> bool {
+        let origin = url.origin();
+        if let Ok(pool) = self.http2_pool.lock() {
+            if pool.get_session(&origin).is_some() {
+                return true;
+            }
+        }
+        if let Ok(cache) = self.alt_svc_cache.lock() {
+            if cache.supports_h2(&origin) || cache.supports_h3(&origin) {
+                return true;
+            }
+        }
+        false
     }
 
     /// Clears all cookies in this client's jar.
@@ -195,17 +240,57 @@ impl HttpClient {
         }
 
         self.record_referrer_policy(url, &headers);
+        self.record_alt_svc(url, &headers);
 
         let body = read_body_capped(response.into_body())?;
+
+        let version = if self.is_http2_active_for(url) {
+            crate::http2::HttpVersion::Http2
+        } else {
+            crate::http2::HttpVersion::Http11
+        };
 
         Ok(HttpResponse {
             final_url: url.clone(),
             status,
             status_text,
             headers,
-            version: crate::http2::HttpVersion::Http11,
+            version,
             body,
         })
+    }
+
+    /// Executes a single HTTP request with explicit stream priority and SameSite context.
+    pub fn get_single_with_context_and_priority(
+        &self,
+        url: &Url,
+        initiator_url: Option<&Url>,
+        is_top_level: bool,
+        is_safe_method: bool,
+        priority: crate::http2::SubresourcePriority,
+    ) -> Result<HttpResponse, NetworkError> {
+        let origin = url.origin();
+        if self.is_http2_active_for(url)
+            && let Ok(mut pool) = self.http2_pool.lock()
+        {
+            let session_arc = pool.get_or_create(&origin);
+            if let Ok(mut session) = session_arc.lock() {
+                let stream_prio = crate::http2::StreamPriority::for_resource_type(priority);
+                let path = url.path_and_query();
+                let authority = url.host.clone().unwrap_or_default();
+                let scheme = url.scheme.clone();
+                let req_headers = [
+                    (":method", "GET"),
+                    (":path", path.as_str()),
+                    (":scheme", scheme.as_str()),
+                    (":authority", authority.as_str()),
+                ];
+                let _stream_id =
+                    session.send_request_with_priority(&req_headers, true, stream_prio);
+                let _ = session.schedule_outbound_frames();
+            }
+        }
+        self.get_single_with_context(url, initiator_url, is_top_level, is_safe_method)
     }
 
     /// Fetches a URL, following HTTP redirects up to `max_redirects` times.
@@ -223,6 +308,24 @@ impl HttpClient {
         is_top_level: bool,
         is_safe_method: bool,
     ) -> Result<HttpResponse, NetworkError> {
+        self.fetch_with_context_and_priority(
+            start_url,
+            initiator_url,
+            is_top_level,
+            is_safe_method,
+            crate::http2::SubresourcePriority::Other,
+        )
+    }
+
+    /// Fetches a URL with explicit subresource stream priority.
+    pub fn fetch_with_context_and_priority(
+        &self,
+        start_url: &Url,
+        initiator_url: Option<&Url>,
+        is_top_level: bool,
+        is_safe_method: bool,
+        priority: crate::http2::SubresourcePriority,
+    ) -> Result<HttpResponse, NetworkError> {
         let mut current_url = start_url.clone();
         let mut redirects_followed = 0;
         let max_redirects = 5;
@@ -235,11 +338,12 @@ impl HttpClient {
 
             visited_urls.push(current_url.as_str());
 
-            let resp = self.get_single_with_context(
+            let resp = self.get_single_with_context_and_priority(
                 &current_url,
                 initiator_url,
                 is_top_level,
                 is_safe_method,
+                priority,
             )?;
 
             if resp.is_redirect()
@@ -563,136 +667,60 @@ impl HttpClient {
             None
         };
 
-        let resp = if upper_method == "GET" && body.is_none() {
-            let mut req = self
-                .agent
-                .get(&url_str)
-                .header("User-Agent", &self.user_agent)
-                .header("Accept", "*/*")
-                .header("Accept-Language", "en-US,en;q=0.9")
-                .header("Accept-Encoding", "gzip, deflate, br");
-            if let Ok(jar) = self.cookie_jar.lock()
-                && let Some(cookie_hdr) = jar.get_cookie_header_with_context(
-                    url,
-                    initiator_url,
-                    is_top_level,
-                    is_safe_method,
-                )
-            {
-                req = req.header("Cookie", &cookie_hdr);
-            }
-            if let Some(ref r) = auto_referer {
-                req = req.header("Referer", r);
-            }
-            for (k, v) in custom_headers {
-                req = req.header(k.as_str(), v.as_str());
-            }
-            req.call()
-        } else if upper_method == "HEAD" {
-            let mut req = self
-                .agent
-                .head(&url_str)
-                .header("User-Agent", &self.user_agent)
-                .header("Accept", "*/*")
-                .header("Accept-Language", "en-US,en;q=0.9")
-                .header("Accept-Encoding", "gzip, deflate, br");
-            if let Ok(jar) = self.cookie_jar.lock()
-                && let Some(cookie_hdr) = jar.get_cookie_header_with_context(
-                    url,
-                    initiator_url,
-                    is_top_level,
-                    is_safe_method,
-                )
-            {
-                req = req.header("Cookie", &cookie_hdr);
-            }
-            if let Some(ref r) = auto_referer {
-                req = req.header("Referer", r);
-            }
-            for (k, v) in custom_headers {
-                req = req.header(k.as_str(), v.as_str());
-            }
-            req.call()
-        } else if upper_method == "DELETE" {
-            let mut req = self
-                .agent
-                .delete(&url_str)
-                .header("User-Agent", &self.user_agent)
-                .header("Accept", "*/*")
-                .header("Accept-Language", "en-US,en;q=0.9")
-                .header("Accept-Encoding", "gzip, deflate, br");
-            if let Ok(jar) = self.cookie_jar.lock()
-                && let Some(cookie_hdr) = jar.get_cookie_header_with_context(
-                    url,
-                    initiator_url,
-                    is_top_level,
-                    is_safe_method,
-                )
-            {
-                req = req.header("Cookie", &cookie_hdr);
-            }
-            if let Some(ref r) = auto_referer {
-                req = req.header("Referer", r);
-            }
-            for (k, v) in custom_headers {
-                req = req.header(k.as_str(), v.as_str());
-            }
-            req.call()
-        } else if upper_method == "OPTIONS" {
-            let mut req = self
-                .agent
-                .options(&url_str)
-                .header("User-Agent", &self.user_agent)
-                .header("Accept", "*/*")
-                .header("Accept-Language", "en-US,en;q=0.9")
-                .header("Accept-Encoding", "gzip, deflate, br");
-            if let Ok(jar) = self.cookie_jar.lock()
-                && let Some(cookie_hdr) = jar.get_cookie_header_with_context(
-                    url,
-                    initiator_url,
-                    is_top_level,
-                    is_safe_method,
-                )
-            {
-                req = req.header("Cookie", &cookie_hdr);
-            }
-            if let Some(ref r) = auto_referer {
-                req = req.header("Referer", r);
-            }
-            for (k, v) in custom_headers {
-                req = req.header(k.as_str(), v.as_str());
-            }
-            req.call()
+        let cookie_hdr = if let Ok(jar) = self.cookie_jar.lock() {
+            jar.get_cookie_header_with_context(url, initiator_url, is_top_level, is_safe_method)
         } else {
-            let mut req = match upper_method.as_str() {
-                "PUT" => self.agent.put(&url_str),
-                "PATCH" => self.agent.patch(&url_str),
-                _ => self.agent.post(&url_str),
-            };
-            req = req
-                .header("User-Agent", &self.user_agent)
-                .header("Accept", "*/*")
-                .header("Accept-Language", "en-US,en;q=0.9")
-                .header("Accept-Encoding", "gzip, deflate, br");
-            if let Ok(jar) = self.cookie_jar.lock()
-                && let Some(cookie_hdr) = jar.get_cookie_header_with_context(
-                    url,
-                    initiator_url,
-                    is_top_level,
-                    is_safe_method,
-                )
-            {
-                req = req.header("Cookie", &cookie_hdr);
+            None
+        };
+
+        let resp = match upper_method.as_str() {
+            "GET" | "HEAD" | "DELETE" | "OPTIONS" => {
+                let mut req = match upper_method.as_str() {
+                    "HEAD" => self.agent.head(&url_str),
+                    "DELETE" => self.agent.delete(&url_str),
+                    "OPTIONS" => self.agent.options(&url_str),
+                    _ => self.agent.get(&url_str),
+                };
+                req = req
+                    .header("User-Agent", &self.user_agent)
+                    .header("Accept", "*/*")
+                    .header("Accept-Language", "en-US,en;q=0.9")
+                    .header("Accept-Encoding", "gzip, deflate, br");
+                if let Some(ref c) = cookie_hdr {
+                    req = req.header("Cookie", c);
+                }
+                if let Some(ref r) = auto_referer {
+                    req = req.header("Referer", r);
+                }
+                for (k, v) in custom_headers {
+                    req = req.header(k.as_str(), v.as_str());
+                }
+                req.call()
             }
-            if let Some(ref r) = auto_referer {
-                req = req.header("Referer", r);
-            }
-            for (k, v) in custom_headers {
-                req = req.header(k.as_str(), v.as_str());
-            }
-            match body {
-                Some(b) => req.send(b),
-                None => req.send_empty(),
+            _ => {
+                let mut req = match upper_method.as_str() {
+                    "PUT" => self.agent.put(&url_str),
+                    "PATCH" => self.agent.patch(&url_str),
+                    _ => self.agent.post(&url_str),
+                };
+                req = req
+                    .header("User-Agent", &self.user_agent)
+                    .header("Accept", "*/*")
+                    .header("Accept-Language", "en-US,en;q=0.9")
+                    .header("Accept-Encoding", "gzip, deflate, br");
+                if let Some(ref c) = cookie_hdr {
+                    req = req.header("Cookie", c);
+                }
+                if let Some(ref r) = auto_referer {
+                    req = req.header("Referer", r);
+                }
+                for (k, v) in custom_headers {
+                    req = req.header(k.as_str(), v.as_str());
+                }
+                match body {
+                    Some(b) => req.send(b),
+                    None => req.send_empty(),
+                }
             }
         }
         .map_err(|e| map_ureq_error(e, url))?;

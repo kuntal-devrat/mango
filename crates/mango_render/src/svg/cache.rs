@@ -6,7 +6,7 @@ use std::sync::{OnceLock, RwLock};
 use mango_core::Color;
 use tiny_skia::{Color as SkiaColor, Pixmap, Transform};
 
-use super::ast::{SvgDocument, SvgNode, SvgSymbol};
+use super::ast::{AspectRatioAlign, MeetOrSlice, SvgDocument, SvgNode, SvgSymbol};
 use crate::image_decode::DecodedImage;
 
 /// Bounded memory cache for rendered SVG pixmaps.
@@ -227,16 +227,50 @@ pub fn render_svg(
         return None;
     }
 
-    // Uniform fit (meet) preserving aspect ratio, centered in viewport
-    let scale_x = target_w as f32 / vb_w;
-    let scale_y = target_h as f32 / vb_h;
-    let scale = scale_x.min(scale_y);
+    // Compute scale and offsets according to preserveAspectRatio rules
+    let scale_x_raw = target_w as f32 / vb_w;
+    let scale_y_raw = target_h as f32 / vb_h;
 
-    let offset_x = (target_w as f32 - vb_w * scale) / 2.0;
-    let offset_y = (target_h as f32 - vb_h * scale) / 2.0;
+    let par = doc.preserve_aspect_ratio.unwrap_or_default();
+    let (scale_x, scale_y, offset_x, offset_y) = match par.align {
+        AspectRatioAlign::None => (scale_x_raw, scale_y_raw, 0.0, 0.0),
+        align => {
+            let scale = match par.meet_or_slice {
+                MeetOrSlice::Meet => scale_x_raw.min(scale_y_raw),
+                MeetOrSlice::Slice => scale_x_raw.max(scale_y_raw),
+            };
+            let diff_x = target_w as f32 - vb_w * scale;
+            let diff_y = target_h as f32 - vb_h * scale;
+            let ox = match align {
+                AspectRatioAlign::XMinYMin
+                | AspectRatioAlign::XMinYMid
+                | AspectRatioAlign::XMinYMax => 0.0,
+                AspectRatioAlign::XMidYMin
+                | AspectRatioAlign::XMidYMid
+                | AspectRatioAlign::XMidYMax => diff_x / 2.0,
+                AspectRatioAlign::XMaxYMin
+                | AspectRatioAlign::XMaxYMid
+                | AspectRatioAlign::XMaxYMax => diff_x,
+                AspectRatioAlign::None => 0.0,
+            };
+            let oy = match align {
+                AspectRatioAlign::XMinYMin
+                | AspectRatioAlign::XMidYMin
+                | AspectRatioAlign::XMaxYMin => 0.0,
+                AspectRatioAlign::XMinYMid
+                | AspectRatioAlign::XMidYMid
+                | AspectRatioAlign::XMaxYMid => diff_y / 2.0,
+                AspectRatioAlign::XMinYMax
+                | AspectRatioAlign::XMidYMax
+                | AspectRatioAlign::XMaxYMax => diff_y,
+                AspectRatioAlign::None => 0.0,
+            };
+            (scale, scale, ox, oy)
+        }
+    };
 
     let transform = Transform::from_translate(offset_x, offset_y)
-        .pre_scale(scale, scale)
+        .pre_scale(scale_x, scale_y)
         .pre_translate(-vb_x, -vb_y);
 
     let initial_state = doc.root_state.clone();

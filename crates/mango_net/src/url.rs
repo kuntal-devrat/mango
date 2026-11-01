@@ -381,6 +381,14 @@ impl Url {
         out
     }
 
+    /// Returns the path and query string (e.g. `/index.html?q=1`) for HTTP request lines.
+    pub fn path_and_query(&self) -> String {
+        match &self.query {
+            Some(q) => format!("{}?{}", self.path, q),
+            None => self.path.clone(),
+        }
+    }
+
     /// Returns `true` if this is an HTTP or HTTPS URL.
     pub fn is_http_or_https(&self) -> bool {
         self.scheme == "http" || self.scheme == "https"
