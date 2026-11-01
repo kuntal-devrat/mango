@@ -11,25 +11,38 @@ use super::types::PlacedItem;
 pub fn track_min_size(
     track: &GridTrackSize,
     font_size: f32,
+    root_font_size: f32,
     container_width: f32,
     container_height: f32,
 ) -> f32 {
     match track {
         GridTrackSize::Length(l) => {
-            l.to_px_with_viewport(font_size, 16.0, container_width, container_height)
+            l.to_px_with_viewport(font_size, root_font_size, container_width, container_height)
         }
-        GridTrackSize::MinMax(min_t, _) => {
-            track_min_size(min_t, font_size, container_width, container_height)
-        }
+        GridTrackSize::MinMax(min_t, _) => track_min_size(
+            min_t,
+            font_size,
+            root_font_size,
+            container_width,
+            container_height,
+        ),
         GridTrackSize::Fr(_) => 0.0,
         GridTrackSize::Auto | GridTrackSize::MinContent | GridTrackSize::MaxContent => 0.0,
         GridTrackSize::Subgrid => 0.0,
-        GridTrackSize::RepeatAutoFill(inner) => {
-            track_min_size(inner, font_size, container_width, container_height)
-        }
-        GridTrackSize::RepeatAutoFit(inner) => {
-            track_min_size(inner, font_size, container_width, container_height)
-        }
+        GridTrackSize::RepeatAutoFill(inner) => track_min_size(
+            inner,
+            font_size,
+            root_font_size,
+            container_width,
+            container_height,
+        ),
+        GridTrackSize::RepeatAutoFit(inner) => track_min_size(
+            inner,
+            font_size,
+            root_font_size,
+            container_width,
+            container_height,
+        ),
     }
 }
 
@@ -44,9 +57,14 @@ pub fn track_min_px(
     placed_items: &[PlacedItem],
     container: &LayoutBox,
 ) -> f32 {
+    let root_font_size = container
+        .style
+        .as_ref()
+        .map(|s| s.root_font_size)
+        .unwrap_or(16.0);
     match min_track {
         GridTrackSize::Length(l) => {
-            l.to_px_with_viewport(font_size, 16.0, container_width, container_height)
+            l.to_px_with_viewport(font_size, root_font_size, container_width, container_height)
         }
         GridTrackSize::MinContent => {
             measure_col_content_min_width(col, placed_items, container, font_size)
@@ -144,7 +162,7 @@ pub fn child_intrinsic_width(child: &LayoutBox, font_size: f32, is_min: bool) ->
     {
         let px = cs.width.to_px_with_viewport(
             cs.font_size,
-            16.0,
+            cs.root_font_size,
             0.0, // no percentage basis for intrinsic measurement
             0.0,
         );
@@ -288,6 +306,7 @@ pub fn measure_grid_intrinsic_widths(container: &LayoutBox, font_size: f32) -> (
     } else {
         font_size
     };
+    let c_root_font_size = style.root_font_size;
 
     let mut in_flow_indices = Vec::new();
     for (idx, child) in container.children.iter().enumerate() {
@@ -363,7 +382,7 @@ pub fn measure_grid_intrinsic_widths(container: &LayoutBox, font_size: f32) -> (
 
     let col_gap = style
         .column_gap
-        .to_px_with_viewport(c_font_size, 16.0, 0.0, 0.0);
+        .to_px_with_viewport(c_font_size, c_root_font_size, 0.0, 0.0);
 
     let mut total_min = 0.0f32;
     let mut total_max = 0.0f32;
@@ -372,7 +391,7 @@ pub fn measure_grid_intrinsic_widths(container: &LayoutBox, font_size: f32) -> (
         let track = &template_cols[c];
         let (c_min, c_max) = match track {
             GridTrackSize::Length(l) if !matches!(l, Length::Percent(_)) => {
-                let px = l.to_px_with_viewport(c_font_size, 16.0, 0.0, 0.0);
+                let px = l.to_px_with_viewport(c_font_size, c_root_font_size, 0.0, 0.0);
                 (px, px)
             }
             GridTrackSize::MinContent => {
@@ -391,7 +410,7 @@ pub fn measure_grid_intrinsic_widths(container: &LayoutBox, font_size: f32) -> (
             GridTrackSize::MinMax(min_t, max_t) => {
                 let min_w = match &**min_t {
                     GridTrackSize::Length(l) if !matches!(l, Length::Percent(_)) => {
-                        l.to_px_with_viewport(c_font_size, 16.0, 0.0, 0.0)
+                        l.to_px_with_viewport(c_font_size, c_root_font_size, 0.0, 0.0)
                     }
                     GridTrackSize::MaxContent => {
                         measure_col_content_max_width(c, &placed_items, container, c_font_size)
@@ -400,7 +419,7 @@ pub fn measure_grid_intrinsic_widths(container: &LayoutBox, font_size: f32) -> (
                 };
                 let max_w = match &**max_t {
                     GridTrackSize::Length(l) if !matches!(l, Length::Percent(_)) => {
-                        l.to_px_with_viewport(c_font_size, 16.0, 0.0, 0.0)
+                        l.to_px_with_viewport(c_font_size, c_root_font_size, 0.0, 0.0)
                     }
                     GridTrackSize::MinContent => {
                         measure_col_content_min_width(c, &placed_items, container, c_font_size)

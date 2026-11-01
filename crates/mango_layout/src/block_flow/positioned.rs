@@ -147,6 +147,7 @@ pub fn layout_positioned_children_with_cb(
 pub(crate) fn apply_relative_offset(box_node: &mut LayoutBox, containing_block: &Dimensions) {
     if let Some(style) = &box_node.style {
         let font_size = style.font_size;
+        let root_font_size = style.root_font_size;
         let cw = containing_block.content.width();
         let ch = if containing_block.content.height() > 0.0 {
             containing_block.content.height()
@@ -155,17 +156,25 @@ pub(crate) fn apply_relative_offset(box_node: &mut LayoutBox, containing_block: 
         };
 
         let dx = if style.left != Length::Auto {
-            style.left.to_px_with_viewport(font_size, 16.0, cw, ch)
+            style
+                .left
+                .to_px_with_viewport(font_size, root_font_size, cw, ch)
         } else if style.right != Length::Auto {
-            -style.right.to_px_with_viewport(font_size, 16.0, cw, ch)
+            -style
+                .right
+                .to_px_with_viewport(font_size, root_font_size, cw, ch)
         } else {
             0.0
         };
 
         let dy = if style.top != Length::Auto {
-            style.top.to_px_with_viewport(font_size, 16.0, ch, ch)
+            style
+                .top
+                .to_px_with_viewport(font_size, root_font_size, ch, ch)
         } else if style.bottom != Length::Auto {
-            -style.bottom.to_px_with_viewport(font_size, 16.0, ch, ch)
+            -style
+                .bottom
+                .to_px_with_viewport(font_size, root_font_size, ch, ch)
         } else {
             0.0
         };
@@ -206,6 +215,7 @@ pub(crate) fn layout_positioned_element(
 
     let style = box_node.style.clone().unwrap_or_default();
     let font_size = style.font_size;
+    let root_font_size = style.root_font_size;
     let (vp_w, vp_h) = mango_css::values::get_current_viewport();
 
     let is_top_layer = (box_node.tag_name.as_deref() == Some("dialog")
@@ -299,28 +309,28 @@ pub(crate) fn layout_positioned_element(
         if let Some(target_x) = resolve_anchor_coord(l, true, style.position_anchor.as_ref()) {
             target_x - pad_box.x()
         } else {
-            l.to_px_with_viewport(font_size, 16.0, pad_w, pad_h)
+            l.to_px_with_viewport(font_size, root_font_size, pad_w, pad_h)
         }
     };
     let calc_right_px = |l: &Length| -> f32 {
         if let Some(target_x) = resolve_anchor_coord(l, true, style.position_anchor.as_ref()) {
             pad_box.right() - target_x
         } else {
-            l.to_px_with_viewport(font_size, 16.0, pad_w, pad_h)
+            l.to_px_with_viewport(font_size, root_font_size, pad_w, pad_h)
         }
     };
     let calc_top_px = |l: &Length| -> f32 {
         if let Some(target_y) = resolve_anchor_coord(l, false, style.position_anchor.as_ref()) {
             target_y - pad_box.y()
         } else {
-            l.to_px_with_viewport(font_size, 16.0, pad_h, pad_h)
+            l.to_px_with_viewport(font_size, root_font_size, pad_h, pad_h)
         }
     };
     let calc_bottom_px = |l: &Length| -> f32 {
         if let Some(target_y) = resolve_anchor_coord(l, false, style.position_anchor.as_ref()) {
             pad_box.bottom() - target_y
         } else {
-            l.to_px_with_viewport(font_size, 16.0, pad_h, pad_h)
+            l.to_px_with_viewport(font_size, root_font_size, pad_h, pad_h)
         }
     };
 
@@ -356,14 +366,14 @@ pub(crate) fn layout_positioned_element(
     } else {
         style
             .margin_left
-            .to_px_with_viewport(font_size, 16.0, pad_w, pad_h)
+            .to_px_with_viewport(font_size, root_font_size, pad_w, pad_h)
     };
     let margin_r = if is_margin_r_auto {
         0.0
     } else {
         style
             .margin_right
-            .to_px_with_viewport(font_size, 16.0, pad_w, pad_h)
+            .to_px_with_viewport(font_size, root_font_size, pad_w, pad_h)
     };
 
     // If both left and right are specified and width is auto, width expands to fill the span
@@ -381,9 +391,10 @@ pub(crate) fn layout_positioned_element(
             (pad_w - left_px - right_px - margin_l - margin_r - non_content_h).max(0.0);
         let mut clamped_w = tentative_w;
         if style.max_width != Length::Auto {
-            let max_w = style
-                .max_width
-                .to_px_with_viewport(font_size, 16.0, pad_w, pad_h);
+            let max_w =
+                style
+                    .max_width
+                    .to_px_with_viewport(font_size, root_font_size, pad_w, pad_h);
             let max_content_w = if style.box_sizing == BoxSizing::BorderBox {
                 (max_w - non_content_h).max(0.0)
             } else {
@@ -392,9 +403,10 @@ pub(crate) fn layout_positioned_element(
             clamped_w = clamped_w.min(max_content_w);
         }
         if style.min_width != Length::Auto {
-            let min_w = style
-                .min_width
-                .to_px_with_viewport(font_size, 16.0, pad_w, pad_h);
+            let min_w =
+                style
+                    .min_width
+                    .to_px_with_viewport(font_size, root_font_size, pad_w, pad_h);
             let min_content_w = if style.box_sizing == BoxSizing::BorderBox {
                 (min_w - non_content_h).max(0.0)
             } else {
@@ -418,14 +430,14 @@ pub(crate) fn layout_positioned_element(
     } else {
         style
             .margin_top
-            .to_px_with_viewport(font_size, 16.0, pad_w, pad_h)
+            .to_px_with_viewport(font_size, root_font_size, pad_w, pad_h)
     };
     let margin_b = if is_margin_b_auto {
         0.0
     } else {
         style
             .margin_bottom
-            .to_px_with_viewport(font_size, 16.0, pad_w, pad_h)
+            .to_px_with_viewport(font_size, root_font_size, pad_w, pad_h)
     };
 
     // If both top and bottom are specified and height is auto, height expands to fill the span
@@ -443,9 +455,10 @@ pub(crate) fn layout_positioned_element(
             (pad_h - top_px - bottom_px - margin_t - margin_b - non_content_v).max(0.0);
         let mut clamped_h = tentative_h;
         if style.max_height != Length::Auto {
-            let max_h = style
-                .max_height
-                .to_px_with_viewport(font_size, 16.0, pad_h, pad_h);
+            let max_h =
+                style
+                    .max_height
+                    .to_px_with_viewport(font_size, root_font_size, pad_h, pad_h);
             let max_content_h = if style.box_sizing == BoxSizing::BorderBox {
                 (max_h - non_content_v).max(0.0)
             } else {
@@ -454,9 +467,10 @@ pub(crate) fn layout_positioned_element(
             clamped_h = clamped_h.min(max_content_h);
         }
         if style.min_height != Length::Auto {
-            let min_h = style
-                .min_height
-                .to_px_with_viewport(font_size, 16.0, pad_h, pad_h);
+            let min_h =
+                style
+                    .min_height
+                    .to_px_with_viewport(font_size, root_font_size, pad_h, pad_h);
             let min_content_h = if style.box_sizing == BoxSizing::BorderBox {
                 (min_h - non_content_v).max(0.0)
             } else {

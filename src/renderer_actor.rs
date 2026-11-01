@@ -202,8 +202,7 @@ impl RendererActorHandle {
 
 impl Drop for RendererActorHandle {
     fn drop(&mut self) {
-        let _ = self.cmd_tx.send(RendererCommand::Shutdown);
-        self.ipc_endpoint.close();
+        self.shutdown();
     }
 }
 
@@ -573,7 +572,7 @@ fn run_renderer_loop(
                 if let Some(ref mut rt) = js_rt {
                     is_busy.store(true, Ordering::Release);
                     let _ = rt.execute_script(&format!(
-                        "if (typeof document !== 'undefined') {{ var ev = new MouseEvent('click', {{ clientX: {x}, clientY: {y}, bubbles: true }}); document.dispatchEvent(ev); }}"
+                        "if (typeof document !== 'undefined') {{ var target = (typeof document.elementFromPoint === 'function' ? document.elementFromPoint({x}, {y}) : null) || document; var ev = new MouseEvent('click', {{ clientX: {x}, clientY: {y}, bubbles: true, cancelable: true }}); target.dispatchEvent(ev); }}"
                     ));
                     drain_renderer_js_effects(rt, current_base_url.as_ref(), &result_tx, &ipc_ep);
                     if rt.is_dom_dirty() {
@@ -610,9 +609,10 @@ fn run_renderer_loop(
             Ok(RendererCommand::InputKey { event }) => {
                 if let Some(ref mut rt) = js_rt {
                     is_busy.store(true, Ordering::Release);
-                    let key_str = format!("{:?}", event.key);
+                    let key_json = serde_json::to_string(&event.key.to_w3c_key())
+                        .unwrap_or_else(|_| "\"Unidentified\"".to_string());
                     let _ = rt.execute_script(&format!(
-                        "if (typeof document !== 'undefined') {{ var ev = new KeyboardEvent('keydown', {{ key: '{key_str}', bubbles: true }}); document.dispatchEvent(ev); }}"
+                        "if (typeof document !== 'undefined') {{ var ev = new KeyboardEvent('keydown', {{ key: {key_json}, bubbles: true, cancelable: true }}); document.dispatchEvent(ev); }}"
                     ));
                     drain_renderer_js_effects(rt, current_base_url.as_ref(), &result_tx, &ipc_ep);
                     is_busy.store(false, Ordering::Release);

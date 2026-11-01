@@ -43,26 +43,33 @@ pub fn layout_grid_internal(
 
     let style = container.style.clone().unwrap_or_default();
     let font_size = style.font_size;
+    let root_font_size = style.root_font_size;
 
     // 1. Resolve container padding, borders, and margins
-    let pad_top =
-        style
-            .padding_top
-            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
-    let pad_right =
-        style
-            .padding_right
-            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
-    let pad_bottom = style.padding_bottom.to_px_with_viewport(
+    let pad_top = style.padding_top.to_px_with_viewport(
         font_size,
-        16.0,
+        root_font_size,
         container_width,
         container_height,
     );
-    let pad_left =
-        style
-            .padding_left
-            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
+    let pad_right = style.padding_right.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
+    let pad_bottom = style.padding_bottom.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
+    let pad_left = style.padding_left.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
 
     let border_top = style.border_top_width;
     let border_right = style.border_right_width;
@@ -73,27 +80,35 @@ pub fn layout_grid_internal(
     container.dimensions.border =
         EdgeSizes::new(border_top, border_right, border_bottom, border_left);
 
-    let margin_top =
-        style
-            .margin_top
-            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
-    let margin_bottom =
-        style
-            .margin_bottom
-            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
+    let margin_top = style.margin_top.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
+    let margin_bottom = style.margin_bottom.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
 
     let is_width_auto = style.width == Length::Auto;
     let is_margin_left_auto = style.margin_left == Length::Auto;
     let is_margin_right_auto = style.margin_right == Length::Auto;
 
-    let mut margin_left =
-        style
-            .margin_left
-            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
-    let mut margin_right =
-        style
-            .margin_right
-            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
+    let mut margin_left = style.margin_left.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
+    let mut margin_right = style.margin_right.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
 
     let total_non_content_h = pad_left + pad_right + border_left + border_right;
 
@@ -123,10 +138,12 @@ pub fn layout_grid_internal(
         }
         (container_width - total_non_content_h - margin_left - margin_right).max(0.0)
     } else {
-        let raw_w =
-            style
-                .width
-                .to_px_with_viewport(font_size, 16.0, container_width, container_height);
+        let raw_w = style.width.to_px_with_viewport(
+            font_size,
+            root_font_size,
+            container_width,
+            container_height,
+        );
         let resolved_w = if style.box_sizing == BoxSizing::BorderBox {
             (raw_w - total_non_content_h).max(0.0)
         } else {
@@ -150,20 +167,24 @@ pub fn layout_grid_internal(
         resolved_w
     };
 
-    let raw_min_w =
-        style
-            .min_width
-            .to_px_with_viewport(font_size, 16.0, container_width, container_height);
+    let raw_min_w = style.min_width.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+    );
     let min_w = if style.box_sizing == BoxSizing::BorderBox {
         (raw_min_w - total_non_content_h).max(0.0)
     } else {
         raw_min_w
     };
     let max_w = if style.max_width != Length::Auto {
-        let raw_max =
-            style
-                .max_width
-                .to_px_with_viewport(font_size, 16.0, container_width, container_height);
+        let raw_max = style.max_width.to_px_with_viewport(
+            font_size,
+            root_font_size,
+            container_width,
+            container_height,
+        );
         if style.box_sizing == BoxSizing::BorderBox {
             (raw_max - total_non_content_h).max(0.0)
         } else {
@@ -212,7 +233,7 @@ pub fn layout_grid_internal(
         let h = if !is_height_content && !is_percent_indefinite {
             let raw_h = style.height.to_px_with_viewport(
                 font_size,
-                16.0,
+                root_font_size,
                 container_height,
                 container_height,
             );
@@ -226,7 +247,7 @@ pub fn layout_grid_internal(
         };
         let raw_min_h = style.min_height.to_px_with_viewport(
             font_size,
-            16.0,
+            root_font_size,
             container_height,
             container_height,
         );
@@ -238,7 +259,7 @@ pub fn layout_grid_internal(
         let max_h = if style.max_height != Length::Auto {
             let raw_max = style.max_height.to_px_with_viewport(
                 font_size,
-                16.0,
+                root_font_size,
                 container_height,
                 container_height,
             );
@@ -255,14 +276,18 @@ pub fn layout_grid_internal(
     }
 
     // 2. Resolve gaps
-    let col_gap =
-        style
-            .column_gap
-            .to_px_with_viewport(font_size, 16.0, content_width, container_height);
-    let row_gap =
-        style
-            .row_gap
-            .to_px_with_viewport(font_size, 16.0, content_width, container_height);
+    let col_gap = style.column_gap.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        content_width,
+        container_height,
+    );
+    let row_gap = style.row_gap.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        content_width,
+        container_height,
+    );
 
     // 3. Filter in-flow children and sort by order (CSS Grid §4.1)
     let mut in_flow_indices = Vec::new();
@@ -303,6 +328,7 @@ pub fn layout_grid_internal(
         content_width,
         container_height,
         font_size,
+        root_font_size,
         col_gap,
         in_flow_indices.len(),
         area_cols,
@@ -431,10 +457,12 @@ pub fn layout_grid_internal(
             | Length::Content
     );
     if !is_height_content && !is_percent_indefinite {
-        let raw_h =
-            style
-                .height
-                .to_px_with_viewport(font_size, 16.0, container_height, container_height);
+        let raw_h = style.height.to_px_with_viewport(
+            font_size,
+            root_font_size,
+            container_height,
+            container_height,
+        );
         if style.box_sizing == BoxSizing::BorderBox {
             container.dimensions.content.size.height =
                 (raw_h - pad_top - pad_bottom - border_top - border_bottom).max(0.0);
@@ -449,10 +477,12 @@ pub fn layout_grid_internal(
         container.dimensions.content.size.height = total_grid_h.max(0.0);
     }
 
-    let raw_min_h =
-        style
-            .min_height
-            .to_px_with_viewport(font_size, 16.0, container_height, container_height);
+    let raw_min_h = style.min_height.to_px_with_viewport(
+        font_size,
+        root_font_size,
+        container_height,
+        container_height,
+    );
     let min_h = if style.box_sizing == BoxSizing::BorderBox {
         (raw_min_h - pad_top - pad_bottom - border_top - border_bottom).max(0.0)
     } else {
@@ -461,7 +491,7 @@ pub fn layout_grid_internal(
     let max_h = if style.max_height != Length::Auto {
         let raw_max = style.max_height.to_px_with_viewport(
             font_size,
-            16.0,
+            root_font_size,
             container_height,
             container_height,
         );

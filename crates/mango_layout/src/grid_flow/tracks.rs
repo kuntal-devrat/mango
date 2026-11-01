@@ -13,6 +13,7 @@ pub fn expand_column_templates(
     content_width: f32,
     container_height: f32,
     font_size: f32,
+    root_font_size: f32,
     col_gap: f32,
     in_flow_count: usize,
     area_cols: usize,
@@ -38,8 +39,12 @@ pub fn expand_column_templates(
             match t {
                 GridTrackSize::RepeatAutoFill(_) | GridTrackSize::RepeatAutoFit(_) => {}
                 GridTrackSize::Length(l) => {
-                    non_repeat_fixed +=
-                        l.to_px_with_viewport(font_size, 16.0, content_width, container_height);
+                    non_repeat_fixed += l.to_px_with_viewport(
+                        font_size,
+                        root_font_size,
+                        content_width,
+                        container_height,
+                    );
                     non_repeat_count += 1;
                 }
                 _ => {
@@ -53,7 +58,13 @@ pub fn expand_column_templates(
         for t in template_columns {
             match t {
                 GridTrackSize::RepeatAutoFill(inner) => {
-                    let min_sz = track_min_size(inner, font_size, content_width, container_height);
+                    let min_sz = track_min_size(
+                        inner,
+                        font_size,
+                        root_font_size,
+                        content_width,
+                        container_height,
+                    );
                     let step = (min_sz + col_gap).max(1.0);
                     let count = ((repeat_space + col_gap) / step).floor() as usize;
                     let count = count.max(1);
@@ -62,7 +73,13 @@ pub fn expand_column_templates(
                     }
                 }
                 GridTrackSize::RepeatAutoFit(inner) => {
-                    let min_sz = track_min_size(inner, font_size, content_width, container_height);
+                    let min_sz = track_min_size(
+                        inner,
+                        font_size,
+                        root_font_size,
+                        content_width,
+                        container_height,
+                    );
                     let step = (min_sz + col_gap).max(1.0);
                     let count = ((repeat_space + col_gap) / step).floor() as usize;
                     let count = count.min(in_flow_count).max(1);
@@ -92,6 +109,11 @@ pub fn resolve_column_widths_and_offsets(
     col_gap: f32,
     justify_content: JustifyContent,
 ) -> (Vec<f32>, Vec<f32>) {
+    let root_font_size = container
+        .style
+        .as_ref()
+        .map(|s| s.root_font_size)
+        .unwrap_or(16.0);
     let total_col_gaps = (num_cols.saturating_sub(1) as f32) * col_gap;
     let available_width_for_tracks = (content_width - total_col_gaps).max(0.0);
 
@@ -102,7 +124,12 @@ pub fn resolve_column_widths_and_offsets(
     for (c, track) in template_cols.iter().enumerate() {
         match track {
             GridTrackSize::Length(len) => {
-                let px = len.to_px_with_viewport(font_size, 16.0, content_width, container_height);
+                let px = len.to_px_with_viewport(
+                    font_size,
+                    root_font_size,
+                    content_width,
+                    container_height,
+                );
                 col_widths[c] = px;
                 fixed_used += px;
             }
@@ -168,9 +195,12 @@ pub fn resolve_column_widths_and_offsets(
                         container,
                     );
                     let max_px = match &**max_t {
-                        GridTrackSize::Length(l) => {
-                            l.to_px_with_viewport(font_size, 16.0, content_width, container_height)
-                        }
+                        GridTrackSize::Length(l) => l.to_px_with_viewport(
+                            font_size,
+                            root_font_size,
+                            content_width,
+                            container_height,
+                        ),
                         GridTrackSize::Auto | GridTrackSize::MaxContent => {
                             measure_col_content_max_width(*c, placed_items, container, font_size)
                         }
@@ -203,9 +233,12 @@ pub fn resolve_column_widths_and_offsets(
                     container,
                 );
                 let max_px = match &**max_t {
-                    GridTrackSize::Length(l) => {
-                        l.to_px_with_viewport(font_size, 16.0, content_width, container_height)
-                    }
+                    GridTrackSize::Length(l) => l.to_px_with_viewport(
+                        font_size,
+                        root_font_size,
+                        content_width,
+                        container_height,
+                    ),
                     GridTrackSize::Auto | GridTrackSize::MaxContent => {
                         measure_col_content_max_width(c, placed_items, container, font_size)
                     }
@@ -291,14 +324,23 @@ pub fn resolve_row_heights_and_offsets(
     row_gap: f32,
     align_content: AlignContent,
 ) -> (Vec<f32>, Vec<f32>) {
+    let root_font_size = container
+        .style
+        .as_ref()
+        .map(|s| s.root_font_size)
+        .unwrap_or(16.0);
     let mut row_heights = vec![0.0f32; num_rows];
 
     for (r, r_track) in grid_template_rows.iter().enumerate() {
         if r < num_rows
             && let GridTrackSize::Length(l) = r_track
         {
-            row_heights[r] =
-                l.to_px_with_viewport(font_size, 16.0, container_height, container_height);
+            row_heights[r] = l.to_px_with_viewport(
+                font_size,
+                root_font_size,
+                container_height,
+                container_height,
+            );
         }
     }
 

@@ -157,36 +157,32 @@ pub fn is_point_inside_clip_path(
             }
         }
         ClipPath::Polygon(pts) => {
-            if pts.len() < 3 {
+            let n = pts.len();
+            if n < 3 {
                 return true;
             }
-            let resolved_pts: Vec<(f32, f32)> = pts
-                .iter()
-                .map(|(x_len, y_len)| {
-                    let x = bounds.x()
-                        + match x_len {
-                            mango_css::values::Length::Px(p) => *p,
-                            mango_css::values::Length::Percent(pct) => bounds.width() * pct / 100.0,
-                            _ => 0.0,
-                        };
-                    let y = bounds.y()
-                        + match y_len {
-                            mango_css::values::Length::Px(p) => *p,
-                            mango_css::values::Length::Percent(pct) => {
-                                bounds.height() * pct / 100.0
-                            }
-                            _ => 0.0,
-                        };
-                    (x, y)
-                })
-                .collect();
+            let resolve_pt = |i: usize| -> (f32, f32) {
+                let (x_len, y_len) = &pts[i];
+                let x = bounds.x()
+                    + match x_len {
+                        mango_css::values::Length::Px(p) => *p,
+                        mango_css::values::Length::Percent(pct) => bounds.width() * pct / 100.0,
+                        _ => 0.0,
+                    };
+                let y = bounds.y()
+                    + match y_len {
+                        mango_css::values::Length::Px(p) => *p,
+                        mango_css::values::Length::Percent(pct) => bounds.height() * pct / 100.0,
+                        _ => 0.0,
+                    };
+                (x, y)
+            };
 
-            // Ray-casting even-odd point-in-polygon
+            // Ray-casting even-odd point-in-polygon without per-pixel heap allocations
             let mut inside = false;
-            let n = resolved_pts.len();
             for i in 0..n {
-                let (x1, y1) = resolved_pts[i];
-                let (x2, y2) = resolved_pts[(i + 1) % n];
+                let (x1, y1) = resolve_pt(i);
+                let (x2, y2) = resolve_pt((i + 1) % n);
                 if ((y1 > py) != (y2 > py)) && (px < (x2 - x1) * (py - y1) / (y2 - y1 + 1e-6) + x1)
                 {
                     inside = !inside;
@@ -222,14 +218,66 @@ pub(crate) fn restore_outside_clip_path(
     let min_y = (r.y().max(0.0) as u32).min(buf_height);
     let max_y = ((r.y() + r.height()).max(0.0) as u32).min(buf_height);
 
+    // Pre-resolve polygon vertices once outside the inner pixel scan loop
+    let pre_resolved_polygon: Option<Vec<(f32, f32)>> =
+        if let mango_css::values::ClipPath::Polygon(pts) = clip_path {
+            if pts.len() >= 3 {
+                Some(
+                    pts.iter()
+                        .map(|&(x_len, y_len)| {
+                            let x = rect.x()
+                                + match x_len {
+                                    mango_css::values::Length::Px(p) => p,
+                                    mango_css::values::Length::Percent(pct) => {
+                                        rect.width() * pct / 100.0
+                                    }
+                                    _ => 0.0,
+                                };
+                            let y = rect.y()
+                                + match y_len {
+                                    mango_css::values::Length::Px(p) => p,
+                                    mango_css::values::Length::Percent(pct) => {
+                                        rect.height() * pct / 100.0
+                                    }
+                                    _ => 0.0,
+                                };
+                            (x, y)
+                        })
+                        .collect(),
+                )
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
     for y in min_y..max_y {
+        let py = y as f32;
         for x in min_x..max_x {
             if x >= orig_min_x && x < orig_max_x && y >= orig_min_y && y < orig_max_y {
                 let snap_idx = ((y - orig_min_y) * snap_w + (x - orig_min_x)) as usize;
-                if snap_idx < snapshot.len()
-                    && !is_point_inside_clip_path(clip_path, rect, x as f32, y as f32)
-                {
-                    buffer[(y * buf_width + x) as usize] = snapshot[snap_idx];
+                if snap_idx < snapshot.len() {
+                    let px = x as f32;
+                    let inside = if let Some(ref poly) = pre_resolved_polygon {
+                        let n = poly.len();
+                        let mut ins = false;
+                        for i in 0..n {
+                            let (x1, y1) = poly[i];
+                            let (x2, y2) = poly[(i + 1) % n];
+                            if ((y1 > py) != (y2 > py))
+                                && (px < (x2 - x1) * (py - y1) / (y2 - y1 + 1e-6) + x1)
+                            {
+                                ins = !ins;
+                            }
+                        }
+                        ins
+                    } else {
+                        is_point_inside_clip_path(clip_path, rect, px, py)
+                    };
+                    if !inside {
+                        buffer[(y * buf_width + x) as usize] = snapshot[snap_idx];
+                    }
                 }
             }
         }

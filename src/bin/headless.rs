@@ -555,11 +555,10 @@ fn probe(browser: &BrowserChrome, selector: &str) {
                 script_dump.push('\n');
             }
         }
-        let _ = std::fs::write("/tmp/claude_scripts.txt", script_dump);
-        println!(
-            "Dumped {} scripts to /tmp/claude_scripts.txt",
-            script_matches.len()
-        );
+        if let Ok(dump_path) = std::env::var("MANGO_DUMP_SCRIPTS") {
+            let _ = std::fs::write(&dump_path, script_dump);
+            println!("Dumped {} scripts to {}", script_matches.len(), dump_path);
+        }
     }
 
     let mut index = 0usize;

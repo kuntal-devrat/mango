@@ -394,7 +394,7 @@ fn test_render_ddg_snippet_glyphs() {
 
 #[test]
 fn test_web_font_multiple_slices() {
-    if let Ok(bytes) = std::fs::read("/tmp/fira.woff2") {
+    if let Ok(bytes) = std::fs::read(std::env::temp_dir().join("fira.woff2")) {
         let fm = font_manager();
         let id = fm
             .register_web_font("TestSliceFamily", FontWeight::Regular, &bytes)

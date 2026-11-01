@@ -21,22 +21,24 @@ pub fn format_grid_item(
 ) -> f32 {
     let child_style = child.style.clone().unwrap_or_default();
     let c_fs = child_style.font_size;
+    let c_rfs = child_style.root_font_size;
 
     // Child padding, border, margins
     let p_top = child_style
         .padding_top
-        .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+        .to_px_with_viewport(c_fs, c_rfs, span_w, container_height);
     let p_right =
         child_style
             .padding_right
-            .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+            .to_px_with_viewport(c_fs, c_rfs, span_w, container_height);
     let p_bottom =
         child_style
             .padding_bottom
-            .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
-    let p_left = child_style
-        .padding_left
-        .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+            .to_px_with_viewport(c_fs, c_rfs, span_w, container_height);
+    let p_left =
+        child_style
+            .padding_left
+            .to_px_with_viewport(c_fs, c_rfs, span_w, container_height);
 
     let b_top = child_style.border_top_width;
     let b_right = child_style.border_right_width;
@@ -45,18 +47,18 @@ pub fn format_grid_item(
 
     let m_top = child_style
         .margin_top
-        .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+        .to_px_with_viewport(c_fs, c_rfs, span_w, container_height);
     let m_right =
         child_style
             .margin_right
-            .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+            .to_px_with_viewport(c_fs, c_rfs, span_w, container_height);
     let m_bottom =
         child_style
             .margin_bottom
-            .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+            .to_px_with_viewport(c_fs, c_rfs, span_w, container_height);
     let m_left = child_style
         .margin_left
-        .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+        .to_px_with_viewport(c_fs, c_rfs, span_w, container_height);
 
     child.dimensions.padding = EdgeSizes::new(p_top, p_right, p_bottom, p_left);
     child.dimensions.border = EdgeSizes::new(b_top, b_right, b_bottom, b_left);
@@ -66,7 +68,7 @@ pub fn format_grid_item(
     let item_content_w = if child_style.width != Length::Auto {
         let explicit = child_style
             .width
-            .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+            .to_px_with_viewport(c_fs, c_rfs, span_w, container_height);
         if child_style.box_sizing == BoxSizing::BorderBox {
             (explicit - p_left - p_right - b_left - b_right).max(0.0)
         } else {
@@ -77,11 +79,11 @@ pub fn format_grid_item(
     };
     let min_w = child_style
         .min_width
-        .to_px_with_viewport(c_fs, 16.0, span_w, container_height);
+        .to_px_with_viewport(c_fs, c_rfs, span_w, container_height);
     let max_w = if child_style.max_width != Length::Auto {
         child_style
             .max_width
-            .to_px_with_viewport(c_fs, 16.0, span_w, container_height)
+            .to_px_with_viewport(c_fs, c_rfs, span_w, container_height)
     } else {
         f32::INFINITY
     };
@@ -114,7 +116,7 @@ pub fn format_grid_item(
         let raw_h =
             child_style
                 .height
-                .to_px_with_viewport(c_fs, 16.0, container_height, container_height);
+                .to_px_with_viewport(c_fs, c_rfs, container_height, container_height);
         let content_h = if child_style.box_sizing == BoxSizing::BorderBox {
             (raw_h - p_top - p_bottom - b_top - b_bottom).max(0.0)
         } else {
@@ -122,14 +124,14 @@ pub fn format_grid_item(
         };
         let min_h = child_style.min_height.to_px_with_viewport(
             c_fs,
-            16.0,
+            c_rfs,
             container_height,
             container_height,
         );
         let max_h = if child_style.max_height != Length::Auto {
             child_style.max_height.to_px_with_viewport(
                 c_fs,
-                16.0,
+                c_rfs,
                 container_height,
                 container_height,
             )
@@ -269,16 +271,17 @@ pub fn position_grid_items_in_cells(
                         (span_cell_h - p.top - p.bottom - b.top - b.bottom - m.top - m.bottom)
                             .max(0.0);
                     let c_fs = child_style.font_size;
+                    let c_rfs = child_style.root_font_size;
                     let min_h = child_style.min_height.to_px_with_viewport(
                         c_fs,
-                        16.0,
+                        c_rfs,
                         container_height,
                         container_height,
                     );
                     let max_h = if child_style.max_height != Length::Auto {
                         child_style.max_height.to_px_with_viewport(
                             c_fs,
-                            16.0,
+                            c_rfs,
                             container_height,
                             container_height,
                         )

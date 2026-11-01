@@ -433,7 +433,8 @@ impl Drop for JsRuntime {
         }
         self.worker_manager.terminate_all();
         // SAFETY: `v8_isolate()` returns a valid reference to the runtime's V8 isolate.
-        // Entering the isolate is required before invoking `low_memory_notification()`.
+        // Entering the isolate is required before invoking `low_memory_notification()`
+        // and ensures the isolate is current during deno_core realm destruction.
         unsafe {
             let isolate = self.runtime.v8_isolate();
             isolate.enter();
