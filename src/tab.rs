@@ -25,7 +25,7 @@ pub struct TabWebContents {
     pub cached_stylesheets: Vec<mango_css::Stylesheet>,
     pub root_box: Option<mango_layout::box_tree::LayoutBox>,
     pub js_runtime: Option<mango_js::JsRuntime>,
-    pub style_snapshot: std::collections::HashMap<u32, mango_css::ComputedStyle>,
+    pub style_snapshot: std::collections::HashMap<u32, std::sync::Arc<mango_css::ComputedStyle>>,
     pub focused_control: Option<mango_html::dom::NodeId>,
     pub page_display_list: mango_render::display_list::DisplayList,
     pub display_list_cache: mango_layout::display_list::DisplayListCache,

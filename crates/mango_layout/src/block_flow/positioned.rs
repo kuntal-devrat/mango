@@ -867,6 +867,9 @@ pub(crate) fn layout_positioned_element(
     if !is_flex_or_grid {
         layout_positioned_children(box_node, float_ctx);
     }
+
+    // Release unflattened static backup children now that positioned layout is complete
+    box_node.raw_children = None;
 }
 
 pub(crate) fn shift_descendants(box_node: &mut LayoutBox, dx: f32, dy: f32) {

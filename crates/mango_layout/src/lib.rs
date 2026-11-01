@@ -39,6 +39,8 @@ pub mod snapshot;
 pub mod style_tree;
 pub mod table_flow;
 
+use std::sync::Arc;
+
 pub use a11y::{A11yNode, A11yRole, A11yState, A11yTree, CheckedState, PressedState};
 pub use bidi::{BidiRun, bidi_visual_runs};
 pub use block_flow::layout_block;
@@ -123,10 +125,10 @@ pub fn relayout_box_tree_with_scroll_xy(
 /// Collects `(DOM node id, computed style)` pairs for every styled box in the tree.
 pub fn collect_box_styles(
     root: &LayoutBox,
-    out: &mut std::collections::HashMap<u32, mango_css::computed::ComputedStyle>,
+    out: &mut std::collections::HashMap<u32, Arc<mango_css::computed::ComputedStyle>>,
 ) {
     if let (Some(node_id), Some(style)) = (root.node_id, root.style.as_ref()) {
-        out.insert(node_id.raw(), (**style).clone());
+        out.insert(node_id.raw(), Arc::clone(style));
     }
     for child in &root.children {
         collect_box_styles(child, out);
