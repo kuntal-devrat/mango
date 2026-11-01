@@ -562,3 +562,175 @@ fn test_flex_min_greater_than_max_no_panic() {
     crate::flex_flow::layout_flex(&mut container, &containing_block, &mut float_ctx);
     assert!(container.children[0].dimensions.content.width() >= 42.0);
 }
+
+#[test]
+fn test_subgrid_column_track_inheritance() {
+    // Parent grid: 3 columns (100px, 150px, 200px), col_gap: 10px
+    let mut container = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+    let mut c_style = ComputedStyle::default();
+    c_style.display = Display::Grid;
+    c_style.width = Length::Px(500.0);
+    c_style.column_gap = Length::Px(10.0);
+    c_style.grid_template_columns = vec![
+        GridTrackSize::Length(Length::Px(100.0)),
+        GridTrackSize::Length(Length::Px(150.0)),
+        GridTrackSize::Length(Length::Px(200.0)),
+    ];
+    container.style = Some(c_style.into());
+
+    // Subgrid item spanning col 2 to 4 (tracks 1 and 2: 150px and 200px)
+    let mut subgrid = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+    let mut sub_style = ComputedStyle::default();
+    sub_style.display = Display::Grid;
+    sub_style.grid_column_start = GridPlacement::Line(2);
+    sub_style.grid_column_end = GridPlacement::Line(4);
+    sub_style.grid_template_columns = vec![GridTrackSize::Subgrid];
+    subgrid.style = Some(sub_style.into());
+
+    // Child 1 inside subgrid (col 0 of subgrid -> 150px)
+    let mut child1 = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+    child1.style = Some(ComputedStyle::default().into());
+
+    // Child 2 inside subgrid (col 1 of subgrid -> 200px)
+    let mut child2 = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+    child2.style = Some(ComputedStyle::default().into());
+
+    subgrid.children.push(child1);
+    subgrid.children.push(child2);
+    container.children.push(subgrid);
+
+    let mut containing_block = Dimensions::default();
+    containing_block.content = Rect::new(0.0, 0.0, 500.0, 400.0);
+    let mut float_ctx = FloatContext::new();
+
+    layout_grid(&mut container, &containing_block, &mut float_ctx);
+
+    let sub = &container.children[0];
+    // Subgrid starts at col 1 offset: 100 + 10 = 110px. Width = 150 + 200 + 10 = 360px.
+    assert_eq!(sub.dimensions.content.x(), 110.0);
+    assert_eq!(sub.dimensions.content.width(), 360.0);
+
+    // Child 1 inside subgrid inherits 150px column width
+    assert_eq!(sub.children[0].dimensions.content.width(), 150.0);
+    // Child 2 inside subgrid inherits 200px column width
+    assert_eq!(sub.children[1].dimensions.content.width(), 200.0);
+}
+
+#[test]
+fn test_subgrid_row_track_inheritance() {
+    // Parent grid: 2 rows (80px, 160px), row_gap: 15px
+    let mut container = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+    let mut c_style = ComputedStyle::default();
+    c_style.display = Display::Grid;
+    c_style.width = Length::Px(400.0);
+    c_style.height = Length::Px(300.0);
+    c_style.row_gap = Length::Px(15.0);
+    c_style.grid_template_columns = vec![GridTrackSize::Length(Length::Px(400.0))];
+    c_style.grid_template_rows = vec![
+        GridTrackSize::Length(Length::Px(80.0)),
+        GridTrackSize::Length(Length::Px(160.0)),
+    ];
+    container.style = Some(c_style.into());
+
+    // Subgrid item spanning both rows (grid-row: 1 / 3)
+    let mut subgrid = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+    let mut sub_style = ComputedStyle::default();
+    sub_style.display = Display::Grid;
+    sub_style.grid_row_start = GridPlacement::Line(1);
+    sub_style.grid_row_end = GridPlacement::Line(3);
+    sub_style.grid_template_rows = vec![GridTrackSize::Subgrid];
+    subgrid.style = Some(sub_style.into());
+
+    // Child 1 on Row 0 of subgrid (should inherit 80px)
+    let mut child1 = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+    child1.style = Some(ComputedStyle::default().into());
+
+    // Child 2 on Row 1 of subgrid (should inherit 160px)
+    let mut child2 = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+    child2.style = Some(ComputedStyle::default().into());
+
+    subgrid.children.push(child1);
+    subgrid.children.push(child2);
+    container.children.push(subgrid);
+
+    let mut containing_block = Dimensions::default();
+    containing_block.content = Rect::new(0.0, 0.0, 400.0, 300.0);
+    let mut float_ctx = FloatContext::new();
+
+    layout_grid(&mut container, &containing_block, &mut float_ctx);
+
+    let sub = &container.children[0];
+    assert_eq!(sub.children[0].dimensions.content.height(), 80.0);
+    assert_eq!(sub.children[1].dimensions.content.height(), 160.0);
+}
+
+#[test]
+fn test_subgrid_bidirectional_track_alignment() {
+    // 2D subgrid inheriting both columns and rows
+    let mut container = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+    let mut c_style = ComputedStyle::default();
+    c_style.display = Display::Grid;
+    c_style.width = Length::Px(500.0);
+    c_style.height = Length::Px(250.0);
+    c_style.column_gap = Length::Px(10.0);
+    c_style.row_gap = Length::Px(10.0);
+    c_style.grid_template_columns = vec![
+        GridTrackSize::Length(Length::Px(200.0)),
+        GridTrackSize::Length(Length::Px(290.0)),
+    ];
+    c_style.grid_template_rows = vec![
+        GridTrackSize::Length(Length::Px(100.0)),
+        GridTrackSize::Length(Length::Px(140.0)),
+    ];
+    container.style = Some(c_style.into());
+
+    let mut subgrid = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+    let mut sub_style = ComputedStyle::default();
+    sub_style.display = Display::Grid;
+    sub_style.grid_column_start = GridPlacement::Line(1);
+    sub_style.grid_column_end = GridPlacement::Line(3);
+    sub_style.grid_row_start = GridPlacement::Line(1);
+    sub_style.grid_row_end = GridPlacement::Line(3);
+    sub_style.grid_template_columns = vec![GridTrackSize::Subgrid];
+    sub_style.grid_template_rows = vec![GridTrackSize::Subgrid];
+    subgrid.style = Some(sub_style.into());
+
+    // 4 items inside subgrid
+    let mut item00 = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+    item00.style = Some(ComputedStyle::default().into());
+    let mut item01 = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+    item01.style = Some(ComputedStyle::default().into());
+    let mut item10 = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+    item10.style = Some(ComputedStyle::default().into());
+    let mut item11 = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
+    item11.style = Some(ComputedStyle::default().into());
+
+    subgrid.children.push(item00);
+    subgrid.children.push(item01);
+    subgrid.children.push(item10);
+    subgrid.children.push(item11);
+    container.children.push(subgrid);
+
+    let mut containing_block = Dimensions::default();
+    containing_block.content = Rect::new(0.0, 0.0, 500.0, 250.0);
+    let mut float_ctx = FloatContext::new();
+
+    layout_grid(&mut container, &containing_block, &mut float_ctx);
+
+    let sub = &container.children[0];
+    // Cell (0,0): width 200, height 100
+    assert_eq!(sub.children[0].dimensions.content.width(), 200.0);
+    assert_eq!(sub.children[0].dimensions.content.height(), 100.0);
+
+    // Cell (0,1): width 290, height 100
+    assert_eq!(sub.children[1].dimensions.content.width(), 290.0);
+    assert_eq!(sub.children[1].dimensions.content.height(), 100.0);
+
+    // Cell (1,0): width 200, height 140
+    assert_eq!(sub.children[2].dimensions.content.width(), 200.0);
+    assert_eq!(sub.children[2].dimensions.content.height(), 140.0);
+
+    // Cell (1,1): width 290, height 140
+    assert_eq!(sub.children[3].dimensions.content.width(), 290.0);
+    assert_eq!(sub.children[3].dimensions.content.height(), 140.0);
+}

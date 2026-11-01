@@ -9,7 +9,8 @@ use crate::float::FloatContext;
 use super::item::{format_grid_item, position_grid_items_in_cells};
 use super::placement::place_grid_items;
 use super::tracks::{
-    expand_column_templates, resolve_column_widths_and_offsets, resolve_row_heights_and_offsets,
+    expand_column_templates, expand_row_templates, resolve_column_widths_and_offsets,
+    resolve_row_heights_and_offsets,
 };
 
 /// Executes CSS Grid layout on a grid container box.
@@ -27,7 +28,7 @@ pub fn layout_grid_internal(
     containing_block: &Dimensions,
     float_ctx: &mut FloatContext,
     parent_subgrid_cols: Option<&[f32]>,
-    _parent_subgrid_rows: Option<&[f32]>,
+    parent_subgrid_rows: Option<&[f32]>,
 ) {
     let container_width = containing_block.content.width();
     let container_height = if containing_block.content.height() > 0.0 {
@@ -334,12 +335,27 @@ pub fn layout_grid_internal(
         area_cols,
     );
 
+    let area_rows = style.grid_template_areas.len();
+    let is_subgrid_rows = parent_subgrid_rows.is_some()
+        && style
+            .grid_template_rows
+            .iter()
+            .any(|t| matches!(t, GridTrackSize::Subgrid));
+
+    let mut template_rows = expand_row_templates(
+        &style.grid_template_rows,
+        parent_subgrid_rows,
+        content_width,
+        container_height,
+        font_size,
+        root_font_size,
+        row_gap,
+        in_flow_indices.len(),
+        area_rows,
+    );
+
     let mut num_cols = template_cols.len().max(area_cols).max(1);
-    let explicit_row_count = style
-        .grid_template_rows
-        .len()
-        .max(style.grid_template_areas.len())
-        .max(1);
+    let explicit_row_count = template_rows.len().max(area_rows).max(1);
 
     // 5. Place items into grid cells
     let (placed_items, resolved_num_cols) = place_grid_items(
@@ -356,15 +372,18 @@ pub fn layout_grid_internal(
         template_cols.push(GridTrackSize::Auto);
     }
 
-    let area_rows = style.grid_template_areas.len();
     let num_rows = placed_items
         .iter()
         .map(|item| item.row_start + item.row_span)
         .max()
         .unwrap_or(1)
         .max(area_rows)
-        .max(style.grid_template_rows.len())
+        .max(template_rows.len())
         .max(1);
+
+    while template_rows.len() < num_rows {
+        template_rows.push(GridTrackSize::Auto);
+    }
 
     // 6. Track Sizing for Columns
     let (col_widths, col_x_offsets) = resolve_column_widths_and_offsets(
@@ -406,28 +425,94 @@ pub fn layout_grid_internal(
             .enumerate()
             .for_each(|(idx, child)| {
                 if let Some((span_w, tracks)) = item_spans_map.get(&idx) {
-                    format_grid_item(child, *span_w, container_height, Some(tracks));
+                    format_grid_item(child, *span_w, container_height, Some(tracks), None);
                 }
             });
     } else {
         for (idx, (span_w, tracks)) in &item_spans_map {
             if let Some(child) = container.children.get_mut(*idx) {
-                format_grid_item(child, *span_w, container_height, Some(tracks));
+                format_grid_item(child, *span_w, container_height, Some(tracks), None);
             }
         }
     }
 
     // 7. Resolve row heights and offsets
+    let is_percent_indefinite =
+        matches!(style.height, Length::Percent(_)) && containing_block.content.height() <= 0.0;
+    let is_height_content = matches!(
+        style.height,
+        Length::Auto
+            | Length::MinContent
+            | Length::MaxContent
+            | Length::FitContent
+            | Length::Content
+    );
+    let definite_h = if is_pos_stretched_h {
+        pre_resolved_h
+    } else if !is_height_content && !is_percent_indefinite {
+        let raw_h = style.height.to_px_with_viewport(
+            font_size,
+            root_font_size,
+            container_height,
+            container_height,
+        );
+        let h = if style.box_sizing == BoxSizing::BorderBox {
+            (raw_h - pad_top - pad_bottom - border_top - border_bottom).max(0.0)
+        } else {
+            raw_h
+        };
+        Some(h)
+    } else {
+        None
+    };
+
     let (row_heights, row_y_offsets) = resolve_row_heights_and_offsets(
-        &style.grid_template_rows,
+        &template_rows,
         &placed_items,
         container,
         num_rows,
-        container_height,
+        definite_h.unwrap_or(0.0),
         font_size,
         row_gap,
         style.align_content,
+        is_subgrid_rows,
     );
+
+    // 7b. Re-format subgrid children with resolved parent row tracks
+    for item in &placed_items {
+        if let Some(child) = container.children.get_mut(item.child_idx) {
+            let child_is_subgrid_rows = child
+                .style
+                .as_ref()
+                .map(|s| {
+                    (s.display == Display::Grid || s.display == Display::InlineGrid)
+                        && s.grid_template_rows
+                            .iter()
+                            .any(|t| matches!(t, GridTrackSize::Subgrid))
+                })
+                .unwrap_or(false);
+
+            if child_is_subgrid_rows {
+                let sub_rows: Vec<f32> = (item.row_start..item.row_start + item.row_span)
+                    .map(|r| row_heights.get(r).copied().unwrap_or(0.0))
+                    .collect();
+                let col_tracks_opt = item_spans_map
+                    .get(&item.child_idx)
+                    .map(|(_, tr)| tr.as_slice());
+                let span_w = item_spans_map
+                    .get(&item.child_idx)
+                    .map(|(w, _)| *w)
+                    .unwrap_or(0.0);
+                format_grid_item(
+                    child,
+                    span_w,
+                    container_height,
+                    col_tracks_opt,
+                    Some(&sub_rows),
+                );
+            }
+        }
+    }
 
     // 8. Position children at resolved cell origins
     position_grid_items_in_cells(
@@ -446,30 +531,7 @@ pub fn layout_grid_internal(
     );
 
     // 9. Compute container final height
-    let is_percent_indefinite =
-        matches!(style.height, Length::Percent(_)) && containing_block.content.height() <= 0.0;
-    let is_height_content = matches!(
-        style.height,
-        Length::Auto
-            | Length::MinContent
-            | Length::MaxContent
-            | Length::FitContent
-            | Length::Content
-    );
-    if !is_height_content && !is_percent_indefinite {
-        let raw_h = style.height.to_px_with_viewport(
-            font_size,
-            root_font_size,
-            container_height,
-            container_height,
-        );
-        if style.box_sizing == BoxSizing::BorderBox {
-            container.dimensions.content.size.height =
-                (raw_h - pad_top - pad_bottom - border_top - border_bottom).max(0.0);
-        } else {
-            container.dimensions.content.size.height = raw_h;
-        }
-    } else if let Some(h) = pre_resolved_h {
+    if let Some(h) = definite_h {
         container.dimensions.content.size.height = h;
     } else {
         let total_grid_h =

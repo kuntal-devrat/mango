@@ -98,6 +98,97 @@ pub fn expand_column_templates(
     }
 }
 
+pub fn expand_row_templates(
+    template_rows: &[GridTrackSize],
+    parent_subgrid_rows: Option<&[f32]>,
+    content_width: f32,
+    container_height: f32,
+    font_size: f32,
+    root_font_size: f32,
+    row_gap: f32,
+    in_flow_count: usize,
+    area_rows: usize,
+) -> Vec<GridTrackSize> {
+    let is_subgrid_rows = parent_subgrid_rows.is_some()
+        && template_rows
+            .iter()
+            .any(|t| matches!(t, GridTrackSize::Subgrid));
+
+    if is_subgrid_rows {
+        if let Some(rows) = parent_subgrid_rows {
+            rows.iter()
+                .map(|&h| GridTrackSize::Length(Length::Px(h)))
+                .collect()
+        } else {
+            Vec::new()
+        }
+    } else if !template_rows.is_empty() {
+        let mut expanded = Vec::new();
+        let mut non_repeat_fixed = 0.0f32;
+        let mut non_repeat_count = 0usize;
+        for t in template_rows {
+            match t {
+                GridTrackSize::RepeatAutoFill(_) | GridTrackSize::RepeatAutoFit(_) => {}
+                GridTrackSize::Length(l) => {
+                    non_repeat_fixed += l.to_px_with_viewport(
+                        font_size,
+                        root_font_size,
+                        content_width,
+                        container_height,
+                    );
+                    non_repeat_count += 1;
+                }
+                _ => {
+                    non_repeat_count += 1;
+                }
+            }
+        }
+        let repeat_space =
+            (container_height - non_repeat_fixed - (non_repeat_count as f32) * row_gap).max(0.0);
+
+        for t in template_rows {
+            match t {
+                GridTrackSize::RepeatAutoFill(inner) => {
+                    let min_sz = track_min_size(
+                        inner,
+                        font_size,
+                        root_font_size,
+                        content_width,
+                        container_height,
+                    );
+                    let step = (min_sz + row_gap).max(1.0);
+                    let count = ((repeat_space + row_gap) / step).floor() as usize;
+                    let count = count.max(1);
+                    for _ in 0..count {
+                        expanded.push((**inner).clone());
+                    }
+                }
+                GridTrackSize::RepeatAutoFit(inner) => {
+                    let min_sz = track_min_size(
+                        inner,
+                        font_size,
+                        root_font_size,
+                        content_width,
+                        container_height,
+                    );
+                    let step = (min_sz + row_gap).max(1.0);
+                    let count = ((repeat_space + row_gap) / step).floor() as usize;
+                    let count = count.min(in_flow_count).max(1);
+                    for _ in 0..count {
+                        expanded.push((**inner).clone());
+                    }
+                }
+                other => expanded.push(other.clone()),
+            }
+        }
+        expanded
+    } else if area_rows > 0 {
+        vec![GridTrackSize::Auto; area_rows]
+    } else {
+        Vec::new()
+    }
+}
+
 pub fn resolve_column_widths_and_offsets(
     template_cols: &[GridTrackSize],
     placed_items: &[PlacedItem],
@@ -323,6 +414,7 @@ pub fn resolve_row_heights_and_offsets(
     font_size: f32,
     row_gap: f32,
     align_content: AlignContent,
+    is_subgrid_rows: bool,
 ) -> (Vec<f32>, Vec<f32>) {
     let root_font_size = container
         .style
@@ -379,30 +471,32 @@ pub fn resolve_row_heights_and_offsets(
         }
     }
 
-    for item in placed_items {
-        let child = &container.children[item.child_idx];
-        let item_outer_h = child.dimensions.margin_box().height();
-        if item.row_span == 1 && item.row_start < num_rows {
-            row_heights[item.row_start] = row_heights[item.row_start].max(item_outer_h);
-        }
-    }
-
-    for item in placed_items {
-        if item.row_span > 1 {
+    if !is_subgrid_rows {
+        for item in placed_items {
             let child = &container.children[item.child_idx];
             let item_outer_h = child.dimensions.margin_box().height();
-            let current_span_h: f32 = (item.row_start..item.row_start + item.row_span)
-                .map(|r| row_heights.get(r).copied().unwrap_or(0.0))
-                .sum::<f32>()
-                + (item.row_span.saturating_sub(1) as f32) * row_gap;
-            if item_outer_h > current_span_h {
-                let excess_per_row = (item_outer_h - current_span_h) / (item.row_span as f32);
-                for row_h in row_heights
-                    .iter_mut()
-                    .skip(item.row_start)
-                    .take(item.row_span)
-                {
-                    *row_h += excess_per_row;
+            if item.row_span == 1 && item.row_start < num_rows {
+                row_heights[item.row_start] = row_heights[item.row_start].max(item_outer_h);
+            }
+        }
+
+        for item in placed_items {
+            if item.row_span > 1 {
+                let child = &container.children[item.child_idx];
+                let item_outer_h = child.dimensions.margin_box().height();
+                let current_span_h: f32 = (item.row_start..item.row_start + item.row_span)
+                    .map(|r| row_heights.get(r).copied().unwrap_or(0.0))
+                    .sum::<f32>()
+                    + (item.row_span.saturating_sub(1) as f32) * row_gap;
+                if item_outer_h > current_span_h {
+                    let excess_per_row = (item_outer_h - current_span_h) / (item.row_span as f32);
+                    for row_h in row_heights
+                        .iter_mut()
+                        .skip(item.row_start)
+                        .take(item.row_span)
+                    {
+                        *row_h += excess_per_row;
+                    }
                 }
             }
         }
@@ -410,11 +504,53 @@ pub fn resolve_row_heights_and_offsets(
 
     let total_row_tracks_h: f32 =
         row_heights.iter().sum::<f32>() + (num_rows.saturating_sub(1) as f32) * row_gap;
-    let free_row_space = if container_height > 0.0 {
+    let mut free_row_space = if container_height > 0.0 {
         (container_height - total_row_tracks_h).max(0.0)
     } else {
         0.0
     };
+
+    if (align_content == AlignContent::Normal || align_content == AlignContent::Stretch)
+        && free_row_space > 0.0
+        && !is_subgrid_rows
+    {
+        let auto_rows_count = grid_template_rows
+            .iter()
+            .take(num_rows)
+            .filter(|t| {
+                matches!(
+                    t,
+                    GridTrackSize::Auto | GridTrackSize::MinContent | GridTrackSize::MaxContent
+                )
+            })
+            .count()
+            .max(if grid_template_rows.is_empty() {
+                num_rows
+            } else {
+                0
+            });
+
+        if auto_rows_count > 0 {
+            let add_per_row = free_row_space / (auto_rows_count as f32);
+            for (r, r_h) in row_heights.iter_mut().enumerate() {
+                let is_auto = grid_template_rows
+                    .get(r)
+                    .map(|t| {
+                        matches!(
+                            t,
+                            GridTrackSize::Auto
+                                | GridTrackSize::MinContent
+                                | GridTrackSize::MaxContent
+                        )
+                    })
+                    .unwrap_or(true);
+                if is_auto {
+                    *r_h += add_per_row;
+                }
+            }
+            free_row_space = 0.0;
+        }
+    }
 
     let (row_start_y, extra_row_gap) = match align_content {
         AlignContent::Center => (free_row_space / 2.0, 0.0),
