@@ -495,14 +495,8 @@ pub fn parse_single_value(token: &Token) -> Option<Value> {
             }
 
             // Cursor
-            match lower.as_str() {
-                "pointer" => return Some(Value::Cursor(Cursor::Pointer)),
-                "default" => return Some(Value::Cursor(Cursor::Default)),
-                "text" => return Some(Value::Cursor(Cursor::Text)),
-                "move" => return Some(Value::Cursor(Cursor::Move)),
-                "not-allowed" => return Some(Value::Cursor(Cursor::NotAllowed)),
-                "crosshair" => return Some(Value::Cursor(Cursor::Crosshair)),
-                _ => {}
+            if let Some(cursor) = Cursor::from_keyword(&lower) {
+                return Some(Value::Cursor(cursor));
             }
 
             // VerticalAlign
@@ -550,4 +544,24 @@ pub fn parse_single_value(token: &Token) -> Option<Value> {
         Token::Delim('/') => Some(Value::Keyword("/".to_string())),
         _ => None,
     }
+}
+
+/// Tries to parse `cursor` keywords (all 32 CSS3 cursor keywords or CSS-wide keywords).
+pub fn try_parse_cursor(tokens: &[Token]) -> Option<Value> {
+    let first = tokens
+        .iter()
+        .find(|t| !matches!(t, Token::Whitespace | Token::Comment(_)))?;
+    if let Token::Ident(ident) = first {
+        let lower = ident.to_ascii_lowercase();
+        if let Some(cursor) = Cursor::from_keyword(&lower) {
+            return Some(Value::Cursor(cursor));
+        }
+        if matches!(
+            lower.as_str(),
+            "inherit" | "initial" | "unset" | "revert" | "revert-layer"
+        ) {
+            return Some(Value::Keyword(lower));
+        }
+    }
+    None
 }

@@ -259,8 +259,29 @@
     globalThis.getComputedStyle = function(el, pseudo) {
         var cs = new CSSStyleDeclaration(el);
         var s = (el && el.style) ? el.style : {};
+        var vw = 1280, vh = 900;
+        var win = (el && el.ownerDocument && el.ownerDocument.defaultView) || (typeof window !== 'undefined' ? window : globalThis);
+        if (win && win.frameElement) {
+            var fe = win.frameElement;
+            var styleAttr = fe.getAttribute ? fe.getAttribute('style') : null;
+            var wStr = '', hStr = '';
+            if (styleAttr) {
+                var wMatch = /(?:^|;)\s*width\s*:\s*([^;]+)/i.exec(styleAttr);
+                if (wMatch) wStr = wMatch[1].trim();
+                var hMatch = /(?:^|;)\s*height\s*:\s*([^;]+)/i.exec(styleAttr);
+                if (hMatch) hStr = hMatch[1].trim();
+            }
+            if (!wStr && styleAttr !== null && fe.style) wStr = fe.style.width || '';
+            if (!hStr && styleAttr !== null && fe.style) hStr = fe.style.height || '';
+            if (!wStr && fe.getAttribute && fe.hasAttribute && fe.hasAttribute('width')) wStr = fe.getAttribute('width') || '';
+            if (!hStr && fe.getAttribute && fe.hasAttribute && fe.hasAttribute('height')) hStr = fe.getAttribute('height') || '';
+            var pw = parseFloat(wStr);
+            var ph = parseFloat(hStr);
+            vw = isNaN(pw) ? 0 : pw;
+            vh = isNaN(ph) ? 0 : ph;
+        }
         var backendProps = (el && el._nodeId !== undefined && typeof _getComputedStyle === 'function')
-            ? _getComputedStyle(el._nodeId)
+            ? _getComputedStyle(el._nodeId, vw, vh)
             : null;
 
         var rect = (el && typeof el.getBoundingClientRect === 'function') ? el.getBoundingClientRect() : null;
@@ -345,11 +366,12 @@
             overflow:         s.overflow         || 'visible',
             overflowX:        s.overflowX        || s.overflow || 'visible',
             overflowY:        s.overflowY        || s.overflow || 'visible',
-            zIndex:           s.zIndex           || 'auto',
+            zIndex:           (backendProps && (backendProps['z-index'] || backendProps.zIndex)) || s.zIndex || 'auto',
             flexDirection:    s.flexDirection    || 'row',
             alignItems:       s.alignItems       || 'stretch',
             justifyContent:   s.justifyContent   || 'flex-start',
-            cursor:           s.cursor           || 'auto',
+            cursor:           (backendProps && (backendProps.cursor || backendProps['cursor'])) || s.cursor || 'auto',
+            textTransform:    (backendProps && (backendProps['text-transform'] || backendProps.textTransform)) || s.textTransform || 'none',
             whiteSpace:       (backendProps && (backendProps['white-space'] || backendProps.whiteSpace)) || s.whiteSpace || 'normal',
             overlay:          (el && el._overlayTransition === 'in') ? 'none' : ((el && (el.hasAttribute && (el.hasAttribute('data-mango-popover-open') || el.hasAttribute(':popover-open') || (el.tagName === 'DIALOG' && el.hasAttribute('open')) || el._overlayTransition === 'out'))) ? 'auto' : 'none')
         };

@@ -487,16 +487,11 @@ pub(crate) fn apply_layout_property(style: &mut ComputedStyle, prop: &str, val: 
         },
         "cursor" => match val {
             Value::Cursor(c) => style.cursor = *c,
-            Value::Keyword(k) => match k.as_str() {
-                "default" => style.cursor = Cursor::Default,
-                "pointer" => style.cursor = Cursor::Pointer,
-                "text" => style.cursor = Cursor::Text,
-                "not-allowed" => style.cursor = Cursor::NotAllowed,
-                "move" => style.cursor = Cursor::Move,
-                "wait" => style.cursor = Cursor::Wait,
-                "help" => style.cursor = Cursor::Help,
-                _ => {}
-            },
+            Value::Keyword(k) => {
+                if let Some(c) = Cursor::from_keyword(k.as_str()) {
+                    style.cursor = c;
+                }
+            }
             _ => {}
         },
         "vertical-align" => match val {

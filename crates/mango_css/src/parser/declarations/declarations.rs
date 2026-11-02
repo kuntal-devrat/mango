@@ -14,7 +14,7 @@ use crate::parser::declarations::typography::{
     try_parse_text_emphasis_style, try_parse_text_underline_offset, try_parse_white_space,
     try_parse_word_break,
 };
-use crate::parser::declarations::value::parse_value_from_tokens;
+use crate::parser::declarations::value::{parse_value_from_tokens, try_parse_cursor};
 use crate::parser::declarations::visual::{
     split_commas, try_parse_background_attachment, try_parse_background_blend_mode,
     try_parse_background_clip, try_parse_blend_mode, try_parse_border_image, try_parse_clip,
@@ -495,8 +495,8 @@ impl CssParser {
                         .or_else(|| parse_value_from_tokens(&value_tokens)),
                     "will-change" => try_parse_will_change(&value_tokens)
                         .or_else(|| parse_value_from_tokens(&value_tokens)),
-                    "white-space" => try_parse_white_space(&value_tokens)
-                        .or_else(|| parse_value_from_tokens(&value_tokens)),
+                    "white-space" => try_parse_white_space(&value_tokens),
+                    "cursor" => try_parse_cursor(&value_tokens),
                     "box-shadow" => self
                         .parse_box_shadow(&value_tokens)
                         .or_else(|| parse_value_from_tokens(&value_tokens)),

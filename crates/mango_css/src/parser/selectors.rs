@@ -14,17 +14,8 @@ impl CssParser {
                 break;
             }
 
-            if let Some(complex) = self.parse_complex_selector() {
-                selectors.push(complex);
-            } else {
-                // Recover from invalid selector: skip tokens until comma, open curly, or EOF
-                while *self.peek() != Token::Comma
-                    && *self.peek() != Token::OpenCurly
-                    && *self.peek() != Token::Eof
-                {
-                    self.advance();
-                }
-            }
+            let complex = self.parse_complex_selector()?;
+            selectors.push(complex);
 
             self.skip_whitespace_and_comments();
             if *self.peek() == Token::Comma {
@@ -132,6 +123,12 @@ impl CssParser {
         let mut simples = Vec::new();
 
         while let Some(simple) = self.parse_simple_selector() {
+            // CSS Selectors Level 3 § 3: type and universal selectors are only allowed at the beginning of a compound selector.
+            if !simples.is_empty()
+                && matches!(simple, SimpleSelector::Type(_) | SimpleSelector::Universal)
+            {
+                return None;
+            }
             simples.push(simple);
             // Compound selectors must not be separated by whitespace
             if matches!(
@@ -156,10 +153,52 @@ impl CssParser {
                 Some(SimpleSelector::Nesting)
             }
             Token::Delim('*') => {
+                if self.tokens.get(self.cursor + 1) == Some(&Token::Delim('|')) {
+                    if let Some(Token::Ident(tag)) = self.tokens.get(self.cursor + 2) {
+                        let tag_clone = tag.clone();
+                        self.advance();
+                        self.advance();
+                        self.advance();
+                        return Some(SimpleSelector::Type(tag_clone));
+                    } else if let Some(Token::Delim('*')) = self.tokens.get(self.cursor + 2) {
+                        self.advance();
+                        self.advance();
+                        self.advance();
+                        return Some(SimpleSelector::Universal);
+                    }
+                }
                 self.advance();
                 Some(SimpleSelector::Universal)
             }
+            Token::Delim('|') => {
+                if let Some(Token::Ident(tag)) = self.tokens.get(self.cursor + 1) {
+                    let tag_clone = tag.clone();
+                    self.advance();
+                    self.advance();
+                    Some(SimpleSelector::Type(tag_clone))
+                } else if let Some(Token::Delim('*')) = self.tokens.get(self.cursor + 1) {
+                    self.advance();
+                    self.advance();
+                    Some(SimpleSelector::Universal)
+                } else {
+                    None
+                }
+            }
             Token::Ident(tag) => {
+                if self.tokens.get(self.cursor + 1) == Some(&Token::Delim('|')) {
+                    if let Some(Token::Ident(local_name)) = self.tokens.get(self.cursor + 2) {
+                        let local_clone = local_name.clone();
+                        self.advance();
+                        self.advance();
+                        self.advance();
+                        return Some(SimpleSelector::Type(local_clone));
+                    } else if let Some(Token::Delim('*')) = self.tokens.get(self.cursor + 2) {
+                        self.advance();
+                        self.advance();
+                        self.advance();
+                        return Some(SimpleSelector::Universal);
+                    }
+                }
                 let tag_clone = tag.clone();
                 self.advance();
                 Some(SimpleSelector::Type(tag_clone))

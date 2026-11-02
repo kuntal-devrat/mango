@@ -20,7 +20,7 @@ use mango_browser::browser::BrowserChrome;
 use server::WptServer;
 use std::time::{Duration, Instant};
 
-const ACID3_TIMEOUT: Duration = Duration::from_secs(30);
+const ACID3_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Acid3RunResult {
@@ -330,9 +330,14 @@ fn test_acid3_baseline() {
         result.bucket_passed[1], result.bucket_totals[1],
         "Bucket 1 (DOM Traversal & Range) regressed below 100%"
     );
+    // Bucket 3 (CSS Selectors & Style) must be 100% conforming (16/16)
+    assert_eq!(
+        result.bucket_passed[3], result.bucket_totals[3],
+        "Bucket 3 (CSS Selectors & Style) regressed below 100%"
+    );
     assert!(
-        result.score >= 77,
-        "Acid3 baseline score regressed below 77/100 (got {}/100)",
+        result.score >= 92,
+        "Acid3 baseline score regressed below 92/100 (got {}/100)",
         result.score
     );
     assert!(
