@@ -230,7 +230,7 @@
                     this._currentNode = node;
                     return node;
                 }
-                sib = node.previousSibling;
+                sib = sib.previousSibling;
             }
             if (node === this._root || !node.parentNode) return null;
             node = node.parentNode;
@@ -275,6 +275,8 @@
     };
 
     // NodeIterator
+    var _activeNodeIterators = [];
+
     var NodeIterator = function NodeIterator() {
         throw new TypeError("Illegal constructor");
     };
@@ -286,11 +288,11 @@
         enumerable: true, configurable: true
     });
     Object.defineProperty(NodeIterator.prototype, 'referenceNode', {
-        get: function() { return this._referenceNode; },
+        get: function() { return this._reference; },
         enumerable: true, configurable: true
     });
     Object.defineProperty(NodeIterator.prototype, 'pointerBeforeReferenceNode', {
-        get: function() { return this._pointerBeforeReferenceNode; },
+        get: function() { return this._pointerBeforeReference; },
         enumerable: true, configurable: true
     });
     Object.defineProperty(NodeIterator.prototype, 'whatToShow', {
@@ -303,51 +305,201 @@
     });
     NodeIterator.prototype.detach = function() {};
 
-    function _traverseDocPreOrder(root) {
-        var list = [];
-        function walk(n) {
-            if (!n) return;
-            list.push(n);
-            var kids = n.childNodes || [];
-            for (var i = 0; i < kids.length; i++) {
-                walk(kids[i]);
+    function _nodeFollowing(node, root) {
+        var fc = _getFirstChild(node);
+        if (fc) return fc;
+        if (node === root) return null;
+        var cur = node;
+        while (cur) {
+            if (cur === root) return null;
+            if (cur.nextSibling) return cur.nextSibling;
+            cur = cur.parentNode;
+        }
+        return null;
+    }
+
+    function _nodePreceding(node, root) {
+        if (node === root) return null;
+        var ps = node.previousSibling;
+        if (ps) {
+            var cur = ps;
+            while (_getLastChild(cur)) {
+                cur = _getLastChild(cur);
+            }
+            return cur;
+        }
+        var p = node.parentNode;
+        if (!p || p === root) return p || null;
+        return p;
+    }
+
+    function _traverseNodeIterator(iterator, direction) {
+        iterator._candidateReference = {
+            node: iterator._reference,
+            pointerBefore: iterator._pointerBeforeReference
+        };
+        var result = null;
+
+        while (true) {
+            var candidate = iterator._candidateReference;
+            if (direction === 'next') {
+                if (!candidate.pointerBefore) {
+                    var following = _nodeFollowing(candidate.node, iterator._root);
+                    if (!following) break;
+                    candidate.node = following;
+                    candidate.pointerBefore = false;
+                } else {
+                    candidate.pointerBefore = false;
+                }
+            } else {
+                if (candidate.pointerBefore) {
+                    var preceding = _nodePreceding(candidate.node, iterator._root);
+                    if (!preceding) break;
+                    candidate.node = preceding;
+                    candidate.pointerBefore = true;
+                } else {
+                    candidate.pointerBefore = true;
+                }
+            }
+
+            var nodeToFilter = candidate.node;
+            var testResult = _filterTestNode(iterator._whatToShow, iterator._filter, nodeToFilter);
+            if (testResult === 1) {
+                result = nodeToFilter;
+                break;
             }
         }
-        walk(root);
-        return list;
+
+        if (result !== null) {
+            iterator._reference = iterator._candidateReference.node;
+            iterator._pointerBeforeReference = iterator._candidateReference.pointerBefore;
+        }
+        iterator._candidateReference = null;
+        return result;
     }
 
     NodeIterator.prototype.nextNode = function() {
-        var all = _traverseDocPreOrder(this._root);
-        var idx = all.indexOf(this._referenceNode);
-        if (idx === -1) idx = 0;
-        var start = this._pointerBeforeReferenceNode ? idx : idx + 1;
-        for (var i = start; i < all.length; i++) {
-            var cand = all[i];
-            if (_filterTestNode(this._whatToShow, this._filter, cand) === 1) {
-                this._referenceNode = cand;
-                this._pointerBeforeReferenceNode = false;
-                return cand;
-            }
-        }
-        return null;
+        return _traverseNodeIterator(this, 'next');
     };
 
     NodeIterator.prototype.previousNode = function() {
-        var all = _traverseDocPreOrder(this._root);
-        var idx = all.indexOf(this._referenceNode);
-        if (idx === -1) idx = 0;
-        var start = this._pointerBeforeReferenceNode ? idx - 1 : idx;
-        for (var i = start; i >= 0; i--) {
-            var cand = all[i];
-            if (_filterTestNode(this._whatToShow, this._filter, cand) === 1) {
-                this._referenceNode = cand;
-                this._pointerBeforeReferenceNode = true;
-                return cand;
+        return _traverseNodeIterator(this, 'previous');
+    };
+
+    function _isInclusiveAncestorNode(ancestor, node) {
+        if (!ancestor || !node) return false;
+        var cur = node;
+        while (cur) {
+            if (cur === ancestor || (cur._nodeId !== undefined && ancestor._nodeId !== undefined && cur._nodeId === ancestor._nodeId)) {
+                return true;
             }
+            cur = cur.parentNode || cur._parentNode;
+        }
+        return false;
+    }
+
+    function _getNodePrevSibling(node) {
+        if (!node) return null;
+        if (node.previousSibling) return node.previousSibling;
+        var p = node.parentNode || node._parentNode;
+        if (p && p.childNodes) {
+            var idx = -1;
+            for (var i = 0; i < p.childNodes.length; i++) {
+                if (p.childNodes[i] === node || (p.childNodes[i]._nodeId !== undefined && node._nodeId !== undefined && p.childNodes[i]._nodeId === node._nodeId)) {
+                    idx = i; break;
+                }
+            }
+            if (idx > 0) return p.childNodes[idx - 1];
         }
         return null;
-    };
+    }
+
+    function _getNodeNextSibling(node) {
+        if (!node) return null;
+        if (node.nextSibling) return node.nextSibling;
+        var p = node.parentNode || node._parentNode;
+        if (p && p.childNodes) {
+            var idx = -1;
+            for (var i = 0; i < p.childNodes.length; i++) {
+                if (p.childNodes[i] === node || (p.childNodes[i]._nodeId !== undefined && node._nodeId !== undefined && p.childNodes[i]._nodeId === node._nodeId)) {
+                    idx = i; break;
+                }
+            }
+            if (idx !== -1 && idx + 1 < p.childNodes.length) return p.childNodes[idx + 1];
+        }
+        return null;
+    }
+
+    function _adjustNodePointer(pointer, iterator, toBeRemovedNode) {
+        if (!_isInclusiveAncestorNode(toBeRemovedNode, pointer.node)) {
+            return pointer;
+        }
+        if (_isInclusiveAncestorNode(toBeRemovedNode, iterator._root)) {
+            return pointer;
+        }
+
+        if (pointer.pointerBefore) {
+            var cur = toBeRemovedNode;
+            var next = null;
+            while (cur && cur !== iterator._root) {
+                var sib = _getNodeNextSibling(cur);
+                if (sib) {
+                    if (_isInclusiveAncestorNode(iterator._root, sib)) {
+                        next = sib;
+                        break;
+                    }
+                }
+                cur = cur.parentNode || cur._parentNode;
+            }
+            if (next) {
+                return { node: next, pointerBefore: true };
+            }
+            var prev = null;
+            var ps = _getNodePrevSibling(toBeRemovedNode);
+            if (ps) {
+                var c = ps;
+                while (_getLastChild(c)) c = _getLastChild(c);
+                prev = c;
+            } else {
+                prev = toBeRemovedNode.parentNode || toBeRemovedNode._parentNode;
+            }
+            if (!prev || !_isInclusiveAncestorNode(iterator._root, prev)) {
+                prev = iterator._root;
+            }
+            return { node: prev, pointerBefore: false };
+        } else {
+            var prev = null;
+            var ps = _getNodePrevSibling(toBeRemovedNode);
+            if (ps) {
+                var c = ps;
+                while (_getLastChild(c)) c = _getLastChild(c);
+                prev = c;
+            } else {
+                prev = toBeRemovedNode.parentNode || toBeRemovedNode._parentNode;
+            }
+            if (!prev || !_isInclusiveAncestorNode(iterator._root, prev)) {
+                prev = iterator._root;
+            }
+            return { node: prev, pointerBefore: false };
+        }
+    }
+
+    function _notifyNodeIteratorsPreRemove(toBeRemoved) {
+        if (!toBeRemoved) return;
+        for (var i = 0; i < _activeNodeIterators.length; i++) {
+            var iter = _activeNodeIterators[i];
+            if (!iter) continue;
+            var adj = _adjustNodePointer({ node: iter._reference, pointerBefore: iter._pointerBeforeReference }, iter, toBeRemoved);
+            iter._reference = adj.node;
+            iter._pointerBeforeReference = adj.pointerBefore;
+            if (iter._candidateReference) {
+                var cAdj = _adjustNodePointer(iter._candidateReference, iter, toBeRemoved);
+                iter._candidateReference.node = cAdj.node;
+                iter._candidateReference.pointerBefore = cAdj.pointerBefore;
+            }
+        }
+    }
+    globalThis._notifyNodeIteratorsPreRemove = _notifyNodeIteratorsPreRemove;
 
     document.createTreeWalker = function(root, whatToShow, filter) {
         if (arguments.length < 1 || !root || typeof root !== 'object') {
@@ -367,12 +519,23 @@
         }
         var ni = Object.create(NodeIterator.prototype);
         ni._root = root;
-        ni._referenceNode = root;
-        ni._pointerBeforeReferenceNode = true;
+        ni._reference = root;
+        ni._pointerBeforeReference = true;
         ni._whatToShow = (whatToShow === undefined) ? 0xFFFFFFFF : (Number(whatToShow) >>> 0);
         ni._filter = filter || null;
+        ni._candidateReference = null;
+        _activeNodeIterators.push(ni);
         return ni;
     };
+
+    if (globalThis.Document && globalThis.Document.prototype) {
+        globalThis.Document.prototype.createTreeWalker = function(root, whatToShow, filter) {
+            return document.createTreeWalker(root, whatToShow, filter);
+        };
+        globalThis.Document.prototype.createNodeIterator = function(root, whatToShow, filter) {
+            return document.createNodeIterator(root, whatToShow, filter);
+        };
+    }
 
     var _domInterfaces = {
         NodeIterator: NodeIterator,

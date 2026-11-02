@@ -541,7 +541,33 @@
                 if (n.nodeType === 1 && !this._documentElement) { this._documentElement = n; this.documentElement = n; }
                 return n;
             },
-            _documentElement: html, documentElement: html, body: body, head: head, defaultView: null, _defaultView: null,
+            _documentElement: html, documentElement: html, defaultView: null, _defaultView: null,
+            get body() {
+                var de = this.documentElement;
+                if (!de) return null;
+                var kids = de.childNodes || de._childNodes || [];
+                for (var i = 0; i < kids.length; i++) {
+                    var k = kids[i];
+                    if (k && k.nodeType === 1) {
+                        var tag = (k.tagName || k.nodeName || '').toLowerCase();
+                        if (tag === 'body' || tag === 'frameset') return k;
+                    }
+                }
+                return null;
+            },
+            get head() {
+                var de = this.documentElement;
+                if (!de) return null;
+                var kids = de.childNodes || de._childNodes || [];
+                for (var i = 0; i < kids.length; i++) {
+                    var k = kids[i];
+                    if (k && k.nodeType === 1) {
+                        var tag = (k.tagName || k.nodeName || '').toLowerCase();
+                        if (tag === 'head') return k;
+                    }
+                }
+                return null;
+            },
             get scrollingElement() { return this.documentElement || this.body || null; },
             implementation: Object.create(DOMImplementation.prototype),
             nodeType: 9, nodeName: '#document',
@@ -559,7 +585,7 @@
             createTextNode: function(t) { var tn = _wrapElement(_origCTN(t)); if (tn) { tn._ownerDocument = doc; tn.ownerDocument = doc; if (doc._creationRealm) tn._creationRealm = doc._creationRealm; } return tn; },
             createDocumentFragment: function() { var f = _wrapElement(_createFragment()); if (f) { f._ownerDocument = doc; f.ownerDocument = doc; if (doc._creationRealm) f._creationRealm = doc._creationRealm; } return f; },
             createComment: function(t) { var c = (typeof document !== 'undefined' && document.createComment) ? document.createComment(t) : null; if (c) { c._ownerDocument = doc; c.ownerDocument = doc; if (doc._creationRealm) c._creationRealm = doc._creationRealm; } return c; },
-            createRange: function() { return document.createRange(); },
+            createRange: function() { var r = new Range(); r.setStart(doc, 0); r.setEnd(doc, 0); return r; },
             createTreeWalker: function(root, whatToShow, filter) { return document.createTreeWalker(root, whatToShow, filter); },
             createNodeIterator: function(root, whatToShow, filter) { return document.createNodeIterator(root, whatToShow, filter); },
             createEvent: function(t) { return document.createEvent(t); },

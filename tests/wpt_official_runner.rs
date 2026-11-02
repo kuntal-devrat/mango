@@ -16,6 +16,7 @@
 //!    - WHATWG DOM § 4.2.6 `ParentNode` mutations suite (`append`, `prepend`, `replaceChildren`)
 //!    - WHATWG DOM § 4.4/4.5 `Text` and `Comment` suite (constructors, `splitText`, `wholeText`)
 //!    - WHATWG DOM § 4.2.3 `Node` tree predicates suite (`contains`, `isSameNode`, `isConnected`, `parentElement`)
+//!    - WHATWG DOM § 4.3 `DOMImplementation` suite (`createDocument`, `createDocumentType`, `createHTMLDocument`, `hasFeature`)
 //! 2. `wpt_official_dom_category` — the whole vendored `dom/` category, with a
 //!    per-file conformance threshold.
 //! 3. `wpt_official_css_category` — the whole vendored `css/` category.
@@ -298,6 +299,28 @@ fn wpt_dom_node_tree_predicates_is_100_percent() {
         .collect();
     files.sort();
     assert_suite_100_percent("Node Tree Predicates", &files);
+}
+
+/// The WHATWG DOM § 4.3 `DOMImplementation` suite (`createDocument`, `createDocumentType`, `createHTMLDocument`, `hasFeature`), which Mango targets at 100 %.
+#[test]
+fn wpt_dom_domimplementation_is_100_percent() {
+    let root = upstream_root();
+    let dir = root.join("dom/nodes");
+    let mut files: Vec<String> = harness::discover_tests(&root, &dir)
+        .into_iter()
+        .filter(|rel| {
+            rel.ends_with("DOMImplementation-createDocument.html")
+                || rel.ends_with("DOMImplementation-createDocument-no-browsing-context.html")
+                || rel.ends_with("DOMImplementation-createDocumentType.html")
+                || rel.ends_with("DOMImplementation-createHTMLDocument.html")
+                || rel.ends_with(
+                    "DOMImplementation-createHTMLDocument-with-saved-implementation.html",
+                )
+                || rel.ends_with("DOMImplementation-hasFeature.html")
+        })
+        .collect();
+    files.sort();
+    assert_suite_100_percent("DOMImplementation", &files);
 }
 
 /// The whole vendored `dom/` category.

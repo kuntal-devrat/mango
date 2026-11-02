@@ -325,7 +325,16 @@ fn test_acid3_baseline() {
 
     print_scorecard(&result);
 
-    // Baseline validation assertion: verify execution ran
+    // Bucket 1 (DOM Traversal & Range) must be 100% conforming (16/16)
+    assert_eq!(
+        result.bucket_passed[1], result.bucket_totals[1],
+        "Bucket 1 (DOM Traversal & Range) regressed below 100%"
+    );
+    assert!(
+        result.score >= 77,
+        "Acid3 baseline score regressed below 77/100 (got {}/100)",
+        result.score
+    );
     assert!(
         result.duration > Duration::from_millis(50),
         "Runner should execute"

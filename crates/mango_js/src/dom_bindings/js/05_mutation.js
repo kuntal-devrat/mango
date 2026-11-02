@@ -248,6 +248,9 @@
         if (removeIdx === -1 && typeof _getNodeIndex === 'function') {
             removeIdx = _getNodeIndex(child);
         }
+        if (typeof globalThis !== 'undefined' && typeof globalThis._notifyNodeIteratorsPreRemove === 'function') {
+            globalThis._notifyNodeIteratorsPreRemove(childObj || child);
+        }
         child._parentNode = null;
         child.parentNode = null;
         if (node._nodeId === undefined) {

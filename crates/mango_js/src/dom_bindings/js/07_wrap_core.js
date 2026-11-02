@@ -243,6 +243,12 @@
             set id(val) { if (typeof this.setAttribute === 'function') this.setAttribute("id", val); else this._id = val; },
             get className() { return (typeof this.getAttribute === 'function') ? (this.getAttribute("class") || "") : (this._className || ""); },
             set className(val) { if (typeof this.setAttribute === 'function') this.setAttribute("class", val); else this._className = val; },
+            get title() { return (typeof this.getAttribute === 'function') ? (this.getAttribute("title") || "") : (this._title || ""); },
+            set title(val) { if (typeof this.setAttribute === 'function') this.setAttribute("title", String(val)); else this._title = String(val); },
+            get lang() { return (typeof this.getAttribute === 'function') ? (this.getAttribute("lang") || "") : (this._lang || ""); },
+            set lang(val) { if (typeof this.setAttribute === 'function') this.setAttribute("lang", String(val)); else this._lang = String(val); },
+            get dir() { return (typeof this.getAttribute === 'function') ? (this.getAttribute("dir") || "") : (this._dir || ""); },
+            set dir(val) { if (typeof this.setAttribute === 'function') this.setAttribute("dir", String(val)); else this._dir = String(val); },
             get classList() {
                 if (!this._classList) this._classList = _createClassList(this._nodeId, this);
                 return this._classList;
