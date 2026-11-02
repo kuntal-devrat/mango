@@ -14,6 +14,10 @@ impl CssParser {
             }
             if is_nested_block && *self.peek() == Token::CloseCurly {
                 break;
+            } else if *self.peek() == Token::CloseCurly {
+                // Unexpected closing brace at top level: discard per CSS Syntax § 5.4.1
+                self.advance();
+                continue;
             }
 
             // Check for @media or @import

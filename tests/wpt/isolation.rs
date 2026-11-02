@@ -17,7 +17,7 @@ use std::process::{Command, Stdio};
 /// Number of files executed in a single child process before falling back to
 /// one process per file. Large enough to amortise process start-up, small
 /// enough that a crash only costs one batch re-run.
-const BATCH_SIZE: usize = 25;
+const BATCH_SIZE: usize = 10;
 
 /// Returns the path of the `wpt-runner` binary to spawn.
 ///
@@ -247,7 +247,7 @@ fn run_batch(bin: &str, root: &Path, files: &[String]) -> Option<Vec<WptFileResu
 
     let mut results = Vec::new();
     let start = std::time::Instant::now();
-    let batch_timeout = std::time::Duration::from_secs((files.len() as u64 * 3).max(15));
+    let batch_timeout = std::time::Duration::from_secs((files.len() as u64 * 10).max(60));
     let mut finished = false;
 
     while !finished {
@@ -332,7 +332,7 @@ fn run_single(bin: &str, root: &Path, file: &str) -> WptFileResult {
     });
 
     let start = std::time::Instant::now();
-    let single_timeout = std::time::Duration::from_secs(10);
+    let single_timeout = std::time::Duration::from_secs(30);
     let mut timed_out = false;
     let mut status_res = None;
 

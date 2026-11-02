@@ -84,21 +84,27 @@ impl CssParser {
 
     pub(crate) fn skip_unknown_rule_or_block(&mut self) {
         let mut depth = 0;
+        let mut consumed = 0;
         loop {
             match self.peek() {
                 Token::OpenCurly => {
                     depth += 1;
                     self.advance();
+                    consumed += 1;
                 }
                 Token::CloseCurly => {
                     if depth > 0 {
                         self.advance();
+                        consumed += 1;
                         depth -= 1;
                         if depth == 0 {
                             break;
                         }
                     } else {
-                        // Belongs to the outer block; do not consume
+                        // Belongs to the outer block; do not consume unless nothing was consumed
+                        if consumed == 0 {
+                            self.advance();
+                        }
                         break;
                     }
                 }
@@ -109,6 +115,7 @@ impl CssParser {
                 Token::Eof => break,
                 _ => {
                     self.advance();
+                    consumed += 1;
                 }
             }
         }
