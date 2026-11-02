@@ -62,10 +62,13 @@ pub fn op_mango_ls_keys(state: &mut OpState) -> Vec<String> {
     if let Some(store) = state.try_borrow::<OpLocalStorage>()
         && let Ok(map) = store.0.lock()
     {
-        map.keys()
+        let mut keys: Vec<String> = map
+            .keys()
             .filter(|k| k.starts_with(&prefix) && !k[prefix.len()..].starts_with("__idb__"))
             .map(|k| k[prefix.len()..].to_string())
-            .collect()
+            .collect();
+        keys.sort();
+        keys
     } else {
         Vec::new()
     }
@@ -124,10 +127,13 @@ pub fn op_mango_ss_keys(state: &mut OpState) -> Vec<String> {
     if let Some(store) = state.try_borrow::<OpSessionStorage>()
         && let Ok(map) = store.0.lock()
     {
-        map.keys()
+        let mut keys: Vec<String> = map
+            .keys()
             .filter(|k| k.starts_with(&prefix))
             .map(|k| k[prefix.len()..].to_string())
-            .collect()
+            .collect();
+        keys.sort();
+        keys
     } else {
         Vec::new()
     }

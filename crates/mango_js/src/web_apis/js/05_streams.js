@@ -5,6 +5,7 @@
     ByteLengthQueuingStrategy.prototype.size = function(chunk) {
         return (chunk && chunk.byteLength !== undefined) ? chunk.byteLength : 0;
     };
+    ByteLengthQueuingStrategy.prototype[Symbol.toStringTag] = 'ByteLengthQueuingStrategy';
     globalThis.ByteLengthQueuingStrategy = ByteLengthQueuingStrategy;
 
     function CountQueuingStrategy(options) {
@@ -13,6 +14,7 @@
     CountQueuingStrategy.prototype.size = function() {
         return 1;
     };
+    CountQueuingStrategy.prototype[Symbol.toStringTag] = 'CountQueuingStrategy';
     globalThis.CountQueuingStrategy = CountQueuingStrategy;
 
     function ReadableStreamDefaultReader(stream) {
@@ -83,6 +85,7 @@
             return this._stream.cancel(reason);
         }
     };
+    ReadableStreamDefaultReader.prototype[Symbol.toStringTag] = 'ReadableStreamDefaultReader';
     globalThis.ReadableStreamDefaultReader = ReadableStreamDefaultReader;
 
     function ReadableStream(underlyingSource, strategy) {
@@ -182,18 +185,86 @@
         return transform.readable;
     };
     ReadableStream.prototype.pipeTo = function(destination, options) {
+        options = options || {};
+        var preventClose = !!options.preventClose;
+        var preventAbort = !!options.preventAbort;
+        var preventCancel = !!options.preventCancel;
+        var signal = options.signal;
+
+        if (signal && signal.aborted) {
+            return Promise.reject(signal.reason || new TypeError("Aborted"));
+        }
+
         var self = this;
         var reader = this.getReader();
         var writer = destination.getWriter();
+
         return new Promise(function(resolve, reject) {
+            var abortHandler = null;
+            if (signal) {
+                abortHandler = function() {
+                    var err = signal.reason || new TypeError("Aborted");
+                    reader.cancel(err).catch(function() {});
+                    writer.abort(err).catch(function() {});
+                    cleanup();
+                    reject(err);
+                };
+                signal.addEventListener('abort', abortHandler);
+            }
+
+            function cleanup() {
+                if (signal && abortHandler && signal.removeEventListener) {
+                    signal.removeEventListener('abort', abortHandler);
+                }
+                try { reader.releaseLock(); } catch(e) {}
+                try { writer.releaseLock(); } catch(e) {}
+            }
+
             function pump() {
                 reader.read().then(function(res) {
                     if (res.done) {
-                        writer.close().then(resolve, reject);
+                        if (!preventClose) {
+                            writer.close().then(function() {
+                                cleanup();
+                                resolve();
+                            }, function(err) {
+                                cleanup();
+                                reject(err);
+                            });
+                        } else {
+                            cleanup();
+                            resolve();
+                        }
                         return;
                     }
-                    writer.write(res.value).then(pump, reject);
-                }).catch(reject);
+                    writer.write(res.value).then(pump, function(err) {
+                        if (!preventCancel) {
+                            reader.cancel(err).then(function() {
+                                cleanup();
+                                reject(err);
+                            }, function() {
+                                cleanup();
+                                reject(err);
+                            });
+                        } else {
+                            cleanup();
+                            reject(err);
+                        }
+                    });
+                }).catch(function(err) {
+                    if (!preventAbort) {
+                        writer.abort(err).then(function() {
+                            cleanup();
+                            reject(err);
+                        }, function() {
+                            cleanup();
+                            reject(err);
+                        });
+                    } else {
+                        cleanup();
+                        reject(err);
+                    }
+                });
             }
             pump();
         });
@@ -201,30 +272,76 @@
     ReadableStream.prototype.tee = function() {
         var self = this;
         var branch1Ctrl, branch2Ctrl;
+        var b1Canceled = false, b2Canceled = false;
+        var b1Reason, b2Reason;
+        var reader = self.getReader();
+
+        function checkCancel() {
+            if (b1Canceled && b2Canceled) {
+                return reader.cancel(b1Reason !== undefined ? b1Reason : b2Reason);
+            }
+            return Promise.resolve();
+        }
+
         var b1 = new ReadableStream({
-            start: function(c) { branch1Ctrl = c; }
+            start: function(c) { branch1Ctrl = c; },
+            cancel: function(reason) {
+                b1Canceled = true;
+                b1Reason = reason;
+                return checkCancel();
+            }
         });
         var b2 = new ReadableStream({
-            start: function(c) { branch2Ctrl = c; }
+            start: function(c) { branch2Ctrl = c; },
+            cancel: function(reason) {
+                b2Canceled = true;
+                b2Reason = reason;
+                return checkCancel();
+            }
         });
-        var reader = self.getReader();
+
         function pump() {
             reader.read().then(function(res) {
                 if (res.done) {
-                    branch1Ctrl.close();
-                    branch2Ctrl.close();
+                    if (!b1Canceled) branch1Ctrl.close();
+                    if (!b2Canceled) branch2Ctrl.close();
                     return;
                 }
-                branch1Ctrl.enqueue(res.value);
-                branch2Ctrl.enqueue(res.value);
+                if (!b1Canceled) branch1Ctrl.enqueue(res.value);
+                if (!b2Canceled) branch2Ctrl.enqueue(res.value);
                 pump();
             }).catch(function(err) {
-                branch1Ctrl.error(err);
-                branch2Ctrl.error(err);
+                if (!b1Canceled) branch1Ctrl.error(err);
+                if (!b2Canceled) branch2Ctrl.error(err);
             });
         }
         pump();
         return [b1, b2];
+    };
+    ReadableStream.from = function(iterable) {
+        if (!iterable || (typeof iterable[Symbol.iterator] !== 'function' && typeof iterable[Symbol.asyncIterator] !== 'function')) {
+            throw new TypeError("ReadableStream.from requires an iterable object");
+        }
+        var it = typeof iterable[Symbol.asyncIterator] === 'function' ? iterable[Symbol.asyncIterator]() : iterable[Symbol.iterator]();
+        return new ReadableStream({
+            pull: function(controller) {
+                return Promise.resolve(it.next()).then(function(res) {
+                    if (res.done) {
+                        controller.close();
+                    } else {
+                        controller.enqueue(res.value);
+                    }
+                }, function(err) {
+                    controller.error(err);
+                });
+            },
+            cancel: function(reason) {
+                if (typeof it.return === 'function') {
+                    return Promise.resolve(it.return(reason));
+                }
+                return Promise.resolve();
+            }
+        });
     };
     if (typeof Symbol !== 'undefined' && Symbol.asyncIterator) {
         ReadableStream.prototype[Symbol.asyncIterator] = function() {
@@ -240,6 +357,7 @@
             };
         };
     }
+    ReadableStream.prototype[Symbol.toStringTag] = 'ReadableStream';
     globalThis.ReadableStream = ReadableStream;
 
     function WritableStreamDefaultWriter(stream) {
@@ -283,6 +401,7 @@
         this._stream._writer = null;
         this._stream = null;
     };
+    WritableStreamDefaultWriter.prototype[Symbol.toStringTag] = 'WritableStreamDefaultWriter';
     globalThis.WritableStreamDefaultWriter = WritableStreamDefaultWriter;
 
     function WritableStream(underlyingSink, strategy) {
@@ -332,6 +451,7 @@
         if (this.locked) throw new TypeError("WritableStream is locked");
         return new WritableStreamDefaultWriter(this);
     };
+    WritableStream.prototype[Symbol.toStringTag] = 'WritableStream';
     globalThis.WritableStream = WritableStream;
 
     function TransformStream(transformer, writableStrategy, readableStrategy) {
@@ -377,5 +497,6 @@
         this.readable = r;
         this.writable = w;
     }
+    TransformStream.prototype[Symbol.toStringTag] = 'TransformStream';
     globalThis.TransformStream = TransformStream;
 

@@ -350,6 +350,7 @@
         }
     };
     Storage.prototype = _storageProto;
+    Storage.prototype[Symbol.toStringTag] = 'Storage';
     globalThis.Storage = Storage;
 
     var _lsBase = Object.create(Storage.prototype);

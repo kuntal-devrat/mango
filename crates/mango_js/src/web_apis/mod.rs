@@ -15,6 +15,7 @@ pub const WEB_APIS_SHIM_TEMPLATE: &str = concat!(
     include_str!("js/04_encoding_crypto_data.js"),
     include_str!("js/05_streams.js"),
     include_str!("js/06_fetch.js"),
+    include_str!("js/06b_cache.js"),
     include_str!("js/07_xhr_websocket.js"),
     include_str!("js/08_dom_nodes.js"),
     include_str!("js/09_dom_elements.js"),

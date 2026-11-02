@@ -347,8 +347,8 @@ fn test_selectors_level_4() {
         "comments must be ignored by :empty"
     );
     assert!(
-        empty_sel.matches(el("whitespace-empty"), &doc),
-        "whitespace must be ignored by :empty in Selectors 4"
+        !empty_sel.matches(el("whitespace-empty"), &doc),
+        "whitespace text nodes must affect emptiness per CSS3 / Selectors 4"
     );
     assert!(!empty_sel.matches(el("not-empty"), &doc));
 

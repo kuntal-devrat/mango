@@ -7,6 +7,7 @@ mod core_tests;
 mod dom_manipulation_tests;
 mod dom_tests;
 mod events_tests;
+mod fetch_streams_storage_tests;
 mod html_tests;
 mod media_tests;
 mod platform_tests;
