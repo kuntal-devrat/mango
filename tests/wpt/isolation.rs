@@ -17,7 +17,7 @@ use std::process::{Command, Stdio};
 /// Number of files executed in a single child process before falling back to
 /// one process per file. Large enough to amortise process start-up, small
 /// enough that a crash only costs one batch re-run.
-const BATCH_SIZE: usize = 25;
+const BATCH_SIZE: usize = 10;
 
 /// Returns the path of the `wpt-runner` binary to spawn.
 ///
@@ -40,8 +40,13 @@ fn parallelism() -> usize {
     {
         return n.max(1);
     }
-    1
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .min(4)
 }
+
+static BATCH_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 static STREAM_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -203,10 +208,11 @@ fn run_batch_isolated(bin: &str, root: &Path, files: &[String]) -> Vec<WptFileRe
 /// Runs a batch of files in one child process, streaming results line-by-line.
 /// Returns `None` if the child process itself failed without producing any output.
 fn run_batch(bin: &str, root: &Path, files: &[String]) -> Option<Vec<WptFileResult>> {
+    let batch_id = BATCH_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let list_path = std::env::temp_dir().join(format!(
-        "mango-wpt-batch-{}-{:?}.txt",
+        "mango-wpt-batch-{}-{}.txt",
         std::process::id(),
-        files.first().map(|f| f.len()).unwrap_or(0)
+        batch_id
     ));
     {
         let mut f = std::fs::File::create(&list_path).ok()?;
@@ -225,75 +231,168 @@ fn run_batch(bin: &str, root: &Path, files: &[String]) -> Option<Vec<WptFileResu
         .spawn()
         .ok()?;
 
-    let mut results = Vec::new();
-    if let Some(stdout) = child.stdout.take() {
-        use std::io::BufRead;
-        let reader = std::io::BufReader::new(stdout);
-        for line in reader.lines().map_while(Result::ok) {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
+    let (tx, rx) = std::sync::mpsc::channel();
+    let reader_handle = child.stdout.take().map(|stdout| {
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            let reader = std::io::BufReader::new(stdout);
+            for line in reader.lines().map_while(Result::ok) {
+                let line = line.trim().to_string();
+                if !line.is_empty() {
+                    let _ = tx.send(line);
+                }
             }
-            if let Ok(r) = serde_json::from_str::<WptFileResult>(line) {
+        })
+    });
+
+    let mut results = Vec::new();
+    let start = std::time::Instant::now();
+    let batch_timeout = std::time::Duration::from_secs((files.len() as u64 * 10).max(60));
+    let mut finished = false;
+
+    while !finished {
+        while let Ok(line) = rx.try_recv() {
+            if let Ok(r) = serde_json::from_str::<WptFileResult>(&line) {
                 stream_result(&r);
                 results.push(r);
             }
         }
+
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                finished = true;
+                if !status.success() && results.is_empty() {
+                    let _ = std::fs::remove_file(&list_path);
+                    return None;
+                }
+            }
+            Ok(None) => {
+                if start.elapsed() > batch_timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(_) => break,
+        }
     }
 
-    let status = child.wait().ok()?;
+    while let Ok(line) = rx.try_recv() {
+        if let Ok(r) = serde_json::from_str::<WptFileResult>(&line) {
+            stream_result(&r);
+            results.push(r);
+        }
+    }
+    if let Some(h) = reader_handle {
+        let _ = h.join();
+    }
     let _ = std::fs::remove_file(&list_path);
-
-    if !status.success() && results.is_empty() {
-        return None;
-    }
 
     Some(results)
 }
 
-/// Runs a single file in its own child process.
+/// Runs a single file in its own child process with an isolated execution timeout.
 fn run_single(bin: &str, root: &Path, file: &str) -> WptFileResult {
-    let output = Command::new(bin)
+    let mut child = match Command::new(bin)
         .arg("--json")
         .arg(file)
         .current_dir(root)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .output();
-
-    let res = match output {
-        Ok(out) => {
-            let text = String::from_utf8_lossy(&out.stdout);
-            let mut found = None;
-            for line in text.lines().rev() {
-                let line = line.trim();
-                if line.starts_with('{')
-                    && let Ok(r) = serde_json::from_str::<WptFileResult>(line)
-                {
-                    found = Some(r);
-                    break;
-                }
-            }
-            found.unwrap_or_else(|| WptFileResult {
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            let res = WptFileResult {
                 path: file.to_string(),
                 status: WptFileStatus::Error,
                 subtests: Vec::new(),
-                message: Some(format!(
-                    "test process terminated abnormally ({}): {}",
-                    out.status,
-                    text.lines().last().unwrap_or("no output")
-                )),
+                message: Some(format!("could not spawn test process: {e}")),
                 duration: std::time::Duration::ZERO,
-            })
+            };
+            stream_result(&res);
+            return res;
         }
-        Err(e) => WptFileResult {
+    };
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let reader_handle = child.stdout.take().map(|stdout| {
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            let reader = std::io::BufReader::new(stdout);
+            for line in reader.lines().map_while(Result::ok) {
+                let line = line.trim().to_string();
+                if !line.is_empty() {
+                    let _ = tx.send(line);
+                }
+            }
+        })
+    });
+
+    let start = std::time::Instant::now();
+    let single_timeout = std::time::Duration::from_secs(30);
+    let mut timed_out = false;
+    let mut status_res = None;
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(s)) => {
+                status_res = Some(s);
+                break;
+            }
+            Ok(None) => {
+                if start.elapsed() > single_timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    timed_out = true;
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(_) => break,
+        }
+    }
+
+    let mut lines = Vec::new();
+    while let Ok(line) = rx.try_recv() {
+        lines.push(line);
+    }
+    if let Some(h) = reader_handle {
+        let _ = h.join();
+    }
+
+    let mut found = None;
+    for line in lines.iter().rev() {
+        if line.starts_with('{')
+            && let Ok(r) = serde_json::from_str::<WptFileResult>(line)
+        {
+            found = Some(r);
+            break;
+        }
+    }
+
+    let res = if timed_out {
+        WptFileResult {
+            path: file.to_string(),
+            status: WptFileStatus::Timeout,
+            subtests: Vec::new(),
+            message: Some("test execution timed out".to_string()),
+            duration: start.elapsed(),
+        }
+    } else {
+        found.unwrap_or_else(|| WptFileResult {
             path: file.to_string(),
             status: WptFileStatus::Error,
             subtests: Vec::new(),
-            message: Some(format!("could not spawn test process: {e}")),
-            duration: std::time::Duration::ZERO,
-        },
+            message: Some(format!(
+                "test process terminated abnormally ({:?}): {}",
+                status_res,
+                lines.last().map(|s| s.as_str()).unwrap_or("no output")
+            )),
+            duration: start.elapsed(),
+        })
     };
     stream_result(&res);
     res

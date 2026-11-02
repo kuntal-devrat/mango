@@ -26,7 +26,14 @@
       "status": "Pass"
     },
     "css/css-cascade/revert-rule-shadow.html": {
-      "status": "Pass"
+      "status": "Fail",
+      "subtests": {
+        "revert-rule in ::part() rule falls back to earlier ::part() rule": "FAIL",
+        "revert-rule in shadow-internal rule has no effect when ::part() rule wins": "FAIL",
+        "revert-rule in third ::part() rule falls back to second ::part() rule": "FAIL",
+        "revert-rule on host and ::part() rule on part are independent": "FAIL",
+        "revert-rule in higher-specificity ::part() rule falls back to lower-specificity ::part() rule": "FAIL"
+      }
     },
     "css/css-cascade/revert-val-003.html": {
       "status": "Fail",

@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use mango_css::computed::{
     ComputedStyle, compute_pseudo_style_with_shadow_index, compute_style_with_index,
@@ -15,6 +16,7 @@ use super::extract::{
 };
 use super::node::StyledNode;
 use super::pseudo::{collapse_whitespace, create_pseudo_styled_node};
+use super::sharing::{StyleSharingCache, derive_text_computed_style};
 
 /// Builds the styled tree from a DOM [`Document`], applying both external author
 /// stylesheets and any inline `<style>` sheets found in the document.
@@ -104,6 +106,7 @@ fn build_style_tree_with_author_index(
 
     // 3. Recursively build style tree from root
     let mut counter_ctx = CounterContext::new();
+    let mut sharing_cache = StyleSharingCache::new(author_index);
     let mut visited = HashSet::new();
     build_styled_node(
         doc,
@@ -113,6 +116,7 @@ fn build_style_tree_with_author_index(
         None,
         None,
         &mut counter_ctx,
+        &mut sharing_cache,
         &mut visited,
         0,
     )
@@ -153,8 +157,9 @@ pub fn build_styled_node<'a>(
     author_index: &'a RuleIndex<'a>,
     shadow_indexes: &'a HashMap<NodeId, RuleIndex<'a>>,
     shadow_ctx: Option<&ShadowContext<'a>>,
-    parent_style: Option<&ComputedStyle>,
+    parent_style: Option<&Arc<ComputedStyle>>,
     counter_ctx: &mut CounterContext,
+    sharing_cache: &mut StyleSharingCache,
     visited: &mut HashSet<NodeId>,
     depth: usize,
 ) -> Option<StyledNode> {
@@ -178,6 +183,7 @@ pub fn build_styled_node<'a>(
                         shadow_ctx,
                         parent_style,
                         counter_ctx,
+                        sharing_cache,
                         visited,
                         depth + 1,
                     );
@@ -194,6 +200,7 @@ pub fn build_styled_node<'a>(
                         shadow_ctx,
                         parent_style,
                         counter_ctx,
+                        sharing_cache,
                         visited,
                         depth + 1,
                     );
@@ -270,14 +277,30 @@ pub fn build_styled_node<'a>(
                 part_indexes.push(author_index);
             }
 
-            let style = std::sync::Arc::new(mango_css::compute_style_with_shadow_and_part_indexes(
-                node_id,
-                doc,
-                effective_index,
-                host_shadow_index,
-                &part_indexes,
-                parent_style,
-            ));
+            let key_opt = if shadow_ctx.is_none() && host_shadow_index.is_none() {
+                sharing_cache.make_element_key(doc, node_id, el, parent_style)
+            } else {
+                None
+            };
+
+            let style = if let Some(ref key) = key_opt
+                && let Some(cached) = sharing_cache.get_element_style(key)
+            {
+                cached
+            } else {
+                let computed = Arc::new(mango_css::compute_style_with_shadow_and_part_indexes(
+                    node_id,
+                    doc,
+                    effective_index,
+                    host_shadow_index,
+                    &part_indexes,
+                    parent_style.map(|s| s.as_ref()),
+                ));
+                if let Some(key) = key_opt {
+                    sharing_cache.insert_element_style(key, Arc::clone(&computed));
+                }
+                computed
+            };
             if style.custom_properties.len() > 1000 {
                 log::debug!(
                     "large custom-property map: node={} tag={} entries={}",
@@ -381,6 +404,7 @@ pub fn build_styled_node<'a>(
                                 shadow_ctx,
                                 Some(&style),
                                 counter_ctx,
+                                sharing_cache,
                                 visited,
                                 depth + 1,
                             ) {
@@ -398,6 +422,7 @@ pub fn build_styled_node<'a>(
                                 current_ctx,
                                 Some(&style),
                                 counter_ctx,
+                                sharing_cache,
                                 visited,
                                 depth + 1,
                             ) {
@@ -413,6 +438,7 @@ pub fn build_styled_node<'a>(
                     current_ctx,
                     Some(&style),
                     counter_ctx,
+                    sharing_cache,
                     visited,
                     depth + 1,
                 ) {
@@ -457,13 +483,9 @@ pub fn build_styled_node<'a>(
             let mut styled_node = StyledNode::new(Some(node_id), style.clone());
             // Capture tag name and attributes for downstream use (e.g. <img> detection)
             if let NodeData::Element(el) = &node.data {
-                styled_node.tag_name = Some(el.tag_name.to_lowercase());
+                styled_node.tag_name = Some(el.tag_name.clone());
                 styled_node.canvas_key = doc.canvas_key(node_id);
-                styled_node.attributes = el
-                    .attributes
-                    .iter()
-                    .map(|(name, value)| (name.to_lowercase(), value.clone()))
-                    .collect();
+                styled_node.attributes = el.attributes.clone();
 
                 decorate_element_pseudos(
                     node_id,
@@ -617,11 +639,12 @@ pub fn build_styled_node<'a>(
                             } else {
                                 author_index
                             };
+                            let parent_style_ref = parent_style.map(|s| s.as_ref());
                             let prev_inline = prev_meaningful.is_some_and(|s| {
-                                is_node_inline(doc, s.id, effective_index, parent_style)
+                                is_node_inline(doc, s.id, effective_index, parent_style_ref)
                             });
                             let next_inline = next_meaningful.is_some_and(|s| {
-                                is_node_inline(doc, s.id, effective_index, parent_style)
+                                is_node_inline(doc, s.id, effective_index, parent_style_ref)
                             });
                             prev_inline && next_inline
                         }
@@ -638,47 +661,10 @@ pub fn build_styled_node<'a>(
             }
 
             // Inherit parent style, forced to inline display
-            let mut style = parent_style.cloned().unwrap_or_default();
-            style.display = Display::Inline;
-            style.position = mango_css::values::Position::Static;
-            style.float = mango_css::values::Float::None;
-            style.clear = mango_css::values::Clear::None;
-            // vertical-align only applies to inline-level elements. If the parent is a block-level container (such as a <td>),
-            // vertical-align does not inherit to the inline formatting context and defaults to Baseline.
-            // If the parent is an inline element, the text participates in that inline box's vertical alignment.
-            let is_parent_inline = parent_style
-                .map(|s| {
-                    matches!(
-                        s.display,
-                        Display::Inline | Display::Ruby | Display::RubyBase | Display::RubyText
-                    )
-                })
-                .unwrap_or(false);
-            if !is_parent_inline {
-                style.vertical_align = mango_css::values::VerticalAlign::Baseline;
-            }
-            // CSS rule: Raw text nodes do not have backgrounds, borders, or box-shadows
-            style.background_image = None;
-            style.background_color = mango_core::Color::TRANSPARENT;
-            style.box_shadow = None;
-            style.border_top_width = 0.0;
-            style.border_right_width = 0.0;
-            style.border_bottom_width = 0.0;
-            style.border_left_width = 0.0;
-            style.margin_top = mango_css::values::Length::Px(0.0);
-            style.margin_right = mango_css::values::Length::Px(0.0);
-            style.margin_bottom = mango_css::values::Length::Px(0.0);
-            style.margin_left = mango_css::values::Length::Px(0.0);
-            style.padding_top = mango_css::values::Length::Px(0.0);
-            style.padding_right = mango_css::values::Length::Px(0.0);
-            style.padding_bottom = mango_css::values::Length::Px(0.0);
-            style.padding_left = mango_css::values::Length::Px(0.0);
-            style.width = mango_css::values::Length::Auto;
-            style.height = mango_css::values::Length::Auto;
-            style.min_width = mango_css::values::Length::Auto;
-            style.min_height = mango_css::values::Length::Auto;
-            style.max_width = mango_css::values::Length::Auto;
-            style.max_height = mango_css::values::Length::Auto;
+            let parent_style_ref = parent_style.map(|s| s.as_ref());
+            let style = sharing_cache.get_or_compute_text_style(parent_style, || {
+                derive_text_computed_style(parent_style_ref)
+            });
 
             Some(StyledNode::with_text(Some(node_id), style, text_to_use))
         }
