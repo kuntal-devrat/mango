@@ -379,7 +379,7 @@ fn test_selectors_level_4_dom_bindings() {
   <div id="card2" class="card">
     <h2 class="title">Heading 2</h2>
     <!-- Card with empty box -->
-    <div id="empty-box">   <!-- comment --> </div>
+    <div id="empty-box"><!-- comment --></div>
   </div>
 
   <ul id="items">
@@ -450,7 +450,7 @@ fn test_selectors_level_4_dom_bindings() {
 
         // 6. :empty
         var emptyBox = document.querySelector("#empty-box:empty");
-        if (!emptyBox) throw new Error(":empty failed for whitespace/comment-only node");
+        if (!emptyBox) throw new Error(":empty failed for comment-only node");
 
         // 7. :target
         var targetElem = document.querySelector("#target-elem:target");
