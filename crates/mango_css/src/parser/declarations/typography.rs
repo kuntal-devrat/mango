@@ -144,13 +144,17 @@ pub fn try_parse_white_space(tokens: &[Token]) -> Option<Value> {
         .iter()
         .find(|t| !matches!(t, Token::Whitespace | Token::Comment(_)))?;
     if let Token::Ident(ident) = first {
-        match ident.to_ascii_lowercase().as_str() {
+        let lower = ident.to_ascii_lowercase();
+        match lower.as_str() {
             "normal" => Some(Value::WhiteSpace(WhiteSpace::Normal)),
             "nowrap" => Some(Value::WhiteSpace(WhiteSpace::Nowrap)),
             "pre" => Some(Value::WhiteSpace(WhiteSpace::Pre)),
             "pre-wrap" => Some(Value::WhiteSpace(WhiteSpace::PreWrap)),
             "pre-line" => Some(Value::WhiteSpace(WhiteSpace::PreLine)),
             "break-spaces" => Some(Value::WhiteSpace(WhiteSpace::BreakSpaces)),
+            "inherit" | "initial" | "unset" | "revert" | "revert-layer" => {
+                Some(Value::Keyword(lower))
+            }
             _ => None,
         }
     } else {

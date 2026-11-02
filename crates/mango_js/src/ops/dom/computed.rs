@@ -11,6 +11,8 @@ use crate::dom_bindings::{LayoutBounds, LayoutMargins, SharedDocument};
 pub fn op_mango_get_computed_style(
     state: &mut OpState,
     node_id: u32,
+    viewport_width: Option<f64>,
+    viewport_height: Option<f64>,
 ) -> std::collections::HashMap<String, String> {
     crate::ops::dom::query::ensure_layout_up_to_date(state);
     use std::collections::HashMap;
@@ -60,14 +62,27 @@ pub fn op_mango_get_computed_style(
             collect_styles_recursive(d, child.id, out);
         }
     }
-    collect_styles_recursive(&d, d.root(), &mut sheets);
+
+    let mut root_of_nid = nid;
+    while let Some(parent) = d.get(root_of_nid).and_then(|n| n.parent) {
+        root_of_nid = parent;
+    }
+    if root_of_nid != d.root() {
+        collect_styles_recursive(&d, root_of_nid, &mut sheets);
+    } else {
+        collect_styles_recursive(&d, d.root(), &mut sheets);
+    }
 
     let sheet_refs: Vec<&mango_css::parser::Stylesheet> = sheets.iter().collect();
     let mut author_order = 1000;
-    let author_index = mango_css::cascade::RuleIndex::from_stylesheets(
+    let vp_w = viewport_width.unwrap_or(1280.0) as f32;
+    let vp_h = viewport_height.unwrap_or(900.0) as f32;
+    let author_index = mango_css::cascade::RuleIndex::from_stylesheets_with_size(
         &sheet_refs,
         mango_css::cascade::Origin::Author,
         &mut author_order,
+        vp_w,
+        vp_h,
     );
 
     let node_elem = d.get(nid).and_then(|n| match &n.data {
@@ -335,6 +350,15 @@ pub fn op_mango_get_computed_style(
         None => "auto".to_string(),
     };
     map.insert("z-index".to_string(), z_str);
+
+    let tt_str = match style.text_transform {
+        mango_css::values::TextTransform::None => "none",
+        mango_css::values::TextTransform::Uppercase => "uppercase",
+        mango_css::values::TextTransform::Lowercase => "lowercase",
+        mango_css::values::TextTransform::Capitalize => "capitalize",
+    };
+    map.insert("text-transform".to_string(), tt_str.to_string());
+    map.insert("cursor".to_string(), style.cursor.as_str().to_string());
 
     // Dimensions.
     //
@@ -646,145 +670,7 @@ pub fn op_mango_get_computed_style(
     map.insert("flex-line-count".to_string(), flc_str);
     map.insert("order".to_string(), style.order.to_string());
 
-    let jc_str = match style.justify_content {
-        mango_css::values::JustifyContent::Normal => "normal",
-        mango_css::values::JustifyContent::FlexStart => "flex-start",
-        mango_css::values::JustifyContent::FlexEnd => "flex-end",
-        mango_css::values::JustifyContent::Center => "center",
-        mango_css::values::JustifyContent::SpaceBetween => "space-between",
-        mango_css::values::JustifyContent::SpaceAround => "space-around",
-        mango_css::values::JustifyContent::SpaceEvenly => "space-evenly",
-        mango_css::values::JustifyContent::Start => "start",
-        mango_css::values::JustifyContent::End => "end",
-        mango_css::values::JustifyContent::Left => "left",
-        mango_css::values::JustifyContent::Right => "right",
-    };
-    map.insert("justify-content".to_string(), jc_str.to_string());
-
-    let ji_str = match style.justify_items {
-        mango_css::values::JustifyItems::Stretch => "stretch",
-        mango_css::values::JustifyItems::FlexStart => "flex-start",
-        mango_css::values::JustifyItems::FlexEnd => "flex-end",
-        mango_css::values::JustifyItems::Center => "center",
-        mango_css::values::JustifyItems::Baseline => "baseline",
-    };
-    map.insert("justify-items".to_string(), ji_str.to_string());
-
-    let js_str = match style.justify_self {
-        mango_css::values::JustifySelf::Auto => "auto",
-        mango_css::values::JustifySelf::Stretch => "stretch",
-        mango_css::values::JustifySelf::FlexStart => "flex-start",
-        mango_css::values::JustifySelf::FlexEnd => "flex-end",
-        mango_css::values::JustifySelf::Center => "center",
-        mango_css::values::JustifySelf::Baseline => "baseline",
-    };
-    map.insert("justify-self".to_string(), js_str.to_string());
-
-    let ai_str = match style.align_items {
-        mango_css::values::AlignItems::Normal => "normal",
-        mango_css::values::AlignItems::Stretch => "stretch",
-        mango_css::values::AlignItems::FlexStart => "flex-start",
-        mango_css::values::AlignItems::FlexEnd => "flex-end",
-        mango_css::values::AlignItems::Center => "center",
-        mango_css::values::AlignItems::Baseline => "baseline",
-        mango_css::values::AlignItems::SafeCenter => "safe center",
-        mango_css::values::AlignItems::SafeFlexStart => "safe flex-start",
-        mango_css::values::AlignItems::SafeFlexEnd => "safe flex-end",
-        mango_css::values::AlignItems::SafeStart => "safe start",
-        mango_css::values::AlignItems::SafeEnd => "safe end",
-        mango_css::values::AlignItems::LastBaseline => "last baseline",
-    };
-    map.insert("align-items".to_string(), ai_str.to_string());
-
-    let as_str = match style.align_self {
-        mango_css::values::AlignSelf::Auto => "auto",
-        mango_css::values::AlignSelf::Stretch => "stretch",
-        mango_css::values::AlignSelf::FlexStart => "flex-start",
-        mango_css::values::AlignSelf::FlexEnd => "flex-end",
-        mango_css::values::AlignSelf::Center => "center",
-        mango_css::values::AlignSelf::Baseline => "baseline",
-        mango_css::values::AlignSelf::SafeCenter => "safe center",
-        mango_css::values::AlignSelf::SafeFlexStart => "safe flex-start",
-        mango_css::values::AlignSelf::SafeFlexEnd => "safe flex-end",
-        mango_css::values::AlignSelf::SafeStart => "safe start",
-        mango_css::values::AlignSelf::SafeEnd => "safe end",
-        mango_css::values::AlignSelf::LastBaseline => "last baseline",
-    };
-    map.insert("align-self".to_string(), as_str.to_string());
-
-    let ac_str = match style.align_content {
-        mango_css::values::AlignContent::Normal => "normal",
-        mango_css::values::AlignContent::Stretch => "stretch",
-        mango_css::values::AlignContent::FlexStart => "flex-start",
-        mango_css::values::AlignContent::FlexEnd => "flex-end",
-        mango_css::values::AlignContent::Center => "center",
-        mango_css::values::AlignContent::SpaceBetween => "space-between",
-        mango_css::values::AlignContent::SpaceAround => "space-around",
-        mango_css::values::AlignContent::SpaceEvenly => "space-evenly",
-    };
-    map.insert("align-content".to_string(), ac_str.to_string());
-
-    let rg = format_css_length(&style.row_gap, style.font_size, style.root_font_size, None);
-    let cg = format_css_length(
-        &style.column_gap,
-        style.font_size,
-        style.root_font_size,
-        cb_w,
-    );
-    map.insert("row-gap".to_string(), rg.clone());
-    map.insert("column-gap".to_string(), cg.clone());
-    let gap_shorthand = if rg == cg { rg } else { format!("{rg} {cg}") };
-    map.insert("gap".to_string(), gap_shorthand);
-
-    // Overflow
-    let ox_str = match style.overflow_x {
-        mango_css::values::Overflow::Visible => "visible",
-        mango_css::values::Overflow::Hidden => "hidden",
-        mango_css::values::Overflow::Scroll => "scroll",
-        mango_css::values::Overflow::Auto => "auto",
-    };
-    let oy_str = match style.overflow_y {
-        mango_css::values::Overflow::Visible => "visible",
-        mango_css::values::Overflow::Hidden => "hidden",
-        mango_css::values::Overflow::Scroll => "scroll",
-        mango_css::values::Overflow::Auto => "auto",
-    };
-    map.insert("overflow-x".to_string(), ox_str.to_string());
-    map.insert("overflow-y".to_string(), oy_str.to_string());
-    map.insert(
-        "overflow".to_string(),
-        if ox_str == oy_str {
-            ox_str.to_string()
-        } else {
-            format!("{ox_str} {oy_str}")
-        },
-    );
-
-    // Custom properties
-    for (k, v) in style.custom_properties.iter() {
-        let val_str = match v {
-            mango_css::Value::String(s)
-            | mango_css::Value::Keyword(s)
-            | mango_css::Value::Url(s) => s.clone(),
-            mango_css::Value::Number(n) => format!("{}", n),
-            mango_css::Value::Percentage(p) => format!("{}%", p),
-            mango_css::Value::Color(c) => {
-                if c.a == 255 {
-                    format!("rgb({}, {}, {})", c.r, c.g, c.b)
-                } else {
-                    format!("rgba({}, {}, {}, {})", c.r, c.g, c.b, c.a as f32 / 255.0)
-                }
-            }
-            mango_css::Value::Length(l) => match l {
-                mango_css::values::Length::Px(px) => format!("{}px", px),
-                mango_css::values::Length::Percent(pct) => format!("{}%", pct),
-                mango_css::values::Length::Auto => "auto".to_string(),
-                _ => format!("{:?}", l),
-            },
-            _ => format!("{:?}", v),
-        };
-        map.insert(k.clone(), val_str);
-    }
+    format_flex_alignment_overflow_custom(&style, cb_w, &mut map);
 
     map
 }

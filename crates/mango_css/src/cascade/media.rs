@@ -228,7 +228,8 @@ fn matches_single_condition(
         return !matches_single_condition(rest.trim(), width, height, env, is_container);
     }
 
-    while lower.starts_with('(') && lower.ends_with(')') {
+    while lower.starts_with('(') && lower.ends_with(')') && lower[1..lower.len() - 1].contains('(')
+    {
         let mut depth = 0;
         let mut closed_early = false;
         for (i, c) in lower.char_indices() {
@@ -266,15 +267,13 @@ fn matches_single_condition(
         }
 
         let trimmed_cond = cond.trim();
-        let inner = if trimmed_cond.starts_with('(')
-            && trimmed_cond.ends_with(')')
-            && trimmed_cond.len() >= 2
-        {
-            &trimmed_cond[1..trimmed_cond.len() - 1]
-        } else {
-            trimmed_cond
+        let has_parens =
+            trimmed_cond.starts_with('(') && trimmed_cond.ends_with(')') && trimmed_cond.len() >= 2;
+        if !has_parens {
+            // CSS Media Queries § 3: media features must be parenthesized.
+            return false;
         }
-        .trim();
+        let inner = trimmed_cond[1..trimmed_cond.len() - 1].trim();
 
         // 1. Check if it's a range condition (contains <=, >=, <, >, =)
         if let Some(res) = eval_range_condition(inner, width, height, env, is_container) {
@@ -318,6 +317,7 @@ fn eval_boolean_feature(feature: &str, width: f32, height: f32, env: &MediaEnvir
         "pointer" => env.pointer != PointerType::None,
         "any-pointer" => env.any_pointer != PointerType::None,
         "color" => true,
+        "monochrome" => false,
         "all" | "screen" => true,
         _ => false,
     }
@@ -332,6 +332,32 @@ fn eval_feature_condition(
     _is_container: bool,
 ) -> bool {
     match feature {
+        "min-color" => val_str
+            .trim()
+            .parse::<u32>()
+            .map(|v| 8 >= v)
+            .unwrap_or(false),
+        "max-color" => val_str
+            .trim()
+            .parse::<u32>()
+            .map(|v| 8 <= v)
+            .unwrap_or(false),
+        "color" => val_str
+            .trim()
+            .parse::<u32>()
+            .map(|v| 8 == v)
+            .unwrap_or(false),
+        "min-monochrome" => val_str
+            .trim()
+            .parse::<u32>()
+            .map(|v| v == 0)
+            .unwrap_or(false),
+        "max-monochrome" => val_str.trim().parse::<u32>().is_ok(),
+        "monochrome" => val_str
+            .trim()
+            .parse::<u32>()
+            .map(|v| 0 == v)
+            .unwrap_or(false),
         "min-width" | "min-inline-size" => {
             if let Some(val) = parse_media_length(val_str) {
                 width >= val - 1e-4

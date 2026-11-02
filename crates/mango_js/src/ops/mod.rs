@@ -284,7 +284,7 @@ pub const PRELUDE_JS: &str = r##"
     globalThis._getElementRect = (id) => ops.op_mango_get_element_rect(Number(id));
     globalThis._scrollIntoView = (id, smooth) => ops.op_mango_scroll_into_view(Number(id), !!smooth);
     globalThis._scrollTo = (x, y, smooth) => ops.op_mango_scroll_to(Number(x), Number(y), !!smooth);
-    globalThis._getComputedStyle = (id) => ops.op_mango_get_computed_style(Number(id));
+    globalThis._getComputedStyle = (id, vw, vh) => ops.op_mango_get_computed_style(Number(id), vw !== undefined && vw !== null ? Number(vw) : null, vh !== undefined && vh !== null ? Number(vh) : null);
     globalThis._parseCssDeclaration = (p, v) => ops.op_mango_css_parse_declaration(String(p), String(v));
     globalThis._cssSupports = (p, v) => ops.op_mango_css_supports(String(p), v != null ? String(v) : null);
     globalThis._elementFromPoint = (x, y) => { const r = ops.op_mango_element_from_point(Number(x), Number(y)); return r > 0 ? r : null; };

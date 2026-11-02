@@ -122,7 +122,16 @@ pub(crate) fn matches_pseudo_class(
             (el.tag_name.eq_ignore_ascii_case("a") || el.tag_name.eq_ignore_ascii_case("area"))
                 && el.get_attribute("href") == Some("")
         }
-        "root" => el.tag_name.eq_ignore_ascii_case("html"),
+        "root" => {
+            if el.tag_name.eq_ignore_ascii_case("html") {
+                true
+            } else {
+                match node.parent {
+                    None => true,
+                    Some(pid) => pid == doc.root(),
+                }
+            }
+        }
         "scope" => {
             if let Some(scope_id) = current_scope_root() {
                 node_id.raw() == scope_id.raw()
@@ -132,7 +141,7 @@ pub(crate) fn matches_pseudo_class(
         }
         "empty" => !doc.children(node_id).any(|child| match &child.data {
             NodeData::Element(_) => true,
-            NodeData::Text(t) => !t.trim().is_empty(),
+            NodeData::Text(t) => !t.is_empty(),
             _ => false,
         }),
         "target" => {
@@ -153,8 +162,18 @@ pub(crate) fn matches_pseudo_class(
                 el.get_attribute("selected").is_some()
                     || el.get_attribute("data-mango-selected") == Some("true")
             } else if tag == "input" {
-                el.get_attribute("checked").is_some()
-                    || el.get_attribute("data-mango-checked") == Some("true")
+                let input_type = el
+                    .get_attribute("type")
+                    .unwrap_or("text")
+                    .to_ascii_lowercase();
+                if input_type != "checkbox" && input_type != "radio" {
+                    return false;
+                }
+                if let Some(dyn_checked) = el.get_attribute("data-mango-checked") {
+                    dyn_checked == "true"
+                } else {
+                    el.get_attribute("checked").is_some()
+                }
             } else {
                 el.get_attribute("checked").is_some()
             }
@@ -458,6 +477,34 @@ pub(crate) fn matches_pseudo_class(
             } else {
                 false
             }
+        }
+        s if s.starts_with("lang(") && s.ends_with(')') => {
+            let target = pseudo[5..pseudo.len() - 1].trim();
+            if target.is_empty() {
+                return false;
+            }
+            let mut curr = Some(node_id);
+            while let Some(curr_id) = curr {
+                if let Some(n) = doc.get(curr_id) {
+                    if let NodeData::Element(curr_el) = &n.data {
+                        if let Some(lang_val) = curr_el
+                            .get_attribute("lang")
+                            .or_else(|| curr_el.get_attribute("xml:lang"))
+                        {
+                            let l = lang_val.trim();
+                            let t = target.trim();
+                            return l.eq_ignore_ascii_case(t)
+                                || (l.len() > t.len()
+                                    && l[..t.len()].eq_ignore_ascii_case(t)
+                                    && l.as_bytes()[t.len()] == b'-');
+                        }
+                    }
+                    curr = n.parent;
+                } else {
+                    break;
+                }
+            }
+            false
         }
         _ => false,
     }

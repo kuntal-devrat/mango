@@ -120,12 +120,42 @@
                 if (val) this.setAttribute("checked", "");
                 else if (this.removeAttribute) this.removeAttribute("checked");
             }
+            if (val && (this.type || '').toLowerCase() === 'radio' && this.name) {
+                var doc = this.ownerDocument || (typeof document !== 'undefined' ? document : null);
+                if (doc && doc.querySelectorAll) {
+                    var group = doc.querySelectorAll('input[type="radio"][name="' + this.name + '"]');
+                    for (var gi = 0; gi < group.length; gi++) {
+                        var other = group[gi];
+                        if (other !== this) {
+                            if (other.setAttribute) other.setAttribute("data-mango-checked", "false");
+                            if (other.removeAttribute) other.removeAttribute("checked");
+                        }
+                    }
+                }
+            }
             if (this.dispatchEvent) {
                 this.dispatchEvent({ type: 'change' });
             }
         },
         configurable: true,
         enumerable: true
+    });
+
+    ['HTMLInputElement', 'HTMLButtonElement', 'HTMLSelectElement', 'HTMLTextAreaElement', 'HTMLOptionElement', 'HTMLOptGroupElement', 'HTMLFieldSetElement'].forEach(function(cls) {
+        if (globalThis[cls] && globalThis[cls].prototype) {
+            Object.defineProperty(globalThis[cls].prototype, 'disabled', {
+                get: function() { return this.hasAttribute ? this.hasAttribute('disabled') : false; },
+                set: function(val) {
+                    if (val) {
+                        if (this.setAttribute) this.setAttribute('disabled', '');
+                    } else {
+                        if (this.removeAttribute) this.removeAttribute('disabled');
+                    }
+                },
+                configurable: true,
+                enumerable: true
+            });
+        }
     });
     globalThis.HTMLInputElement.prototype.stepUp = function(n) {
         var count = (n === undefined) ? 1 : (parseInt(n, 10) || 0);
