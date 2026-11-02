@@ -10,6 +10,7 @@ pub mod extract;
 pub mod invalidation;
 pub mod node;
 pub mod pseudo;
+pub mod sharing;
 
 #[cfg(test)]
 mod tests;
@@ -29,3 +30,4 @@ pub use extract::{
 pub use invalidation::StyleInvalidator;
 pub use node::StyledNode;
 pub use pseudo::collapse_whitespace;
+pub use sharing::{StyleSharingCache, derive_text_computed_style, is_attribute_consuming_tag};

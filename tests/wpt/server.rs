@@ -529,7 +529,11 @@ mod tests {
 
     #[test]
     fn test_resolve_target_file_path_traversal_prevention() {
-        let temp_dir = std::env::temp_dir().join("mango_traversal_test");
+        let temp_dir = std::env::temp_dir().join(format!(
+            "mango_traversal_test_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
         let _ = std::fs::create_dir_all(&temp_dir);
         let secret_file = temp_dir.join("secret.txt");
         std::fs::write(&secret_file, "secret_data").unwrap();

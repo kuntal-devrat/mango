@@ -240,6 +240,7 @@ pub fn layout_styled_document(
     }
 
     clamp_scroll_offsets(&mut root_box);
+    root_box.prune_raw_children();
 
     let display_list = build_display_list_with_scroll_xy(&root_box, scroll_x, scroll_y);
 

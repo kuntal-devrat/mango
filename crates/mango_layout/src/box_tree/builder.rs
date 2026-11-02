@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use mango_css::values::{Clear, Display, Float, Length, Position};
+use mango_css::values::Display;
 
 use crate::box_model::BoxType;
 use crate::style_tree::StyledNode;
@@ -190,38 +190,15 @@ pub fn build_box_tree_with_maps(
         }
     };
 
-    // Computed styles are cloned onto text nodes for inheritance, but box
-    // properties such as position and margin are not inherited. Keeping the
-    // ancestor's out-of-flow values on a text box creates stale descendants
-    // when an absolute/flex item is relaid out.
-    let box_style = if styled_node.text.is_some() {
-        let mut style = (*styled_node.style).clone();
-        style.display = Display::Inline;
-        style.position = Position::Static;
-        style.float = Float::None;
-        style.clear = Clear::None;
-        style.margin_top = Length::Px(0.0);
-        style.margin_right = Length::Px(0.0);
-        style.margin_bottom = Length::Px(0.0);
-        style.margin_left = Length::Px(0.0);
-        style.padding_top = Length::Px(0.0);
-        style.padding_right = Length::Px(0.0);
-        style.padding_bottom = Length::Px(0.0);
-        style.padding_left = Length::Px(0.0);
-        style.width = Length::Auto;
-        style.height = Length::Auto;
-        style.min_width = Length::Auto;
-        style.min_height = Length::Auto;
-        style.max_width = Length::Auto;
-        style.max_height = Length::Auto;
-        Some(std::sync::Arc::new(style))
-    } else {
-        Some(styled_node.style.clone())
-    };
+    // Text nodes already have their style normalized in `StyledNode::with_text`,
+    // so `styled_node.style` can be shared directly via Arc clone without a 2 KB copy.
+    let box_style = Some(styled_node.style.clone());
     let mut root_box = LayoutBox::new(box_type, box_style);
     root_box.node_id = styled_node.node_id;
     root_box.tag_name = styled_node.tag_name.clone();
-    root_box.attributes = styled_node.attributes.clone();
+    if !styled_node.attributes.is_empty() {
+        root_box.attributes = styled_node.attributes.clone();
+    }
 
     // Recursively build children, hoisting Display::Contents children directly into parent
     let mut raw_children: Vec<LayoutBox> = Vec::new();
