@@ -494,11 +494,6 @@ pub fn parse_single_value(token: &Token) -> Option<Value> {
                 _ => {}
             }
 
-            // Cursor
-            if let Some(cursor) = Cursor::from_keyword(&lower) {
-                return Some(Value::Cursor(cursor));
-            }
-
             // VerticalAlign
             match lower.as_str() {
                 "top" => return Some(Value::VerticalAlign(VerticalAlign::Top)),

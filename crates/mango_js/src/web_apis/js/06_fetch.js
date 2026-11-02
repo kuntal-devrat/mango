@@ -621,6 +621,23 @@
         var reqMode = req.mode || (init && init.mode) || 'cors';
         var reqCreds = (req.credentials === 'include' || (init && init.credentials === 'include'));
 
+        // Service Worker Fetch Event Interception
+        if (globalThis.navigator && globalThis.navigator.serviceWorker && globalThis.navigator.serviceWorker.controller) {
+            var sw = globalThis.navigator.serviceWorker.controller;
+            if (!sw._handlingFetch && typeof FetchEvent === 'function') {
+                try {
+                    sw._handlingFetch = true;
+                    var fe = new FetchEvent('fetch', { request: req });
+                    sw.dispatchEvent(fe);
+                    if (fe._responded && fe._responsePromise) {
+                        return fe._responsePromise;
+                    }
+                } finally {
+                    sw._handlingFetch = false;
+                }
+            }
+        }
+
         function performFetch(bodyPayload) {
             return new Promise(function(resolve, reject) {
                 var abortHandler = null;
