@@ -30,4 +30,4 @@ pub use extract::{
 pub use invalidation::StyleInvalidator;
 pub use node::StyledNode;
 pub use pseudo::collapse_whitespace;
-pub use sharing::{StyleSharingCache, derive_text_computed_style, is_attribute_consuming_tag};
+pub use sharing::{StyleSharingCache, derive_text_computed_style};

@@ -16,7 +16,7 @@ use super::extract::{
 };
 use super::node::StyledNode;
 use super::pseudo::{collapse_whitespace, create_pseudo_styled_node};
-use super::sharing::{StyleSharingCache, derive_text_computed_style, is_attribute_consuming_tag};
+use super::sharing::{StyleSharingCache, derive_text_computed_style};
 
 /// Builds the styled tree from a DOM [`Document`], applying both external author
 /// stylesheets and any inline `<style>` sheets found in the document.
@@ -485,9 +485,7 @@ pub fn build_styled_node<'a>(
             if let NodeData::Element(el) = &node.data {
                 styled_node.tag_name = Some(el.tag_name.clone());
                 styled_node.canvas_key = doc.canvas_key(node_id);
-                if is_attribute_consuming_tag(&el.tag_name) {
-                    styled_node.attributes = el.attributes.clone();
-                }
+                styled_node.attributes = el.attributes.clone();
 
                 decorate_element_pseudos(
                     node_id,
