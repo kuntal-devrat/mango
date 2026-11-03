@@ -107,6 +107,7 @@ pub fn collect_styles_recursive(doc: &Document, node_id: NodeId, out: &mut Vec<S
                     sheet.scoping_element = doc
                         .get_enclosing_shadow_root(child.id)
                         .and_then(|sr| doc.get_host_for_shadow_root(sr));
+                    sheet.owner_parent = child.parent;
                     out.push(sheet);
                 }
             } else if el.tag_name.eq_ignore_ascii_case("link") {

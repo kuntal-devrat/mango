@@ -45,6 +45,7 @@ pub fn op_mango_get_computed_style(
                         sheet.scoping_element = d
                             .get_enclosing_shadow_root(child.id)
                             .and_then(|sr| d.get_host_for_shadow_root(sr));
+                        sheet.owner_parent = child.parent;
                         out.push(sheet);
                     }
                 }

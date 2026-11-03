@@ -7,6 +7,7 @@ use crate::values::{FontDisplay, FontStyle, FontWeight, Value};
 pub struct Stylesheet {
     pub rules: Vec<Rule>,
     pub scoping_element: Option<mango_html::dom::NodeId>,
+    pub owner_parent: Option<mango_html::dom::NodeId>,
 }
 
 impl Stylesheet {
@@ -14,6 +15,7 @@ impl Stylesheet {
         Self {
             rules,
             scoping_element: None,
+            owner_parent: None,
         }
     }
 }

@@ -13,6 +13,7 @@ impl<'a> RuleIndex<'a> {
     /// Ingests all style rules, media queries, layers, and @property definitions from a parsed stylesheet.
     pub fn add_stylesheet(&mut self, sheet: &'a Stylesheet, origin: Origin, order: &mut usize) {
         let scoping_element = sheet.scoping_element;
+        let implicit_scope = scoping_element.or(sheet.owner_parent);
         for rule in &sheet.rules {
             match rule {
                 Rule::Style(style_rule) => {
@@ -98,6 +99,7 @@ impl<'a> RuleIndex<'a> {
                         origin,
                         order,
                         initial_scope,
+                        implicit_scope,
                     );
                 }
                 Rule::Scope(scope_rule) => {
@@ -107,7 +109,7 @@ impl<'a> RuleIndex<'a> {
                         order,
                         Arc::from([]),
                         &[],
-                        scoping_element,
+                        implicit_scope,
                     );
                 }
                 Rule::Keyframes(kf) => {
@@ -164,6 +166,7 @@ impl<'a> RuleIndex<'a> {
         origin: Origin,
         order: &mut usize,
         scope_chain: Arc<[ScopeDef<'a>]>,
+        implicit_scope: Option<mango_html::dom::NodeId>,
     ) {
         for rule in rules {
             match rule {
@@ -220,11 +223,15 @@ impl<'a> RuleIndex<'a> {
                         origin,
                         order,
                         scope_chain.clone(),
+                        implicit_scope,
                     );
                 }
                 Rule::Scope(scope_rule) => {
                     let parent_scopes: Vec<ScopeDef<'a>> = scope_chain.iter().cloned().collect();
-                    let parent_scoping = parent_scopes.last().and_then(|s| s.scoping_element);
+                    let parent_scoping = parent_scopes
+                        .last()
+                        .and_then(|s| s.scoping_element)
+                        .or(implicit_scope);
                     self.add_scope_rules(
                         scope_rule,
                         origin,
@@ -303,6 +310,7 @@ impl<'a> RuleIndex<'a> {
                         origin,
                         order,
                         scope_chain.clone(),
+                        scoping_element,
                     );
                 }
                 Rule::Media(media_rule)
