@@ -29,6 +29,29 @@ pub fn execute_taffy_layout(
         None => return false,
     };
 
+    // Only handle horizontal-tb writing mode in Taffy; fall back to Mango for vertical modes
+    if style.writing_mode != mango_css::values::WritingMode::HorizontalTb {
+        return false;
+    }
+
+    // Fall back to Mango if container or children use non-visible overflow (scrollbars)
+    if !matches!(style.overflow_x, mango_css::values::Overflow::Visible)
+        || !matches!(style.overflow_y, mango_css::values::Overflow::Visible)
+    {
+        return false;
+    }
+    if container.children.iter().any(|c| {
+        c.style
+            .as_ref()
+            .map(|s| {
+                !matches!(s.overflow_x, mango_css::values::Overflow::Visible)
+                    || !matches!(s.overflow_y, mango_css::values::Overflow::Visible)
+            })
+            .unwrap_or(false)
+    }) {
+        return false;
+    }
+
     // Subgrid requires parent track inheritance which is handled by Mango's internal grid engine
     if is_grid {
         let has_subgrid = style
@@ -81,6 +104,16 @@ pub fn execute_taffy_layout(
         {
             return false;
         }
+        if style.width == Length::Auto
+            && container.children.iter().any(|c| {
+                c.style
+                    .as_ref()
+                    .map(|s| matches!(s.width, Length::Percent(_)))
+                    .unwrap_or(false)
+            })
+        {
+            return false;
+        }
         if style.width == Length::Auto && containing_block.content.width() <= 0.0 {
             return false;
         }
@@ -125,6 +158,16 @@ pub fn execute_taffy_layout(
                 .map(|s| s.visibility == mango_css::values::Visibility::Collapse)
                 .unwrap_or(false)
         }) {
+            return false;
+        }
+        if style.width == Length::Auto
+            && container.children.iter().any(|c| {
+                c.style
+                    .as_ref()
+                    .map(|s| matches!(s.width, Length::Percent(_)))
+                    .unwrap_or(false)
+            })
+        {
             return false;
         }
         if style.width == Length::Auto && containing_block.content.width() <= 0.0 {
