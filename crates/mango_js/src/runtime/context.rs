@@ -124,6 +124,8 @@ pub struct JsRuntime {
     /// Once exceeded, page script execution is disabled for this document.
     /// This prevents one page's JS graph from taking down the browser.
     pub(crate) execution_disabled: bool,
+    /// Last garbage collection instant for periodic idle cleanup.
+    pub(crate) last_gc: std::time::Instant,
 }
 
 static TOKIO_RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
@@ -379,6 +381,7 @@ impl JsRuntime {
             web_locks_engine,
             import_maps,
             execution_disabled: false,
+            last_gc: std::time::Instant::now(),
         }
     }
 

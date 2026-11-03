@@ -67,13 +67,13 @@ impl EventLoop {
         id
     }
 
-    /// Schedules a one-shot timeout with a predetermined ID.
+    /// Schedules a one-shot timeout with a predetermined ID. Returns `true` if scheduled.
     pub fn schedule_timeout_with_id(
         &mut self,
         id: TimerId,
         callback_source: String,
         delay_ms: u64,
-    ) {
+    ) -> bool {
         if self.timers.len() >= MAX_ACTIVE_TIMERS {
             self.timers.retain(|_, t| !t.cancelled);
         }
@@ -82,7 +82,7 @@ impl EventLoop {
                 "Maximum active timers reached ({}), ignoring setTimeout",
                 MAX_ACTIVE_TIMERS
             );
-            return;
+            return false;
         }
         if id >= self.next_id {
             self.next_id = id + 1;
@@ -98,6 +98,7 @@ impl EventLoop {
             },
         );
         log::debug!("setTimeout registered: id={}, delay={}ms", id, delay_ms);
+        true
     }
 
     /// Schedules a repeating interval. Returns the timer ID.
@@ -108,13 +109,13 @@ impl EventLoop {
         id
     }
 
-    /// Schedules a repeating interval with a predetermined ID.
+    /// Schedules a repeating interval with a predetermined ID. Returns `true` if scheduled.
     pub fn schedule_interval_with_id(
         &mut self,
         id: TimerId,
         callback_source: String,
         delay_ms: u64,
-    ) {
+    ) -> bool {
         if self.timers.len() >= MAX_ACTIVE_TIMERS {
             self.timers.retain(|_, t| !t.cancelled);
         }
@@ -123,7 +124,7 @@ impl EventLoop {
                 "Maximum active timers reached ({}), ignoring setInterval",
                 MAX_ACTIVE_TIMERS
             );
-            return;
+            return false;
         }
         if id >= self.next_id {
             self.next_id = id + 1;
@@ -140,6 +141,7 @@ impl EventLoop {
             },
         );
         log::debug!("setInterval registered: id={}, delay={}ms", id, delay_ms);
+        true
     }
 
     /// Cancels a timer by ID.
