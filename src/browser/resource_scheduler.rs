@@ -206,6 +206,18 @@ impl DocumentResourceScheduler {
             reason: None,
             bytes: 0,
         };
+        if self.records.len() >= 1000 {
+            self.records.retain(|_, r| {
+                matches!(
+                    r.event.state,
+                    ResourceState::Discovered
+                        | ResourceState::Queued
+                        | ResourceState::Fetching
+                        | ResourceState::Ready
+                        | ResourceState::Executing
+                )
+            });
+        }
         self.records.insert(id, ResourceRecord { event });
         self.report.discovered += 1;
         if priority >= ResourcePriority::Async {

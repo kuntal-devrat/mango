@@ -342,13 +342,13 @@ fn test_overflow_hidden_generates_push_and_pop_clip() {
 #[test]
 fn test_form_controls_checkbox_checked() {
     let mut input_box = LayoutBox::new(BoxType::InlineBlock, None);
-    input_box.tag_name = Some("input".to_string());
+    input_box.tag_name = Some("input".into());
     input_box
         .attributes
-        .push(("type".to_string(), "checkbox".to_string()));
+        .push(("type".into(), "checkbox".to_string()));
     input_box
         .attributes
-        .push(("checked".to_string(), "true".to_string()));
+        .push(("checked".into(), "true".to_string()));
     input_box.style = Some(ComputedStyle::default().into());
     input_box.dimensions.content = Rect::new(10.0, 10.0, 14.0, 14.0);
 
@@ -425,19 +425,19 @@ fn test_select_options() {
 #[test]
 fn test_input_caret_fill_rect() {
     let mut input_box = LayoutBox::new(BoxType::BlockNode, Some(ComputedStyle::default().into()));
-    input_box.tag_name = Some("input".to_string());
+    input_box.tag_name = Some("input".into());
     input_box
         .attributes
-        .push(("type".to_string(), "text".to_string()));
+        .push(("type".into(), "text".to_string()));
     input_box
         .attributes
-        .push(("value".to_string(), "hello".to_string()));
+        .push(("value".into(), "hello".to_string()));
     input_box
         .attributes
-        .push(("data-mango-focused".to_string(), "true".to_string()));
+        .push(("data-mango-focused".into(), "true".to_string()));
     input_box
         .attributes
-        .push(("_mango_cursor_pos".to_string(), "3".to_string()));
+        .push(("_mango_cursor_pos".into(), "3".to_string()));
     input_box.dimensions.content = Rect::new(10.0, 10.0, 150.0, 30.0);
 
     let dl = build_display_list(&input_box);

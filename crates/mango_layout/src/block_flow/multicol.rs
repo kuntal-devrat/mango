@@ -59,7 +59,7 @@ pub(crate) fn layout_multicol_children(
             if child.tag_name.as_deref() == Some("li") {
                 child
                     .attributes
-                    .push(("_mango_list_index".to_string(), ol_idx.to_string()));
+                    .push(("_mango_list_index".into(), ol_idx.to_string()));
                 ol_idx += 1;
             }
         }

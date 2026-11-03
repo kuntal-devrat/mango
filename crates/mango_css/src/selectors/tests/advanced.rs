@@ -79,7 +79,7 @@ fn test_focus_within_ancestor_matching() {
         && let NodeData::Element(el) = &mut node.data
     {
         el.attributes
-            .push(("data-mango-focused".to_string(), "true".to_string()));
+            .push(("data-mango-focused".into(), "true".to_string()));
     }
     assert!(
         focus_within.matches(wrap, &doc),
@@ -497,7 +497,7 @@ fn test_shadow_dom_host_and_slotted_selectors() {
     let host_id = doc.find_element_by_id(doc.root(), "host1").unwrap();
     let sr_id = doc.attach_shadow(host_id).unwrap();
 
-    let slot1 = doc.create_element("slot", vec![("name".to_string(), "badge".to_string())]);
+    let slot1 = doc.create_element("slot", vec![("name".into(), "badge".to_string())]);
     doc.append_child(sr_id, slot1);
     let span_id = doc.find_element_by_id(doc.root(), "slotted-span").unwrap();
     doc.append_child(slot1, span_id);

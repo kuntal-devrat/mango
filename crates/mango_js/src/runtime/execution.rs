@@ -89,14 +89,22 @@ impl JsRuntime {
             .get_heap_statistics()
             .used_heap_size();
         if used > Self::MAX_HEAP_BYTES {
-            self.execution_disabled = true;
-            self.clear_timers();
-            log::error!(
-                "Disabling page JavaScript at {} MiB (budget {} MiB)",
-                used / (1024 * 1024),
-                Self::MAX_HEAP_BYTES / (1024 * 1024)
-            );
-            return Err("page JavaScript memory budget exceeded".to_string());
+            self.gc();
+            let used_after = self
+                .runtime
+                .v8_isolate()
+                .get_heap_statistics()
+                .used_heap_size();
+            if used_after > Self::MAX_HEAP_BYTES {
+                self.execution_disabled = true;
+                self.clear_timers();
+                log::error!(
+                    "Disabling page JavaScript at {} MiB (budget {} MiB)",
+                    used_after / (1024 * 1024),
+                    Self::MAX_HEAP_BYTES / (1024 * 1024)
+                );
+                return Err("page JavaScript memory budget exceeded".to_string());
+            }
         }
         Ok(())
     }
@@ -400,7 +408,15 @@ impl JsRuntime {
         }
     }
 
-    /// Processes any expired timers and drains promise microtasks with watchdog protection.
+    /// Runs an idle garbage collection cycle if at least 10 seconds elapsed since the last one.
+    pub fn maybe_idle_gc(&mut self) {
+        if self.last_gc.elapsed() >= std::time::Duration::from_secs(10) {
+            self.last_gc = std::time::Instant::now();
+            self.gc();
+        }
+    }
+
+    /// Processes any expired timers and drains promise microtasks.
     /// Returns `true` if the DOM was mutated.
     pub fn tick(&mut self) -> bool {
         const MAX_CALLBACKS_PER_TICK: usize = 5;
@@ -409,49 +425,35 @@ impl JsRuntime {
             .event_loop
             .borrow_mut()
             .drain_due_limited(MAX_CALLBACKS_PER_TICK);
-        let mut timer_fired = false;
         for s in scripts {
-            if self
-                .execute_script_with_name_and_timeout("<event_loop>", &s, CALLBACK_TIMEOUT)
-                .is_ok()
-            {
-                timer_fired = true;
-            }
+            let _ = self.execute_script_with_name_and_timeout("<event_loop>", &s, CALLBACK_TIMEOUT);
         }
 
         let waker = std::task::Waker::noop();
         let mut cx = std::task::Context::from_waker(waker);
         {
-            let isolate_handle = self.runtime.v8_isolate().thread_safe_handle();
-            let watchdog = ExecutionWatchdog::new(
-                isolate_handle,
-                std::time::Duration::from_secs(5),
-                "mango-event-loop-watchdog",
-            );
             let isolate_ptr: *mut deno_core::v8::Isolate = &mut **self.runtime.v8_isolate();
             // SAFETY: `isolate_ptr` is a valid pointer derived from the active `deno_core` runtime's isolate.
             // Entering the isolate prepares it for polling operations and is balanced by the subsequent `exit()`.
             unsafe {
                 (*isolate_ptr).enter();
             }
-            let poll_result = self
+            let _ = self
                 .runtime
                 .poll_event_loop(&mut cx, deno_core::PollEventLoopOptions::default());
             // SAFETY: `isolate_ptr` was entered immediately before polling; exiting restores the idle state.
             unsafe {
                 (*isolate_ptr).exit();
             }
-            if watchdog.finish() {
-                log::warn!("JavaScript event-loop polling exceeded its budget");
-            }
-            let _ = poll_result;
         }
+
+        self.maybe_idle_gc();
 
         let dirty = *self.dom_dirty.borrow();
         if dirty {
             *self.dom_dirty.borrow_mut() = false;
         }
-        dirty || timer_fired
+        dirty
     }
 
     /// Whether any timer, animation frame, or queued task is still waiting to be expedited.

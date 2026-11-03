@@ -104,20 +104,10 @@ pub fn collect_styles_recursive(doc: &Document, node_id: NodeId, out: &mut Vec<S
                 let css_text = doc.text_content(child.id);
                 if !css_text.trim().is_empty() {
                     let mut sheet = parse_stylesheet(&css_text);
-                    let mut parent_id = doc.get(child.id).and_then(|n| n.parent);
-                    if let Some(pid) = parent_id {
-                        if let Some(host) = doc.get_host_for_shadow_root(pid) {
-                            parent_id = Some(host);
-                        } else if let Some(pnode) = doc.get(pid) {
-                            if let NodeData::Element(pel) = &pnode.data {
-                                if pel.tag_name.eq_ignore_ascii_case("head") {
-                                    // Style in <head> scopes to the document root (<html>)
-                                    parent_id = doc.get(pid).and_then(|n| n.parent);
-                                }
-                            }
-                        }
-                    }
-                    sheet.scoping_element = parent_id;
+                    sheet.scoping_element = doc
+                        .get_enclosing_shadow_root(child.id)
+                        .and_then(|sr| doc.get_host_for_shadow_root(sr));
+                    sheet.owner_parent = child.parent;
                     out.push(sheet);
                 }
             } else if el.tag_name.eq_ignore_ascii_case("link") {

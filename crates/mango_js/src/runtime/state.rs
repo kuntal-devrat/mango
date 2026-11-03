@@ -184,7 +184,7 @@ impl JsRuntime {
             {
                 *v = value.to_string();
             } else {
-                elem.attributes.push((name.to_string(), value.to_string()));
+                elem.attributes.push((name.into(), value.to_string()));
             }
             *self.dom_dirty.borrow_mut() = true;
         }

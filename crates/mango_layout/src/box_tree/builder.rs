@@ -145,7 +145,7 @@ pub fn build_box_tree_with_maps(
         if is_multiple {
             root_box
                 .attributes
-                .push(("_mango_is_multiple".to_string(), "true".to_string()));
+                .push(("_mango_is_multiple".into(), "true".to_string()));
             let text = if selected_texts.is_empty() {
                 String::new()
             } else {
@@ -153,11 +153,11 @@ pub fn build_box_tree_with_maps(
             };
             root_box
                 .attributes
-                .push(("_mango_selected_text".to_string(), text));
+                .push(("_mango_selected_text".into(), text));
         } else if let Some(text) = selected_texts.into_iter().next().or(first_text) {
             root_box
                 .attributes
-                .push(("_mango_selected_text".to_string(), text));
+                .push(("_mango_selected_text".into(), text));
         }
         return root_box;
     }

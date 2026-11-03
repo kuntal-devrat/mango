@@ -6,239 +6,12 @@ use mango_html::dom::{Document, ElementData, NodeData, NodeId};
 
 use crate::cascade::media::matches_container_query;
 use crate::cascade::types::{IndexedRule, MatchedDeclaration, Origin, ScopeDef};
-use crate::parser::{StyleRule, parse_declaration_list};
+use crate::parser::StyleRule;
 use crate::specificity::Specificity;
-use crate::values::{Length, Value};
 
+pub(crate) use super::container::find_container_size_for_node;
 use super::index::RuleIndex;
-
-fn selector_targets_scope(sel_list: Option<&crate::selectors::SelectorList>) -> bool {
-    let Some(list) = sel_list else { return false };
-    list.selectors.iter().any(|sel| {
-        let subject = if let Some((_, compound)) = sel.tail.last() {
-            compound
-        } else {
-            &sel.head
-        };
-        subject.simple_selectors.iter().any(|s| match s {
-            crate::selectors::SimpleSelector::Nesting => true,
-            crate::selectors::SimpleSelector::PseudoClass(p) => {
-                p.eq_ignore_ascii_case("scope")
-                    || ((p.starts_with("is(") || p.starts_with("where("))
-                        && (p.contains("scope") || p.contains('&')))
-            }
-            _ => false,
-        })
-    })
-}
-
-fn subject_targets_scope(style_rule: &StyleRule) -> bool {
-    selector_targets_scope(Some(&style_rule.selectors))
-}
-
-pub(crate) fn selector_targets_host(sel: &crate::selectors::ComplexSelector) -> bool {
-    let subject = if let Some((_, compound)) = sel.tail.last() {
-        compound
-    } else {
-        &sel.head
-    };
-    subject.simple_selectors.iter().any(|s| match s {
-        crate::selectors::SimpleSelector::PseudoClass(p) => {
-            let lower = p.to_ascii_lowercase();
-            lower == "host"
-                || lower.starts_with("host(")
-                || lower.starts_with("host-context(")
-                || lower == "scope"
-                || (lower.starts_with("is(")
-                    && (lower.contains(":host") || lower.contains(":scope")))
-                || (lower.starts_with("where(")
-                    && (lower.contains(":host") || lower.contains(":scope")))
-        }
-        _ => false,
-    })
-}
-
-fn match_scope_chain(
-    chain: &[ScopeDef],
-    node_id: NodeId,
-    doc: &Document,
-    style_rule: &StyleRule,
-    pseudo: Option<&str>,
-) -> Option<NodeId> {
-    if chain.is_empty() {
-        return Some(node_id);
-    }
-    match_scope_level(
-        chain,
-        chain.len() - 1,
-        node_id,
-        doc,
-        style_rule,
-        true,
-        pseudo,
-    )
-}
-
-fn match_scope_level(
-    chain: &[ScopeDef],
-    level: usize,
-    target_node: NodeId,
-    doc: &Document,
-    style_rule: &StyleRule,
-    is_innermost: bool,
-    pseudo: Option<&str>,
-) -> Option<NodeId> {
-    let scope_def = &chain[level];
-    let root_sel = scope_def.root;
-    let limit_sel = scope_def.limit;
-    let scoping_element = scope_def.scoping_element;
-
-    let can_target_self = if is_innermost {
-        subject_targets_scope(style_rule)
-    } else {
-        selector_targets_scope(chain[level + 1].root)
-    };
-
-    let mut candidates = Vec::new();
-    if root_sel.is_some() {
-        if can_target_self {
-            candidates.push(target_node);
-        }
-        let mut cur = Some(target_node);
-        while let Some(curr_id) = cur {
-            let parent = doc
-                .get(curr_id)
-                .and_then(|n| n.parent)
-                .or_else(|| doc.get_host_for_shadow_root(curr_id));
-            if let Some(pid) = parent {
-                candidates.push(pid);
-                cur = Some(pid);
-            } else {
-                break;
-            }
-        }
-    } else if let Some(scop_id) = scoping_element {
-        let mut is_in_scope = false;
-        if target_node.raw() == scop_id.raw() {
-            if can_target_self {
-                is_in_scope = true;
-            }
-        } else {
-            let mut cur = Some(target_node);
-            while let Some(curr_id) = cur {
-                if curr_id.raw() == scop_id.raw() {
-                    is_in_scope = true;
-                    break;
-                }
-                cur = doc
-                    .get(curr_id)
-                    .and_then(|n| n.parent)
-                    .or_else(|| doc.get_host_for_shadow_root(curr_id));
-            }
-        }
-        if is_in_scope {
-            candidates.push(scop_id);
-        }
-    }
-
-    for root_cand in candidates {
-        let mut outer_root_opt = None;
-        if level > 0 {
-            if let Some(outer_root) =
-                match_scope_level(chain, level - 1, root_cand, doc, style_rule, false, None)
-            {
-                outer_root_opt = Some(outer_root);
-            } else {
-                continue;
-            }
-        }
-
-        if let Some(rsel) = root_sel {
-            if let Some(outer_root) = outer_root_opt {
-                crate::selectors::set_current_scope_root(Some(outer_root));
-            }
-            let matches_root = rsel.matches(root_cand, doc);
-            if outer_root_opt.is_some() {
-                crate::selectors::set_current_scope_root(None);
-            }
-            if !matches_root {
-                continue;
-            }
-        }
-
-        crate::selectors::set_current_scope_root(Some(root_cand));
-        let is_limited = if let Some(lsel) = limit_sel {
-            if selector_targets_scope(Some(lsel)) && lsel.matches(root_cand, doc) {
-                true
-            } else if target_node.raw() == root_cand.raw() {
-                false
-            } else {
-                let mut hit = false;
-                let mut curr_opt = Some(target_node);
-                while let Some(elem) = curr_opt {
-                    if elem.raw() == root_cand.raw() {
-                        break;
-                    }
-                    if lsel.matches(elem, doc) {
-                        hit = true;
-                        break;
-                    }
-                    curr_opt = doc
-                        .get(elem)
-                        .and_then(|n| n.parent)
-                        .or_else(|| doc.get_host_for_shadow_root(elem));
-                }
-                hit
-            }
-        } else {
-            false
-        };
-        crate::selectors::set_current_scope_root(None);
-
-        if is_limited {
-            continue;
-        }
-
-        if is_innermost {
-            crate::selectors::set_current_scope_root(Some(root_cand));
-            let matches_rule = style_rule.selectors.selectors.iter().any(|sel| {
-                if target_node.raw() == root_cand.raw() {
-                    let subject = if let Some((_, compound)) = sel.tail.last() {
-                        compound
-                    } else {
-                        &sel.head
-                    };
-                    let has_scope = subject.simple_selectors.iter().any(|s| match s {
-                        crate::selectors::SimpleSelector::Nesting => true,
-                        crate::selectors::SimpleSelector::PseudoClass(p) => {
-                            p.eq_ignore_ascii_case("scope")
-                                || ((p.starts_with("is(") || p.starts_with("where("))
-                                    && (p.contains("scope") || p.contains('&')))
-                        }
-                        _ => false,
-                    });
-                    if !has_scope {
-                        return false;
-                    }
-                }
-                if let Some(p) = pseudo {
-                    sel.matches_pseudo_element(target_node, doc, p)
-                } else {
-                    sel.matches(target_node, doc)
-                }
-            });
-            crate::selectors::set_current_scope_root(None);
-
-            if !matches_rule {
-                continue;
-            }
-        }
-
-        return Some(root_cand);
-    }
-
-    None
-}
+pub(crate) use super::scope::*;
 
 static EMPTY_LAYER_PATH: std::sync::LazyLock<std::sync::Arc<[u32]>> =
     std::sync::LazyLock::new(|| std::sync::Arc::from([]));
@@ -251,6 +24,7 @@ pub(crate) fn apply_style_rule(
     layer_path: &std::sync::Arc<[u32]>,
     scope_chain: &[ScopeDef],
     rule_source_order: usize,
+    bloom_filter: Option<&selectors::bloom::BloomFilter>,
     out: &mut Vec<MatchedDeclaration>,
 ) {
     let winning_root = if !scope_chain.is_empty() {
@@ -307,9 +81,15 @@ pub(crate) fn apply_style_rule(
             let has_scope = subject.simple_selectors.iter().any(|s| match s {
                 crate::selectors::SimpleSelector::Nesting => true,
                 crate::selectors::SimpleSelector::PseudoClass(p) => {
-                    p.eq_ignore_ascii_case("scope")
-                        || ((p.starts_with("is(") || p.starts_with("where("))
-                            && (p.contains("scope") || p.contains('&')))
+                    let lower = p.to_ascii_lowercase();
+                    lower == "scope"
+                        || lower == "host"
+                        || lower.starts_with("host(")
+                        || lower.starts_with("host-context(")
+                        || ((lower.starts_with("is(") || lower.starts_with("where("))
+                            && (lower.contains("scope")
+                                || lower.contains('&')
+                                || lower.contains("host")))
                 }
                 _ => false,
             });
@@ -317,7 +97,7 @@ pub(crate) fn apply_style_rule(
                 continue;
             }
         }
-        let m = complex_sel.matches(node_id, doc);
+        let m = complex_sel.matches_with_filter(node_id, doc, bloom_filter);
         if m {
             if !is_visited_selector(complex_sel) {
                 non_visited_match = true;
@@ -412,6 +192,19 @@ pub(crate) fn collect_matches_for_node<'a>(
 ) {
     let mut seen_rules: HashSet<usize> = HashSet::with_capacity(32);
 
+    // Fast BloomFilter of ancestors for O(1) early rejection of ancestor selectors
+    let mut bloom = selectors::bloom::BloomFilter::default();
+    let mut cur = doc.get(node_id).and_then(|n| n.parent);
+    while let Some(pid) = cur {
+        let p_elem = crate::selectors::servo::MangoElement { node_id: pid, doc };
+        selectors::Element::add_element_unique_hashes(&p_elem, &mut bloom);
+        cur = doc
+            .get(pid)
+            .and_then(|n| n.parent)
+            .or_else(|| doc.get_host_for_shadow_root(pid));
+    }
+    let filter = Some(&bloom);
+
     // 0. Root rules (only for <html>)
     if elem.tag_name.eq_ignore_ascii_case("html") {
         for cand in &index.root_rules {
@@ -424,6 +217,7 @@ pub(crate) fn collect_matches_for_node<'a>(
                     &cand.layer_path,
                     &cand.scope_chain,
                     cand.source_order,
+                    filter,
                     out,
                 );
             }
@@ -441,6 +235,7 @@ pub(crate) fn collect_matches_for_node<'a>(
                 &cand.layer_path,
                 &cand.scope_chain,
                 cand.source_order,
+                filter,
                 out,
             );
         }
@@ -459,6 +254,7 @@ pub(crate) fn collect_matches_for_node<'a>(
                     &cand.layer_path,
                     &cand.scope_chain,
                     cand.source_order,
+                    filter,
                     out,
                 );
             }
@@ -479,6 +275,7 @@ pub(crate) fn collect_matches_for_node<'a>(
                     &cand.layer_path,
                     &cand.scope_chain,
                     cand.source_order,
+                    filter,
                     out,
                 );
             }
@@ -498,6 +295,7 @@ pub(crate) fn collect_matches_for_node<'a>(
                         &cand.layer_path,
                         &cand.scope_chain,
                         cand.source_order,
+                        filter,
                         out,
                     );
                 }
@@ -519,6 +317,7 @@ pub(crate) fn collect_matches_for_node<'a>(
                         &cand.layer_path,
                         &cand.scope_chain,
                         cand.source_order,
+                        filter,
                         out,
                     );
                 }
@@ -546,6 +345,7 @@ pub(crate) fn collect_matches_for_node<'a>(
                     &EMPTY_LAYER_PATH,
                     &[],
                     cand.source_order,
+                    filter,
                     out,
                 );
             }
@@ -584,6 +384,7 @@ pub(crate) fn collect_part_matches_for_node<'a>(
             &cand.layer_path,
             &cand.scope_chain,
             *source_order + cand.source_order,
+            None,
             out,
         );
     }
@@ -815,177 +616,4 @@ pub(crate) fn collect_pseudo_matches_for_node<'a>(
             }
         }
     }
-}
-
-pub(crate) fn find_container_size_for_node(
-    index: &RuleIndex,
-    node_id: NodeId,
-    doc: &Document,
-    name_filter: Option<&str>,
-) -> Option<(f32, f32)> {
-    let mut current = doc.get(node_id).and_then(|n| n.parent);
-    while let Some(ancestor_id) = current {
-        let Some(ancestor_node) = doc.get(ancestor_id) else {
-            break;
-        };
-        if let NodeData::Element(elem) = &ancestor_node.data {
-            let mut container_type = None;
-            let mut container_name = None;
-            let mut explicit_width = None;
-            let mut explicit_height = None;
-
-            // 1. Inspect element's inline style
-            if let Some(style_attr) = elem.get_attribute("style") {
-                let decls = parse_declaration_list(style_attr);
-                for d in decls {
-                    let name = d.name.to_ascii_lowercase();
-                    if name == "container-type" {
-                        container_type = Some(d.value);
-                    } else if name == "contain" {
-                        let val_str = format!("{:?}", d.value).to_ascii_lowercase();
-                        if val_str.contains("size")
-                            || val_str.contains("inline-size")
-                            || val_str.contains("strict")
-                        {
-                            if container_type.is_none() {
-                                container_type = Some(Value::Keyword("inline-size".into()));
-                            }
-                        }
-                    } else if name == "container-name" {
-                        if let Value::String(s) = d.value {
-                            container_name = Some(s);
-                        } else if let Value::Keyword(s) = d.value {
-                            container_name = Some(s);
-                        }
-                    } else if name == "container" {
-                        for exp in d.expand_shorthand() {
-                            if exp.name == "container-name" {
-                                if let Value::String(s) = exp.value {
-                                    container_name = Some(s);
-                                } else if let Value::Keyword(s) = exp.value {
-                                    container_name = Some(s);
-                                }
-                            } else if exp.name == "container-type" {
-                                container_type = Some(exp.value);
-                            }
-                        }
-                    } else if name == "width" {
-                        if let Value::Length(Length::Px(px)) = d.value {
-                            explicit_width = Some(px);
-                        }
-                    } else if name == "height"
-                        && let Value::Length(Length::Px(px)) = d.value
-                    {
-                        explicit_height = Some(px);
-                    }
-                }
-            }
-
-            // 2. Inspect author stylesheet rules defining container properties
-            for cand in &index.container_def_rules {
-                for complex_sel in &cand.style_rule.selectors.selectors {
-                    if complex_sel.matches(ancestor_id, doc) {
-                        for decl in &cand.style_rule.declarations {
-                            let mut check_decl = |dname: &str, dval: &Value| {
-                                if dname == "container-type" && container_type.is_none() {
-                                    container_type = Some(dval.clone());
-                                } else if dname == "contain" && container_type.is_none() {
-                                    let val_str = format!("{:?}", dval).to_ascii_lowercase();
-                                    if val_str.contains("size")
-                                        || val_str.contains("inline-size")
-                                        || val_str.contains("strict")
-                                    {
-                                        container_type = Some(Value::Keyword("inline-size".into()));
-                                    }
-                                } else if dname == "container-name" && container_name.is_none() {
-                                    if let Value::String(s) = dval {
-                                        container_name = Some(s.clone());
-                                    } else if let Value::Keyword(s) = dval {
-                                        container_name = Some(s.clone());
-                                    }
-                                } else if dname == "width" && explicit_width.is_none() {
-                                    if let Value::Length(Length::Px(px)) = dval {
-                                        explicit_width = Some(*px);
-                                    }
-                                } else if dname == "height"
-                                    && explicit_height.is_none()
-                                    && let Value::Length(Length::Px(px)) = dval
-                                {
-                                    explicit_height = Some(*px);
-                                }
-                            };
-                            if decl.is_shorthand() {
-                                for exp in decl.expand_shorthand_ref() {
-                                    check_decl(&exp.name.to_ascii_lowercase(), &exp.value);
-                                }
-                            } else {
-                                check_decl(&decl.name.to_ascii_lowercase(), &decl.value);
-                            }
-                        }
-                        break;
-                    }
-                }
-            }
-
-            // 3. HTML attributes
-            if explicit_width.is_none()
-                && let Some(w_str) = elem.get_attribute("width")
-                && let Ok(w) = w_str.trim_end_matches("px").parse::<f32>()
-            {
-                explicit_width = Some(w);
-            }
-            if explicit_height.is_none()
-                && let Some(h_str) = elem.get_attribute("height")
-                && let Ok(h) = h_str.trim_end_matches("px").parse::<f32>()
-            {
-                explicit_height = Some(h);
-            }
-            if container_name.is_none()
-                && let Some(cn) = elem.get_attribute("data-container-name")
-            {
-                container_name = Some(cn.to_string());
-            }
-            if container_type.is_none()
-                && let Some(ct) = elem.get_attribute("data-container-type")
-                && let Some(parsed_ct) = crate::values::ContainerType::parse(ct)
-            {
-                container_type = Some(Value::ContainerType(parsed_ct));
-            }
-            if container_type.is_none()
-                && let Some(c) = elem.get_attribute("contain")
-                && (c.contains("size") || c.contains("inline-size") || c.contains("strict"))
-            {
-                container_type = Some(Value::Keyword("inline-size".into()));
-            }
-
-            // Check if this element establishes a container
-            let is_container = match &container_type {
-                Some(Value::ContainerType(ct)) => *ct != crate::values::ContainerType::Normal,
-                Some(Value::Keyword(k)) => k != "normal",
-                _ => container_name.is_some(),
-            };
-
-            if is_container {
-                let matches_name = match name_filter {
-                    Some(filter) => {
-                        if let Some(ref cn) = container_name {
-                            cn.split_whitespace()
-                                .any(|part| part.eq_ignore_ascii_case(filter))
-                        } else {
-                            false
-                        }
-                    }
-                    None => true,
-                };
-
-                if matches_name {
-                    let w = explicit_width.unwrap_or(index.viewport_width);
-                    let h = explicit_height.unwrap_or(index.viewport_height);
-                    return Some((w, h));
-                }
-            }
-        }
-        current = ancestor_node.parent;
-    }
-    None
 }

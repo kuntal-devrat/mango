@@ -597,3 +597,35 @@ fn test_where_descendant_matching() {
         Some(&Value::Display(crate::values::Display::Grid))
     );
 }
+
+#[test]
+fn test_host_cascading() {
+    let html = r#"<div id="host" class="active"></div>"#;
+    let mut doc = parse_html(html);
+    let host_id = doc.find_element_by_id(doc.root(), "host").unwrap();
+    let _sr = doc.attach_shadow(host_id).unwrap();
+
+    let css =
+        r#":host { border-top-width: 2px; } :host(.active) { background-color: rgb(255, 0, 0); }"#;
+    let mut sheet = parse_stylesheet(css);
+    sheet.scoping_element = Some(host_id);
+    let mut order = 0;
+    let mut sr_index = RuleIndex::new();
+    sr_index.add_stylesheet(&sheet, Origin::Shadow, &mut order);
+    let ua = crate::cascade::resolver::user_agent_rule_index();
+
+    let (cascaded, _) =
+        crate::cascade::resolver::resolve_cascade_with_shadow_and_part_indexes_and_parent_details(
+            host_id,
+            &doc,
+            ua,
+            Some(&sr_index),
+            &[],
+            None,
+            None,
+        );
+    assert_eq!(
+        cascaded.get("border-top-width"),
+        Some(&Value::Length(crate::values::Length::Px(2.0)))
+    );
+}

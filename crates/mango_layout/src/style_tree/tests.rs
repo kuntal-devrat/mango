@@ -206,7 +206,7 @@ fn test_shadow_dom_v1_scoped_styles_and_slot_projection() {
     doc.append_child(shadow_root, style_elem);
 
     // Div inside shadow root
-    let inside_div = doc.create_element("div", vec![("class".to_string(), "inside".to_string())]);
+    let inside_div = doc.create_element("div", vec![("class".into(), "inside".to_string())]);
     let inside_text = doc.create_text("Inside Shadow");
     doc.append_child(inside_div, inside_text);
     doc.append_child(shadow_root, inside_div);

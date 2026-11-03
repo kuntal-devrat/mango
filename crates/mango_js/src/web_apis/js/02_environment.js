@@ -215,6 +215,14 @@
     // ── 6. performance ───────────────────────────────────────────────────────
     var _p0 = Date.now();
     var _perfEntries = [];
+    var _maxPerfEntries = 250;
+    function _addPerfEntry(entry) {
+        if (_perfEntries.length >= _maxPerfEntries) {
+            _perfEntries.shift();
+        }
+        _perfEntries.push(entry);
+    }
+    globalThis._addPerfEntry = _addPerfEntry;
     function PerformanceEntry(name, entryType, startTime, duration) {
         this.name = String(name || '');
         this.entryType = String(entryType || '');
@@ -251,7 +259,7 @@
         timing:      { navigationStart: _p0, loadEventEnd: _p0 + 50 },
         mark:        function(name) {
             var entry = new PerformanceEntry(name, 'mark', Date.now() - _p0, 0);
-            _perfEntries.push(entry);
+            _addPerfEntry(entry);
             return entry;
         },
         measure:     function(name, startMark, endMark) {
@@ -268,7 +276,7 @@
                 }
             }
             var entry = new PerformanceEntry(name, 'measure', start, Math.max(0, end - start));
-            _perfEntries.push(entry);
+            _addPerfEntry(entry);
             return entry;
         },
         clearMarks:  function(name) {
@@ -292,6 +300,9 @@
         },
         getEntriesByType: function(type) {
             return _perfEntries.filter(function(e) { return e.entryType === type; });
+        },
+        setResourceTimingBufferSize: function(maxSize) {
+            _maxPerfEntries = Math.max(1, Number(maxSize) || 250);
         }
     };
 

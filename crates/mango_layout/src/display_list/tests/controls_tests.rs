@@ -89,13 +89,13 @@ fn test_form_controls_accent_color() {
     let mut cb_style = ComputedStyle::default();
     cb_style.accent_color = Some(accent);
     let mut cb_box = LayoutBox::new(BoxType::InlineBlock, Some(cb_style.into()));
-    cb_box.tag_name = Some("input".to_string());
+    cb_box.tag_name = Some("input".into());
     cb_box
         .attributes
-        .push(("type".to_string(), "checkbox".to_string()));
+        .push(("type".into(), "checkbox".to_string()));
     cb_box
         .attributes
-        .push(("checked".to_string(), "true".to_string()));
+        .push(("checked".into(), "true".to_string()));
     cb_box.dimensions.content = Rect::new(0.0, 0.0, 16.0, 16.0);
     let cb_dl = build_display_list(&cb_box);
     let cb_has_accent = cb_dl.iter().any(
@@ -107,13 +107,11 @@ fn test_form_controls_accent_color() {
     let mut r_style = ComputedStyle::default();
     r_style.accent_color = Some(accent);
     let mut r_box = LayoutBox::new(BoxType::InlineBlock, Some(r_style.into()));
-    r_box.tag_name = Some("input".to_string());
+    r_box.tag_name = Some("input".into());
+    r_box.attributes.push(("type".into(), "radio".to_string()));
     r_box
         .attributes
-        .push(("type".to_string(), "radio".to_string()));
-    r_box
-        .attributes
-        .push(("checked".to_string(), "true".to_string()));
+        .push(("checked".into(), "true".to_string()));
     r_box.dimensions.content = Rect::new(0.0, 0.0, 16.0, 16.0);
     let r_dl = build_display_list(&r_box);
     let r_has_accent = r_dl.iter().any(
@@ -125,13 +123,11 @@ fn test_form_controls_accent_color() {
     let mut rng_style = ComputedStyle::default();
     rng_style.accent_color = Some(accent);
     let mut rng_box = LayoutBox::new(BoxType::InlineBlock, Some(rng_style.into()));
-    rng_box.tag_name = Some("input".to_string());
+    rng_box.tag_name = Some("input".into());
     rng_box
         .attributes
-        .push(("type".to_string(), "range".to_string()));
-    rng_box
-        .attributes
-        .push(("value".to_string(), "50".to_string()));
+        .push(("type".into(), "range".to_string()));
+    rng_box.attributes.push(("value".into(), "50".to_string()));
     rng_box.dimensions.content = Rect::new(0.0, 0.0, 100.0, 20.0);
     let rng_dl = build_display_list(&rng_box);
     let rng_has_accent = rng_dl.iter().any(
@@ -143,13 +139,9 @@ fn test_form_controls_accent_color() {
     let mut prog_style = ComputedStyle::default();
     prog_style.accent_color = Some(accent);
     let mut prog_box = LayoutBox::new(BoxType::InlineBlock, Some(prog_style.into()));
-    prog_box.tag_name = Some("progress".to_string());
-    prog_box
-        .attributes
-        .push(("value".to_string(), "50".to_string()));
-    prog_box
-        .attributes
-        .push(("max".to_string(), "100".to_string()));
+    prog_box.tag_name = Some("progress".into());
+    prog_box.attributes.push(("value".into(), "50".to_string()));
+    prog_box.attributes.push(("max".into(), "100".to_string()));
     prog_box.dimensions.content = Rect::new(0.0, 0.0, 160.0, 16.0);
     let prog_dl = build_display_list(&prog_box);
     let prog_has_accent = prog_dl.iter().any(

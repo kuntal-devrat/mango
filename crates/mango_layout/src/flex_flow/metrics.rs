@@ -359,7 +359,7 @@ pub(crate) fn record_flex_container_baseline(
                     .attributes
                     .retain(|(k, _)| k != "_mango_flex_first_baseline");
                 container.attributes.push((
-                    "_mango_flex_first_baseline".to_string(),
+                    "_mango_flex_first_baseline".into(),
                     first_baseline.to_string(),
                 ));
             }

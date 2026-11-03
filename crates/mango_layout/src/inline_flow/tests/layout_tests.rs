@@ -293,7 +293,7 @@ fn test_word_break_opportunity_wbr_and_zero_width_space() {
     ));
 
     let mut wbr_box = LayoutBox::new(BoxType::InlineNode, Some(style.clone().into()));
-    wbr_box.tag_name = Some("wbr".to_string());
+    wbr_box.tag_name = Some("wbr".into());
     inline_node.children.push(wbr_box);
 
     inline_node.children.push(LayoutBox::new(

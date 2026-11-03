@@ -9,3 +9,7 @@ mango_core.workspace = true
 mango_html.workspace = true
 log.workspace = true
 regex = "1.10"
+selectors.workspace = true
+string_cache.workspace = true
+cssparser = "0.38"
+precomputed-hash = "0.1"

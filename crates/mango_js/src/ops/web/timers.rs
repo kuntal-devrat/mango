@@ -13,7 +13,7 @@ pub fn op_mango_schedule_timer(
     delay_ms: u32,
     repeats: bool,
     _is_raf: bool,
-) {
+) -> bool {
     if let Some(event_loop) = state.try_borrow::<SharedEventLoop>() {
         let source = format!(
             "if (typeof _mangoRunTimer === 'function') _mangoRunTimer({});",
@@ -21,12 +21,13 @@ pub fn op_mango_schedule_timer(
         );
         if let Ok(mut el) = event_loop.try_borrow_mut() {
             if repeats {
-                el.schedule_interval_with_id(id, source, delay_ms as u64);
+                return el.schedule_interval_with_id(id, source, delay_ms as u64);
             } else {
-                el.schedule_timeout_with_id(id, source, delay_ms as u64);
+                return el.schedule_timeout_with_id(id, source, delay_ms as u64);
             }
         }
     }
+    false
 }
 
 #[op2(fast)]

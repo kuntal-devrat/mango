@@ -2,6 +2,7 @@ pub mod animations;
 pub mod box_model;
 pub mod colors_bg;
 pub mod css_wide;
+pub mod grid_flex;
 pub mod layout;
 pub mod typography;
 

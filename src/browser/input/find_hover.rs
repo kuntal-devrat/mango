@@ -166,7 +166,7 @@ impl BrowserChrome {
                     && let mango_html::dom::NodeData::Element(el) = &mut node.data
                 {
                     el.attributes
-                        .push(("data-mango-hover".to_string(), "true".to_string()));
+                        .push(("data-mango-hover".into(), "true".to_string()));
                 }
             }
             self.hovered_dom_nodes = new_chain;
@@ -213,7 +213,7 @@ impl BrowserChrome {
                     && let mango_html::dom::NodeData::Element(el) = &mut node.data
                 {
                     el.attributes
-                        .push(("data-mango-active".to_string(), "true".to_string()));
+                        .push(("data-mango-active".into(), "true".to_string()));
                 }
             }
             self.active_dom_nodes = new_chain;

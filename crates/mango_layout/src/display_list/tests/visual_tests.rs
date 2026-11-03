@@ -103,7 +103,7 @@ fn test_root_and_body_overflow_clip_exemption() {
 
     // 1. Root element (html) with overflow-x: hidden should NOT emit PushClip
     let mut html_box = LayoutBox::new(BoxType::BlockNode, Some(style.clone().into()));
-    html_box.tag_name = Some("html".to_string());
+    html_box.tag_name = Some("html".into());
     html_box.dimensions.content = Rect::new(0.0, 0.0, 1280.0, 800.0);
 
     let dl_html = build_display_list(&html_box);
@@ -117,7 +117,7 @@ fn test_root_and_body_overflow_clip_exemption() {
 
     // 2. Body element with overflow-x: hidden should NOT emit PushClip
     let mut body_box = LayoutBox::new(BoxType::BlockNode, Some(style.clone().into()));
-    body_box.tag_name = Some("body".to_string());
+    body_box.tag_name = Some("body".into());
     body_box.dimensions.content = Rect::new(0.0, 0.0, 1280.0, 800.0);
 
     let dl_body = build_display_list(&body_box);
@@ -131,7 +131,7 @@ fn test_root_and_body_overflow_clip_exemption() {
 
     // 3. Normal container with overflow-x: hidden and overflow-y: visible should have unconstrained vertical clip
     let mut div_box = LayoutBox::new(BoxType::BlockNode, Some(style.into()));
-    div_box.tag_name = Some("div".to_string());
+    div_box.tag_name = Some("div".into());
     div_box.dimensions.content = Rect::new(10.0, 10.0, 500.0, 300.0);
 
     let dl_div = build_display_list(&div_box);
@@ -270,7 +270,7 @@ fn test_canvas_display_list_rendering_and_fallback_suppression() {
         },
         None,
     );
-    canvas_box.tag_name = Some("canvas".to_string());
+    canvas_box.tag_name = Some("canvas".into());
     canvas_box.dimensions.content = Rect::new(20.0, 30.0, 100.0, 50.0);
 
     // Add a fallback child (e.g. <p>Your browser does not support canvas</p>)
@@ -384,13 +384,11 @@ fn test_display_list_cache_update_and_diff() {
 #[test]
 fn test_modal_dialog_backdrop() {
     let mut dialog_box = LayoutBox::new(BoxType::BlockNode, Some(ComputedStyle::default().into()));
-    dialog_box.tag_name = Some("dialog".to_string());
+    dialog_box.tag_name = Some("dialog".into());
+    dialog_box.attributes.push(("open".into(), "".to_string()));
     dialog_box
         .attributes
-        .push(("open".to_string(), "".to_string()));
-    dialog_box
-        .attributes
-        .push(("data-mango-modal".to_string(), "true".to_string()));
+        .push(("data-mango-modal".into(), "true".to_string()));
     dialog_box.dimensions.content = Rect::new(100.0, 100.0, 200.0, 100.0);
 
     let dl = build_display_list(&dialog_box);
@@ -413,13 +411,13 @@ fn test_progress_and_meter_rendering() {
     // 1. Determinate progress
     let mut progress_box =
         LayoutBox::new(BoxType::InlineBlock, Some(ComputedStyle::default().into()));
-    progress_box.tag_name = Some("progress".to_string());
+    progress_box.tag_name = Some("progress".into());
     progress_box
         .attributes
-        .push(("value".to_string(), "50".to_string()));
+        .push(("value".into(), "50".to_string()));
     progress_box
         .attributes
-        .push(("max".to_string(), "100".to_string()));
+        .push(("max".into(), "100".to_string()));
     progress_box.dimensions.content = Rect::new(10.0, 10.0, 160.0, 16.0);
 
     let dl_progress = build_display_list(&progress_box);
@@ -436,25 +434,17 @@ fn test_progress_and_meter_rendering() {
 
     // 2. Meter (optimal zone -> green)
     let mut meter_box = LayoutBox::new(BoxType::InlineBlock, Some(ComputedStyle::default().into()));
-    meter_box.tag_name = Some("meter".to_string());
+    meter_box.tag_name = Some("meter".into());
+    meter_box.attributes.push(("min".into(), "0".to_string()));
+    meter_box.attributes.push(("max".into(), "100".to_string()));
+    meter_box.attributes.push(("low".into(), "33".to_string()));
+    meter_box.attributes.push(("high".into(), "66".to_string()));
     meter_box
         .attributes
-        .push(("min".to_string(), "0".to_string()));
+        .push(("optimum".into(), "80".to_string()));
     meter_box
         .attributes
-        .push(("max".to_string(), "100".to_string()));
-    meter_box
-        .attributes
-        .push(("low".to_string(), "33".to_string()));
-    meter_box
-        .attributes
-        .push(("high".to_string(), "66".to_string()));
-    meter_box
-        .attributes
-        .push(("optimum".to_string(), "80".to_string()));
-    meter_box
-        .attributes
-        .push(("value".to_string(), "75".to_string()));
+        .push(("value".into(), "75".to_string()));
     meter_box.dimensions.content = Rect::new(10.0, 10.0, 100.0, 16.0);
 
     let dl_meter = build_display_list(&meter_box);
@@ -475,14 +465,13 @@ fn test_select_optgroup_and_multiple() {
     // Multi-select rendering
     let mut select_box =
         LayoutBox::new(BoxType::InlineBlock, Some(ComputedStyle::default().into()));
-    select_box.tag_name = Some("select".to_string());
+    select_box.tag_name = Some("select".into());
     select_box
         .attributes
-        .push(("_mango_is_multiple".to_string(), "true".to_string()));
-    select_box.attributes.push((
-        "_mango_selected_text".to_string(),
-        "Apple, Cherry".to_string(),
-    ));
+        .push(("_mango_is_multiple".into(), "true".to_string()));
+    select_box
+        .attributes
+        .push(("_mango_selected_text".into(), "Apple, Cherry".to_string()));
     select_box.dimensions.content = Rect::new(10.0, 10.0, 150.0, 60.0);
 
     let dl = build_display_list(&select_box);

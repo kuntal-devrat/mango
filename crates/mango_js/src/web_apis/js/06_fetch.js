@@ -554,7 +554,9 @@
             var res = _makeResponse(raw);
             if (typeof PerformanceResourceTiming !== 'undefined' && typeof _perfEntries !== 'undefined' && typeof _p0 !== 'undefined') {
                 var dur = Math.max(0, (Date.now() - _p0) - (entry.startTime || 0));
-                _perfEntries.push(new PerformanceResourceTiming(entry.url || '', 'fetch', entry.startTime || 0, dur, raw.status || 200));
+                var timing = new PerformanceResourceTiming(entry.url || '', 'fetch', entry.startTime || 0, dur, raw.status || 200);
+                if (typeof _addPerfEntry === 'function') _addPerfEntry(timing);
+                else _perfEntries.push(timing);
             }
             entry.resolve(res);
         }
@@ -677,7 +679,9 @@
                             var res = _makeResponse(raw);
                             if (typeof PerformanceResourceTiming !== 'undefined' && typeof _perfEntries !== 'undefined' && typeof _p0 !== 'undefined') {
                                 var dur = Math.max(0, (Date.now() - _p0) - fetchStart);
-                                _perfEntries.push(new PerformanceResourceTiming(url, 'fetch', fetchStart, dur, raw.status || 200));
+                                var timing = new PerformanceResourceTiming(url, 'fetch', fetchStart, dur, raw.status || 200);
+                                if (typeof _addPerfEntry === 'function') _addPerfEntry(timing);
+                                else _perfEntries.push(timing);
                             }
                             resolve(res);
                         }

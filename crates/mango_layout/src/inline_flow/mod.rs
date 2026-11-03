@@ -9,6 +9,8 @@ pub mod container;
 pub mod containing_block;
 pub mod line;
 pub mod metrics;
+pub mod multicol;
+pub mod ruby;
 pub mod shaping;
 pub mod vertical;
 

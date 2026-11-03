@@ -265,7 +265,7 @@ pub fn build_replaced_element_with_maps(
 
     if no_aspect_ratio {
         b.attributes
-            .push(("_mango_no_aspect_ratio".to_string(), "1".to_string()));
+            .push(("_mango_no_aspect_ratio".into(), "1".to_string()));
     }
 
     if let Some(usemap) = get_attr("usemap")
@@ -402,7 +402,7 @@ pub fn try_build_object_element_with_maps(
 
     if no_aspect_ratio {
         b.attributes
-            .push(("_mango_no_aspect_ratio".to_string(), "1".to_string()));
+            .push(("_mango_no_aspect_ratio".into(), "1".to_string()));
     }
 
     if let Some(usemap) = get_attr("usemap")

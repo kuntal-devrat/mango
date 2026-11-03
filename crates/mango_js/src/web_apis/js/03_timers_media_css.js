@@ -36,14 +36,18 @@
         var args = Array.prototype.slice.call(arguments, 2);
         var id = _timerNextId++;
         _timerCallbacks[id] = { fn: fn, repeat: false, args: args };
-        if (typeof _mangoScheduleTimer === 'function') _mangoScheduleTimer(id, Number(delay) || 0, false);
+        if (typeof _mangoScheduleTimer === 'function' && _mangoScheduleTimer(id, Number(delay) || 0, false) === false) {
+            delete _timerCallbacks[id];
+        }
         return id;
     };
     globalThis.setInterval = function(fn, delay) {
         var args = Array.prototype.slice.call(arguments, 2);
         var id = _timerNextId++;
         _timerCallbacks[id] = { fn: fn, repeat: true, args: args };
-        if (typeof _mangoScheduleTimer === 'function') _mangoScheduleTimer(id, Number(delay) || 0, true);
+        if (typeof _mangoScheduleTimer === 'function' && _mangoScheduleTimer(id, Number(delay) || 0, true) === false) {
+            delete _timerCallbacks[id];
+        }
         return id;
     };
     globalThis.clearTimeout = function(id) {

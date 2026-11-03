@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use mango_core::Atom;
 use mango_css::cascade::RuleIndex;
 use mango_css::computed::ComputedStyle;
 use mango_html::dom::{Document, ElementData, NodeId};
@@ -20,7 +21,7 @@ pub struct ElementStyleKey {
     /// Pointer address of parent element's computed style (for inheritance).
     pub parent_style_ptr: usize,
     /// Element tag name (canonical lowercase).
-    pub tag_name: String,
+    pub tag_name: Atom,
     /// Element id attribute, if any.
     pub id: Option<String>,
     /// Element class attribute, if any.
@@ -28,7 +29,7 @@ pub struct ElementStyleKey {
     /// Element inline style attribute, if any.
     pub inline_style: Option<String>,
     /// Remaining attributes that might affect attribute selectors.
-    pub other_attributes: Vec<(String, String)>,
+    pub other_attributes: Vec<(Atom, String)>,
     /// Positional classification (first-child, last-child, nth-child, etc.).
     pub positional_key: u32,
     /// Hover state.
@@ -148,7 +149,7 @@ impl StyleSharingCache {
 
         Some(ElementStyleKey {
             parent_style_ptr: parent_ptr,
-            tag_name: el.tag_name.to_ascii_lowercase(),
+            tag_name: Atom::from(el.tag_name.to_ascii_lowercase()),
             id,
             class,
             inline_style,

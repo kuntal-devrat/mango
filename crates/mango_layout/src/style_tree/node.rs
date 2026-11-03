@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use mango_core::Atom;
 use mango_css::computed::ComputedStyle;
 use mango_html::dom::NodeId;
 
@@ -12,9 +13,9 @@ pub struct StyledNode {
     pub style: Arc<ComputedStyle>,
     pub text: Option<String>,
     /// The element's tag name (e.g. "div", "img"), or None for text/document nodes.
-    pub tag_name: Option<String>,
+    pub tag_name: Option<Atom>,
     /// Element attributes (e.g. "src", "width", "height").
-    pub attributes: Vec<(String, String)>,
+    pub attributes: Vec<(Atom, String)>,
     pub children: Vec<StyledNode>,
 }
 

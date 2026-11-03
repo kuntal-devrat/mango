@@ -685,7 +685,7 @@ fn serialize_dom_node(doc: &Document, nid: NodeId, max_depth: i64, current_depth
         NodeData::Element(elem) => {
             let mut attrs = Vec::new();
             for (k, v) in &elem.attributes {
-                attrs.push(k.clone());
+                attrs.push(k.to_string());
                 attrs.push(v.clone());
             }
 

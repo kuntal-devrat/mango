@@ -12,4 +12,5 @@ ureq.workspace = true
 rustls = { version = "0.23", features = ["std"] }
 webpki-roots = "1.0"
 getrandom.workspace = true
+encoding_rs.workspace = true
 

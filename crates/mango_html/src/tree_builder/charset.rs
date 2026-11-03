@@ -47,20 +47,7 @@ pub(crate) fn extract_charset_from_content(content: &str) -> Option<String> {
 
 /// Maps standard charset labels and aliases to their WHATWG canonical encoding name.
 pub(crate) fn canonical_charset(label: &str) -> Option<&'static str> {
-    let normalized = label.trim().trim_matches(['"', '\'']).to_ascii_lowercase();
+    let normalized = label.trim().trim_matches(['"', '\'']);
     let name = normalized.split([';', ',']).next().unwrap_or("").trim();
-    match name {
-        "utf-8" | "utf8" | "unicode-1-1-utf-8" | "unicode11utf8" | "unicode20utf8"
-        | "x-unicode20utf8" | "csunicode11utf8" | "utf_8" => Some("UTF-8"),
-        "utf-16" | "utf-16le" | "csunicode" | "iso-10646-ucs-2" | "ucs-2" | "unicode"
-        | "unicodefeff" => Some("UTF-16LE"),
-        "utf-16be" | "unicodefffe" => Some("UTF-16BE"),
-        "windows-1252" | "cp1252" | "x-cp1252" | "iso-8859-1" | "iso8859-1" | "iso_8859-1"
-        | "iso_8859-1:1987" | "iso-ir-100" | "latin1" | "latin-1" | "l1" | "csisolatin1"
-        | "us-ascii" | "ascii" | "ansi_x3.4-1968" | "iso-ir-6" | "ansi_x3.4-1986"
-        | "iso_646.irv:1991" | "iso646-us" | "us" | "ibm367" | "cp367" | "csascii" => {
-            Some("windows-1252")
-        }
-        _ => None,
-    }
+    encoding_rs::Encoding::for_label(name.as_bytes()).map(|enc| enc.name())
 }

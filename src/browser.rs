@@ -440,35 +440,48 @@ impl BrowserChrome {
         let Some(ref mut renderer) = self.renderer_actor else {
             return false;
         };
-        let mut messages = Vec::new();
+        let mut latest_frame: Option<crate::renderer_actor::RenderFramePayload> = None;
+        let mut non_frame_messages = Vec::new();
         while let Ok(msg) = renderer.result_rx.try_recv() {
-            messages.push(msg);
-        }
-        let mut updated = false;
-        for msg in messages {
             match msg {
                 crate::renderer_actor::RendererResult::FrameReady(frame) => {
                     if frame.generation >= self.renderer_generation {
-                        self.page_display_list = frame.display_list;
-                        self.cached_scrollable_height = frame.scrollable_height;
-                        self.canvas_bg = frame.canvas_bg;
-                        if let Some(title) = frame.title {
-                            self.page_title = title.clone();
-                            if let Some(tab) = self.tabs.get_mut(self.active_tab_idx) {
-                                tab.set_title(title);
+                        if let Some(prev) = latest_frame.as_mut() {
+                            if frame.frame_id >= prev.frame_id {
+                                *prev = *frame;
                             }
+                        } else {
+                            latest_frame = Some(*frame);
                         }
-                        if let Some(root) = frame.root_box {
-                            self.root_box = Some(root);
-                        }
-                        if let Some(doc) = frame.doc_mirror {
-                            self.cached_document = Some(doc);
-                        }
-                        self.style_snapshot = frame.style_snapshot;
-                        self.page_dirty = true;
-                        updated = true;
                     }
                 }
+                other => non_frame_messages.push(other),
+            }
+        }
+        let mut updated = false;
+        if let Some(frame) = latest_frame {
+            self.page_display_list = frame.display_list;
+            self.cached_scrollable_height = frame.scrollable_height;
+            self.canvas_bg = frame.canvas_bg;
+            if let Some(title) = frame.title {
+                self.page_title = title.clone();
+                if let Some(tab) = self.tabs.get_mut(self.active_tab_idx) {
+                    tab.set_title(title);
+                }
+            }
+            if let Some(root) = frame.root_box {
+                self.root_box = Some(root);
+            }
+            if let Some(doc) = frame.doc_mirror {
+                self.cached_document = Some(doc);
+            }
+            self.style_snapshot = frame.style_snapshot;
+            self.page_dirty = true;
+            updated = true;
+        }
+
+        for msg in non_frame_messages {
+            match msg {
                 crate::renderer_actor::RendererResult::OpenWindow { url, features: _ } => {
                     let nav_url = if let Some(base) = &self.base_url {
                         base.resolve(&url).map(|u| u.to_string()).unwrap_or(url)
@@ -500,6 +513,7 @@ impl BrowserChrome {
                 crate::renderer_actor::RendererResult::Error { message } => {
                     log::warn!("Isolated renderer warning: {message}");
                 }
+                crate::renderer_actor::RendererResult::FrameReady(_) => {}
             }
         }
         updated
