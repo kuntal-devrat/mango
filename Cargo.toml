@@ -58,6 +58,8 @@ rayon = "1.10"
 deno_core = "0.412.0"
 getrandom = "0.2"
 encoding_rs = "0.8.44"
+rustybuzz = "0.20"
+unicode-bidi = "0.3"
 string_cache = "0.11.0"
 selectors = "0.41.0"
 

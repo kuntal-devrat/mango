@@ -12,3 +12,4 @@ mango_render.workspace = true
 log.workspace = true
 rayon.workspace = true
 self_cell = "1.0"
+unicode-bidi.workspace = true
