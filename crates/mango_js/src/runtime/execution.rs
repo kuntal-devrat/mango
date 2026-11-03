@@ -408,12 +408,31 @@ impl JsRuntime {
         }
     }
 
-    /// Runs an idle garbage collection cycle if at least 10 seconds elapsed since the last one.
+    /// Runs an idle garbage collection cycle if at least 5 seconds elapsed since the last one.
     pub fn maybe_idle_gc(&mut self) {
-        if self.last_gc.elapsed() >= std::time::Duration::from_secs(10) {
+        if self.last_gc.elapsed() >= std::time::Duration::from_secs(5) {
             self.last_gc = std::time::Instant::now();
-            self.gc();
+            self.idle_gc();
+        } else {
+            self.set_idle(true);
         }
+    }
+
+    /// Performs idle garbage collection, clears kept objects, and compacts the V8 heap.
+    pub fn idle_gc(&mut self) {
+        {
+            let _guard = self.enter_isolate();
+            let isolate = self.runtime.v8_isolate();
+            isolate.clear_kept_objects();
+            isolate.low_memory_notification();
+            isolate.memory_pressure_notification(deno_core::v8::MemoryPressureLevel::Moderate);
+            isolate
+                .request_garbage_collection_for_testing(deno_core::v8::GarbageCollectionType::Full);
+            deno_core::v8::scope!(scope, self.runtime.v8_isolate());
+            scope.perform_microtask_checkpoint();
+        }
+        self.run_jobs();
+        self.set_idle(true);
     }
 
     /// Processes any expired timers and drains promise microtasks.
@@ -553,13 +572,15 @@ impl JsRuntime {
         self.gc();
     }
 
-    /// Requests a V8 low memory notification garbage collection cycle.
+    /// Requests an aggressive V8 low memory notification garbage collection and compaction cycle.
     pub fn gc(&mut self) {
         {
             let _guard = self.enter_isolate();
-            self.runtime.v8_isolate().low_memory_notification();
-            self.runtime
-                .v8_isolate()
+            let isolate = self.runtime.v8_isolate();
+            isolate.clear_kept_objects();
+            isolate.low_memory_notification();
+            isolate.memory_pressure_notification(deno_core::v8::MemoryPressureLevel::Critical);
+            isolate
                 .request_garbage_collection_for_testing(deno_core::v8::GarbageCollectionType::Full);
             // FinalizationRegistry callbacks are queued as microtasks/tasks
             // after the collection. Run the checkpoint now; the event-loop
@@ -569,6 +590,7 @@ impl JsRuntime {
             scope.perform_microtask_checkpoint();
         }
         self.run_jobs();
+        self.set_idle(true);
     }
 
     pub(crate) fn eval_bool_script(&mut self, script: &str) -> Result<bool, String> {

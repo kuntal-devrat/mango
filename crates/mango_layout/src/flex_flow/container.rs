@@ -26,6 +26,10 @@ pub fn layout_flex(
     containing_block: &Dimensions,
     float_ctx: &mut FloatContext,
 ) {
+    if crate::taffy_adapter::compute_taffy_flex(container, containing_block, float_ctx) {
+        return;
+    }
+
     let container_width = containing_block.content.width();
     let container_height = if containing_block.content.height() > 0.0 {
         containing_block.content.height()

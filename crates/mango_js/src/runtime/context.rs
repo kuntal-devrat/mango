@@ -36,6 +36,7 @@ pub(crate) struct IsolateScopeGuard(*mut deno_core::v8::Isolate);
 impl IsolateScopeGuard {
     #[inline]
     pub(crate) fn enter(isolate: &mut deno_core::v8::Isolate) -> Self {
+        isolate.set_idle(false);
         // SAFETY: `isolate` is a valid mutable reference to the active V8 isolate.
         // Entering the isolate prepares it for execution on the current thread,
         // and is balanced by the paired `exit()` call in `Drop`.
@@ -50,9 +51,11 @@ impl Drop for IsolateScopeGuard {
     #[inline]
     fn drop(&mut self) {
         // SAFETY: `self.0` points to the V8 isolate entered in `IsolateScopeGuard::enter`.
-        // Calling `exit()` restores the previous isolate scope depth on the thread.
+        // Calling `exit()` restores the previous isolate scope depth on the thread,
+        // and marking the isolate as idle enables background compaction heuristics.
         unsafe {
             (*self.0).exit();
+            (*self.0).set_idle(true);
         }
     }
 }
@@ -423,6 +426,11 @@ impl JsRuntime {
     /// Returns the WebLocks engine handle.
     pub fn web_locks_engine(&self) -> crate::web_locks::WebLocksEngine {
         self.web_locks_engine.clone()
+    }
+
+    /// Marks the isolate as idle or active for V8 background compaction.
+    pub fn set_idle(&mut self, is_idle: bool) {
+        self.runtime.v8_isolate().set_idle(is_idle);
     }
 }
 
