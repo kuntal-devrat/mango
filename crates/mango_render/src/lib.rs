@@ -31,6 +31,7 @@ pub mod tile;
 pub mod canvas;
 pub mod pdf;
 pub mod svg;
+pub mod webrender;
 
 pub use canvas::{
     Canvas2D, CanvasColorStop, CanvasPaintStyle, CanvasState, RadialGradient,
@@ -61,3 +62,4 @@ pub use svg::{
     prune_svg_caches, register_global_svg_symbol, render_svg,
 };
 pub use tile::{DEFAULT_TILE_SIZE, Tile, TileCoord, TileGrid};
+pub use webrender::{WebRenderEngine, render_with_webrender};
