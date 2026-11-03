@@ -6,6 +6,7 @@ pub mod clip;
 pub mod gradient;
 pub mod path;
 pub mod render;
+pub mod resvg_adapter;
 pub mod text;
 pub mod xml;
 pub mod xml_attrs;

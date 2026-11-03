@@ -8,3 +8,4 @@ description = "HTML5 tokenizer and tree builder for the Mango browser engine"
 mango_core.workspace = true
 encoding_rs.workspace = true
 log.workspace = true
+html5ever.workspace = true

@@ -14,3 +14,5 @@ tiny-skia.workspace = true
 wuff.workspace = true
 rayon.workspace = true
 rustybuzz.workspace = true
+resvg.workspace = true
+usvg.workspace = true
