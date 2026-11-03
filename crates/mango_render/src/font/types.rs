@@ -99,7 +99,9 @@ pub(crate) struct WebFontEntry {
     #[allow(dead_code)]
     pub(crate) family_name: String,
     pub(crate) regular: Vec<Arc<Font>>,
+    pub(crate) regular_data: Vec<Arc<[u8]>>,
     pub(crate) bold: Vec<Arc<Font>>,
+    pub(crate) bold_data: Vec<Arc<[u8]>>,
     pub(crate) is_system: bool,
     pub(crate) last_accessed: AtomicU64,
 }

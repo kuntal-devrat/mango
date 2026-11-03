@@ -9,8 +9,9 @@ use fontdue::{Font, FontSettings};
 
 use super::emoji::is_emoji_char;
 use super::loader::{
-    FONT_AHEM, FONT_MONO, FONT_SANS, FONT_SANS_BOLD, FONT_SERIF, FONT_SERIF_BOLD,
-    decode_font_bytes, load_system_font, script_candidates_for_char,
+    DEFAULT_FALLBACK_FONTS, FONT_AHEM, FONT_MONO, FONT_SANS, FONT_SANS_BOLD, FONT_SERIF,
+    FONT_SERIF_BOLD, decompress_font_bytes, generic_family_fallback, load_system_font_bytes,
+    script_candidates_for_char, system_font_filenames_for_family,
 };
 use super::types::{
     FONT_ACCESS_TICK, FontFamily, FontWeight, MAX_WEB_FONT_FAMILIES, WebFontEntry,
@@ -35,11 +36,17 @@ pub fn prune_web_fonts() {
 /// Manages loaded font faces and provides text measurement and glyph rasterization.
 pub struct FontManager {
     pub(crate) sans_regular: Arc<Font>,
+    pub(crate) sans_regular_data: Arc<[u8]>,
     pub(crate) sans_bold: Arc<Font>,
+    pub(crate) sans_bold_data: Arc<[u8]>,
     pub(crate) serif_regular: Arc<Font>,
+    pub(crate) serif_regular_data: Arc<[u8]>,
     pub(crate) serif_bold: Arc<Font>,
+    pub(crate) serif_bold_data: Arc<[u8]>,
     pub(crate) mono: Arc<Font>,
+    pub(crate) mono_data: Arc<[u8]>,
     pub(crate) fallback_fonts: RwLock<Vec<Arc<Font>>>,
+    pub(crate) fallback_data: RwLock<Vec<Arc<[u8]>>>,
     pub(crate) unloaded_fallbacks: RwLock<Vec<&'static str>>,
     pub(crate) missing_glyphs: RwLock<HashSet<char>>,
     pub(crate) web_fonts: RwLock<HashMap<u32, WebFontEntry>>,
@@ -59,103 +66,40 @@ impl FontManager {
     pub fn new() -> Self {
         let settings = FontSettings::default();
 
-        let sans_regular = Arc::new(
-            load_system_font("arial.ttf")
-                .or_else(|| load_system_font("segoeui.ttf"))
-                .unwrap_or_else(|| {
-                    Font::from_bytes(FONT_SANS, settings)
-                        .expect("Failed to parse embedded DejaVuSans.ttf")
-                }),
-        );
-        let sans_bold = Arc::new(
-            load_system_font("arialbd.ttf")
-                .or_else(|| load_system_font("segoeuib.ttf"))
-                .unwrap_or_else(|| {
-                    Font::from_bytes(FONT_SANS_BOLD, settings)
-                        .expect("Failed to parse embedded DejaVuSans-Bold.ttf")
-                }),
-        );
-        let serif_regular = Arc::new(
-            load_system_font("times.ttf")
-                .or_else(|| load_system_font("georgia.ttf"))
-                .unwrap_or_else(|| {
-                    Font::from_bytes(FONT_SERIF, settings)
-                        .expect("Failed to parse embedded DejaVuSerif.ttf")
-                }),
-        );
-        let serif_bold = Arc::new(
-            load_system_font("timesbd.ttf")
-                .or_else(|| load_system_font("georgiab.ttf"))
-                .unwrap_or_else(|| {
-                    Font::from_bytes(FONT_SERIF_BOLD, settings)
-                        .expect("Failed to parse embedded DejaVuSerif-Bold.ttf")
-                }),
-        );
-        let mono = Arc::new(
-            load_system_font("consola.ttf")
-                .or_else(|| load_system_font("cour.ttf"))
-                .unwrap_or_else(|| {
-                    Font::from_bytes(FONT_MONO, settings)
-                        .expect("Failed to parse embedded DejaVuSansMono.ttf")
-                }),
-        );
+        let load_face = |filenames: &[&str], embedded: &'static [u8]| -> (Arc<Font>, Arc<[u8]>) {
+            let data: Arc<[u8]> = filenames
+                .iter()
+                .find_map(|&f| load_system_font_bytes(f))
+                .map(Arc::from)
+                .unwrap_or_else(|| Arc::from(embedded));
+            let font =
+                Arc::new(Font::from_bytes(&data[..], settings).expect("Failed to parse font"));
+            (font, data)
+        };
+        let (sans_regular, sans_regular_data) = load_face(&["arial.ttf", "segoeui.ttf"], FONT_SANS);
+        let (sans_bold, sans_bold_data) =
+            load_face(&["arialbd.ttf", "segoeuib.ttf"], FONT_SANS_BOLD);
+        let (serif_regular, serif_regular_data) =
+            load_face(&["times.ttf", "georgia.ttf"], FONT_SERIF);
+        let (serif_bold, serif_bold_data) =
+            load_face(&["timesbd.ttf", "georgiab.ttf"], FONT_SERIF_BOLD);
+        let (mono, mono_data) = load_face(&["consola.ttf", "cour.ttf"], FONT_MONO);
 
-        let fallback_names: Vec<&'static str> = vec![
-            "Nirmala.ttc",
-            "nirmala.ttf",
-            "mangal.ttf",
-            "vrinda.ttf",
-            "gautami.ttf",
-            "latha.ttf",
-            "msyh.ttc",
-            "msyhl.ttc",
-            "simsun.ttc",
-            "simsunb.ttf",
-            "SimsunExtG.ttf",
-            "msjh.ttc",
-            "mingliu.ttc",
-            "deng.ttf",
-            "NotoSansCJK-Regular.ttc",
-            "NotoSansSC-Regular.otf",
-            "NotoSansTC-Regular.otf",
-            "wqy-zenhei.ttc",
-            "wqy-microhei.ttc",
-            "msgothic.ttc",
-            "meiryo.ttc",
-            "YuGothR.ttc",
-            "NotoSansJP-Regular.otf",
-            "malgun.ttf",
-            "malgunbd.ttf",
-            "gulim.ttc",
-            "NotoSansKR-Regular.otf",
-            "NotoSansArabic-Regular.ttf",
-            "NotoKufiArabic-Regular.ttf",
-            "NotoNaskhArabic-Regular.ttf",
-            "tahoma.ttf",
-            "tahomabd.ttf",
-            "LeelawUI.ttf",
-            "leelawad.ttf",
-            "NotoSansThai-Regular.ttf",
-            "NotoSansHebrew-Regular.ttf",
-            "DavidLibre-Regular.ttf",
-            "DavidCLM-Medium.otf",
-            "david.ttf",
-            "NotoSansArmenian-Regular.ttf",
-            "NotoSansGeorgian-Regular.ttf",
-            "NotoSansLao-Regular.ttf",
-            "seguiemj.ttf",
-            "seguisym.ttf",
-            "NotoColorEmoji.ttf",
-            "Symbola.ttf",
-        ];
+        let fallback_names: Vec<&'static str> = DEFAULT_FALLBACK_FONTS.to_vec();
 
         let mgr = Self {
             sans_regular,
+            sans_regular_data,
             sans_bold,
+            sans_bold_data,
             serif_regular,
+            serif_regular_data,
             serif_bold,
+            serif_bold_data,
             mono,
+            mono_data,
             fallback_fonts: RwLock::new(Vec::new()),
+            fallback_data: RwLock::new(Vec::new()),
             unloaded_fallbacks: RwLock::new(fallback_names),
             missing_glyphs: RwLock::new(HashSet::new()),
             web_fonts: RwLock::new(HashMap::new()),
@@ -201,6 +145,72 @@ impl FontManager {
                 }
             }
         }
+    }
+
+    /// Returns the raw font byte data for the specified family and weight.
+    pub fn select_font_data(&self, family: FontFamily, weight: FontWeight) -> Arc<[u8]> {
+        match family {
+            FontFamily::Monospace => Arc::clone(&self.mono_data),
+            FontFamily::Serif => match weight {
+                FontWeight::Bold => Arc::clone(&self.serif_bold_data),
+                FontWeight::Regular => Arc::clone(&self.serif_regular_data),
+            },
+            FontFamily::SansSerif => match weight {
+                FontWeight::Bold => Arc::clone(&self.sans_bold_data),
+                FontWeight::Regular => Arc::clone(&self.sans_regular_data),
+            },
+            FontFamily::Custom(id) => {
+                if let Ok(web_fonts) = self.web_fonts.read()
+                    && let Some(entry) = web_fonts.get(&id)
+                {
+                    let data_opt = match weight {
+                        FontWeight::Bold => entry
+                            .bold_data
+                            .first()
+                            .or_else(|| entry.regular_data.first()),
+                        FontWeight::Regular => entry
+                            .regular_data
+                            .first()
+                            .or_else(|| entry.bold_data.first()),
+                    };
+                    if let Some(data) = data_opt {
+                        return Arc::clone(data);
+                    }
+                }
+                match weight {
+                    FontWeight::Bold => Arc::clone(&self.sans_bold_data),
+                    FontWeight::Regular => Arc::clone(&self.sans_regular_data),
+                }
+            }
+        }
+    }
+
+    /// Shapes text using OpenType tables (GSUB / GPOS) via `rustybuzz`.
+    pub fn shape_text(
+        &self,
+        text: &str,
+        font_size: f32,
+        weight: FontWeight,
+        family: FontFamily,
+        letter_spacing: f32,
+    ) -> super::shaping::ShapedRun {
+        let data = self.select_font_data(family, weight);
+        super::shaping::shape_text_with_font_data(&data, 0, text, font_size, letter_spacing)
+            .unwrap_or_default()
+    }
+
+    fn try_load_fallback(&self, name: &str) -> Option<Arc<Font>> {
+        let bytes = load_system_font_bytes(name)?;
+        let font = Font::from_bytes(&bytes[..], FontSettings::default()).ok()?;
+        let font = Arc::new(font);
+        let font_data: Arc<[u8]> = Arc::from(bytes);
+        if let Ok(mut loaded) = self.fallback_fonts.write() {
+            loaded.push(Arc::clone(&font));
+        }
+        if let Ok(mut loaded_data) = self.fallback_data.write() {
+            loaded_data.push(font_data);
+        }
+        Some(font)
     }
 
     /// Selects a font face that contains a glyph for `ch`, falling back to platform Indic/CJK/symbol fonts.
@@ -256,11 +266,7 @@ impl FontManager {
                         .position(|&name| name.eq_ignore_ascii_case(target_name))
                     {
                         let name = pending.remove(pos);
-                        if let Some(font) = load_system_font(name) {
-                            let font = Arc::new(font);
-                            if let Ok(mut loaded) = self.fallback_fonts.write() {
-                                loaded.push(Arc::clone(&font));
-                            }
+                        if let Some(font) = self.try_load_fallback(name) {
                             if font.lookup_glyph_index(ch) != 0 {
                                 found_font = Some(font);
                                 break;
@@ -274,11 +280,7 @@ impl FontManager {
                 let mut remaining = Vec::with_capacity(pending.len());
                 for name in pending.drain(..) {
                     if found_font.is_none() {
-                        if let Some(font) = load_system_font(name) {
-                            let font = Arc::new(font);
-                            if let Ok(mut loaded) = self.fallback_fonts.write() {
-                                loaded.push(Arc::clone(&font));
-                            }
+                        if let Some(font) = self.try_load_fallback(name) {
                             if font.lookup_glyph_index(ch) != 0 {
                                 found_font = Some(font);
                                 continue;
@@ -374,7 +376,12 @@ impl FontManager {
             }
         }
 
-        let font = Arc::new(decode_font_bytes(&raw_bytes)?);
+        let decompressed = decompress_font_bytes(&raw_bytes)?;
+        let font = Arc::new(
+            Font::from_bytes(decompressed.as_ref(), FontSettings::default())
+                .map_err(|e| format!("Failed to parse TrueType/OpenType font tables: {}", e))?,
+        );
+        let font_data: Arc<[u8]> = Arc::from(decompressed.as_ref());
 
         let id = if let Some(&existing_id) = family_map.get(&key) {
             if let Some(entry) = web_fonts.get_mut(&existing_id) {
@@ -383,8 +390,14 @@ impl FontManager {
                     Ordering::Relaxed,
                 );
                 match weight {
-                    FontWeight::Bold => entry.bold.push(Arc::clone(&font)),
-                    FontWeight::Regular => entry.regular.push(Arc::clone(&font)),
+                    FontWeight::Bold => {
+                        entry.bold.push(Arc::clone(&font));
+                        entry.bold_data.push(Arc::clone(&font_data));
+                    }
+                    FontWeight::Regular => {
+                        entry.regular.push(Arc::clone(&font));
+                        entry.regular_data.push(Arc::clone(&font_data));
+                    }
                 }
             }
             existing_id
@@ -413,15 +426,23 @@ impl FontManager {
             let mut entry = WebFontEntry {
                 family_name: family_name.to_string(),
                 regular: Vec::new(),
+                regular_data: Vec::new(),
                 bold: Vec::new(),
+                bold_data: Vec::new(),
                 is_system: false,
                 last_accessed: std::sync::atomic::AtomicU64::new(
                     FONT_ACCESS_TICK.fetch_add(1, Ordering::Relaxed),
                 ),
             };
             match weight {
-                FontWeight::Bold => entry.bold.push(Arc::clone(&font)),
-                FontWeight::Regular => entry.regular.push(Arc::clone(&font)),
+                FontWeight::Bold => {
+                    entry.bold.push(Arc::clone(&font));
+                    entry.bold_data.push(Arc::clone(&font_data));
+                }
+                FontWeight::Regular => {
+                    entry.regular.push(Arc::clone(&font));
+                    entry.regular_data.push(Arc::clone(&font_data));
+                }
             }
             family_map.insert(key, new_id);
             web_fonts.insert(new_id, entry);
@@ -471,19 +492,21 @@ impl FontManager {
             FontFamily::SansSerif => "SansSerif".to_string(),
             FontFamily::Serif => "Serif".to_string(),
             FontFamily::Monospace => "Monospace".to_string(),
-            FontFamily::Custom(id) => {
-                if let Ok(web_fonts) = self.web_fonts.read()
-                    && let Some(entry) = web_fonts.get(&id)
-                {
-                    return format!(
-                        "{}(has_reg={}, has_bold={})",
-                        entry.family_name,
-                        !entry.regular.is_empty(),
-                        !entry.bold.is_empty()
-                    );
-                }
-                format!("Custom({})", id)
-            }
+            FontFamily::Custom(id) => self
+                .web_fonts
+                .read()
+                .ok()
+                .and_then(|m| {
+                    m.get(&id).map(|e| {
+                        format!(
+                            "{}(has_reg={}, has_bold={})",
+                            e.family_name,
+                            !e.regular.is_empty(),
+                            !e.bold.is_empty()
+                        )
+                    })
+                })
+                .unwrap_or_else(|| format!("Custom({})", id)),
         }
     }
 
@@ -528,21 +551,7 @@ impl FontManager {
                 return FontFamily::SansSerif;
             }
 
-            let system_files = match clean.as_str() {
-                "verdana" => Some(("verdana.ttf", "verdanab.ttf")),
-                "segoe ui" | "segoe" => Some(("segoeui.ttf", "segoeuib.ttf")),
-                "arial" | "helvetica" => Some(("arial.ttf", "arialbd.ttf")),
-                "times new roman" | "times" => Some(("times.ttf", "timesbd.ttf")),
-                "consolas" => Some(("consola.ttf", "consolab.ttf")),
-                "georgia" => Some(("georgia.ttf", "georgiab.ttf")),
-                "tahoma" => Some(("tahoma.ttf", "tahomabd.ttf")),
-                "trebuchet ms" | "trebuchet" => Some(("trebuc.ttf", "trebucbd.ttf")),
-                "calibri" => Some(("calibri.ttf", "calibrib.ttf")),
-                "courier new" | "courier" => Some(("cour.ttf", "courbd.ttf")),
-                _ => None,
-            };
-
-            if let Some((reg_file, bold_file)) = system_files {
+            if let Some((reg_file, bold_file)) = system_font_filenames_for_family(clean.as_str()) {
                 if clean == "arial" || clean == "helvetica" {
                     return FontFamily::SansSerif;
                 }
@@ -561,55 +570,52 @@ impl FontManager {
                     return FontFamily::Custom(id);
                 }
 
-                if let Some(reg_font) = load_system_font(reg_file) {
-                    let reg_font = Arc::new(reg_font);
-                    let bold_font: Option<Arc<Font>> = load_system_font(bold_file).map(Arc::new);
+                if let Some(reg_bytes) = load_system_font_bytes(reg_file) {
+                    if let Ok(reg_font) = Font::from_bytes(&reg_bytes[..], FontSettings::default())
+                    {
+                        let reg_font = Arc::new(reg_font);
+                        let reg_data: Arc<[u8]> = Arc::from(reg_bytes);
+                        let bold_data: Option<Arc<[u8]>> =
+                            load_system_font_bytes(bold_file).map(Arc::from);
+                        let bold_font: Option<Arc<Font>> = bold_data.as_ref().and_then(|b| {
+                            Font::from_bytes(&b[..], FontSettings::default())
+                                .ok()
+                                .map(Arc::new)
+                        });
 
-                    let new_id = self.next_font_id.fetch_add(1, Ordering::Relaxed);
-                    if let Ok(mut web_fonts) = self.web_fonts.write() {
-                        family_map.insert(clean.clone(), new_id);
-                        if clean == "segoe ui" {
-                            family_map.insert("segoe".to_string(), new_id);
-                            family_map.insert("system-ui".to_string(), new_id);
-                            family_map.insert("-apple-system".to_string(), new_id);
-                            family_map.insert("blinkmacsystemfont".to_string(), new_id);
+                        let new_id = self.next_font_id.fetch_add(1, Ordering::Relaxed);
+                        if let Ok(mut web_fonts) = self.web_fonts.write() {
+                            family_map.insert(clean.clone(), new_id);
+                            if clean == "segoe ui" {
+                                family_map.insert("segoe".to_string(), new_id);
+                                family_map.insert("system-ui".to_string(), new_id);
+                                family_map.insert("-apple-system".to_string(), new_id);
+                                family_map.insert("blinkmacsystemfont".to_string(), new_id);
+                            }
+                            let bold_vec = bold_font.into_iter().collect();
+                            let bold_data_vec = bold_data.into_iter().collect();
+                            web_fonts.insert(
+                                new_id,
+                                WebFontEntry {
+                                    family_name: clean,
+                                    regular: vec![reg_font],
+                                    regular_data: vec![reg_data],
+                                    bold: bold_vec,
+                                    bold_data: bold_data_vec,
+                                    is_system: true,
+                                    last_accessed: std::sync::atomic::AtomicU64::new(
+                                        FONT_ACCESS_TICK.fetch_add(1, Ordering::Relaxed),
+                                    ),
+                                },
+                            );
+                            return FontFamily::Custom(new_id);
                         }
-                        let bold_vec = if let Some(b) = bold_font {
-                            vec![b]
-                        } else {
-                            Vec::new()
-                        };
-                        web_fonts.insert(
-                            new_id,
-                            WebFontEntry {
-                                family_name: clean,
-                                regular: vec![Arc::clone(&reg_font)],
-                                bold: bold_vec,
-                                is_system: true,
-                                last_accessed: std::sync::atomic::AtomicU64::new(
-                                    FONT_ACCESS_TICK.fetch_add(1, Ordering::Relaxed),
-                                ),
-                            },
-                        );
-                        return FontFamily::Custom(new_id);
                     }
                 }
             }
         }
 
-        let lower = family_str.to_lowercase();
-        if lower.contains("mono") || lower.contains("courier") || lower.contains("consolas") {
-            FontFamily::Monospace
-        } else if (lower.contains("serif") && !lower.contains("sans"))
-            || lower.contains("times")
-            || lower.contains("georgia")
-            || lower.contains("palatino")
-            || lower.contains("cambria")
-        {
-            FontFamily::Serif
-        } else {
-            FontFamily::SansSerif
-        }
+        generic_family_fallback(&family_str.to_lowercase())
     }
 
     /// Prunes custom web fonts loaded across navigations, reclaiming heap allocations.
@@ -671,6 +677,21 @@ impl FontManager {
         let reg_font = self.select_font(family, FontWeight::Regular);
         let is_synth_bold = weight == FontWeight::Bold;
         let px_size = font_size.max(1.0);
+
+        if !is_synth_bold && !text.contains('\n') && !text.chars().any(is_emoji_char) {
+            let data = self.select_font_data(family, weight);
+            if let Some(shaped) =
+                super::shaping::shape_text_with_font_data(&data, 0, text, px_size, letter_spacing)
+            {
+                if !shaped.glyphs.is_empty() && shaped.glyphs.iter().all(|g| g.glyph_id != 0) {
+                    let line_metrics = primary_font.horizontal_line_metrics(px_size);
+                    let height = line_metrics
+                        .map(|lm| lm.new_line_size)
+                        .unwrap_or(px_size * 1.2);
+                    return (shaped.width, height);
+                }
+            }
+        }
 
         let shaped_text;
         let text_to_measure = if text.chars().any(super::shaping::is_complex_char) {

@@ -13,3 +13,4 @@ image.workspace = true
 tiny-skia.workspace = true
 wuff.workspace = true
 rayon.workspace = true
+rustybuzz.workspace = true

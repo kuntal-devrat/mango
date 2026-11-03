@@ -460,6 +460,84 @@ pub fn shape_complex_script(text: &str) -> String {
     current
 }
 
+// ============================================================================
+// 4. OpenType Shaping Engine via rustybuzz (HarfBuzz Pure Rust Port)
+// ============================================================================
+
+/// A shaped glyph produced by HarfBuzz / rustybuzz OpenType shaping.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShapedGlyph {
+    pub glyph_id: u16,
+    pub cluster: u32,
+    pub x_advance: f32,
+    pub y_advance: f32,
+    pub x_offset: f32,
+    pub y_offset: f32,
+}
+
+/// A shaped text run with advance width, line height, and glyph positions.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ShapedRun {
+    pub glyphs: Vec<ShapedGlyph>,
+    pub width: f32,
+    pub height: f32,
+}
+
+/// Shapes a text run using OpenType tables (GSUB ligatures/conjuncts, GPOS kerning/offsets) via `rustybuzz`.
+///
+/// Returns `Some(ShapedRun)` if the font bytes are valid OpenType/TrueType data,
+/// or `None` if `rustybuzz` fails to parse the face.
+pub fn shape_text_with_font_data(
+    font_data: &[u8],
+    face_index: u32,
+    text: &str,
+    px_size: f32,
+    letter_spacing: f32,
+) -> Option<ShapedRun> {
+    if text.is_empty() || px_size <= 0.0 {
+        return Some(ShapedRun::default());
+    }
+
+    let face = rustybuzz::Face::from_slice(font_data, face_index)?;
+    let mut buffer = rustybuzz::UnicodeBuffer::new();
+    buffer.push_str(text);
+    buffer.guess_segment_properties();
+
+    let glyph_buffer = rustybuzz::shape(&face, &[], buffer);
+    let infos = glyph_buffer.glyph_infos();
+    let positions = glyph_buffer.glyph_positions();
+
+    let upem = face.units_per_em() as f32;
+    let scale = if upem > 0.0 { px_size / upem } else { 1.0 };
+
+    let mut glyphs = Vec::with_capacity(infos.len());
+    let mut total_width = 0.0f32;
+
+    for (info, pos) in infos.iter().zip(positions.iter()) {
+        let x_adv = (pos.x_advance as f32) * scale + letter_spacing;
+        let y_adv = (pos.y_advance as f32) * scale;
+        let x_off = (pos.x_offset as f32) * scale;
+        let y_off = (pos.y_offset as f32) * scale;
+
+        total_width += x_adv;
+        glyphs.push(ShapedGlyph {
+            glyph_id: info.glyph_id as u16,
+            cluster: info.cluster,
+            x_advance: x_adv,
+            y_advance: y_adv,
+            x_offset: x_off,
+            y_offset: y_off,
+        });
+    }
+
+    let height = px_size * 1.2;
+    Some(ShapedRun {
+        glyphs,
+        width: total_width,
+        height,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -544,5 +622,38 @@ mod tests {
             "Thai phrase must be segmented into syllables: got {:?}",
             syllables
         );
+    }
+
+    #[test]
+    fn test_rustybuzz_shaping_ahem() {
+        let run = shape_text_with_font_data(crate::font::loader::FONT_AHEM, 0, "p", 16.0, 0.0)
+            .expect("Ahem font must shape with rustybuzz");
+        assert_eq!(run.glyphs.len(), 1);
+        assert!(
+            (run.width - 16.0).abs() < 0.1,
+            "Ahem glyph advance should be 16px: got {}",
+            run.width
+        );
+    }
+
+    #[test]
+    fn test_rustybuzz_shaping_latin_text() {
+        let run =
+            shape_text_with_font_data(crate::font::loader::FONT_SANS, 0, "Hello World", 20.0, 1.0)
+                .expect("DejaVuSans font must shape with rustybuzz");
+        assert_eq!(run.glyphs.len(), 11);
+        assert!(run.width > 0.0);
+    }
+
+    #[test]
+    fn test_rustybuzz_shaping_empty_or_zero() {
+        let empty = shape_text_with_font_data(crate::font::loader::FONT_SANS, 0, "", 16.0, 0.0)
+            .expect("Empty text shaping should succeed");
+        assert!(empty.glyphs.is_empty());
+        assert_eq!(empty.width, 0.0);
+
+        let zero = shape_text_with_font_data(crate::font::loader::FONT_SANS, 0, "Hello", 0.0, 0.0)
+            .expect("Zero size shaping should succeed");
+        assert!(zero.glyphs.is_empty());
     }
 }

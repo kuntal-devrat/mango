@@ -11,13 +11,63 @@ pub(crate) const FONT_SERIF_BOLD: &[u8] = include_bytes!("../fonts/DejaVuSerif-B
 pub(crate) const FONT_MONO: &[u8] = include_bytes!("../fonts/DejaVuSansMono.ttf");
 pub(crate) const FONT_AHEM: &[u8] = include_bytes!("../fonts/Ahem.ttf");
 
-pub(crate) fn load_system_font(filename: &str) -> Option<Font> {
+/// Default list of platform fallback font filenames to probe.
+pub(crate) const DEFAULT_FALLBACK_FONTS: &[&str] = &[
+    "Nirmala.ttc",
+    "nirmala.ttf",
+    "mangal.ttf",
+    "vrinda.ttf",
+    "gautami.ttf",
+    "latha.ttf",
+    "msyh.ttc",
+    "msyhl.ttc",
+    "simsun.ttc",
+    "simsunb.ttf",
+    "SimsunExtG.ttf",
+    "msjh.ttc",
+    "mingliu.ttc",
+    "deng.ttf",
+    "NotoSansCJK-Regular.ttc",
+    "NotoSansSC-Regular.otf",
+    "NotoSansTC-Regular.otf",
+    "wqy-zenhei.ttc",
+    "wqy-microhei.ttc",
+    "msgothic.ttc",
+    "meiryo.ttc",
+    "YuGothR.ttc",
+    "NotoSansJP-Regular.otf",
+    "malgun.ttf",
+    "malgunbd.ttf",
+    "gulim.ttc",
+    "NotoSansKR-Regular.otf",
+    "NotoSansArabic-Regular.ttf",
+    "NotoKufiArabic-Regular.ttf",
+    "NotoNaskhArabic-Regular.ttf",
+    "tahoma.ttf",
+    "tahomabd.ttf",
+    "LeelawUI.ttf",
+    "leelawad.ttf",
+    "NotoSansThai-Regular.ttf",
+    "NotoSansHebrew-Regular.ttf",
+    "DavidLibre-Regular.ttf",
+    "DavidCLM-Medium.otf",
+    "david.ttf",
+    "NotoSansArmenian-Regular.ttf",
+    "NotoSansGeorgian-Regular.ttf",
+    "NotoSansLao-Regular.ttf",
+    "seguiemj.ttf",
+    "seguisym.ttf",
+    "NotoColorEmoji.ttf",
+    "Symbola.ttf",
+];
+
+pub(crate) fn load_system_font_bytes(filename: &str) -> Option<Vec<u8>> {
     #[cfg(target_os = "windows")]
     {
         let windir = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".to_string());
         let path = format!("{}\\Fonts\\{}", windir, filename);
         if let Ok(bytes) = std::fs::read(&path) {
-            return Font::from_bytes(bytes, FontSettings::default()).ok();
+            return Some(bytes);
         }
     }
     #[cfg(target_os = "linux")]
@@ -34,10 +84,8 @@ pub(crate) fn load_system_font(filename: &str) -> Option<Font> {
                 format!("/usr/share/fonts/truetype/{}", s_name),
             ];
             for p in s_paths {
-                if let Ok(bytes) = std::fs::read(&p)
-                    && let Ok(f) = Font::from_bytes(bytes, FontSettings::default())
-                {
-                    return Some(f);
+                if let Ok(bytes) = std::fs::read(&p) {
+                    return Some(bytes);
                 }
             }
         }
@@ -71,10 +119,8 @@ pub(crate) fn load_system_font(filename: &str) -> Option<Font> {
             format!("/usr/share/fonts/truetype/wqy/{}", filename),
         ];
         for p in paths {
-            if let Ok(bytes) = std::fs::read(&p)
-                && let Ok(f) = Font::from_bytes(bytes, FontSettings::default())
-            {
-                return Some(f);
+            if let Ok(bytes) = std::fs::read(&p) {
+                return Some(bytes);
             }
         }
     }
@@ -82,8 +128,14 @@ pub(crate) fn load_system_font(filename: &str) -> Option<Font> {
     None
 }
 
-/// Decompresses and parses font bytes, supporting WOFF2, WOFF1, TrueType, and OpenType.
-pub fn decode_font_bytes(bytes: &[u8]) -> Result<Font, String> {
+#[allow(dead_code)]
+pub(crate) fn load_system_font(filename: &str) -> Option<Font> {
+    let bytes = load_system_font_bytes(filename)?;
+    Font::from_bytes(bytes, FontSettings::default()).ok()
+}
+
+/// Decompresses font bytes if compressed with WOFF or WOFF2.
+pub fn decompress_font_bytes(bytes: &[u8]) -> Result<Cow<'_, [u8]>, String> {
     if bytes.len() < 4 {
         return Err("Font data is too short".to_string());
     }
@@ -111,20 +163,56 @@ pub fn decode_font_bytes(bytes: &[u8]) -> Result<Font, String> {
         return Err("Expected binary font data, received HTML text".to_string());
     }
 
-    let decompressed: Cow<[u8]> = if bytes.starts_with(b"wOF2") {
-        let dec = wuff::decompress_woff2(bytes)
+    if slice.starts_with(b"wOF2") {
+        let dec = wuff::decompress_woff2(slice)
             .map_err(|e| format!("Failed to decompress WOFF2 font: {:?}", e))?;
-        Cow::Owned(dec)
-    } else if bytes.starts_with(b"wOFF") {
-        let dec = wuff::decompress_woff1(bytes)
+        Ok(Cow::Owned(dec))
+    } else if slice.starts_with(b"wOFF") {
+        let dec = wuff::decompress_woff1(slice)
             .map_err(|e| format!("Failed to decompress WOFF1 font: {:?}", e))?;
-        Cow::Owned(dec)
+        Ok(Cow::Owned(dec))
+    } else if !trimmed.is_empty() {
+        Ok(Cow::Owned(trimmed))
     } else {
-        Cow::Borrowed(bytes)
-    };
+        Ok(Cow::Borrowed(bytes))
+    }
+}
 
+/// Decompresses and parses font bytes, supporting WOFF2, WOFF1, TrueType, and OpenType.
+pub fn decode_font_bytes(bytes: &[u8]) -> Result<Font, String> {
+    let decompressed = decompress_font_bytes(bytes)?;
     Font::from_bytes(decompressed.as_ref(), FontSettings::default())
         .map_err(|e| format!("Failed to parse TrueType/OpenType font tables: {}", e))
+}
+
+/// Returns the platform TTF filenames for regular and bold faces of well-known CSS font families.
+pub(crate) fn system_font_filenames_for_family(
+    clean: &str,
+) -> Option<(&'static str, &'static str)> {
+    match clean {
+        "verdana" => Some(("verdana.ttf", "verdanab.ttf")),
+        "segoe ui" | "segoe" => Some(("segoeui.ttf", "segoeuib.ttf")),
+        "arial" | "helvetica" => Some(("arial.ttf", "arialbd.ttf")),
+        "times new roman" | "times" => Some(("times.ttf", "timesbd.ttf")),
+        "consolas" => Some(("consola.ttf", "consolab.ttf")),
+        "georgia" => Some(("georgia.ttf", "georgiab.ttf")),
+        "tahoma" => Some(("tahoma.ttf", "tahomabd.ttf")),
+        "trebuchet ms" | "trebuchet" => Some(("trebuc.ttf", "trebucbd.ttf")),
+        "calibri" => Some(("calibri.ttf", "calibrib.ttf")),
+        "courier new" | "courier" => Some(("cour.ttf", "courbd.ttf")),
+        _ => None,
+    }
+}
+
+/// Resolves generic CSS font family fallbacks when exact named fonts are absent.
+pub(crate) fn generic_family_fallback(lower: &str) -> super::types::FontFamily {
+    if lower.contains("mono") || lower.contains("courier") || lower.contains("consolas") {
+        super::types::FontFamily::Monospace
+    } else if lower.contains("serif") || lower.contains("times") || lower.contains("georgia") {
+        super::types::FontFamily::Serif
+    } else {
+        super::types::FontFamily::SansSerif
+    }
 }
 
 /// Returns targeted system font filenames prioritized for the Unicode script of `ch`.

@@ -544,3 +544,47 @@ fn test_zero_and_negative_font_size_metrics() {
     assert_eq!(descent, 0.0);
     assert_eq!(line_gap, 0.0);
 }
+
+#[test]
+fn test_rustybuzz_shaping_and_kerning() {
+    let fm = font_manager();
+    let run = fm.shape_text(
+        "AV AV",
+        24.0,
+        FontWeight::Regular,
+        FontFamily::SansSerif,
+        0.0,
+    );
+    assert_eq!(run.glyphs.len(), 5);
+    assert!(
+        run.width > 0.0,
+        "Shaped run width should be positive: got {}",
+        run.width
+    );
+
+    // Letter spacing should expand width
+    let run_spaced = fm.shape_text(
+        "AV AV",
+        24.0,
+        FontWeight::Regular,
+        FontFamily::SansSerif,
+        2.0,
+    );
+    assert!(
+        run_spaced.width > run.width,
+        "Letter spacing must increase advance width: {} vs {}",
+        run_spaced.width,
+        run.width
+    );
+}
+
+#[test]
+fn test_rustybuzz_complex_script_shaping() {
+    let fm = font_manager();
+    let run_arabic = fm.shape_text("باب", 18.0, FontWeight::Regular, FontFamily::SansSerif, 0.0);
+    assert!(
+        !run_arabic.glyphs.is_empty(),
+        "Arabic shaping via rustybuzz should produce glyphs"
+    );
+    assert!(run_arabic.width > 0.0);
+}
