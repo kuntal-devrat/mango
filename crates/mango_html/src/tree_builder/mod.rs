@@ -16,5 +16,5 @@ pub use types::{FormattingEntry, InsertionMode, TreeBuilder};
 
 /// Convenience function: parses raw HTML string into a [`crate::dom::Document`].
 pub fn parse_html(html: &str) -> crate::dom::Document {
-    TreeBuilder::parse(html)
+    crate::tree_sink::parse_html5ever(html)
 }

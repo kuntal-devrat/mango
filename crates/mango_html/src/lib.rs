@@ -22,6 +22,7 @@ pub mod entities;
 pub mod incremental;
 pub mod tokenizer;
 pub mod tree_builder;
+pub mod tree_sink;
 
 pub use dom::{
     ChildrenIter, Document, DomError, ElementData, Node, NodeData, NodeId, QuirksMode,
@@ -32,3 +33,4 @@ pub use incremental::{IncrementalParser, PreloadHint, PreloadHintKind};
 pub use mango_core::Atom;
 pub use tokenizer::{Token, Tokenizer};
 pub use tree_builder::{InsertionMode, TreeBuilder, parse_html};
+pub use tree_sink::{MangoTreeSink, parse_html5ever};

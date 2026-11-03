@@ -96,7 +96,7 @@ pub(crate) fn build_svg_shader(
                 final_tf = final_tf.pre_concat(*gtf);
             }
 
-            RadialGradient::new(focal, center, radius, skia_stops, mode, final_tf)
+            RadialGradient::new(focal, 0.0, center, radius, skia_stops, mode, final_tf)
         }
     }
 }

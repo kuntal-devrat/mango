@@ -191,7 +191,7 @@ pub fn render_svg(
         return Some(img.clone());
     }
 
-    // 2. Check parsed SVG DOM cache
+    // 2. Check/populate parsed SVG DOM cache and global symbol registry
     let doc: std::sync::Arc<SvgDocument> = {
         let parsed_opt = if let Ok(cache) = svg_doc_cache().read() {
             cache.get(svg_xml)
@@ -210,6 +210,22 @@ pub fn render_svg(
             arc_doc
         }
     };
+
+    // 3. Try rendering via resvg first for comprehensive SVG 1.1 / SVG 2 vector conformance
+    let has_external_symbol_use =
+        svg_xml.contains("<use") && !svg_xml.contains("<symbol") && !svg_xml.contains("<defs");
+    let has_text = svg_xml.contains("<text");
+
+    if !has_external_symbol_use && !has_text {
+        if let Some(decoded) =
+            super::resvg_adapter::render_svg_resvg(svg_xml, target_w, target_h, current_color)
+        {
+            if let Ok(mut cache) = svg_render_cache().write() {
+                cache.insert(cache_key, decoded.clone());
+            }
+            return Some(decoded);
+        }
+    }
 
     let mut pixmap = Pixmap::new(target_w, target_h)?;
     pixmap.fill(SkiaColor::TRANSPARENT);
@@ -394,6 +410,11 @@ pub fn get_svg_intrinsic_dimensions(svg_xml: &str) -> (Option<f32>, Option<f32>)
                 (None, None, Some((_, _, vb_w, vb_h))) => return (Some(vb_w), Some(vb_h)),
                 _ => {}
             }
+        }
+    }
+    if svg_xml.contains("viewBox") || svg_xml.contains("width") || svg_xml.contains("height") {
+        if let Some((w, h)) = super::resvg_adapter::get_svg_intrinsic_dimensions_resvg(svg_xml) {
+            return (Some(w), Some(h));
         }
     }
     (None, None)
