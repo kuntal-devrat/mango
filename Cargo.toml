@@ -47,8 +47,6 @@ env_logger = "0.11"
 ureq = { version = "3.4", default-features = false, features = ["rustls", "gzip", "brotli"] }
 arboard = "3.4"
 wuff = "0.2.9"
-lgpu = "0.1.2"
-naga = { version = "30", default-features = false, features = ["wgsl-in", "spv-out"] }
 wgpu = "30"
 bytemuck = { version = "1.25", features = ["derive"] }
 pollster = "1.0"
@@ -67,6 +65,11 @@ tikv-jemallocator = { version = "0.6", features = ["unprefixed_malloc_on_support
 html5ever = "0.40.1"
 resvg = "0.49.0"
 usvg = "0.49.0"
+webrender = { version = "0.70.1", default-features = false, features = ["sw_compositor"] }
+webrender_api = "0.70.0"
+swgl = "0.70.0"
+gleam = "0.15"
+euclid = "0.22"
 
 
 [package]
