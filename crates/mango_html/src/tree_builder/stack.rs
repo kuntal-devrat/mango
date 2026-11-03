@@ -168,7 +168,7 @@ impl<'a> TreeBuilder<'a> {
         let node_id = *self.open_elements.last()?;
         let node = self.doc.get(node_id)?;
         if let NodeData::Element(el) = &node.data {
-            Some(el.tag_name.clone())
+            Some(el.tag_name.to_string())
         } else {
             None
         }
@@ -231,7 +231,11 @@ impl<'a> TreeBuilder<'a> {
             self.process_meta_attributes(&attributes);
         }
         let (parent, before) = self.appropriate_insertion_location();
-        let child = self.doc.create_element(name, attributes);
+        let atom_attrs: Vec<(mango_core::Atom, String)> = attributes
+            .into_iter()
+            .map(|(k, v)| (mango_core::Atom::from(k), v))
+            .collect();
+        let child = self.doc.create_element(name, atom_attrs);
         if let Some(before_id) = before {
             let _ = self.doc.insert_before(parent, child, before_id);
         } else {

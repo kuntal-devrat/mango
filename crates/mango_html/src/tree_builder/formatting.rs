@@ -48,7 +48,11 @@ impl<'a> TreeBuilder<'a> {
             };
 
             let parent = self.current_node();
-            let new_child = self.doc.create_element(&tag_name, attributes.clone());
+            let atom_attrs = attributes
+                .iter()
+                .map(|(k, v)| (mango_core::Atom::from(k.as_str()), v.clone()))
+                .collect();
+            let new_child = self.doc.create_element(&tag_name, atom_attrs);
             self.doc.append_child(parent, new_child);
             self.open_elements.push(new_child);
 
@@ -256,7 +260,11 @@ impl<'a> TreeBuilder<'a> {
                     FormattingEntry::Marker => continue,
                 };
 
-                let clone_id = self.doc.create_element(&node_tag, node_attrs.clone());
+                let atom_attrs = node_attrs
+                    .iter()
+                    .map(|(k, v)| (mango_core::Atom::from(k.as_str()), v.clone()))
+                    .collect();
+                let clone_id = self.doc.create_element(&node_tag, atom_attrs);
                 self.active_formatting_elements[active_idx] = FormattingEntry::Element {
                     tag_name: node_tag,
                     attributes: node_attrs,
@@ -274,7 +282,11 @@ impl<'a> TreeBuilder<'a> {
                 .insert_after(common_ancestor, last_node, fmt_node_id);
 
             // Create new element for formatting_element
-            let new_fmt_elem = self.doc.create_element(&fmt_tag, fmt_attrs);
+            let atom_fmt_attrs = fmt_attrs
+                .into_iter()
+                .map(|(k, v)| (mango_core::Atom::from(k), v))
+                .collect();
+            let new_fmt_elem = self.doc.create_element(&fmt_tag, atom_fmt_attrs);
 
             // Move all existing children of furthest_block into new_fmt_elem
             let fb_children: Vec<NodeId> = self.doc.children(fb_id).map(|c| c.id).collect();

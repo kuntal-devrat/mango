@@ -30,57 +30,41 @@
 //! ```
 
 /// A character encoding supported by Mango Browser (PRD 5.4).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Encoding {
-    #[default]
-    Utf8,
-    Utf16Le,
-    Utf16Be,
-    /// ISO-8859-1 (`latin1`) — decoded as Windows-1252 per WHATWG Encoding standard.
-    Windows1252,
+///
+/// Backed by the official WHATWG-standard [`encoding_rs`] engine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Encoding(pub &'static encoding_rs::Encoding);
+
+impl Default for Encoding {
+    fn default() -> Self {
+        Self(encoding_rs::UTF_8)
+    }
 }
 
+#[allow(non_upper_case_globals)]
 impl Encoding {
+    pub const Utf8: Self = Self(encoding_rs::UTF_8);
+    pub const Utf16Le: Self = Self(encoding_rs::UTF_16LE);
+    pub const Utf16Be: Self = Self(encoding_rs::UTF_16BE);
+    pub const Windows1252: Self = Self(encoding_rs::WINDOWS_1252);
+
     /// Maps a charset label (from an HTTP header, `<meta charset>`, or alias) to an [`Encoding`].
     ///
-    /// Follows the WHATWG Encoding Standard lookup table for aliases.
+    /// Follows the WHATWG Encoding Standard lookup table for aliases via [`encoding_rs`].
     pub fn from_label(label: &str) -> Option<Encoding> {
-        let normalized = label.trim().trim_matches(['"', '\'']).to_ascii_lowercase();
-        // Strip any trailing parameters or punctuation (e.g. `utf-8;` or `utf-8,`)
+        let normalized = label.trim().trim_matches(['"', '\'']);
         let name = normalized.split([';', ',']).next().unwrap_or("").trim();
-
-        match name {
-            // UTF-8 aliases
-            "utf-8" | "utf8" | "unicode-1-1-utf-8" | "unicode11utf8" | "unicode20utf8"
-            | "x-unicode20utf8" | "csunicode11utf8" | "utf_8" => Some(Encoding::Utf8),
-
-            // UTF-16LE aliases
-            "utf-16" | "utf-16le" | "csunicode" | "iso-10646-ucs-2" | "ucs-2" | "unicode"
-            | "unicodefeff" => Some(Encoding::Utf16Le),
-
-            // UTF-16BE aliases
-            "utf-16be" | "unicodefffe" => Some(Encoding::Utf16Be),
-
-            // Windows-1252 / ISO-8859-1 / ASCII aliases
-            "windows-1252" | "cp1252" | "x-cp1252" | "iso-8859-1" | "iso8859-1" | "iso_8859-1"
-            | "iso_8859-1:1987" | "iso-ir-100" | "latin1" | "latin-1" | "l1" | "csisolatin1"
-            | "us-ascii" | "ascii" | "ansi_x3.4-1968" | "iso-ir-6" | "ansi_x3.4-1986"
-            | "iso_646.irv:1991" | "iso646-us" | "us" | "ibm367" | "cp367" | "csascii" => {
-                Some(Encoding::Windows1252)
-            }
-
-            _ => None,
-        }
+        encoding_rs::Encoding::for_label(name.as_bytes()).map(Encoding)
     }
 
     /// The canonical name reported to scripts (`document.characterSet`).
     pub fn name(&self) -> &'static str {
-        match self {
-            Encoding::Utf8 => "UTF-8",
-            Encoding::Utf16Le => "UTF-16LE",
-            Encoding::Utf16Be => "UTF-16BE",
-            Encoding::Windows1252 => "windows-1252",
-        }
+        self.0.name()
+    }
+
+    /// Returns the underlying [`encoding_rs::Encoding`].
+    pub fn raw(&self) -> &'static encoding_rs::Encoding {
+        self.0
     }
 }
 
@@ -135,15 +119,7 @@ pub fn detect_encoding(bytes: &[u8], content_type: Option<&str>) -> Encoding {
 ///
 /// Returns `Some(Encoding)` if a UTF-8, UTF-16LE, or UTF-16BE BOM is present.
 pub fn sniff_bom(bytes: &[u8]) -> Option<Encoding> {
-    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
-        Some(Encoding::Utf8)
-    } else if bytes.starts_with(&[0xFE, 0xFF]) {
-        Some(Encoding::Utf16Be)
-    } else if bytes.starts_with(&[0xFF, 0xFE]) {
-        Some(Encoding::Utf16Le)
-    } else {
-        None
-    }
+    encoding_rs::Encoding::for_bom(bytes).map(|(enc, _)| Encoding(enc))
 }
 
 /// Extracts the `charset` parameter from a `Content-Type` HTTP header value (PRD 5.4).
@@ -371,89 +347,17 @@ fn is_html_space(b: u8) -> bool {
 /// Decodes bytes using an explicit encoding (PRD 5.4).
 ///
 /// Strips leading BOM if present and safely replaces invalid byte sequences
-/// with the Unicode replacement character U+FFFD.
+/// with the Unicode replacement character U+FFFD per WHATWG Encoding standard.
 pub fn decode_with(bytes: &[u8], encoding: Encoding) -> String {
-    match encoding {
-        Encoding::Utf8 => {
-            let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
-            String::from_utf8_lossy(bytes).into_owned()
-        }
-        Encoding::Utf16Le => {
-            let bytes = bytes.strip_prefix(&[0xFF, 0xFE]).unwrap_or(bytes);
-            decode_utf16(bytes, true)
-        }
-        Encoding::Utf16Be => {
-            let bytes = bytes.strip_prefix(&[0xFE, 0xFF]).unwrap_or(bytes);
-            decode_utf16(bytes, false)
-        }
-        Encoding::Windows1252 => bytes.iter().map(|b| windows_1252_char(*b)).collect(),
-    }
-}
-
-fn decode_utf16(bytes: &[u8], little_endian: bool) -> String {
-    let (chunks, _) = bytes.as_chunks::<2>();
-    let mut units: Vec<u16> = chunks
-        .iter()
-        .map(|pair| {
-            if little_endian {
-                u16::from_le_bytes([pair[0], pair[1]])
-            } else {
-                u16::from_be_bytes([pair[0], pair[1]])
-            }
-        })
-        .collect();
-
-    // If an odd trailing byte exists, append replacement character per WHATWG
-    if !bytes.len().is_multiple_of(2) {
-        units.push(0xFFFD);
-    }
-
-    String::from_utf16_lossy(&units)
+    let (cow, _) = encoding.0.decode_with_bom_removal(bytes);
+    cow.into_owned()
 }
 
 /// Maps a Windows-1252 byte to its Unicode scalar value.
-///
-/// Bytes 0x80..=0x9F are the Windows-1252 additions; everything else matches
-/// ISO-8859-1 (i.e. the byte value is the code point).
 pub fn windows_1252_char(byte: u8) -> char {
-    const TABLE: [char; 32] = [
-        '\u{20AC}', // 0x80 €
-        '\u{0081}', // 0x81 undefined
-        '\u{201A}', // 0x82 ‚
-        '\u{0192}', // 0x83 ƒ
-        '\u{201E}', // 0x84 „
-        '\u{2026}', // 0x85 …
-        '\u{2020}', // 0x86 †
-        '\u{2021}', // 0x87 ‡
-        '\u{02C6}', // 0x88 ˆ
-        '\u{2030}', // 0x89 ‰
-        '\u{0160}', // 0x8A Š
-        '\u{2039}', // 0x8B ‹
-        '\u{0152}', // 0x8C Œ
-        '\u{008D}', // 0x8D undefined
-        '\u{017D}', // 0x8E Ž
-        '\u{008F}', // 0x8F undefined
-        '\u{0090}', // 0x90 undefined
-        '\u{2018}', // 0x91 ‘
-        '\u{2019}', // 0x92 ’
-        '\u{201C}', // 0x93 “
-        '\u{201D}', // 0x94 ”
-        '\u{2022}', // 0x95 •
-        '\u{2013}', // 0x96 –
-        '\u{2014}', // 0x97 —
-        '\u{02DC}', // 0x98 ˜
-        '\u{2122}', // 0x99 ™
-        '\u{0161}', // 0x9A š
-        '\u{203A}', // 0x9B ›
-        '\u{0153}', // 0x9C œ
-        '\u{009D}', // 0x9D undefined
-        '\u{017E}', // 0x9E ž
-        '\u{0178}', // 0x9F Ÿ
-    ];
-    match byte {
-        0x80..=0x9F => TABLE[(byte - 0x80) as usize],
-        other => other as char,
-    }
+    let raw = [byte];
+    let (cow, _, _) = encoding_rs::WINDOWS_1252.decode(&raw);
+    cow.chars().next().unwrap_or('\u{FFFD}')
 }
 
 #[cfg(test)]
@@ -651,5 +555,24 @@ mod tests {
             decode_html_bytes_with_encoding(b"caf\xe9", Some("text/html; charset=latin1"));
         assert_eq!(html, "café");
         assert_eq!(enc, Encoding::Windows1252);
+    }
+
+    #[test]
+    fn test_whatwg_legacy_encodings_support() {
+        // Shift_JIS test
+        let sjis_enc = Encoding::from_label("shift_jis").expect("shift_jis supported");
+        assert_eq!(sjis_enc.name(), "Shift_JIS");
+
+        // GBK / GB18030 test
+        let gbk_enc = Encoding::from_label("gbk").expect("gbk supported");
+        assert_eq!(gbk_enc.name(), "GBK");
+
+        // Windows-1251 (Cyrillic) test
+        let w1251_enc = Encoding::from_label("windows-1251").expect("windows-1251 supported");
+        assert_eq!(w1251_enc.name(), "windows-1251");
+
+        // EUC-JP test
+        let euc_jp = Encoding::from_label("euc-jp").expect("euc-jp supported");
+        assert_eq!(euc_jp.name(), "EUC-JP");
     }
 }

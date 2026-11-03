@@ -11,12 +11,14 @@
 #![warn(missing_docs)]
 
 pub mod arena;
+pub mod atom;
 pub mod color;
 pub mod geometry;
 pub mod string_interner;
 pub mod types;
 
 pub use arena::{Arena, Id};
+pub use atom::Atom;
 pub use color::Color;
 pub use geometry::{CornerRadii, EdgeSizes, Point, Rect, Size};
 pub use string_interner::{InternedString, StringInterner};

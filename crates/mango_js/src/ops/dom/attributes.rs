@@ -38,7 +38,7 @@ pub fn op_mango_set_attribute(
         if let Some(attr) = elem.attributes.iter_mut().find(|(k, _)| k == &name) {
             attr.1 = val;
         } else {
-            elem.attributes.push((name, val));
+            elem.attributes.push((name.into(), val));
         }
         if let Some(dirty) = state.try_borrow::<DomDirtyFlag>() {
             *dirty.borrow_mut() = true;
@@ -88,7 +88,7 @@ pub fn op_mango_get_attribute_names(state: &mut OpState, node_id: u32) -> Vec<St
     let d = doc.borrow();
     d.get(node_id_from_js(node_id))
         .map(|n| match &n.data {
-            NodeData::Element(el) => el.attributes.iter().map(|(k, _)| k.clone()).collect(),
+            NodeData::Element(el) => el.attributes.iter().map(|(k, _)| k.to_string()).collect(),
             _ => Vec::new(),
         })
         .unwrap_or_default()
@@ -147,7 +147,7 @@ pub fn op_mango_set_dataset_value(
         if let Some(attr) = elem.attributes.iter_mut().find(|(k, _)| k == &attr_name) {
             attr.1 = val;
         } else {
-            elem.attributes.push((attr_name, val));
+            elem.attributes.push((attr_name.into(), val));
         }
         if let Some(dirty) = state.try_borrow::<DomDirtyFlag>() {
             *dirty.borrow_mut() = true;

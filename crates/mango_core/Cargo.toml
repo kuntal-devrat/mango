@@ -5,3 +5,6 @@ edition.workspace = true
 description = "Core types, string interning, and arena allocators for the Mango browser engine"
 
 [dependencies]
+string_cache.workspace = true
+serde.workspace = true
+

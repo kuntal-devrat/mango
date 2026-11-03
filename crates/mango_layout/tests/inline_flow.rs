@@ -270,11 +270,11 @@ fn test_ruby_annotation_layout() {
 
     // Build <ruby> box: base text "漢字", annotation <rt> "かんじ", parentheses <rp> "(" and ")"
     let mut ruby_box = LayoutBox::new(BoxType::InlineNode, Some(ruby_style.clone().into()));
-    ruby_box.tag_name = Some("ruby".to_string());
+    ruby_box.tag_name = Some("ruby".into());
 
     // <rb> 漢字 </rb>
     let mut rb_box = LayoutBox::new(BoxType::InlineNode, Some(ruby_style.clone().into()));
-    rb_box.tag_name = Some("rb".to_string());
+    rb_box.tag_name = Some("rb".into());
     rb_box.children.push(LayoutBox::new(
         BoxType::TextNode("漢字".to_string()),
         Some(ruby_style.clone().into()),
@@ -283,7 +283,7 @@ fn test_ruby_annotation_layout() {
 
     // <rp> ( </rp> (should be hidden in layout)
     let mut rp1_box = LayoutBox::new(BoxType::InlineNode, Some(ruby_style.clone().into()));
-    rp1_box.tag_name = Some("rp".to_string());
+    rp1_box.tag_name = Some("rp".into());
     rp1_box.children.push(LayoutBox::new(
         BoxType::TextNode("(".to_string()),
         Some(ruby_style.clone().into()),
@@ -294,7 +294,7 @@ fn test_ruby_annotation_layout() {
     let mut rt_style = ruby_style.clone();
     rt_style.font_size = 10.0;
     let mut rt_box = LayoutBox::new(BoxType::InlineNode, Some(rt_style.clone().into()));
-    rt_box.tag_name = Some("rt".to_string());
+    rt_box.tag_name = Some("rt".into());
     rt_box.children.push(LayoutBox::new(
         BoxType::TextNode("かんじ".to_string()),
         Some(rt_style.into()),
@@ -303,7 +303,7 @@ fn test_ruby_annotation_layout() {
 
     // <rp> ) </rp> (should be hidden in layout)
     let mut rp2_box = LayoutBox::new(BoxType::InlineNode, Some(ruby_style.into()));
-    rp2_box.tag_name = Some("rp".to_string());
+    rp2_box.tag_name = Some("rp".into());
     rp2_box
         .children
         .push(LayoutBox::new(BoxType::TextNode(")".to_string()), None));

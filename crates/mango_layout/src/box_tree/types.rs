@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use mango_core::Atom;
 use mango_css::computed::ComputedStyle;
 use mango_css::values::WritingMode;
 use mango_html::dom::NodeId;
@@ -25,9 +26,9 @@ pub struct LayoutBox {
     /// DOM node identifier, if backed by a DOM element.
     pub node_id: Option<NodeId>,
     /// Element tag name (e.g. "div", "input", "table"), if backed by an element.
-    pub tag_name: Option<String>,
+    pub tag_name: Option<Atom>,
     /// Element HTML attributes, if backed by an element.
-    pub attributes: Vec<(String, String)>,
+    pub attributes: Vec<(Atom, String)>,
     /// Image map active hit-testing areas if this box is an <img> or <object> with usemap.
     pub map_areas: Vec<MapArea>,
     /// Dirty flag for display list invalidation.

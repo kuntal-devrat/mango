@@ -1,10 +1,12 @@
 //! CSS selectors: simple, compound, complex selectors, and DOM matching engine.
 
+pub mod format;
 pub(crate) mod has;
 pub mod nav;
 pub mod nesting;
 pub mod nth;
 pub(crate) mod pseudo;
+pub mod servo;
 pub mod types;
 pub mod validation;
 

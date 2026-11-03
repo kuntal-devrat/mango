@@ -1,6 +1,6 @@
 //! DOM nodes, element data, and DOM error types conforming to WHATWG DOM.
 
-use mango_core::{Id, InternedString};
+use mango_core::{Atom, Id, InternedString};
 
 /// DOM errors per WHATWG DOM spec (NotFoundError / HierarchyRequestError).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,9 +57,9 @@ pub enum NodeData {
 /// Payload for an element node (tag name, attributes).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ElementData {
-    pub tag_name: String,
+    pub tag_name: Atom,
     pub tag_atom: Option<InternedString>,
-    pub attributes: Vec<(String, String)>,
+    pub attributes: Vec<(Atom, String)>,
     pub shadow_root: Option<NodeId>,
     pub shadow_root_mode: Option<String>,
     pub shadow_root_clonable: bool,
@@ -70,11 +70,21 @@ pub struct ElementData {
 }
 
 impl ElementData {
-    pub fn new(tag_name: impl Into<String>, attributes: Vec<(String, String)>) -> Self {
+    pub fn new<K, V>(
+        tag_name: impl Into<Atom>,
+        attributes: impl IntoIterator<Item = (K, V)>,
+    ) -> Self
+    where
+        K: Into<Atom>,
+        V: Into<String>,
+    {
         Self {
             tag_name: tag_name.into(),
             tag_atom: None,
-            attributes,
+            attributes: attributes
+                .into_iter()
+                .map(|(k, v)| (k.into(), v.into()))
+                .collect(),
             shadow_root: None,
             shadow_root_mode: None,
             shadow_root_clonable: false,
@@ -86,15 +96,22 @@ impl ElementData {
     }
 
     /// Creates a new `ElementData` with an interned tag atom.
-    pub fn with_atom(
-        tag_name: impl Into<String>,
+    pub fn with_atom<K, V>(
+        tag_name: impl Into<Atom>,
         tag_atom: InternedString,
-        attributes: Vec<(String, String)>,
-    ) -> Self {
+        attributes: impl IntoIterator<Item = (K, V)>,
+    ) -> Self
+    where
+        K: Into<Atom>,
+        V: Into<String>,
+    {
         Self {
             tag_name: tag_name.into(),
             tag_atom: Some(tag_atom),
-            attributes,
+            attributes: attributes
+                .into_iter()
+                .map(|(k, v)| (k.into(), v.into()))
+                .collect(),
             shadow_root: None,
             shadow_root_mode: None,
             shadow_root_clonable: false,
@@ -149,7 +166,7 @@ impl ElementData {
         {
             *v = value.to_string();
         } else {
-            self.attributes.push((name.to_string(), value.to_string()));
+            self.attributes.push((Atom::from(name), value.to_string()));
         }
     }
 

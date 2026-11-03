@@ -30,7 +30,8 @@ impl<'a> TreeBuilder<'a> {
                                     .iter()
                                     .any(|(k, _)| k.eq_ignore_ascii_case(&attr_name))
                                 {
-                                    el.attributes.push((attr_name, attr_val));
+                                    el.attributes
+                                        .push((mango_core::Atom::from(attr_name), attr_val));
                                 }
                             }
                             break;
@@ -50,7 +51,8 @@ impl<'a> TreeBuilder<'a> {
                                     .iter()
                                     .any(|(k, _)| k.eq_ignore_ascii_case(&attr_name))
                                 {
-                                    el.attributes.push((attr_name, attr_val));
+                                    el.attributes
+                                        .push((mango_core::Atom::from(attr_name), attr_val));
                                 }
                             }
                             break;

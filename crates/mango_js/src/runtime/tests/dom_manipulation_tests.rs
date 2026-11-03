@@ -320,9 +320,9 @@ fn test_dom_manipulation() {
 fn test_compare_document_position() {
     let mut doc = Document::new();
     let body = doc.create_element("body", Vec::new());
-    let parent = doc.create_element("div", vec![("id".to_string(), "parent".to_string())]);
-    let child1 = doc.create_element("span", vec![("id".to_string(), "child1".to_string())]);
-    let child2 = doc.create_element("p", vec![("id".to_string(), "child2".to_string())]);
+    let parent = doc.create_element("div", vec![("id".into(), "parent".to_string())]);
+    let child1 = doc.create_element("span", vec![("id".into(), "child1".to_string())]);
+    let child2 = doc.create_element("p", vec![("id".into(), "child2".to_string())]);
     doc.append_child(body, parent);
     doc.append_child(parent, child1);
     doc.append_child(parent, child2);

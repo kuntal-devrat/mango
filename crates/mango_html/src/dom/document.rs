@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use mango_core::{Arena, InternedString, StringInterner};
+use mango_core::{Arena, Atom, InternedString, StringInterner};
 
 use super::node::{DomError, ElementData, Node, NodeData, NodeId, QuirksMode};
 
@@ -139,7 +139,7 @@ impl Document {
                 elem.attributes[pos].1 = value.to_string();
             } else {
                 elem.attributes
-                    .push((name.to_ascii_lowercase(), value.to_string()));
+                    .push((Atom::from(name.to_ascii_lowercase()), value.to_string()));
             }
             self.dirty_nodes.insert(node_id);
             self.version = self.version.wrapping_add(1);
@@ -178,7 +178,7 @@ impl Document {
                 {
                     elem.attributes[pos].1 = new_class;
                 } else {
-                    elem.attributes.push(("class".to_string(), new_class));
+                    elem.attributes.push((Atom::from("class"), new_class));
                 }
                 self.dirty_nodes.insert(node_id);
                 self.version = self.version.wrapping_add(1);
@@ -301,114 +301,115 @@ impl Document {
     /// Tag names and attribute keys are stored lowercased per HTML spec
     /// (foreign SVG/MathML case adjustments are re-applied so `viewBox`,
     /// `linearGradient`, etc. keep their canonical casing).
-    pub fn create_element(&mut self, tag_name: &str, attributes: Vec<(String, String)>) -> NodeId {
+    pub fn create_element(&mut self, tag_name: &str, attributes: Vec<(Atom, String)>) -> NodeId {
         let lower_tag = tag_name.to_ascii_lowercase();
         // Re-apply SVG tag-name adjustment so foreign elements keep canonical case.
-        let stored_tag = match lower_tag.as_str() {
-            "altglyph" => "altGlyph".to_string(),
-            "altglyphdef" => "altGlyphDef".to_string(),
-            "altglyphitem" => "altGlyphItem".to_string(),
-            "animatecolor" => "animateColor".to_string(),
-            "animatemotion" => "animateMotion".to_string(),
-            "animatetransform" => "animateTransform".to_string(),
-            "clippath" => "clipPath".to_string(),
-            "feblend" => "feBlend".to_string(),
-            "fecolormatrix" => "feColorMatrix".to_string(),
-            "fecomponenttransfer" => "feComponentTransfer".to_string(),
-            "fecomposite" => "feComposite".to_string(),
-            "feconvolvematrix" => "feConvolveMatrix".to_string(),
-            "fediffuselighting" => "feDiffuseLighting".to_string(),
-            "fedisplacementmap" => "feDisplacementMap".to_string(),
-            "fedistantlight" => "feDistantLight".to_string(),
-            "fedropshadow" => "feDropShadow".to_string(),
-            "feflood" => "feFlood".to_string(),
-            "fefunca" => "feFuncA".to_string(),
-            "fefuncb" => "feFuncB".to_string(),
-            "fefuncg" => "feFuncG".to_string(),
-            "fefuncr" => "feFuncR".to_string(),
-            "fegaussianblur" => "feGaussianBlur".to_string(),
-            "feimage" => "feImage".to_string(),
-            "femerge" => "feMerge".to_string(),
-            "femergenode" => "feMergeNode".to_string(),
-            "femorphology" => "feMorphology".to_string(),
-            "feoffset" => "feOffset".to_string(),
-            "fepointlight" => "fePointLight".to_string(),
-            "fespecularlighting" => "feSpecularLighting".to_string(),
-            "fespotlight" => "feSpotLight".to_string(),
-            "fetile" => "feTile".to_string(),
-            "feturbulence" => "feTurbulence".to_string(),
-            "foreignobject" => "foreignObject".to_string(),
-            "glyphref" => "glyphRef".to_string(),
-            "lineargradient" => "linearGradient".to_string(),
-            "radialgradient" => "radialGradient".to_string(),
-            "textpath" => "textPath".to_string(),
-            _ => lower_tag.clone(),
-        };
+        let stored_tag: Atom = Atom::from(match lower_tag.as_str() {
+            "altglyph" => "altGlyph",
+            "altglyphdef" => "altGlyphDef",
+            "altglyphitem" => "altGlyphItem",
+            "animatecolor" => "animateColor",
+            "animatemotion" => "animateMotion",
+            "animatetransform" => "animateTransform",
+            "clippath" => "clipPath",
+            "feblend" => "feBlend",
+            "fecolormatrix" => "feColorMatrix",
+            "fecomponenttransfer" => "feComponentTransfer",
+            "fecomposite" => "feComposite",
+            "feconvolvematrix" => "feConvolveMatrix",
+            "fediffuselighting" => "feDiffuseLighting",
+            "fedisplacementmap" => "feDisplacementMap",
+            "fedistantlight" => "feDistantLight",
+            "fedropshadow" => "feDropShadow",
+            "feflood" => "feFlood",
+            "fefunca" => "feFuncA",
+            "fefuncb" => "feFuncB",
+            "fefuncg" => "feFuncG",
+            "fefuncr" => "feFuncR",
+            "fegaussianblur" => "feGaussianBlur",
+            "feimage" => "feImage",
+            "femerge" => "feMerge",
+            "femergenode" => "feMergeNode",
+            "femorphology" => "feMorphology",
+            "feoffset" => "feOffset",
+            "fepointlight" => "fePointLight",
+            "fespecularlighting" => "feSpecularLighting",
+            "fespotlight" => "feSpotLight",
+            "fetile" => "feTile",
+            "feturbulence" => "feTurbulence",
+            "foreignobject" => "foreignObject",
+            "glyphref" => "glyphRef",
+            "lineargradient" => "linearGradient",
+            "radialgradient" => "radialGradient",
+            "textpath" => "textPath",
+            _ => lower_tag.as_str(),
+        });
         let tag_atom = self.interner.intern(&stored_tag.to_ascii_lowercase());
         // Lowercase attribute keys, re-applying SVG attribute adjustments.
-        let mut lowered_attrs: Vec<(String, String)> = Vec::with_capacity(attributes.len());
+        let mut lowered_attrs: Vec<(Atom, String)> = Vec::with_capacity(attributes.len());
         for (k, v) in attributes {
             let lk = k.to_ascii_lowercase();
-            let stored_k = match lk.as_str() {
-                "attributename" => "attributeName".to_string(),
-                "attributetype" => "attributeType".to_string(),
-                "basefrequency" => "baseFrequency".to_string(),
-                "baseprofile" => "baseProfile".to_string(),
-                "calcmode" => "calcMode".to_string(),
-                "clippathunits" => "clipPathUnits".to_string(),
-                "diffuseconstant" => "diffuseConstant".to_string(),
-                "edgemode" => "edgeMode".to_string(),
-                "filterunits" => "filterUnits".to_string(),
-                "glyphref" => "glyphRef".to_string(),
-                "gradienttransform" => "gradientTransform".to_string(),
-                "gradientunits" => "gradientUnits".to_string(),
-                "kernelmatrix" => "kernelMatrix".to_string(),
-                "kernelunitlength" => "kernelUnitLength".to_string(),
-                "keypoints" => "keyPoints".to_string(),
-                "keysplines" => "keySplines".to_string(),
-                "keytimes" => "keyTimes".to_string(),
-                "lengthadjust" => "lengthAdjust".to_string(),
-                "limitingconeangle" => "limitingConeAngle".to_string(),
-                "markerheight" => "markerHeight".to_string(),
-                "markerunits" => "markerUnits".to_string(),
-                "markerwidth" => "markerWidth".to_string(),
-                "maskcontentunits" => "maskContentUnits".to_string(),
-                "maskunits" => "maskUnits".to_string(),
-                "numoctaves" => "numOctaves".to_string(),
-                "pathlength" => "pathLength".to_string(),
-                "patterncontentunits" => "patternContentUnits".to_string(),
-                "patterntransform" => "patternTransform".to_string(),
-                "patternunits" => "patternUnits".to_string(),
-                "pointsatx" => "pointsAtX".to_string(),
-                "pointsaty" => "pointsAtY".to_string(),
-                "pointsatz" => "pointsAtZ".to_string(),
-                "preservealpha" => "preserveAlpha".to_string(),
-                "preserveaspectratio" => "preserveAspectRatio".to_string(),
-                "primitiveunits" => "primitiveUnits".to_string(),
-                "refx" => "refX".to_string(),
-                "refy" => "refY".to_string(),
-                "repeatcount" => "repeatCount".to_string(),
-                "repeatdur" => "repeatDur".to_string(),
-                "requiredextensions" => "requiredExtensions".to_string(),
-                "requiredfeatures" => "requiredFeatures".to_string(),
-                "specularconstant" => "specularConstant".to_string(),
-                "specularexponent" => "specularExponent".to_string(),
-                "spreadmethod" => "spreadMethod".to_string(),
-                "startoffset" => "startOffset".to_string(),
-                "stddeviation" => "stdDeviation".to_string(),
-                "stitchtiles" => "stitchTiles".to_string(),
-                "surfacescale" => "surfaceScale".to_string(),
-                "systemlanguage" => "systemLanguage".to_string(),
-                "tablevalues" => "tableValues".to_string(),
-                "targetx" => "targetX".to_string(),
-                "targety" => "targetY".to_string(),
-                "textlength" => "textLength".to_string(),
-                "viewbox" => "viewBox".to_string(),
-                "viewtarget" => "viewTarget".to_string(),
-                "xchannelselector" => "xChannelSelector".to_string(),
-                "ychannelselector" => "yChannelSelector".to_string(),
-                "zoomandpan" => "zoomAndPan".to_string(),
-                _ => lk.clone(),
+            let stored_k: Atom = match lk.as_str() {
+                "attributename" => Atom::from("attributeName"),
+                "attributetype" => Atom::from("attributeType"),
+                "basefrequency" => Atom::from("baseFrequency"),
+                "baseprofile" => Atom::from("baseProfile"),
+                "calcmode" => Atom::from("calcMode"),
+                "clippathunits" => Atom::from("clipPathUnits"),
+                "diffuseconstant" => Atom::from("diffuseConstant"),
+                "edgemode" => Atom::from("edgeMode"),
+                "filterunits" => Atom::from("filterUnits"),
+                "glyphref" => Atom::from("glyphRef"),
+                "gradienttransform" => Atom::from("gradientTransform"),
+                "gradientunits" => Atom::from("gradientUnits"),
+                "kernelmatrix" => Atom::from("kernelMatrix"),
+                "kernelunitlength" => Atom::from("kernelUnitLength"),
+                "keypoints" => Atom::from("keyPoints"),
+                "keysplines" => Atom::from("keySplines"),
+                "keytimes" => Atom::from("keyTimes"),
+                "lengthadjust" => Atom::from("lengthAdjust"),
+                "limitingconeangle" => Atom::from("limitingConeAngle"),
+                "markerheight" => Atom::from("markerHeight"),
+                "markerunits" => Atom::from("markerUnits"),
+                "markerwidth" => Atom::from("markerWidth"),
+                "maskcontentunits" => Atom::from("maskContentUnits"),
+                "maskunits" => Atom::from("maskUnits"),
+                "numoctaves" => Atom::from("numOctaves"),
+                "pathlength" => Atom::from("pathLength"),
+                "patterncontentunits" => Atom::from("patternContentUnits"),
+                "patterntransform" => Atom::from("patternTransform"),
+                "patternunits" => Atom::from("patternUnits"),
+                "pointsatx" => Atom::from("pointsAtX"),
+                "pointsaty" => Atom::from("pointsAtY"),
+                "pointsatz" => Atom::from("pointsAtZ"),
+                "preservealpha" => Atom::from("preserveAlpha"),
+                "preserveaspectratio" => Atom::from("preserveAspectRatio"),
+                "primitiveunits" => Atom::from("primitiveUnits"),
+                "refx" => Atom::from("refX"),
+                "refy" => Atom::from("refY"),
+                "repeatcount" => Atom::from("repeatCount"),
+                "repeatdur" => Atom::from("repeatDur"),
+                "requiredextensions" => Atom::from("requiredExtensions"),
+                "requiredfeatures" => Atom::from("requiredFeatures"),
+                "specularconstant" => Atom::from("specularConstant"),
+                "specularexponent" => Atom::from("specularExponent"),
+                "spreadmethod" => Atom::from("spreadMethod"),
+                "startoffset" => Atom::from("startOffset"),
+                "stddeviation" => Atom::from("stdDeviation"),
+                "stitchtiles" => Atom::from("stitchTiles"),
+                "surfacescale" => Atom::from("surfaceScale"),
+                "systemlanguage" => Atom::from("systemLanguage"),
+                "tablevalues" => Atom::from("tableValues"),
+                "targetx" => Atom::from("targetX"),
+                "targety" => Atom::from("targetY"),
+                "textlength" => Atom::from("textLength"),
+                "viewbox" => Atom::from("viewBox"),
+                "viewtarget" => Atom::from("viewTarget"),
+                "xchannelselector" => Atom::from("xChannelSelector"),
+                "ychannelselector" => Atom::from("yChannelSelector"),
+                "zoomandpan" => Atom::from("zoomAndPan"),
+                _ if lk == *k => k,
+                _ => Atom::from(lk.as_str()),
             };
             self.interner.intern(&lk);
             lowered_attrs.push((stored_k, v));

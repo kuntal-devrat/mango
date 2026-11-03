@@ -345,7 +345,7 @@ impl JsRuntime {
                 el.attributes
                     .retain(|(k, _)| !k.eq_ignore_ascii_case("data-mango-hover"));
                 el.attributes
-                    .push(("data-mango-hover".to_string(), "true".to_string()));
+                    .push(("data-mango-hover".into(), "true".to_string()));
             }
         }
         self.hovered_nodes = new_chain;
@@ -399,7 +399,7 @@ impl JsRuntime {
                 el.attributes
                     .retain(|(k, _)| !k.eq_ignore_ascii_case("data-mango-active"));
                 el.attributes
-                    .push(("data-mango-active".to_string(), "true".to_string()));
+                    .push(("data-mango-active".into(), "true".to_string()));
             }
         }
         self.active_nodes = new_chain;

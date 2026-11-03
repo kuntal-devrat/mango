@@ -143,11 +143,7 @@ pub fn update_styled_subtree(
                     author_index,
                     parent_style,
                 ));
-                node.attributes = elem
-                    .attributes
-                    .iter()
-                    .map(|(k, v)| (k.to_lowercase(), v.clone()))
-                    .collect();
+                node.attributes = elem.attributes.clone();
 
                 // Check if any inherited property changed
                 if has_inherited_property_changed(&old_style, &node.style) {

@@ -304,7 +304,7 @@ fn test_multicolumn_layout_balances_columns() {
         let mut child_style = ComputedStyle::default();
         child_style.height = Length::Px(40.0);
         child.style = Some(child_style.into());
-        child.tag_name = Some(format!("item-{}", i));
+        child.tag_name = Some(format!("item-{}", i).into());
         root.children.push(child);
     }
 

@@ -6,6 +6,7 @@ pub mod functions;
 pub mod gradient;
 pub mod grid_shadow;
 pub mod math;
+pub mod nested;
 pub mod transforms;
 pub mod typography;
 pub mod value;

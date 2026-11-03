@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use mango_core::Atom;
 use mango_css::computed::{
     ComputedStyle, compute_pseudo_style_with_shadow_index, compute_style_with_index,
 };
@@ -506,7 +507,7 @@ pub fn build_styled_node<'a>(
                 {
                     let is_open = parent_elem.get_attribute("open").is_some();
                     styled_node.attributes.push((
-                        "_mango_details_open".to_string(),
+                        Atom::from("_mango_details_open"),
                         if is_open {
                             "true".to_string()
                         } else {
@@ -535,7 +536,7 @@ pub fn build_styled_node<'a>(
                     }
                     if !sources_data.is_empty() {
                         styled_node.attributes.push((
-                            "_mango_picture_sources".to_string(),
+                            Atom::from("_mango_picture_sources"),
                             sources_data.join("\n"),
                         ));
                     }
@@ -681,7 +682,7 @@ fn decorate_element_pseudos(
     host_shadow_index: Option<&RuleIndex>,
     el: &mango_html::dom::ElementData,
     style: &ComputedStyle,
-    attributes: &mut Vec<(String, String)>,
+    attributes: &mut Vec<(Atom, String)>,
 ) {
     // Capture ::placeholder styling for form inputs
     if (el.tag_name.eq_ignore_ascii_case("input") || el.tag_name.eq_ignore_ascii_case("textarea"))
@@ -700,14 +701,14 @@ fn decorate_element_pseudos(
                 .round()
                 .clamp(0.0, 255.0) as u8;
             attributes.push((
-                "_mango_placeholder_color".to_string(),
+                Atom::from("_mango_placeholder_color"),
                 format!(
                     "rgba({},{},{},{})",
                     ph_style.color.r, ph_style.color.g, ph_style.color.b, effective_alpha
                 ),
             ));
             attributes.push((
-                "_mango_placeholder_opacity".to_string(),
+                Atom::from("_mango_placeholder_opacity"),
                 ph_style.opacity.to_string(),
             ));
         }
@@ -727,14 +728,14 @@ fn decorate_element_pseudos(
             "marker",
         ) {
             attributes.push((
-                "_mango_marker_color".to_string(),
+                Atom::from("_mango_marker_color"),
                 format!(
                     "rgba({},{},{},{})",
                     m_style.color.r, m_style.color.g, m_style.color.b, m_style.color.a
                 ),
             ));
             if let Some(c) = &m_style.content {
-                attributes.push(("_mango_marker_content".to_string(), c.clone()));
+                attributes.push((Atom::from("_mango_marker_content"), c.clone()));
             }
         }
     }
@@ -753,7 +754,7 @@ fn decorate_element_pseudos(
             "backdrop",
         ) {
             attributes.push((
-                "_mango_backdrop_bg".to_string(),
+                Atom::from("_mango_backdrop_bg"),
                 format!(
                     "rgba({},{},{},{})",
                     bd_style.background_color.r,
@@ -763,7 +764,7 @@ fn decorate_element_pseudos(
                 ),
             ));
             attributes.push((
-                "_mango_backdrop_visibility".to_string(),
+                Atom::from("_mango_backdrop_visibility"),
                 format!("{:?}", bd_style.visibility),
             ));
         }

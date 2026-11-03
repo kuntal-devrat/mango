@@ -127,8 +127,8 @@ pub fn create_pseudo_styled_node(
                     img_style.display = Display::InlineBlock;
                 }
                 let mut img_node = StyledNode::new(None, img_style);
-                img_node.tag_name = Some("img".to_string());
-                img_node.attributes = vec![("src".to_string(), url)];
+                img_node.tag_name = Some("img".into());
+                img_node.attributes = vec![("src".into(), url)];
                 Some(img_node)
             }
             None => None,
@@ -150,8 +150,8 @@ pub fn create_pseudo_styled_node(
                         img_style.display = Display::InlineBlock;
                     }
                     let mut img_node = StyledNode::new(None, img_style);
-                    img_node.tag_name = Some("img".to_string());
-                    img_node.attributes = vec![("src".to_string(), url)];
+                    img_node.tag_name = Some("img".into());
+                    img_node.attributes = vec![("src".into(), url)];
                     pseudo_node.children.push(img_node);
                 }
             }

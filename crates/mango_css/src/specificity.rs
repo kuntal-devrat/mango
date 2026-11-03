@@ -175,14 +175,14 @@ mod tests {
     #[test]
     fn test_specificity_calculation() {
         // div.card > #hero.primary
-        let sel = ComplexSelector {
-            head: CompoundSelector {
+        let sel = ComplexSelector::new(
+            CompoundSelector {
                 simple_selectors: vec![
                     SimpleSelector::Type("div".to_string()),
                     SimpleSelector::Class("card".to_string()),
                 ],
             },
-            tail: vec![(
+            vec![(
                 Combinator::Child,
                 CompoundSelector {
                     simple_selectors: vec![
@@ -191,7 +191,7 @@ mod tests {
                     ],
                 },
             )],
-        };
+        );
 
         // IDs: 1 (#hero), Classes/Attrs: 2 (.card, .primary), Types: 1 (div) -> (1, 2, 1)
         assert_eq!(Specificity::of(&sel), Specificity(1, 2, 1));

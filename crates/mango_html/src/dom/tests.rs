@@ -64,9 +64,9 @@ fn test_insert_before_and_detach() {
 #[test]
 fn test_dom_element_string_interning() {
     let mut doc = Document::new();
-    let e1 = doc.create_element("div", vec![("class".to_string(), "foo".to_string())]);
-    let e2 = doc.create_element("div", vec![("class".to_string(), "bar".to_string())]);
-    let e3 = doc.create_element("span", vec![("id".to_string(), "baz".to_string())]);
+    let e1 = doc.create_element("div", vec![("class".into(), "foo".to_string())]);
+    let e2 = doc.create_element("div", vec![("class".into(), "bar".to_string())]);
+    let e3 = doc.create_element("span", vec![("id".into(), "baz".to_string())]);
 
     let node1 = doc.get(e1).unwrap();
     let node2 = doc.get(e2).unwrap();

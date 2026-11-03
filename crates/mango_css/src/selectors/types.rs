@@ -408,21 +408,91 @@ pub(crate) fn canonical_pseudo(p: &str) -> &str {
     }
 }
 
+use super::format::format_selector;
+
 /// A sequence of compound selectors separated by combinators (e.g. `div.main > p + span`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct ComplexSelector {
     pub head: CompoundSelector,
     pub tail: Vec<(Combinator, CompoundSelector)>,
+    pub servo_data: Option<std::sync::Arc<crate::selectors::servo::ServoSelectorData>>,
 }
+
+impl PartialEq for ComplexSelector {
+    fn eq(&self, other: &Self) -> bool {
+        self.head == other.head && self.tail == other.tail
+    }
+}
+
+impl Eq for ComplexSelector {}
 
 impl ComplexSelector {
     pub fn new(head: CompoundSelector, tail: Vec<(Combinator, CompoundSelector)>) -> Self {
-        Self { head, tail }
+        let sel_str = format_selector(&head, &tail);
+        let servo_data =
+            crate::selectors::servo::ServoSelectorData::try_from_selector_str(&sel_str)
+                .map(std::sync::Arc::new);
+        Self {
+            head,
+            tail,
+            servo_data,
+        }
+    }
+
+    /// Matches this complex selector against a DOM element with an optional BloomFilter for fast ancestor rejection.
+    pub fn matches_with_filter(
+        &self,
+        node_id: NodeId,
+        doc: &Document,
+        bloom_filter: Option<&selectors::bloom::BloomFilter>,
+    ) -> bool {
+        let last_compound = self.tail.last().map(|(_, c)| c).unwrap_or(&self.head);
+        let has_pseudo = last_compound.simple_selectors.iter().any(|s| match s {
+            SimpleSelector::PseudoElement(p) => {
+                let lower = p.to_ascii_lowercase();
+                !lower.starts_with("part(") && !lower.starts_with("slotted")
+            }
+            _ => false,
+        });
+        if has_pseudo {
+            return false;
+        }
+
+        if let Some(ref data) = self.servo_data {
+            let elem = crate::selectors::servo::MangoElement { node_id, doc };
+            let mut caches = selectors::matching::SelectorCaches::default();
+            let mut context = selectors::matching::MatchingContext::new(
+                selectors::matching::MatchingMode::Normal,
+                bloom_filter,
+                &mut caches,
+                selectors::matching::QuirksMode::NoQuirks,
+                selectors::matching::NeedsSelectorFlags::No,
+                selectors::matching::MatchingForInvalidation::No,
+            );
+            if let Some(scope_id) = current_scope_root() {
+                if let Some(node) = doc.get(scope_id) {
+                    context.scope_element = Some(selectors::OpaqueElement::new(node));
+                }
+            }
+            if let Some(host_id) = current_host_element() {
+                if let Some(node) = doc.get(host_id) {
+                    context.current_host = Some(selectors::OpaqueElement::new(node));
+                }
+            }
+            return selectors::matching::matches_selector(
+                &data.selector,
+                0,
+                Some(&data.ancestor_hashes),
+                &elem,
+                &mut context,
+            );
+        }
+        self.matches_relative(node_id, None, doc)
     }
 
     /// Matches this complex selector against a DOM element using right-to-left evaluation.
     pub fn matches(&self, node_id: NodeId, doc: &Document) -> bool {
-        self.matches_relative(node_id, None, doc)
+        self.matches_with_filter(node_id, doc, None)
     }
 
     /// Matches this complex selector with an optional expected origin constraint on the leftmost compound.

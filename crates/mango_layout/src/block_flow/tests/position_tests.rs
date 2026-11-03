@@ -466,7 +466,7 @@ fn test_positioned_element_top_bottom_stretches_auto_height_input() {
     // Absolute input element with top: 0, bottom: 0, height: auto must stretch to fill
     // the containing block padding box span without being clobbered by default input height (24px).
     let mut btn_box = LayoutBox::new(crate::box_model::BoxType::BlockNode, None);
-    btn_box.tag_name = Some("input".to_string());
+    btn_box.tag_name = Some("input".into());
     let mut btn_style = ComputedStyle::default();
     btn_style.position = Position::Absolute;
     btn_style.display = Display::Block;
