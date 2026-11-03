@@ -409,14 +409,9 @@ impl JsRuntime {
             .event_loop
             .borrow_mut()
             .drain_due_limited(MAX_CALLBACKS_PER_TICK);
-        let mut timer_fired = false;
         for s in scripts {
-            if self
-                .execute_script_with_name_and_timeout("<event_loop>", &s, CALLBACK_TIMEOUT)
-                .is_ok()
-            {
-                timer_fired = true;
-            }
+            let _ =
+                self.execute_script_with_name_and_timeout("<event_loop>", &s, CALLBACK_TIMEOUT);
         }
 
         let waker = std::task::Waker::noop();
@@ -451,7 +446,7 @@ impl JsRuntime {
         if dirty {
             *self.dom_dirty.borrow_mut() = false;
         }
-        dirty || timer_fired
+        dirty
     }
 
     /// Whether any timer, animation frame, or queued task is still waiting to be expedited.
