@@ -7,6 +7,10 @@ use mango_browser::app::MangoApp;
 use mango_browser::cdp::CdpServer;
 use winit::event_loop::EventLoop;
 
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 fn print_help() {
     println!("🥭 Mango Browser v{}", env!("CARGO_PKG_VERSION"));
     println!("\nUsage: mango [options] [URL]");

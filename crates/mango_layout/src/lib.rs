@@ -38,6 +38,7 @@ pub mod shaping;
 pub mod snapshot;
 pub mod style_tree;
 pub mod table_flow;
+pub mod taffy_adapter;
 
 use std::sync::Arc;
 
@@ -75,6 +76,7 @@ pub use style_tree::{
     set_current_document_base_dir,
 };
 pub use table_flow::layout_table;
+pub use taffy_adapter::{compute_taffy_flex, compute_taffy_flex_or_grid, compute_taffy_grid};
 
 use mango_core::{Rect, Size};
 use mango_css::parser::Stylesheet;

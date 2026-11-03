@@ -19,6 +19,9 @@ pub fn layout_grid(
     containing_block: &Dimensions,
     float_ctx: &mut FloatContext,
 ) {
+    if crate::taffy_adapter::compute_taffy_grid(container, containing_block, float_ctx) {
+        return;
+    }
     layout_grid_internal(container, containing_block, float_ctx, None, None);
 }
 
