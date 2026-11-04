@@ -3,6 +3,7 @@
 pub mod emoji;
 pub mod loader;
 pub mod manager;
+pub mod measure_cache;
 pub mod rasterize;
 pub mod shaping;
 pub mod types;
@@ -16,6 +17,7 @@ pub use emoji::{
 };
 pub use loader::decode_font_bytes;
 pub use manager::{FontManager, font_manager, prune_web_fonts};
+pub use measure_cache::clear_text_measure_cache;
 pub use shaping::{
     is_arabic_char, is_complex_char, is_devanagari_char, is_thai_char, segment_thai_syllables,
     shape_arabic, shape_complex_script, shape_devanagari, shape_thai,

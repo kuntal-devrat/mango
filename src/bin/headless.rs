@@ -28,6 +28,10 @@ use mango_layout::box_tree::LayoutBox;
 use mango_platform::input::{KeyState, MouseButton};
 use mango_render::painter::paint;
 
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 /// Height of the browser chrome measured from the top of the window to the first
 /// row of page content: one pixel of separator plus the two chrome bars.
 const CONTENT_TOP: u32 = (HEADER_HEIGHT as u32) + 1;

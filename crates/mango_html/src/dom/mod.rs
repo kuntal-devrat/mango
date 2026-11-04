@@ -17,5 +17,5 @@ pub use js_id::{
     JS_ID_GENERATION_MASK, JS_ID_MAX_GENERATION, JS_ID_MAX_INDEX, node_id_from_js, node_id_to_js,
 };
 pub use mutation::MAX_DOM_DEPTH;
-pub use node::{DomError, ElementData, Node, NodeData, NodeId, QuirksMode};
+pub use node::{DomError, ElementData, Node, NodeData, NodeDirtyFlags, NodeId, QuirksMode};
 pub use traversal::ChildrenIter;

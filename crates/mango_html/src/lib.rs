@@ -25,8 +25,8 @@ pub mod tree_builder;
 pub mod tree_sink;
 
 pub use dom::{
-    ChildrenIter, Document, DomError, ElementData, Node, NodeData, NodeId, QuirksMode,
-    node_id_from_js, node_id_to_js,
+    ChildrenIter, Document, DomError, ElementData, Node, NodeData, NodeDirtyFlags, NodeId,
+    QuirksMode, node_id_from_js, node_id_to_js,
 };
 pub use entities::decode_entities;
 pub use incremental::{IncrementalParser, PreloadHint, PreloadHintKind};

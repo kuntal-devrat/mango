@@ -77,7 +77,7 @@ impl Drop for ExecutionWatchdog {
 }
 
 impl JsRuntime {
-    const MAX_HEAP_BYTES: usize = 512 * 1024 * 1024;
+    const MAX_HEAP_BYTES: usize = 256 * 1024 * 1024;
 
     fn enforce_heap_budget(&mut self) -> Result<(), String> {
         if self.execution_disabled {
@@ -560,6 +560,34 @@ impl JsRuntime {
             .v8_isolate()
             .get_heap_statistics()
             .used_heap_size()
+    }
+
+    /// Performs an incremental idle GC step during leftover frame budget.
+    pub fn perform_idle_gc_step(&mut self) {
+        {
+            let _guard = self.enter_isolate();
+            let isolate = self.runtime.v8_isolate();
+            isolate.memory_pressure_notification(deno_core::v8::MemoryPressureLevel::Moderate);
+            deno_core::v8::scope!(scope, self.runtime.v8_isolate());
+            scope.perform_microtask_checkpoint();
+        }
+        self.run_jobs();
+        self.set_idle(true);
+    }
+
+    /// Requests an aggressive memory purge and compaction when the page is completely idle.
+    pub fn purge_memory(&mut self) {
+        {
+            let _guard = self.enter_isolate();
+            let isolate = self.runtime.v8_isolate();
+            isolate.clear_kept_objects();
+            isolate.low_memory_notification();
+            isolate.memory_pressure_notification(deno_core::v8::MemoryPressureLevel::Critical);
+            deno_core::v8::scope!(scope, self.runtime.v8_isolate());
+            scope.perform_microtask_checkpoint();
+        }
+        self.run_jobs();
+        self.set_idle(true);
     }
 
     /// Forces a complete garbage collection cycle to free unreferenced JS objects.

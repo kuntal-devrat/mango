@@ -19,6 +19,7 @@ use crate::config::Config;
 use crate::tab::Tab;
 
 // Subsystems modularized under src/browser/
+pub mod alloc_trim;
 pub mod animation;
 pub mod forms;
 pub mod images;
@@ -34,6 +35,7 @@ pub mod welcome;
 #[cfg(test)]
 mod tests;
 
+pub use alloc_trim::trim_allocator_memory;
 pub use forms::*;
 pub use navigation::{
     prepare_document_pipeline, prepare_document_pipeline_cancellable,

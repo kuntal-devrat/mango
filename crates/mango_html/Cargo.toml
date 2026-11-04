@@ -9,3 +9,4 @@ mango_core.workspace = true
 encoding_rs.workspace = true
 log.workspace = true
 html5ever.workspace = true
+bitflags.workspace = true

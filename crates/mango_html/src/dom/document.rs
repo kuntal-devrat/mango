@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use mango_core::{Arena, Atom, InternedString, StringInterner};
 
-use super::node::{DomError, ElementData, Node, NodeData, NodeId, QuirksMode};
+use super::node::{DomError, ElementData, Node, NodeData, NodeDirtyFlags, NodeId, QuirksMode};
 
 static NEXT_DOCUMENT_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -56,6 +56,7 @@ impl Document {
             prev_sibling: None,
             next_sibling: None,
             data: NodeData::Document,
+            dirty_flags: NodeDirtyFlags::CLEAN,
         });
 
         Self {
@@ -102,8 +103,33 @@ impl Document {
 
     /// Marks a DOM node as dirty for incremental style recalculation.
     pub fn mark_dirty(&mut self, node_id: NodeId) {
-        self.dirty_nodes.insert(node_id);
+        self.mark_node_dirty(
+            node_id,
+            NodeDirtyFlags::STYLE_DIRTY
+                | NodeDirtyFlags::LAYOUT_DIRTY
+                | NodeDirtyFlags::PAINT_DIRTY,
+        );
         self.version = self.version.wrapping_add(1);
+    }
+
+    /// Marks a node with specific fine-grained dirty flags and propagates `CHILD_DIRTY` up the parent chain.
+    pub fn mark_node_dirty(&mut self, node_id: NodeId, flags: NodeDirtyFlags) {
+        self.dirty_nodes.insert(node_id);
+        if let Some(node) = self.arena.get_mut(node_id) {
+            node.dirty_flags |= flags;
+        }
+        let mut curr_parent = self.arena.get(node_id).and_then(|n| n.parent);
+        while let Some(pid) = curr_parent {
+            if let Some(pnode) = self.arena.get_mut(pid) {
+                if pnode.dirty_flags.contains(NodeDirtyFlags::CHILD_DIRTY) {
+                    break;
+                }
+                pnode.dirty_flags |= NodeDirtyFlags::CHILD_DIRTY;
+                curr_parent = pnode.parent;
+            } else {
+                break;
+            }
+        }
     }
 
     /// Returns a reference to the set of dirty nodes.
@@ -121,9 +147,12 @@ impl Document {
         std::mem::take(&mut self.dirty_nodes)
     }
 
-    /// Clears all dirty flags.
+    /// Clears all dirty flags across the document.
     pub fn clear_dirty(&mut self) {
         self.dirty_nodes.clear();
+        for node in self.arena.values_mut() {
+            node.dirty_flags = NodeDirtyFlags::CLEAN;
+        }
     }
 
     /// Sets an attribute on an element, automatically marking the node dirty.
@@ -141,8 +170,7 @@ impl Document {
                 elem.attributes
                     .push((Atom::from(name.to_ascii_lowercase()), value.to_string()));
             }
-            self.dirty_nodes.insert(node_id);
-            self.version = self.version.wrapping_add(1);
+            self.mark_dirty(node_id);
         }
     }
 
@@ -153,8 +181,7 @@ impl Document {
         {
             elem.attributes
                 .retain(|(k, _)| !k.eq_ignore_ascii_case(name));
-            self.dirty_nodes.insert(node_id);
-            self.version = self.version.wrapping_add(1);
+            self.mark_dirty(node_id);
         }
     }
 
@@ -180,8 +207,7 @@ impl Document {
                 } else {
                     elem.attributes.push((Atom::from("class"), new_class));
                 }
-                self.dirty_nodes.insert(node_id);
-                self.version = self.version.wrapping_add(1);
+                self.mark_dirty(node_id);
             }
         }
     }
@@ -438,6 +464,7 @@ impl Document {
                 is_hovered: false,
                 is_active: false,
             }),
+            dirty_flags: NodeDirtyFlags::CLEAN,
         })
     }
 
@@ -451,6 +478,7 @@ impl Document {
             prev_sibling: None,
             next_sibling: None,
             data: NodeData::DocumentFragment,
+            dirty_flags: NodeDirtyFlags::CLEAN,
         })
     }
 
@@ -537,8 +565,7 @@ impl Document {
             el.shadow_root_clonable = clonable;
             el.shadow_root_delegates_focus = delegates_focus;
             self.shadow_hosts.insert(shadow_fragment, actual_host_id);
-            self.dirty_nodes.insert(actual_host_id);
-            self.version = self.version.wrapping_add(1);
+            self.mark_dirty(actual_host_id);
             return Some(shadow_fragment);
         }
         None
@@ -620,6 +647,7 @@ impl Document {
             prev_sibling: None,
             next_sibling: None,
             data: NodeData::Text(text.to_string()),
+            dirty_flags: NodeDirtyFlags::CLEAN,
         })
     }
 
@@ -633,6 +661,7 @@ impl Document {
             prev_sibling: None,
             next_sibling: None,
             data: NodeData::Comment(comment.to_string()),
+            dirty_flags: NodeDirtyFlags::CLEAN,
         })
     }
 
@@ -650,6 +679,7 @@ impl Document {
                 public_id: public_id.to_string(),
                 system_id: system_id.to_string(),
             },
+            dirty_flags: NodeDirtyFlags::CLEAN,
         })
     }
 }

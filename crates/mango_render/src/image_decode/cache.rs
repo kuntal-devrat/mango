@@ -288,6 +288,7 @@ pub fn prune_image_caches() {
         cache.clear();
     }
     crate::svg::prune_svg_caches();
+    crate::font::clear_text_measure_cache();
 }
 
 /// Gets an existing scaled image or scales the provided image and caches the result.
