@@ -345,7 +345,9 @@ impl TreeSink for MangoTreeSink {
 /// Parses raw HTML string into a [`Document`] using `html5ever`.
 pub fn parse_html5ever(html: &str) -> Document {
     let sink = MangoTreeSink::new();
-    let parser = html5ever::parse_document(sink, html5ever::ParseOpts::default());
+    let mut opts = html5ever::ParseOpts::default();
+    opts.tree_builder.scripting_enabled = false;
+    let parser = html5ever::parse_document(sink, opts);
     let mut bytes = html.as_bytes();
     parser
         .from_utf8()

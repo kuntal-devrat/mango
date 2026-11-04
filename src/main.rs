@@ -9,7 +9,7 @@ use winit::event_loop::EventLoop;
 
 #[cfg(not(target_env = "msvc"))]
 #[global_allocator]
-static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn print_help() {
     println!("🥭 Mango Browser v{}", env!("CARGO_PKG_VERSION"));

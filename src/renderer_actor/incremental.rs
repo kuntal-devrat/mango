@@ -196,15 +196,24 @@ pub fn emit_frame(
     result_tx: &Sender<RendererResult>,
 ) -> Option<String> {
     let dirty_nodes = rt.take_dirty_nodes();
-    let doc_clone = rt.document_ref().clone();
-    let title = rt
+    let has_dom_mutations = !dirty_nodes.is_empty() || *frame_seq == 0;
+    let eval_title = rt
         .eval("document.title")
         .ok()
-        .filter(|s| !s.is_empty())
-        .or_else(|| crate::browser::navigation::resources::extract_title(&doc_clone));
+        .filter(|s| !s.is_empty());
+    let doc_ref = rt.document_ref();
+    let title = eval_title
+        .or_else(|| crate::browser::navigation::resources::extract_title(&doc_ref));
     let (mut root, display_list, scrollable_height, canvas_bg) =
-        incremental_state.compute_layout(&doc_clone, dirty_nodes, stylesheets, viewport_size);
+        incremental_state.compute_layout(&doc_ref, dirty_nodes, stylesheets, viewport_size);
     root.prune_raw_children();
+
+    let doc_mirror = if has_dom_mutations {
+        Some(doc_ref.clone())
+    } else {
+        None
+    };
+    drop(doc_ref);
 
     *frame_seq = frame_seq.wrapping_add(1);
     let _ = result_tx.send(RendererResult::FrameReady(Box::new(RenderFramePayload {
@@ -217,7 +226,7 @@ pub fn emit_frame(
         root_box: Some(root),
         style_snapshot: HashMap::new(),
         focused_control: None,
-        doc_mirror: Some(doc_clone),
+        doc_mirror,
     })));
     title
 }

@@ -408,9 +408,9 @@ impl JsRuntime {
         }
     }
 
-    /// Runs an idle garbage collection cycle if at least 5 seconds elapsed since the last one.
+    /// Runs an idle garbage collection cycle if at least 30 seconds elapsed since the last one.
     pub fn maybe_idle_gc(&mut self) {
-        if self.last_gc.elapsed() >= std::time::Duration::from_secs(5) {
+        if self.last_gc.elapsed() >= std::time::Duration::from_secs(30) {
             self.last_gc = std::time::Instant::now();
             self.idle_gc();
         } else {
@@ -425,9 +425,6 @@ impl JsRuntime {
             let isolate = self.runtime.v8_isolate();
             isolate.clear_kept_objects();
             isolate.low_memory_notification();
-            isolate.memory_pressure_notification(deno_core::v8::MemoryPressureLevel::Moderate);
-            isolate
-                .request_garbage_collection_for_testing(deno_core::v8::GarbageCollectionType::Full);
             deno_core::v8::scope!(scope, self.runtime.v8_isolate());
             scope.perform_microtask_checkpoint();
         }
@@ -465,8 +462,6 @@ impl JsRuntime {
                 (*isolate_ptr).exit();
             }
         }
-
-        self.maybe_idle_gc();
 
         let dirty = *self.dom_dirty.borrow();
         if dirty {

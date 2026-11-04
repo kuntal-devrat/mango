@@ -61,7 +61,7 @@ unicode-bidi = "0.3"
 string_cache = "0.11.0"
 selectors = "0.41.0"
 taffy = "0.15"
-tikv-jemallocator = { version = "0.6", features = ["unprefixed_malloc_on_supported_platforms", "background_threads"] }
+mimalloc = { version = "0.1.52", default-features = false }
 html5ever = "0.40.1"
 resvg = "0.49.0"
 usvg = "0.49.0"
@@ -119,12 +119,11 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 percent-encoding = "2.3.2"
-
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
-tikv-jemallocator = { workspace = true }
+mimalloc = { workspace = true }
 
 [profile.release]
 opt-level = 2

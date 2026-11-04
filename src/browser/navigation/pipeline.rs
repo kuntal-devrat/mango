@@ -727,25 +727,19 @@ fn scan_es_module_imports(source: &str) -> Vec<String> {
 pub fn unwrap_tracking_redirect(url_str: &str) -> Option<String> {
     let parsed = Url::parse(url_str).ok()?;
     let host = parsed.host.as_deref().unwrap_or("");
-    let path = &parsed.path;
     let query = parsed.query.as_deref().unwrap_or("");
+    let is_ddg = (host.ends_with("duckduckgo.com") || host == "ddg.gg") && parsed.path.starts_with("/l/");
+    let is_google = host.contains("google.") && parsed.path.starts_with("/url");
 
-    if (host.ends_with("duckduckgo.com") || host == "ddg.gg") && path.starts_with("/l/") {
+    if is_ddg || is_google {
         for param in query.split('&') {
-            if let Some(val) = param.strip_prefix("uddg=") {
-                let decoded = crate::browser::navigation::anchor::percent_decode(val);
-                if decoded.starts_with("http://") || decoded.starts_with("https://") {
-                    return Some(decoded);
-                }
-            }
-        }
-    } else if host.contains("google.") && path.starts_with("/url") {
-        for param in query.split('&') {
-            if let Some(val) = param
-                .strip_prefix("q=")
-                .or_else(|| param.strip_prefix("url="))
-            {
-                let decoded = crate::browser::navigation::anchor::percent_decode(val);
+            let val = if is_ddg {
+                param.strip_prefix("uddg=")
+            } else {
+                param.strip_prefix("q=").or_else(|| param.strip_prefix("url="))
+            };
+            if let Some(v) = val {
+                let decoded = crate::browser::navigation::anchor::percent_decode(v);
                 if decoded.starts_with("http://") || decoded.starts_with("https://") {
                     return Some(decoded);
                 }
@@ -759,43 +753,34 @@ pub fn unwrap_tracking_redirect(url_str: &str) -> Option<String> {
 /// Returns `Some((delay_seconds, target_url))` if present.
 pub fn check_meta_refresh(doc: &Document, base_url: Option<&Url>) -> Option<(u64, String)> {
     fn search_meta(doc: &Document, node_id: NodeId) -> Option<(u64, String)> {
-        if let Some(node) = doc.get(node_id) {
-            if let NodeData::Element(elem) = &node.data {
-                if elem.tag_name.eq_ignore_ascii_case("meta") {
-                    let is_refresh = elem
-                        .get_attribute("http-equiv")
-                        .is_some_and(|v| v.trim().eq_ignore_ascii_case("refresh"));
-                    if is_refresh && let Some(content) = elem.get_attribute("content") {
-                        let trimmed = content.trim();
-                        let (delay_str, url_part) = if let Some((d, u)) = trimmed.split_once(';') {
-                            (d.trim(), Some(u.trim()))
-                        } else {
-                            (trimmed, None)
-                        };
-                        let delay = delay_str.parse::<u64>().unwrap_or(0);
-                        let target_url = if let Some(u) = url_part {
-                            let mut raw_url = u;
-                            if let Some(idx) = raw_url.to_ascii_lowercase().find("url=") {
-                                raw_url = raw_url[idx + 4..].trim();
-                            }
-                            let raw_url =
-                                raw_url.trim_matches(|c| c == '\'' || c == '"' || c == ' ');
-                            if !raw_url.is_empty() {
-                                raw_url.to_string()
-                            } else {
-                                String::new()
-                            }
-                        } else {
-                            String::new()
-                        };
-                        return Some((delay, target_url));
-                    }
+        let node = doc.get(node_id)?;
+        if let NodeData::Element(elem) = &node.data
+            && elem.tag_name.eq_ignore_ascii_case("meta")
+            && elem.get_attribute("http-equiv").is_some_and(|v| v.trim().eq_ignore_ascii_case("refresh"))
+            && let Some(content) = elem.get_attribute("content")
+        {
+            let trimmed = content.trim();
+            let (delay_str, url_part) = trimmed
+                .split_once(';')
+                .map(|(d, u)| (d.trim(), Some(u.trim())))
+                .unwrap_or((trimmed, None));
+            let delay = delay_str.parse::<u64>().unwrap_or(0);
+            let mut target_url = String::new();
+            if let Some(u) = url_part {
+                let mut raw = u;
+                if let Some(idx) = raw.to_ascii_lowercase().find("url=") {
+                    raw = &raw[idx + 4..];
+                }
+                let raw = raw.trim().trim_matches(|c| c == '\'' || c == '"' || c == ' ');
+                if !raw.is_empty() {
+                    target_url = raw.to_string();
                 }
             }
-            for child in doc.children(node_id) {
-                if let Some(found) = search_meta(doc, child.id) {
-                    return Some(found);
-                }
+            return Some((delay, target_url));
+        }
+        for child in doc.children(node_id) {
+            if let Some(found) = search_meta(doc, child.id) {
+                return Some(found);
             }
         }
         None
@@ -805,12 +790,8 @@ pub fn check_meta_refresh(doc: &Document, base_url: Option<&Url>) -> Option<(u64
     if target.is_empty() {
         return None;
     }
-    let resolved = if let Some(base) = base_url {
-        base.resolve(&target)
-            .map(|u| u.to_string())
-            .unwrap_or(target)
-    } else {
-        target
-    };
+    let resolved = base_url
+        .and_then(|base| base.resolve(&target).ok().map(|u| u.to_string()))
+        .unwrap_or(target);
     Some((delay, resolved))
 }

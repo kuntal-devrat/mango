@@ -313,7 +313,7 @@ impl ApplicationHandler for MangoApp {
         {
             let now = Instant::now();
             if deadline <= now {
-                event_loop.set_control_flow(ControlFlow::WaitUntil(now + Duration::from_millis(1)));
+                event_loop.set_control_flow(ControlFlow::WaitUntil(now + Duration::from_millis(4)));
             } else {
                 event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
             }

@@ -34,18 +34,36 @@ pub fn run_renderer_loop(
     let mut cache_ref: Option<Arc<ResourceCache>> = None;
     let mut incremental_state = IncrementalRendererState::new();
 
+    // Frame-budgeting cadence (60 FPS ~16.6ms per frame)
+    const FRAME_BUDGET: Duration = Duration::from_millis(16);
+    // W3C HTML5 minimum timer clamp for nested intervals
+    const MIN_TIMER_TIMEOUT: Duration = Duration::from_millis(4);
+    // Deep idle sleep timeout
+    const IDLE_TIMEOUT: Duration = Duration::from_millis(50);
+
+    let mut last_frame_time = Instant::now();
+    let mut pending_frame_needed = false;
+
     loop {
-        let timeout = if !pending_scripts.is_empty() {
-            Duration::from_millis(1)
-        } else if let Some(dl) = js_rt.as_ref().and_then(|rt| rt.next_timer_deadline()) {
-            let now = Instant::now();
-            if dl <= now {
+        let now = Instant::now();
+        let timeout = if pending_frame_needed {
+            let elapsed = now.duration_since(last_frame_time);
+            if elapsed >= FRAME_BUDGET {
                 Duration::from_millis(1)
             } else {
-                (dl - now).clamp(Duration::from_millis(1), Duration::from_millis(16))
+                (FRAME_BUDGET - elapsed).clamp(MIN_TIMER_TIMEOUT, FRAME_BUDGET)
+            }
+        } else if !pending_scripts.is_empty() {
+            MIN_TIMER_TIMEOUT
+        } else if let Some(dl) = js_rt.as_ref().and_then(|rt| rt.next_timer_deadline()) {
+            if dl <= now {
+                MIN_TIMER_TIMEOUT
+            } else {
+                let remaining = dl - now;
+                remaining.clamp(MIN_TIMER_TIMEOUT, IDLE_TIMEOUT)
             }
         } else {
-            Duration::from_millis(32)
+            IDLE_TIMEOUT
         };
 
         match cmd_rx.recv_timeout(timeout) {
@@ -140,6 +158,8 @@ pub fn run_renderer_loop(
                     &mut frame_seq,
                     &result_tx,
                 );
+                last_frame_time = Instant::now();
+                pending_frame_needed = false;
 
                 let _ = ipc_ep.send(&IpcMessage::DidCommitProvisionalLoad {
                     url: current_url.clone(),
@@ -163,6 +183,8 @@ pub fn run_renderer_loop(
                     }
                     drain_renderer_js_effects(rt, current_base_url.as_ref(), &result_tx, &ipc_ep);
                     if rt.is_dom_dirty() {
+                        last_frame_time = Instant::now();
+                        pending_frame_needed = false;
                         emit_frame(
                             rt,
                             &mut incremental_state,
@@ -192,6 +214,8 @@ pub fn run_renderer_loop(
                     let _ = rt.execute_script(&format!(
                         "if (typeof window !== 'undefined') {{ window.innerWidth = {width}; window.innerHeight = {height}; if (typeof window.dispatchEvent === 'function') window.dispatchEvent(new Event('resize')); }}"
                     ));
+                    last_frame_time = Instant::now();
+                    pending_frame_needed = false;
                     emit_frame(
                         rt,
                         &mut incremental_state,
@@ -228,6 +252,8 @@ pub fn run_renderer_loop(
                     ));
                     drain_renderer_js_effects(rt, current_base_url.as_ref(), &result_tx, &ipc_ep);
                     if rt.is_dom_dirty() {
+                        last_frame_time = Instant::now();
+                        pending_frame_needed = false;
                         emit_frame(
                             rt,
                             &mut incremental_state,
@@ -284,11 +310,16 @@ pub fn run_renderer_loop(
                     // 3. Drain pending JS side-effects (navigation, window.open, console)
                     drain_renderer_js_effects(rt, current_base_url.as_ref(), &result_tx, &ipc_ep);
 
-                    // 4. Periodic idle GC
-                    rt.maybe_idle_gc();
-
-                    // 5. If DOM mutated, re-compute layout and emit FrameReady
+                    // 4. Mark frame needed if DOM mutated or dirty
                     if mutated || rt.is_dom_dirty() {
+                        pending_frame_needed = true;
+                    }
+
+                    // 5. Frame-rate gated rendering: coalesce DOM mutations to 60 FPS
+                    let now = Instant::now();
+                    if pending_frame_needed && now.duration_since(last_frame_time) >= FRAME_BUDGET {
+                        last_frame_time = now;
+                        pending_frame_needed = false;
                         emit_frame(
                             rt,
                             &mut incremental_state,
@@ -298,6 +329,11 @@ pub fn run_renderer_loop(
                             &mut frame_seq,
                             &result_tx,
                         );
+                    }
+
+                    // 6. Idle phase: when no active work is pending, run idle GC
+                    if pending_scripts.is_empty() && !rt.has_pending_timers() {
+                        rt.maybe_idle_gc();
                     }
 
                     is_busy.store(false, Ordering::Release);
