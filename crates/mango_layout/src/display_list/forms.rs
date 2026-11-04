@@ -604,6 +604,7 @@ pub(crate) fn render_form_control(
         "textarea" => {
             let val = box_node.get_attribute("value");
             let placeholder = box_node.get_attribute("placeholder");
+            let is_focused = box_node.get_attribute("data-mango-focused") == Some("true");
             let font_size = s.font_size;
             let x = content.x() + 4.0;
             let y = content.y() + 4.0;
@@ -617,42 +618,65 @@ pub(crate) fn render_form_control(
                 }),
             });
 
-            if !has_child_text {
-                if let Some(v) = val
-                    && !v.is_empty()
-                {
+            let display_text = val.unwrap_or_default();
+
+            if !display_text.is_empty() {
+                list.push(DisplayCommand::draw_text(
+                    display_text,
+                    x,
+                    y,
+                    apply_opacity(s.color, opacity),
+                    font_size,
+                    mango_render::FontWeight::Regular,
+                    family,
+                ));
+            } else if !has_child_text
+                && let Some(ph) = placeholder
+                && !ph.is_empty()
+            {
+                let ph_color = box_node
+                    .get_attribute("_mango_placeholder_color")
+                    .and_then(mango_css::values::Value::parse_color)
+                    .unwrap_or(Color::rgb(140, 140, 140));
+                let ph_opacity = box_node
+                    .get_attribute("_mango_placeholder_opacity")
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .unwrap_or(1.0);
+                if ph_color.a > 0 && ph_opacity > 0.0 {
                     list.push(DisplayCommand::draw_text(
-                        v,
+                        ph,
                         x,
                         y,
-                        apply_opacity(s.color, opacity),
+                        apply_opacity(ph_color, opacity * ph_opacity),
                         font_size,
                         mango_render::FontWeight::Regular,
                         family,
                     ));
-                } else if let Some(ph) = placeholder
-                    && !ph.is_empty()
-                {
-                    let ph_color = box_node
-                        .get_attribute("_mango_placeholder_color")
-                        .and_then(mango_css::values::Value::parse_color)
-                        .unwrap_or(Color::rgb(140, 140, 140));
-                    let ph_opacity = box_node
-                        .get_attribute("_mango_placeholder_opacity")
-                        .and_then(|v| v.parse::<f32>().ok())
-                        .unwrap_or(1.0);
-                    if ph_color.a > 0 && ph_opacity > 0.0 {
-                        list.push(DisplayCommand::draw_text(
-                            ph,
-                            x,
-                            y,
-                            apply_opacity(ph_color, opacity * ph_opacity),
-                            font_size,
-                            mango_render::FontWeight::Regular,
-                            family,
-                        ));
-                    }
                 }
+            }
+
+            if is_focused {
+                let cursor_pos = box_node
+                    .get_attribute("_mango_cursor_pos")
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or(display_text.chars().count());
+                let chars: Vec<char> = display_text.chars().collect();
+                let c_idx = cursor_pos.min(chars.len());
+                let text_before: String = chars[..c_idx].iter().collect();
+                let text_w = crate::inline_flow::measure_text_width_with_style(
+                    &text_before,
+                    font_size,
+                    mango_render::FontWeight::Regular,
+                    family,
+                );
+
+                let caret_x = x + text_w;
+                let caret_h = (font_size * 1.15).min(content.height() - 4.0).max(12.0);
+                let caret_y = y;
+                list.push(DisplayCommand::FillRect {
+                    rect: Rect::new(caret_x, caret_y, 1.5, caret_h),
+                    color: apply_opacity(s.color, opacity),
+                });
             }
         }
         "summary" => {

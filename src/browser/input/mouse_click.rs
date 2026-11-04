@@ -522,9 +522,104 @@ impl BrowserChrome {
                     return;
                 }
 
+                // Check if clicked inside a <button> or input-wrapping container
+                let pt = mango_core::Point::new(content_x, content_y);
+                if let Some(hit_nid) = self.root_box.as_ref().and_then(|r| r.hit_test(pt)) {
+                    let doc = self.active_document();
+                    // 1. Ancestor <button>
+                    if let Some(btn_id) = find_ancestor_button(&doc, hit_nid) {
+                        self.fire_dom_event(btn_id, "click");
+                        if let Some(ref mut rt) = self.js_runtime
+                            && let Some(onclick) = rt.get_node_attribute(btn_id, "onclick")
+                        {
+                            let _ = rt.execute_script(&onclick);
+                        }
+                        self.submit_form(btn_id);
+                        return;
+                    }
+                    // 2. Nested input / textarea (e.g. search box wrapper)
+                    if let Some(nested_input) = find_nested_input_control(&doc, hit_nid) {
+                        if let Some(inode) = doc.get(nested_input)
+                            && let mango_html::dom::NodeData::Element(el) = &inode.data
+                        {
+                            let t_type = el
+                                .get_attribute("type")
+                                .unwrap_or(if el.tag_name.eq_ignore_ascii_case("textarea") {
+                                    "textarea"
+                                } else {
+                                    "text"
+                                })
+                                .to_ascii_lowercase();
+                            self.handle_form_control_click(mango_layout::FormControlHit {
+                                node_id: Some(nested_input),
+                                tag_name: el.tag_name.to_ascii_lowercase(),
+                                form_type: t_type,
+                                name: el.get_attribute("name").unwrap_or("").to_string(),
+                                value: el.get_attribute("value").unwrap_or("").to_string(),
+                                checked: el.get_attribute("checked").is_some(),
+                                click_offset_x: 0.0,
+                            });
+                            return;
+                        }
+                    }
+                }
+
                 // If clicked normal content, clear form focus
                 self.clear_form_focus();
             }
         }
     }
+}
+
+fn find_ancestor_button(
+    doc: &mango_html::dom::Document,
+    start: mango_html::dom::NodeId,
+) -> Option<mango_html::dom::NodeId> {
+    let mut curr = Some(start);
+    while let Some(nid) = curr {
+        if let Some(node) = doc.get(nid)
+            && let mango_html::dom::NodeData::Element(el) = &node.data
+        {
+            let tag = el.tag_name.to_ascii_lowercase();
+            if tag == "button"
+                || (tag == "input"
+                    && el
+                        .get_attribute("type")
+                        .map(|t| {
+                            t.eq_ignore_ascii_case("submit") || t.eq_ignore_ascii_case("button")
+                        })
+                        .unwrap_or(false))
+            {
+                return Some(nid);
+            }
+            curr = node.parent;
+        } else {
+            break;
+        }
+    }
+    None
+}
+
+fn find_nested_input_control(
+    doc: &mango_html::dom::Document,
+    container: mango_html::dom::NodeId,
+) -> Option<mango_html::dom::NodeId> {
+    let mut stack = vec![container];
+    while let Some(nid) = stack.pop() {
+        if let Some(node) = doc.get(nid) {
+            if let mango_html::dom::NodeData::Element(el) = &node.data {
+                let tag = el.tag_name.to_ascii_lowercase();
+                if (tag == "input" && el.get_attribute("type") != Some("hidden"))
+                    || tag == "textarea"
+                {
+                    return Some(nid);
+                }
+            }
+            let children: Vec<_> = doc.children(nid).collect();
+            for c in children.into_iter().rev() {
+                stack.push(c.id);
+            }
+        }
+    }
+    None
 }

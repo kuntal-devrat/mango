@@ -19,8 +19,11 @@ impl BrowserChrome {
                 rt.remove_node_attribute(old_id, "data-mango-focused");
                 rt.remove_node_attribute(old_id, "data-mango-focus-visible");
                 rt.remove_node_attribute(old_id, "_mango_cursor_pos");
+                let script = "if (typeof document !== 'undefined') document.activeElement = document.body || null;";
+                let _ = rt.execute_script(script);
             }
             self.control_cursor_pos = 0;
+            self.fire_dom_event(old_id, "focusout");
             self.fire_dom_event(old_id, "blur");
             if let (Some(initial), Some(current)) = (initial, current)
                 && initial != current
@@ -39,7 +42,14 @@ impl BrowserChrome {
             if let Some(ref mut rt) = self.js_runtime {
                 rt.set_node_attribute(node_id, "data-mango-focused", "true");
                 rt.set_node_attribute(node_id, "data-mango-focus-visible", "true");
+                let js_nid = mango_html::dom::node_id_to_js(node_id);
+                let script = format!(
+                    "if (typeof _mangoWrap === 'function') {{ var __el = _mangoWrap({}); if (__el && typeof document !== 'undefined') document.activeElement = __el; }}",
+                    js_nid
+                );
+                let _ = rt.execute_script(&script);
             }
+            self.fire_dom_event(node_id, "focusin");
             self.fire_dom_event(node_id, "focus");
             self.relayout();
         }
@@ -398,13 +408,91 @@ impl BrowserChrome {
 
         if let Some(ref mut rt) = self.js_runtime {
             rt.set_node_attribute(node_id, "data-mango-focused", "true");
+            rt.set_node_attribute(node_id, "data-mango-focus-visible", "true");
             rt.set_node_attribute(
                 node_id,
                 "_mango_cursor_pos",
                 &self.control_cursor_pos.to_string(),
             );
+            let js_nid = mango_html::dom::node_id_to_js(node_id);
+            let script = format!(
+                "if (typeof _mangoWrap === 'function') {{ var __el = _mangoWrap({}); if (__el && typeof document !== 'undefined') document.activeElement = __el; }}",
+                js_nid
+            );
+            let _ = rt.execute_script(&script);
         }
+        self.fire_dom_event(node_id, "focusin");
+        self.fire_dom_event(node_id, "focus");
         self.relayout();
         self.status_text = format!("Focused {} field", hit.form_type);
+    }
+
+    /// Dispatches a W3C `KeyboardEvent` (`keydown`, `keypress`, or `keyup`) to `node_id`.
+    /// Returns `true` if the event default was not prevented (i.e. normal text processing should proceed).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn fire_keyboard_event(
+        &mut self,
+        node_id: NodeId,
+        event_type: &str,
+        key: &str,
+        code: &str,
+        key_code: u32,
+        ctrl: bool,
+        alt: bool,
+        shift: bool,
+        meta: bool,
+    ) -> bool {
+        let Some(ref mut rt) = self.js_runtime else {
+            return true;
+        };
+        let js_node_id = mango_html::dom::node_id_to_js(node_id);
+        let escaped_key = key.replace('\\', "\\\\").replace('\'', "\\'");
+        let escaped_code = code.replace('\\', "\\\\").replace('\'', "\\'");
+        let script = format!(
+            r#"(function() {{
+                var __el = (typeof _mangoWrap === 'function') ? _mangoWrap({nid}) : null;
+                if (!__el && typeof document !== 'undefined') {{
+                    __el = document.querySelector('[data-mango-focused]');
+                }}
+                if (__el) {{
+                    var __evt;
+                    if (typeof KeyboardEvent === 'function') {{
+                        __evt = new KeyboardEvent('{evt}', {{
+                            key: '{key}',
+                            code: '{code}',
+                            keyCode: {kc},
+                            which: {kc},
+                            charCode: ('{evt}' === 'keypress') ? {kc} : 0,
+                            ctrlKey: {ctrl},
+                            altKey: {alt},
+                            shiftKey: {shift},
+                            metaKey: {meta},
+                            bubbles: true,
+                            cancelable: true,
+                            view: (typeof window !== 'undefined' ? window : null)
+                        }});
+                    }} else if (typeof Event === 'function') {{
+                        __evt = new Event('{evt}', {{ bubbles: true, cancelable: true }});
+                    }} else {{
+                        __evt = {{ type: '{evt}', bubbles: true, cancelable: true }};
+                    }}
+                    return __el.dispatchEvent(__evt);
+                }}
+                return true;
+            }})()"#,
+            nid = js_node_id,
+            evt = event_type,
+            key = escaped_key,
+            code = escaped_code,
+            kc = key_code,
+            ctrl = ctrl,
+            alt = alt,
+            shift = shift,
+            meta = meta
+        );
+        match rt.eval(&script) {
+            Ok(ref val) => val.trim() != "false",
+            Err(_) => true,
+        }
     }
 }
