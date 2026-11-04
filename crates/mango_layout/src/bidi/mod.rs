@@ -14,8 +14,6 @@
 pub mod brackets;
 pub mod class;
 pub mod reorder;
-pub mod rules;
-pub mod stack;
 
 #[cfg(test)]
 mod tests;
@@ -23,8 +21,3 @@ mod tests;
 pub use brackets::{BracketType, bracket_type, mirror_char};
 pub use class::{BidiClass, bidi_class};
 pub use reorder::{BidiRun, bidi_visual_runs, reorder_bidi_text, resolve_base_direction};
-pub use rules::{apply_weak_and_neutral_rules, resolve_bracket_pairs};
-pub use stack::{
-    DirectionalEntry, MAX_DEPTH, next_even, next_odd, resolve_explicit_levels,
-    resolve_isolate_direction,
-};
