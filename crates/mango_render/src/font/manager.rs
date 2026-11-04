@@ -678,7 +678,11 @@ impl FontManager {
         let is_synth_bold = weight == FontWeight::Bold;
         let px_size = font_size.max(1.0);
 
-        if !is_synth_bold && !text.contains('\n') && !text.chars().any(is_emoji_char) {
+        if !is_synth_bold
+            && !text.contains('\n')
+            && !text.chars().any(is_emoji_char)
+            && text.chars().any(super::shaping::is_complex_char)
+        {
             let data = self.select_font_data(family, weight);
             if let Some(shaped) =
                 super::shaping::shape_text_with_font_data(&data, 0, text, px_size, letter_spacing)

@@ -160,7 +160,7 @@ pub fn build_styled_node<'a>(
     shadow_ctx: Option<&ShadowContext<'a>>,
     parent_style: Option<&Arc<ComputedStyle>>,
     counter_ctx: &mut CounterContext,
-    sharing_cache: &mut StyleSharingCache,
+    sharing_cache: &mut StyleSharingCache<'a>,
     visited: &mut HashSet<NodeId>,
     depth: usize,
 ) -> Option<StyledNode> {

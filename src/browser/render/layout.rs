@@ -4,10 +4,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
 
 use mango_core::{Color, Size};
-use mango_css::Stylesheet;
 use mango_css::computed::ComputedStyle;
 use mango_html::parse_html;
-use mango_layout::{extract_style_elements, layout_document, layout_document_with_style_index};
+use mango_layout::{extract_style_elements, layout_document_with_style_index};
 
 use super::super::BrowserChrome;
 use super::super::types::DocumentView;
@@ -16,7 +15,7 @@ use crate::chrome_ui::*;
 struct LayoutRequest {
     generation: u64,
     document: mango_html::dom::Document,
-    stylesheets: Vec<Stylesheet>,
+    style_index: Arc<mango_layout::PageStyleIndex>,
     viewport: Size,
 }
 
@@ -73,14 +72,14 @@ impl AsyncLayoutCoordinator {
     pub(crate) fn request(
         &mut self,
         document: mango_html::dom::Document,
-        stylesheets: Vec<Stylesheet>,
+        style_index: Arc<mango_layout::PageStyleIndex>,
         viewport: Size,
     ) {
         self.generation = self.generation.wrapping_add(1);
         let request = LayoutRequest {
             generation: self.generation,
             document,
-            stylesheets,
+            style_index,
             viewport,
         };
         let start_worker = if let Ok(mut state) = self.state.lock() {
@@ -145,14 +144,8 @@ impl AsyncLayoutCoordinator {
 }
 
 fn compute_layout(request: LayoutRequest) -> LayoutResult {
-    let mut stylesheets = request.stylesheets;
-    stylesheets.extend(extract_style_elements(&request.document));
-    let mut media = mango_css::current_media_environment();
-    media.viewport_width = request.viewport.width;
-    media.viewport_height = request.viewport.height;
-    let style_index = mango_layout::PageStyleIndex::from_stylesheets(stylesheets, media);
     let (mut root_box, page_display_list) =
-        layout_document_with_style_index(&request.document, &style_index, request.viewport);
+        layout_document_with_style_index(&request.document, &request.style_index, request.viewport);
     root_box.prune_raw_children();
     let canvas_bg = canvas_background_color(&root_box);
     let scrollable_height = crate::scroll::compute_scrollable_height(Some(&root_box));
@@ -211,11 +204,40 @@ impl BrowserChrome {
         self.layout_pending = false;
         let viewport = Size::new(self.width as f32, self.content_height());
 
+        // Build or reuse the page stylesheet index. External rules are retained in
+        // the cache across DOM mutations; embedded sheets are merged when doc changes.
+        let (doc_version, embedded_sheets) = {
+            let doc = self.document_view();
+            (doc.version, extract_style_elements(&doc))
+        };
+        let viewport_key = (self.width, self.height);
+        if self.style_index_cache.is_none()
+            || self.style_index_version != doc_version
+            || self.style_index_viewport != viewport_key
+        {
+            let mut sheets = self.cached_stylesheets.clone();
+            sheets.extend(embedded_sheets);
+            self.style_index_cache = Some(Arc::new(mango_layout::PageStyleIndex::from_stylesheets(
+                sheets,
+                mango_css::current_media_environment(),
+            )));
+            if let Some(index) = &self.style_index_cache {
+                log::debug!(
+                    "built page stylesheet index: {} sheets, {} indexed entries",
+                    index.stylesheet_count(),
+                    index.indexed_entry_count()
+                );
+            }
+            self.style_index_version = doc_version;
+            self.style_index_viewport = viewport_key;
+        }
+
+        let style_index = Arc::clone(self.style_index_cache.as_ref().unwrap());
+
         if self.async_navigation {
             let document = (*self.document_view()).clone();
-            self.style_index_cache = None;
             self.async_layout
-                .request(document, self.cached_stylesheets.clone(), viewport);
+                .request(document, style_index, viewport);
             return;
         }
 
@@ -230,43 +252,9 @@ impl BrowserChrome {
             .unwrap_or_else(|e| e.into_inner())
             .clear();
 
-        // Build the page stylesheet index once per DOM version. Animations,
-        // image completion, scrolling, and other relayouts reuse it without
-        // reparsing or re-indexing every external rule.
-        let (doc_version, embedded_sheets) = {
-            let doc = self.document_view();
-            (doc.version, extract_style_elements(&doc))
-        };
-        let viewport_key = (self.width, self.height);
-        if self.style_index_cache.is_none()
-            || self.style_index_version != doc_version
-            || self.style_index_viewport != viewport_key
-        {
-            let mut sheets = self.cached_stylesheets.clone();
-            sheets.extend(embedded_sheets);
-            self.style_index_cache = Some(mango_layout::PageStyleIndex::from_stylesheets(
-                sheets,
-                mango_css::current_media_environment(),
-            ));
-            if let Some(index) = &self.style_index_cache {
-                log::debug!(
-                    "built page stylesheet index: {} sheets, {} indexed entries",
-                    index.stylesheet_count(),
-                    index.indexed_entry_count()
-                );
-            }
-            self.style_index_version = doc_version;
-            self.style_index_viewport = viewport_key;
-        }
-
         let (root_box, page_dl, canvas_color) = {
             let doc = self.document_view();
-            let (root_box, page_dl) = if let Some(index) = &self.style_index_cache {
-                layout_document_with_style_index(&doc, index, viewport)
-            } else {
-                let author_sheets: Vec<&Stylesheet> = self.cached_stylesheets.iter().collect();
-                layout_document(&doc, &author_sheets, viewport)
-            };
+            let (root_box, page_dl) = layout_document_with_style_index(&doc, &style_index, viewport);
             let canvas_color = canvas_background_color(&root_box);
             (root_box, page_dl, canvas_color)
         };
@@ -319,6 +307,9 @@ impl BrowserChrome {
         if let Some(rt) = &self.js_runtime {
             rt.set_layout_bounds(result.box_rects);
         }
+        if self.layout_pending {
+            self.relayout();
+        }
         true
     }
 
@@ -349,6 +340,12 @@ impl BrowserChrome {
                 .clear();
             self.page_dirty = true;
             self.layout_pending = true;
+        }
+
+        if self.async_navigation && self.async_layout.is_active() {
+            // Background layout is currently active. Keep layout_pending = true so
+            // the newest DOM state is dispatched once the worker finishes.
+            return false;
         }
 
         if self.layout_pending {

@@ -110,6 +110,19 @@ impl<'a> RuleIndex<'a> {
             + self.container_def_rules.len()
     }
 
+    pub fn universal_rule_count(&self) -> usize {
+        self.universal_rules.len()
+    }
+
+    pub fn has_id_rule(&self, id: &str) -> bool {
+        self.id_rules.contains_key(id)
+    }
+
+    pub fn has_attr_rule(&self, attr: &str) -> bool {
+        let lower = attr.to_ascii_lowercase();
+        self.attr_rules.contains_key(&lower)
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
