@@ -23,6 +23,8 @@ jobs:
             target: x86_64-pc-windows-msvc
             bin_name: mango.exe
             headless_name: headless.exe
+            cc: clang-cl
+            cxx: clang-cl
           - os: macos-latest
             target: x86_64-apple-darwin
             bin_name: mango
@@ -48,6 +50,9 @@ jobs:
           sudo apt-get install -y pkg-config libx11-dev libasound2-dev libfontconfig1-dev
 
       - name: Build Binaries
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Package Artifacts (Unix)
