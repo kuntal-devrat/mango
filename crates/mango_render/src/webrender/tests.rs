@@ -98,8 +98,9 @@ fn test_webrender_box_shadow() {
     let pixels = render_with_webrender(&dl, 100, 100).expect("WebRender should render frame");
     assert_eq!(pixels.len(), 100 * 100);
 
-    // Shadow offset location (x=60, y=60) should have shadow red pixels
-    let shadow_pixel = pixels[60 * 100 + 60];
+    // Shadow offset location (x=65, y=65) is outside the clipped element border-box (20..60)
+    // and well within the outset shadow bounds (25..75).
+    let shadow_pixel = pixels[65 * 100 + 65];
     assert_ne!(
         shadow_pixel, 0x00000000,
         "Shadow pixel should be non-transparent"

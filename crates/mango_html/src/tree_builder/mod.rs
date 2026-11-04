@@ -1,20 +1,13 @@
-//! WHATWG HTML5 compliant tree builder.
-//!
-//! Consumes tokens from [`crate::tokenizer::Tokenizer`] and builds an arena-allocated [`crate::dom::Document`].
-//! Implements insertion modes, open element stack, implied tag closing, and resilient error recovery.
+//! WHATWG HTML5 compliant tree builder powered by `html5ever`.
 
 pub mod charset;
-pub mod formatting;
-pub mod modes;
-pub mod stack;
-pub mod types;
 
 #[cfg(test)]
 mod tests;
 
-pub use types::{FormattingEntry, InsertionMode, TreeBuilder};
+pub use charset::{canonical_charset, extract_charset_from_content};
 
-/// Convenience function: parses raw HTML string into a [`crate::dom::Document`].
+/// Convenience function: parses raw HTML string into a [`crate::dom::Document`] using `html5ever`.
 pub fn parse_html(html: &str) -> crate::dom::Document {
     crate::tree_sink::parse_html5ever(html)
 }
