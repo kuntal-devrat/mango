@@ -1,16 +1,15 @@
-use std::time::{Duration, Instant};
 use mango_browser::browser::BrowserChrome;
+use std::time::{Duration, Instant};
 
 fn get_vm_rss_kb() -> usize {
     #[cfg(target_os = "linux")]
     if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
         for line in status.lines() {
-            if let Some(rest) = line.strip_prefix("VmRSS:") {
-                if let Some(val) = rest.split_whitespace().next() {
-                    if let Ok(kb) = val.parse::<usize>() {
-                        return kb;
-                    }
-                }
+            if let Some(rest) = line.strip_prefix("VmRSS:")
+                && let Some(val) = rest.split_whitespace().next()
+                && let Ok(kb) = val.parse::<usize>()
+            {
+                return kb;
             }
         }
     }

@@ -318,7 +318,7 @@ pub fn print_scorecard(res: &Acid3RunResult) {
 }
 
 #[test]
-fn test_acid3_baseline() {
+fn test_wpt_acid3_baseline() {
     let server = WptServer::new("tests/wpt").expect("Failed to start local WptServer");
     let result = run_acid3_headless(&server.base_url(), ACID3_TIMEOUT)
         .expect("Headless Acid3 test run failed");

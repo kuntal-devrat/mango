@@ -472,9 +472,7 @@ fn main() {
     println!("DrawText stats: bold={}, regular={}", bold_count, reg_count);
 
     let mut buffer = vec![0u32; (paint_width * paint_height) as usize];
-    if let Some(wr_pixels) =
-        mango_render::render_with_webrender(&dl, paint_width, paint_height)
-    {
+    if let Some(wr_pixels) = mango_render::render_with_webrender(&dl, paint_width, paint_height) {
         if wr_pixels.len() == buffer.len() {
             buffer.copy_from_slice(&wr_pixels);
         } else {

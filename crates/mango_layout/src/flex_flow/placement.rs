@@ -1,8 +1,6 @@
 use mango_core::Rect;
 use mango_css::computed::ComputedStyle;
-use mango_css::values::{
-    AlignItems, AlignSelf, BoxSizing, Length, Position, WritingMode,
-};
+use mango_css::values::{AlignItems, AlignSelf, BoxSizing, Length, Position, WritingMode};
 
 use crate::box_tree::LayoutBox;
 use crate::dimensions::Dimensions;

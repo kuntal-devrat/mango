@@ -197,13 +197,10 @@ pub fn emit_frame(
 ) -> Option<String> {
     let dirty_nodes = rt.take_dirty_nodes();
     let has_dom_mutations = !dirty_nodes.is_empty() || *frame_seq == 0;
-    let eval_title = rt
-        .eval("document.title")
-        .ok()
-        .filter(|s| !s.is_empty());
+    let eval_title = rt.eval("document.title").ok().filter(|s| !s.is_empty());
     let doc_ref = rt.document_ref();
-    let title = eval_title
-        .or_else(|| crate::browser::navigation::resources::extract_title(&doc_ref));
+    let title =
+        eval_title.or_else(|| crate::browser::navigation::resources::extract_title(&doc_ref));
     let (mut root, display_list, scrollable_height, canvas_bg) =
         incremental_state.compute_layout(&doc_ref, dirty_nodes, stylesheets, viewport_size);
     root.prune_raw_children();

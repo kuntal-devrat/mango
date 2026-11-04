@@ -1,16 +1,17 @@
 use mango_css::computed::ComputedStyle;
 use mango_css::values::{
     AlignContent as MangoAlignContent, AlignItems as MangoAlignItems, AlignSelf as MangoAlignSelf,
-    BoxSizing as MangoBoxSizing, Display as MangoDisplay, FlexDirection as MangoFlexDirection,
-    FlexWrap as MangoFlexWrap, GridAutoFlow as MangoGridAutoFlow,
-    GridPlacement as MangoGridPlacement, GridTrackSize as MangoGridTrackSize,
-    JustifyContent as MangoJustifyContent, Length as MangoLength, Position as MangoPosition,
+    BoxSizing as MangoBoxSizing, Direction as MangoDirection, Display as MangoDisplay,
+    FlexDirection as MangoFlexDirection, FlexWrap as MangoFlexWrap,
+    GridAutoFlow as MangoGridAutoFlow, GridPlacement as MangoGridPlacement,
+    GridTrackSize as MangoGridTrackSize, JustifyContent as MangoJustifyContent,
+    Length as MangoLength, Position as MangoPosition,
 };
 use taffy::geometry::{Line, Rect, Size};
 use taffy::prelude::*;
 use taffy::style::{
-    AlignContent, AlignItems, AlignSelf, BoxSizing, Dimension, Display, FlexDirection, FlexWrap,
-    GridAutoFlow, GridPlacement, GridTemplateComponent, JustifyContent, LengthPercentage,
+    AlignContent, AlignItems, AlignSelf, BoxSizing, Dimension, Direction, Display, FlexDirection,
+    FlexWrap, GridAutoFlow, GridPlacement, GridTemplateComponent, JustifyContent, LengthPercentage,
     LengthPercentageAuto, MaxTrackSizingFunction, MinTrackSizingFunction, Position, Style,
     TrackSizingFunction,
 };
@@ -380,10 +381,16 @@ pub fn to_taffy_style(style: &ComputedStyle, cb_w: f32, cb_h: f32) -> Style<Chea
         end: to_taffy_grid_placement(&style.grid_row_end),
     };
 
+    let direction = match style.direction {
+        MangoDirection::Rtl => Direction::Rtl,
+        _ => Direction::Ltr,
+    };
+
     Style {
         display,
         box_sizing,
         position,
+        direction,
         size,
         min_size,
         max_size,

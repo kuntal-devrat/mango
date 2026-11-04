@@ -272,5 +272,9 @@ pub fn calculate_abspos_static_positions(
         // Note: positioned.rs will add margin_l / margin_t to base_x / base_y when positioning
         child.dimensions.content.origin.x = static_x - margin_l;
         child.dimensions.content.origin.y = static_y - margin_t;
+        child.static_position = Some(mango_core::Point::new(
+            static_x - margin_l,
+            static_y - margin_t,
+        ));
     }
 }
