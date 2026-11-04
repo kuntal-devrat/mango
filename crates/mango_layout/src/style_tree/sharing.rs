@@ -39,22 +39,26 @@ pub struct ElementStyleKey {
 }
 
 /// Cache for sharing `Arc<ComputedStyle>` across structurally identical elements and text nodes.
-pub struct StyleSharingCache {
+pub struct StyleSharingCache<'a> {
     /// Element style cache.
     element_cache: HashMap<ElementStyleKey, Arc<ComputedStyle>>,
     /// Text node style cache keyed by parent style pointer address.
     text_cache: HashMap<usize, Arc<ComputedStyle>>,
+    /// Reference to author rule index for checking targeted IDs and attributes.
+    rule_index: &'a RuleIndex<'a>,
     /// Whether the stylesheet index contains any positional pseudo-class rules.
     has_positional_rules: bool,
     /// Whether the stylesheet index contains any nth-child / nth-of-type rules.
     has_nth_rules: bool,
     /// Whether the stylesheet index contains any :empty pseudo-class rules.
     has_empty_rules: bool,
+    /// Total hit count.
+    hits: usize,
 }
 
-impl StyleSharingCache {
+impl<'a> StyleSharingCache<'a> {
     /// Creates a new style sharing cache configured for the given author stylesheet index.
-    pub fn new(rule_index: &RuleIndex) -> Self {
+    pub fn new(rule_index: &'a RuleIndex<'a>) -> Self {
         let has_nth_rules = rule_index.has_pseudo_rules("nth-child")
             || rule_index.has_pseudo_rules("nth-last-child")
             || rule_index.has_pseudo_rules("nth-of-type")
@@ -76,10 +80,20 @@ impl StyleSharingCache {
         Self {
             element_cache: HashMap::new(),
             text_cache: HashMap::new(),
+            rule_index,
             has_positional_rules,
             has_nth_rules,
             has_empty_rules,
+            hits: 0,
         }
+    }
+
+    pub fn hits(&self) -> usize {
+        self.hits
+    }
+
+    pub fn len(&self) -> usize {
+        self.element_cache.len()
     }
 
     /// Computes or retrieves a shared `Arc<ComputedStyle>` for a text node inheriting from `parent_style`.
@@ -100,8 +114,13 @@ impl StyleSharingCache {
     }
 
     /// Checks if a cached style exists for the given element key.
-    pub fn get_element_style(&self, key: &ElementStyleKey) -> Option<Arc<ComputedStyle>> {
-        self.element_cache.get(key).cloned()
+    pub fn get_element_style(&mut self, key: &ElementStyleKey) -> Option<Arc<ComputedStyle>> {
+        if let Some(s) = self.element_cache.get(key) {
+            self.hits += 1;
+            Some(Arc::clone(s))
+        } else {
+            None
+        }
     }
 
     /// Stores a computed style for the given element key.
@@ -131,12 +150,14 @@ impl StyleSharingCache {
 
         for (name, val) in &el.attributes {
             if name.eq_ignore_ascii_case("id") {
-                id = Some(val.clone());
+                if self.rule_index.has_id_rule(val) {
+                    id = Some(val.clone());
+                }
             } else if name.eq_ignore_ascii_case("class") {
                 class = Some(val.clone());
             } else if name.eq_ignore_ascii_case("style") {
                 inline_style = Some(val.clone());
-            } else {
+            } else if is_style_affecting_attribute(name, self.rule_index) {
                 other_attrs.push((name.clone(), val.clone()));
             }
         }
@@ -221,6 +242,40 @@ impl StyleSharingCache {
 
         key
     }
+}
+
+fn is_style_affecting_attribute(name: &str, rule_index: &RuleIndex) -> bool {
+    let lower = name.to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "align"
+            | "valign"
+            | "width"
+            | "height"
+            | "bgcolor"
+            | "background"
+            | "border"
+            | "color"
+            | "cellspacing"
+            | "cellpadding"
+            | "hspace"
+            | "vspace"
+            | "dir"
+            | "hidden"
+            | "type"
+            | "disabled"
+            | "checked"
+            | "selected"
+            | "readonly"
+            | "multiple"
+            | "wrap"
+            | "nowrap"
+            | "clear"
+            | "size"
+            | "face"
+            | "role"
+            | "aria-hidden"
+    ) || rule_index.has_attr_rule(&lower)
 }
 
 /// Derives the normalized inline computed style for a text node from its parent element style.

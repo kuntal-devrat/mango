@@ -460,32 +460,43 @@ impl ComplexSelector {
 
         if let Some(ref data) = self.servo_data {
             let elem = crate::selectors::servo::MangoElement { node_id, doc };
-            let mut caches = selectors::matching::SelectorCaches::default();
-            let mut context = selectors::matching::MatchingContext::new(
-                selectors::matching::MatchingMode::Normal,
-                bloom_filter,
-                &mut caches,
-                selectors::matching::QuirksMode::NoQuirks,
-                selectors::matching::NeedsSelectorFlags::No,
-                selectors::matching::MatchingForInvalidation::No,
-            );
-            if let Some(scope_id) = current_scope_root() {
-                if let Some(node) = doc.get(scope_id) {
-                    context.scope_element = Some(selectors::OpaqueElement::new(node));
-                }
+            thread_local! {
+                static SELECTOR_CACHES: std::cell::RefCell<selectors::matching::SelectorCaches> =
+                    std::cell::RefCell::new(selectors::matching::SelectorCaches::default());
             }
-            if let Some(host_id) = current_host_element() {
-                if let Some(node) = doc.get(host_id) {
-                    context.current_host = Some(selectors::OpaqueElement::new(node));
+            return SELECTOR_CACHES.with(|c| {
+                let mut caches_guard = c.try_borrow_mut();
+                let mut fallback = selectors::matching::SelectorCaches::default();
+                let caches: &mut selectors::matching::SelectorCaches = match caches_guard {
+                    Ok(ref mut b) => &mut **b,
+                    Err(_) => &mut fallback,
+                };
+                let mut context = selectors::matching::MatchingContext::new(
+                    selectors::matching::MatchingMode::Normal,
+                    bloom_filter,
+                    caches,
+                    selectors::matching::QuirksMode::NoQuirks,
+                    selectors::matching::NeedsSelectorFlags::No,
+                    selectors::matching::MatchingForInvalidation::No,
+                );
+                if let Some(scope_id) = current_scope_root() {
+                    if let Some(node) = doc.get(scope_id) {
+                        context.scope_element = Some(selectors::OpaqueElement::new(node));
+                    }
                 }
-            }
-            return selectors::matching::matches_selector(
-                &data.selector,
-                0,
-                Some(&data.ancestor_hashes),
-                &elem,
-                &mut context,
-            );
+                if let Some(host_id) = current_host_element() {
+                    if let Some(node) = doc.get(host_id) {
+                        context.current_host = Some(selectors::OpaqueElement::new(node));
+                    }
+                }
+                selectors::matching::matches_selector(
+                    &data.selector,
+                    0,
+                    Some(&data.ancestor_hashes),
+                    &elem,
+                    &mut context,
+                )
+            });
         }
         self.matches_relative(node_id, None, doc)
     }

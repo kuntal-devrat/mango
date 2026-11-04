@@ -87,7 +87,7 @@ pub struct BrowserChrome {
     pub(crate) cached_stylesheets: Vec<Stylesheet>,
     /// Page-owned stylesheet/index pair reused across relayouts. The cache is
     /// invalidated when the DOM mutation version changes.
-    pub(crate) style_index_cache: Option<mango_layout::PageStyleIndex>,
+    pub(crate) style_index_cache: Option<Arc<mango_layout::PageStyleIndex>>,
     pub(crate) style_index_version: u64,
     pub(crate) style_index_viewport: (u32, u32),
     /// DOM/style changes requested during a JS turn. The UI loop flushes this

@@ -349,8 +349,10 @@ pub fn parse_html5ever(html: &str) -> Document {
     opts.tree_builder.scripting_enabled = false;
     let parser = html5ever::parse_document(sink, opts);
     let mut bytes = html.as_bytes();
-    parser
+    let mut doc = parser
         .from_utf8()
         .read_from(&mut bytes)
-        .expect("HTML5ever parsing should not fail on in-memory buffers")
+        .expect("HTML5ever parsing should not fail on in-memory buffers");
+    doc.dirty_nodes.clear();
+    doc
 }
