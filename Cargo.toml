@@ -119,6 +119,7 @@ rayon.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+percent-encoding.workspace = true
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
