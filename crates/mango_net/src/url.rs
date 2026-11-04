@@ -1,6 +1,7 @@
-//! URL parsing and relative URL resolution according to RFC 3986.
+//! URL parsing and relative URL resolution backed by the WHATWG `url` standard crate.
 
 use std::fmt;
+use std::str::FromStr;
 
 /// Errors that can occur during URL parsing or resolution.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,15 +64,6 @@ pub fn is_valid_scheme(scheme: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.')
 }
 
-/// Normalizes a port: default ports become `None` so equality ignores them.
-fn normalize_port(scheme: &str, port: Option<u16>) -> Option<u16> {
-    match (scheme, port) {
-        ("http" | "ws", Some(80)) => None,
-        ("https" | "wss", Some(443)) => None,
-        (_, p) => p,
-    }
-}
-
 impl Url {
     /// Parses a URL string.
     ///
@@ -127,121 +119,53 @@ impl Url {
             trimmed.to_string()
         };
 
-        // Extract scheme
+        // Extract and validate scheme
         let scheme_end = normalized.find("://").ok_or(UrlError::InvalidScheme)?;
         let raw_scheme = &normalized[..scheme_end];
         if !is_valid_scheme(raw_scheme) {
             return Err(UrlError::InvalidScheme);
         }
-        let scheme = raw_scheme.to_ascii_lowercase();
+
+        // Check for empty userinfo (e.g. `http://@example.com`)
         let after_scheme = &normalized[scheme_end + 3..];
-
-        // Split authority from path / query / fragment
-        let (authority, rest) = match after_scheme.find(['/', '?', '#']) {
-            Some(idx) => (&after_scheme[..idx], &after_scheme[idx..]),
-            None => (after_scheme, "/"),
+        let authority = match after_scheme.find(['/', '?', '#']) {
+            Some(idx) => &after_scheme[..idx],
+            None => after_scheme,
         };
-
-        // Parse authority: [userinfo@]host[:port] — preserve userinfo, never strip silently.
-        let (userinfo, host_port_part) = match authority.rfind('@') {
-            Some(idx) => (Some(&authority[..idx]), &authority[idx + 1..]),
-            None => (None, authority),
-        };
-        let (username, password) = match userinfo {
-            Some(info) => {
-                if info.is_empty() {
-                    return Err(UrlError::Malformed(
-                        "Empty userinfo in authority".to_string(),
-                    ));
-                }
-                match info.split_once(':') {
-                    Some((u, p)) => (Some(u.to_string()), Some(p.to_string())),
-                    None => (Some(info.to_string()), None),
-                }
-            }
-            None => (None, None),
-        };
-
-        let (host, raw_port) = if host_port_part.starts_with('[') {
-            if let Some(bracket_end) = host_port_part.find(']') {
-                let ipv6_host = &host_port_part[..=bracket_end];
-                let remainder = &host_port_part[bracket_end + 1..];
-                if remainder.is_empty() {
-                    let default_port = match scheme.as_str() {
-                        "http" | "ws" => Some(80),
-                        "https" | "wss" => Some(443),
-                        "ftp" => Some(21),
-                        _ => None,
-                    };
-                    (ipv6_host.to_ascii_lowercase(), default_port)
-                } else if let Some(p_str) = remainder.strip_prefix(':') {
-                    let p = p_str
-                        .parse::<u16>()
-                        .map_err(|_| UrlError::InvalidPort(p_str.to_string()))?;
-                    (ipv6_host.to_ascii_lowercase(), Some(p))
-                } else {
-                    return Err(UrlError::Malformed(format!(
-                        "Invalid authority after IPv6 bracket: {}",
-                        remainder
-                    )));
-                }
-            } else {
+        if let Some(userinfo) = authority.rfind('@').map(|i| &authority[..i]) {
+            if userinfo.is_empty() {
                 return Err(UrlError::Malformed(
-                    "Unclosed IPv6 bracket in authority".to_string(),
+                    "Empty userinfo in authority".to_string(),
                 ));
             }
-        } else if let Some(colon_idx) = host_port_part.rfind(':') {
-            let h = &host_port_part[..colon_idx];
-            let p_str = &host_port_part[colon_idx + 1..];
-            // Empty port (trailing colon) is malformed.
-            if p_str.is_empty() {
-                return Err(UrlError::InvalidPort("".to_string()));
-            }
-            let p = p_str
-                .parse::<u16>()
-                .map_err(|_| UrlError::InvalidPort(p_str.to_string()))?;
-            (h.to_ascii_lowercase(), Some(p))
-        } else {
-            let default_port = match scheme.as_str() {
-                "http" | "ws" => Some(80),
-                "https" | "wss" => Some(443),
-                "ftp" => Some(21),
-                _ => None,
-            };
-            (host_port_part.to_ascii_lowercase(), default_port)
-        };
-
-        if host.is_empty() {
-            return Err(UrlError::MissingHost);
         }
-        // Normalize default ports to None so `https://host/` == `https://host:443/`.
-        let port = normalize_port(&scheme, raw_port);
 
-        // Parse path, query, fragment
-        let (path_and_query, fragment) = match rest.find('#') {
-            Some(idx) => (&rest[..idx], Some(rest[idx + 1..].to_string())),
-            None => (rest, None),
-        };
+        let parsed = url::Url::parse(&normalized).map_err(|e| match e {
+            url::ParseError::EmptyHost => UrlError::MissingHost,
+            url::ParseError::InvalidPort => UrlError::InvalidPort("Invalid port".to_string()),
+            _ => UrlError::Malformed(e.to_string()),
+        })?;
 
-        let (path, query) = match path_and_query.find('?') {
-            Some(idx) => (
-                &path_and_query[..idx],
-                Some(path_and_query[idx + 1..].to_string()),
-            ),
-            None => (path_and_query, None),
-        };
+        let scheme = parsed.scheme().to_ascii_lowercase();
+        let host = parsed.host_str().map(|h| h.to_string());
 
-        let final_path = if path.is_empty() {
-            "/".to_string()
+        // url crate normalizes default ports (80 for http/ws, 443 for https/wss) to None!
+        let port = parsed.port();
+        let path = parsed.path().to_string();
+        let query = parsed.query().map(|q| q.to_string());
+        let fragment = parsed.fragment().map(|f| f.to_string());
+        let username = if parsed.username().is_empty() {
+            None
         } else {
-            normalize_path_segments(path)
+            Some(parsed.username().to_string())
         };
+        let password = parsed.password().map(|p| p.to_string());
 
         Ok(Url {
             scheme,
-            host: Some(host),
+            host,
             port,
-            path: final_path,
+            path,
             query,
             fragment,
             username,
@@ -249,86 +173,41 @@ impl Url {
         })
     }
 
-    /// Resolves a relative URL reference against this base URL according to RFC 3986 §5.
+    /// Resolves a relative URL reference against this base URL according to WHATWG URL Standard.
     pub fn resolve(&self, relative: &str) -> Result<Self, UrlError> {
         let rel = relative.trim();
         if rel.is_empty() {
             return Ok(self.clone());
         }
 
-        // If relative has an explicit scheme, parse it directly as absolute
-        let is_absolute_scheme = if let Some(idx) = rel.find(':') {
-            let scheme_part = &rel[..idx];
-            !scheme_part.is_empty()
-                && !scheme_part.contains('/')
-                && !scheme_part.contains('?')
-                && !scheme_part.contains('#')
-        } else {
-            false
-        };
-
-        if is_absolute_scheme || rel.contains("://") {
-            return Url::parse(rel);
+        // If relative has an explicit custom or network scheme, parse directly
+        let lower = rel.to_ascii_lowercase();
+        for scheme_name in [
+            "about:",
+            "test:",
+            "data:",
+            "javascript:",
+            "mailto:",
+            "blob:",
+            "tel:",
+            "http:",
+            "https:",
+        ] {
+            if lower.starts_with(scheme_name) {
+                return Self::parse(rel);
+            }
         }
 
-        // Protocol-relative (e.g. "//cdn.example.com/lib.js")
-        if rel.starts_with("//") {
-            return Url::parse(&format!("{}:{}", self.scheme, rel));
+        if rel.contains("://") {
+            return Self::parse(rel);
         }
 
-        // Fragment-only reference (e.g. "#section1")
-        if let Some(frag) = rel.strip_prefix('#') {
-            let mut resolved = self.clone();
-            resolved.fragment = Some(frag.to_string());
-            return Ok(resolved);
-        }
-
-        // Query-only reference (e.g. "?sort=asc")
-        if let Some(q) = rel.strip_prefix('?') {
-            let (query, fragment) = match q.find('#') {
-                Some(idx) => (q[..idx].to_string(), Some(q[idx + 1..].to_string())),
-                None => (q.to_string(), None),
-            };
-            let mut resolved = self.clone();
-            resolved.query = Some(query);
-            resolved.fragment = fragment;
-            return Ok(resolved);
-        }
-
-        // Parse path, query, and fragment from relative string
-        let (path_part, fragment) = match rel.find('#') {
-            Some(idx) => (&rel[..idx], Some(rel[idx + 1..].to_string())),
-            None => (rel, None),
-        };
-
-        let (path_part, query) = match path_part.find('?') {
-            Some(idx) => (&path_part[..idx], Some(path_part[idx + 1..].to_string())),
-            None => (path_part, None),
-        };
-
-        let new_path = if path_part.starts_with('/') {
-            // Absolute path on the same host
-            normalize_path_segments(path_part)
-        } else {
-            // Relative path: merge with base directory
-            let base_dir = match self.path.rfind('/') {
-                Some(idx) => &self.path[..=idx],
-                None => "/",
-            };
-            let combined = format!("{base_dir}{path_part}");
-            normalize_path_segments(&combined)
-        };
-
-        Ok(Url {
-            scheme: self.scheme.clone(),
-            host: self.host.clone(),
-            port: self.port,
-            path: new_path,
-            query,
-            fragment,
-            username: self.username.clone(),
-            password: self.password.clone(),
-        })
+        let base_str = self.as_str();
+        let base_url = url::Url::parse(&base_str).map_err(|_| UrlError::RelativeWithoutBase)?;
+        let resolved = base_url
+            .join(rel)
+            .map_err(|e| UrlError::Malformed(e.to_string()))?;
+        Self::parse(resolved.as_str())
     }
 
     /// Returns the origin string formatted as `scheme://host[:port]`.
@@ -443,34 +322,12 @@ impl fmt::Display for Url {
     }
 }
 
-/// Normalizes path segments by resolving `.` (current) and `..` (parent) components.
-fn normalize_path_segments(path: &str) -> String {
-    let mut segments = Vec::new();
-    let ends_with_slash = path.ends_with('/');
+impl FromStr for Url {
+    type Err = UrlError;
 
-    for seg in path.split('/') {
-        match seg {
-            "" | "." => {}
-            ".." => {
-                segments.pop();
-            }
-            s => segments.push(s),
-        }
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s)
     }
-
-    if segments.is_empty() {
-        return "/".to_string();
-    }
-
-    let mut result = String::new();
-    for seg in segments {
-        result.push('/');
-        result.push_str(seg);
-    }
-    if ends_with_slash && !result.ends_with('/') {
-        result.push('/');
-    }
-    result
 }
 
 #[cfg(test)]

@@ -472,8 +472,19 @@ fn main() {
     println!("DrawText stats: bold={}, regular={}", bold_count, reg_count);
 
     let mut buffer = vec![0u32; (paint_width * paint_height) as usize];
-    buffer.fill(browser.canvas_bg().to_rgb_u32());
-    paint(&dl, &mut buffer, paint_width, paint_height);
+    if let Some(wr_pixels) =
+        mango_render::render_with_webrender(&dl, paint_width, paint_height)
+    {
+        if wr_pixels.len() == buffer.len() {
+            buffer.copy_from_slice(&wr_pixels);
+        } else {
+            buffer.fill(browser.canvas_bg().to_rgb_u32());
+            paint(&dl, &mut buffer, paint_width, paint_height);
+        }
+    } else {
+        buffer.fill(browser.canvas_bg().to_rgb_u32());
+        paint(&dl, &mut buffer, paint_width, paint_height);
+    }
 
     let (crop_top, crop_height) = if full_page {
         (0, paint_height)
