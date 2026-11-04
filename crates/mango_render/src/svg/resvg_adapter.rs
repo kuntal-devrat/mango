@@ -137,10 +137,37 @@ mod tests {
     }
 
     #[test]
+    fn test_resvg_symbol_in_defs() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">
+            <defs>
+                <symbol id="global-star" viewBox="0 0 20 20">
+                    <rect x="0" y="0" width="20" height="20" fill="#0000FF"/>
+                </symbol>
+            </defs>
+            <use href="#global-star" x="0" y="0" width="40" height="40"/>
+        </svg>"##;
+        let img = render_svg_resvg(svg, 40, 40, Color::BLACK).expect("resvg should render symbol in defs");
+        let center = img.pixels[20 * 40 + 20];
+        let blue = center & 0xFF;
+        assert_eq!(blue, 255);
+    }
+
+    #[test]
     fn test_resvg_intrinsic_dimensions() {
         let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100"></svg>"#;
         let dims = get_svg_intrinsic_dimensions_resvg(svg);
         assert_eq!(dims, Some((200.0, 100.0)));
+
+        let svg_sym = r##"<svg xmlns="http://www.w3.org/2000/svg">
+            <defs>
+                <symbol id="dim-icon" viewBox="0 0 64 32">
+                    <rect x="0" y="0" width="64" height="32"/>
+                </symbol>
+            </defs>
+            <use href="#dim-icon"/>
+        </svg>"##;
+        let dims_sym = get_svg_intrinsic_dimensions_resvg(svg_sym);
+        println!("Dims sym: {:?}", dims_sym);
     }
 
     #[test]

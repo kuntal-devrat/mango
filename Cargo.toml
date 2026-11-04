@@ -65,6 +65,7 @@ mimalloc = { version = "0.1.52", default-features = false }
 html5ever = "0.40.1"
 resvg = "0.49.0"
 usvg = "0.49.0"
+percent-encoding = "2.3.2"
 webrender = { version = "0.70.1", default-features = false, features = ["sw_compositor"] }
 webrender_api = "0.70.0"
 swgl = "0.70.0"
@@ -118,7 +119,6 @@ rayon.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
-percent-encoding = "2.3.2"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

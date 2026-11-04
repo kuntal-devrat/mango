@@ -191,7 +191,26 @@ pub fn render_svg(
         return Some(img.clone());
     }
 
-    // 2. Check/populate parsed SVG DOM cache and global symbol registry
+    // 2. Extract and resolve symbols for resvg
+    extract_and_register_symbols(svg_xml);
+    let resolved_svg = resolve_and_inject_symbols(svg_xml);
+
+    // 3. Try rendering via resvg first for comprehensive SVG 1.1 / SVG 2 vector conformance
+    if let Some(decoded) =
+        super::resvg_adapter::render_svg_resvg(&resolved_svg, target_w, target_h, current_color)
+    {
+        if let Ok(mut cache) = svg_render_cache().write() {
+            cache.insert(cache_key, decoded.clone());
+        }
+        if let Some(parsed) = SvgDocument::parse(svg_xml) {
+            if let Ok(mut cache) = svg_doc_cache().write() {
+                cache.insert(svg_xml.to_string(), std::sync::Arc::new(parsed));
+            }
+        }
+        return Some(decoded);
+    }
+
+    // 4. Fallback to bespoke parser if resvg fails
     let doc: std::sync::Arc<SvgDocument> = {
         let parsed_opt = if let Ok(cache) = svg_doc_cache().read() {
             cache.get(svg_xml)
@@ -210,21 +229,6 @@ pub fn render_svg(
             arc_doc
         }
     };
-
-    // 3. Try rendering via resvg first for comprehensive SVG 1.1 / SVG 2 vector conformance
-    let has_external_symbol_use =
-        svg_xml.contains("<use") && !svg_xml.contains("<symbol") && !svg_xml.contains("<defs");
-
-    if !has_external_symbol_use {
-        if let Some(decoded) =
-            super::resvg_adapter::render_svg_resvg(svg_xml, target_w, target_h, current_color)
-        {
-            if let Ok(mut cache) = svg_render_cache().write() {
-                cache.insert(cache_key, decoded.clone());
-            }
-            return Some(decoded);
-        }
-    }
 
     let mut pixmap = Pixmap::new(target_w, target_h)?;
     pixmap.fill(SkiaColor::TRANSPARENT);
@@ -317,9 +321,14 @@ pub fn render_svg(
 }
 
 static GLOBAL_SVG_SYMBOLS: OnceLock<RwLock<HashMap<String, SvgSymbol>>> = OnceLock::new();
+static GLOBAL_SVG_RAW_SYMBOLS: OnceLock<RwLock<HashMap<String, String>>> = OnceLock::new();
 
 fn global_svg_symbols() -> &'static RwLock<HashMap<String, SvgSymbol>> {
     GLOBAL_SVG_SYMBOLS.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+fn global_svg_raw_symbols() -> &'static RwLock<HashMap<String, String>> {
+    GLOBAL_SVG_RAW_SYMBOLS.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
 /// Registers an SVG symbol in the global cross-SVG symbol registry.
@@ -338,9 +347,80 @@ pub fn get_global_svg_symbol(id: &str) -> Option<SvgSymbol> {
     lock.get(clean).cloned()
 }
 
+/// Scans an SVG XML string for `<symbol id="...">` definitions and registers them globally.
+pub fn extract_and_register_symbols(svg_xml: &str) {
+    if !svg_xml.contains("<symbol") {
+        return;
+    }
+    let mut pos = 0;
+    while let Some(start_idx) = svg_xml[pos..].find("<symbol") {
+        let abs_start = pos + start_idx;
+        if let Some(end_rel) = svg_xml[abs_start..].find("</symbol>") {
+            let abs_end = abs_start + end_rel + "</symbol>".len();
+            let symbol_block = &svg_xml[abs_start..abs_end];
+            if let Some(id_idx) = symbol_block.find("id=\"") {
+                let id_start = id_idx + "id=\"".len();
+                if let Some(id_end_rel) = symbol_block[id_start..].find('"') {
+                    let id = &symbol_block[id_start..id_start + id_end_rel];
+                    if let Ok(mut lock) = global_svg_raw_symbols().write() {
+                        lock.insert(id.to_string(), symbol_block.to_string());
+                    }
+                }
+            } else if let Some(id_idx) = symbol_block.find("id='") {
+                let id_start = id_idx + "id='".len();
+                if let Some(id_end_rel) = symbol_block[id_start..].find('\'') {
+                    let id = &symbol_block[id_start..id_start + id_end_rel];
+                    if let Ok(mut lock) = global_svg_raw_symbols().write() {
+                        lock.insert(id.to_string(), symbol_block.to_string());
+                    }
+                }
+            }
+            pos = abs_end;
+        } else {
+            break;
+        }
+    }
+}
+
+/// Resolves `<use href="#id"/>` cross-SVG symbol references by injecting registered symbol `<defs>`.
+pub fn resolve_and_inject_symbols(svg_xml: &str) -> std::borrow::Cow<'_, str> {
+    if !svg_xml.contains("<use") {
+        return std::borrow::Cow::Borrowed(svg_xml);
+    }
+    let mut injected_defs = String::new();
+    if let Ok(sym_map) = global_svg_raw_symbols().read() {
+        for (id, sym_xml) in sym_map.iter() {
+            let pattern1 = format!("#{id}\"");
+            let pattern2 = format!("#{id}'");
+            if (svg_xml.contains(&pattern1) || svg_xml.contains(&pattern2))
+                && !svg_xml.contains(sym_xml)
+            {
+                injected_defs.push_str(sym_xml);
+            }
+        }
+    }
+    if injected_defs.is_empty() {
+        return std::borrow::Cow::Borrowed(svg_xml);
+    }
+    if let Some(svg_close) = svg_xml.find('>') {
+        let mut result = String::with_capacity(svg_xml.len() + injected_defs.len() + 16);
+        result.push_str(&svg_xml[..=svg_close]);
+        result.push_str("<defs>");
+        result.push_str(&injected_defs);
+        result.push_str("</defs>");
+        result.push_str(&svg_xml[svg_close + 1..]);
+        std::borrow::Cow::Owned(result)
+    } else {
+        std::borrow::Cow::Borrowed(svg_xml)
+    }
+}
+
 /// Clears all globally registered SVG symbols.
 pub fn clear_global_svg_symbols() {
     if let Ok(mut lock) = global_svg_symbols().write() {
+        lock.clear();
+    }
+    if let Ok(mut lock) = global_svg_raw_symbols().write() {
         lock.clear();
     }
 }
