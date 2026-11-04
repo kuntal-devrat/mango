@@ -3,22 +3,16 @@ use mango_css::values::{
     BoxSizing, Direction, Display, FlexDirection, Length, Position, WritingMode,
 };
 
-use crate::block_flow::layout_positioned_children_with_cb;
 use crate::box_tree::LayoutBox;
 use crate::dimensions::Dimensions;
 use crate::float::FloatContext;
 
-use super::alignment::{
-    compute_align_content_spacing, compute_justify_content_spacing, compute_line_cross_sizes,
-};
+use super::alignment::{compute_align_content_spacing, compute_line_cross_sizes};
+use super::container_helpers::{layout_empty_flex_container, resolve_container_cross_bounds};
 use super::lines::{
     build_flex_lines, resolve_flex_cross_gap, resolve_flex_main_gap, resolve_flexible_lengths,
 };
 use super::metrics::measure_item_metrics;
-use super::placement::{
-    ContainerFinalizeParams, LinePlacementParams, calculate_abspos_static_positions,
-    finalize_container_height, position_flex_items_on_line,
-};
 
 /// Executes Flexbox layout on a flex container box according to CSS Flexible Box Layout Module Level 1.
 pub fn layout_flex(
@@ -433,59 +427,20 @@ pub fn layout_flex(
     container.dimensions.content.origin = Point::new(container_x, container_y);
 
     if container.children.is_empty() {
-        let is_editable = container
-            .get_attribute("contenteditable")
-            .is_some_and(|v| v != "false")
-            || container.get_attribute("_mango_contenteditable") == Some("true");
-        let default_line_h = if is_editable {
-            let family = crate::inline_flow::shaping::font_family_for(&style);
-            let weight = crate::inline_flow::shaping::font_weight_for(&style);
-            crate::inline_flow::shaping::used_line_height(&style, family, weight)
-        } else {
-            0.0
-        };
-        let mut final_h = if is_height_content {
-            if !is_vertical_wm && is_editable {
-                default_line_h
-            } else {
-                0.0
-            }
-        } else {
-            content_height
-        };
-        if style.min_height != Length::Auto {
-            let min_h = style.min_height.to_px_with_viewport(
-                font_size,
-                root_font_size,
-                container_height,
-                container_height,
-            );
-            let min_content_h = if style.box_sizing == BoxSizing::BorderBox {
-                (min_h - pad_top - pad_bottom - border_top - border_bottom).max(0.0)
-            } else {
-                min_h
-            };
-            final_h = final_h.max(min_content_h);
-        }
-        if style.max_height != Length::Auto {
-            let max_h = style.max_height.to_px_with_viewport(
-                font_size,
-                root_font_size,
-                container_height,
-                container_height,
-            );
-            let max_content_h = if style.box_sizing == BoxSizing::BorderBox {
-                (max_h - pad_top - pad_bottom - border_top - border_bottom).max(0.0)
-            } else {
-                max_h
-            };
-            final_h = final_h.min(max_content_h);
-        }
-        container.dimensions.content.size.height = final_h;
-        if is_vertical_wm && is_editable {
-            container.dimensions.content.size.width =
-                container.dimensions.content.size.width.max(default_line_h);
-        }
+        layout_empty_flex_container(
+            container,
+            &style,
+            is_height_content,
+            is_vertical_wm,
+            content_height,
+            container_height,
+            font_size,
+            root_font_size,
+            pad_top,
+            pad_bottom,
+            border_top,
+            border_bottom,
+        );
         return;
     }
 
@@ -701,71 +656,16 @@ pub fn layout_flex(
         content_width
     };
 
-    let (min_cross_size, max_cross_size) = if is_row {
-        let min_c = if style.min_height != Length::Auto {
-            let min_h = style.min_height.to_px_with_viewport(
-                font_size,
-                root_font_size,
-                container_height,
-                container_height,
-            );
-            if style.box_sizing == BoxSizing::BorderBox {
-                (min_h - total_non_content_v).max(0.0)
-            } else {
-                min_h
-            }
-        } else {
-            0.0
-        };
-        let max_c = if style.max_height != Length::Auto {
-            let max_h = style.max_height.to_px_with_viewport(
-                font_size,
-                root_font_size,
-                container_height,
-                container_height,
-            );
-            if style.box_sizing == BoxSizing::BorderBox {
-                (max_h - total_non_content_v).max(0.0)
-            } else {
-                max_h
-            }
-        } else {
-            f32::INFINITY
-        };
-        (min_c, max_c)
-    } else {
-        let min_c = if style.min_width != Length::Auto {
-            let min_w = style.min_width.to_px_with_viewport(
-                font_size,
-                root_font_size,
-                container_width,
-                container_height,
-            );
-            if style.box_sizing == BoxSizing::BorderBox {
-                (min_w - total_non_content_h).max(0.0)
-            } else {
-                min_w
-            }
-        } else {
-            0.0
-        };
-        let max_c = if style.max_width != Length::Auto {
-            let max_w = style.max_width.to_px_with_viewport(
-                font_size,
-                root_font_size,
-                container_width,
-                container_height,
-            );
-            if style.box_sizing == BoxSizing::BorderBox {
-                (max_w - total_non_content_h).max(0.0)
-            } else {
-                max_w
-            }
-        } else {
-            f32::INFINITY
-        };
-        (min_c, max_c)
-    };
+    let (min_cross_size, max_cross_size) = resolve_container_cross_bounds(
+        &style,
+        is_row,
+        font_size,
+        root_font_size,
+        container_width,
+        container_height,
+        total_non_content_h,
+        total_non_content_v,
+    );
 
     let cross_gap = resolve_flex_cross_gap(&style, is_row, container_cross_size, container_height);
 
@@ -780,7 +680,7 @@ pub fn layout_flex(
         min_cross_size,
         max_cross_size,
     );
-    let mut line_cross_sizes = line_metrics.cross_sizes;
+    let mut line_cross_sizes = line_metrics.cross_sizes.clone();
 
     let (cross_cursor, line_spacing) = compute_align_content_spacing(
         &mut line_cross_sizes,
@@ -791,7 +691,6 @@ pub fn layout_flex(
     );
 
     let cross_start_offset = cross_cursor;
-    let mut normal_cross_cursor = cross_start_offset;
 
     let effective_container_main = if is_container_main_definite {
         container_main_size
@@ -817,136 +716,37 @@ pub fn layout_flex(
         max_line_main.max(min_main_size).min(max_main_size)
     };
 
-    for (line_idx, line) in lines.iter().enumerate() {
-        let (main_cursor, item_spacing) = compute_justify_content_spacing(
-            line,
-            &item_metrics,
-            container,
-            &style,
-            is_row,
-            is_reverse,
-            is_container_main_definite,
-            effective_container_main,
-            main_gap,
-        );
-
-        let line_cross_size = line_cross_sizes[line_idx];
-
-        let cross_is_reversed_progression = if is_row {
-            if style.writing_mode == WritingMode::SidewaysLr {
-                style.direction != Direction::Rtl
-            } else {
-                is_vertical_wm && style.direction == Direction::Rtl
-            }
-        } else {
-            matches!(
-                style.writing_mode,
-                WritingMode::VerticalRl | WritingMode::SidewaysRl
-            ) || (style.writing_mode == WritingMode::HorizontalTb
-                && style.direction == Direction::Rtl)
-        };
-
-        let is_cross_reverse_lines = if cross_is_reversed_progression {
-            !is_wrap_reverse
-        } else {
-            is_wrap_reverse
-        };
-
-        let line_cross_cursor = if is_cross_reverse_lines {
-            let after_lines_size: f32 = line_cross_sizes[line_idx + 1..].iter().sum();
-            let after_lines_count = line_cross_sizes.len() - 1 - line_idx;
-            cross_start_offset + after_lines_size + after_lines_count as f32 * line_spacing
-        } else {
-            normal_cross_cursor
-        };
-
-        position_flex_items_on_line(LinePlacementParams {
-            line,
-            item_metrics: &item_metrics,
-            container,
-            style: &style,
-            is_row,
-            is_reverse,
-            is_container_main_definite,
-            container_x,
-            container_y,
-            container_main_size: effective_container_main,
-            container_height,
-            content_width,
-            line_cross_size,
-            line_baseline_ascent: line_metrics.first_ascents[line_idx],
-            line_last_baseline_ascent: line_metrics.last_ascents[line_idx],
-            line_baseline_cross: line_metrics.first_group_crosses[line_idx],
-            line_last_baseline_cross: line_metrics.last_group_crosses[line_idx],
-            cross_cursor: line_cross_cursor,
-            main_cursor,
-            item_spacing,
-        });
-
-        normal_cross_cursor += line_cross_size + line_spacing;
-    }
-
-    if is_vertical_wm && is_width_auto {
-        let final_w = if is_row {
-            effective_container_main
-        } else {
-            (normal_cross_cursor - cross_gap).max(0.0)
-        };
-        container.dimensions.content.size.width = final_w;
-    }
-
-    // 7. Calculate container final height
-    finalize_container_height(ContainerFinalizeParams {
+    super::position_lines::position_lines_and_finalize(super::position_lines::PositionLinesParams {
+        lines: &lines,
+        item_metrics: &item_metrics,
         container,
+        containing_block,
+        float_ctx,
         style: &style,
         is_row,
+        is_reverse,
+        is_vertical_wm,
+        is_width_auto,
+        is_wrap_reverse,
+        is_container_main_definite,
+        effective_container_main,
+        main_gap,
+        line_cross_sizes: &line_cross_sizes,
+        cross_start_offset,
+        line_spacing,
+        line_metrics: &line_metrics,
+        container_x,
+        container_y,
+        container_height,
+        content_width,
+        specified_content_height,
         is_percent_indefinite,
         font_size,
         root_font_size,
-        container_height,
-        content_height: specified_content_height,
-        cross_cursor: normal_cross_cursor,
         cross_gap,
-        container_y,
         pad_top,
         pad_bottom,
         border_top,
         border_bottom,
     });
-
-    // Apply relative positioning offsets for flex items (CSS Flexbox §4.1)
-    let container_dims = container.dimensions;
-    for child in &mut container.children {
-        if child.style.as_ref().map(|s| s.position) == Some(Position::Relative) {
-            crate::block_flow::apply_relative_offset(child, &container_dims);
-        }
-    }
-
-    // 8. Calculate static positions for out-of-flow positioned children (CSS Flexbox §4.1)
-    calculate_abspos_static_positions(
-        container,
-        &style,
-        is_row,
-        is_reverse,
-        container_x,
-        container_y,
-        content_width,
-        container.dimensions.content.size.height,
-    );
-
-    // 9. Lay out out-of-flow positioned children
-    layout_positioned_children_with_cb(container, containing_block, float_ctx);
-
-    // CSS Flexbox §8.5: Record flex container first-line baseline
-    super::metrics::record_flex_container_baseline(
-        container,
-        &lines,
-        &line_metrics.first_ascents,
-        is_row,
-        is_wrap_reverse,
-        style.font_size,
-    );
-
-    // Initial scroll position for reverse flow directions (CSS Flexbox §5.1 & CSS Overflow 3 §2.2)
-    super::metrics::init_reverse_scroll_position(container, &style);
 }

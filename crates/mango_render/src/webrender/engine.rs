@@ -1,6 +1,5 @@
 //! WebRender engine execution and GL context management.
 
-use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -8,17 +7,13 @@ use std::time::Duration;
 
 use webrender::api::units::*;
 use webrender::api::*;
-use webrender::{RenderApi, Renderer, Transaction, WebRenderOptions, create_webrender_instance};
+use webrender::{create_webrender_instance, RenderApi, Renderer, Transaction, WebRenderOptions};
 
 use super::builder::build_webrender_display_list;
 use crate::display_list::DisplayList;
 
 /// Global mutex to serialize SWGL context calls across threads since SWGL uses a process-static `Context* ctx`.
 static SWGL_MUTEX: Mutex<()> = Mutex::new(());
-
-thread_local! {
-    static CACHED_ENGINE: RefCell<Option<WebRenderEngine>> = const { RefCell::new(None) };
-}
 
 #[derive(Clone)]
 struct SyncNotifier {
@@ -124,20 +119,14 @@ impl WebRenderEngine {
         })
     }
 
-    /// Executes a rendering closure using a thread-cached [`WebRenderEngine`] instance.
+    /// Executes a rendering closure using a synchronized [`WebRenderEngine`] instance.
     pub fn with_engine<F, R>(width: u32, height: u32, f: F) -> Option<R>
     where
         F: FnOnce(&mut WebRenderEngine) -> Option<R>,
     {
         let _guard = SWGL_MUTEX.lock().unwrap();
-        CACHED_ENGINE.with(|cell| {
-            let mut borrow = cell.borrow_mut();
-            if borrow.is_none() {
-                *borrow = WebRenderEngine::new(width, height).ok();
-            }
-            let engine = borrow.as_mut()?;
-            f(engine)
-        })
+        let mut engine = WebRenderEngine::new(width, height).ok()?;
+        f(&mut engine)
     }
 
     /// Renders a [`DisplayList`] to a raw `0xAARRGGBB` pixel buffer.
