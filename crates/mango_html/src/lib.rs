@@ -32,5 +32,5 @@ pub use entities::decode_entities;
 pub use incremental::{IncrementalParser, PreloadHint, PreloadHintKind};
 pub use mango_core::Atom;
 pub use tokenizer::{Token, Tokenizer};
-pub use tree_builder::{InsertionMode, TreeBuilder, parse_html};
+pub use tree_builder::parse_html;
 pub use tree_sink::{MangoTreeSink, parse_html5ever};

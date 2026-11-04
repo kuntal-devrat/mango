@@ -483,6 +483,24 @@ pub struct ShapedRun {
     pub height: f32,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+struct ShapeCacheKey {
+    data_ptr: usize,
+    data_len: usize,
+    face_index: u32,
+    px_size_bits: u32,
+    letter_spacing_bits: u32,
+    text: String,
+}
+
+const MAX_SHAPE_CACHE_ENTRIES: usize = 512;
+
+std::thread_local! {
+    static SHAPE_CACHE: std::cell::RefCell<Vec<(ShapeCacheKey, ShapedRun)>> = const {
+        std::cell::RefCell::new(Vec::new())
+    };
+}
+
 /// Shapes a text run using OpenType tables (GSUB ligatures/conjuncts, GPOS kerning/offsets) via `rustybuzz`.
 ///
 /// Returns `Some(ShapedRun)` if the font bytes are valid OpenType/TrueType data,
@@ -496,6 +514,29 @@ pub fn shape_text_with_font_data(
 ) -> Option<ShapedRun> {
     if text.is_empty() || px_size <= 0.0 {
         return Some(ShapedRun::default());
+    }
+
+    let key = ShapeCacheKey {
+        data_ptr: font_data.as_ptr() as usize,
+        data_len: font_data.len(),
+        face_index,
+        px_size_bits: px_size.to_bits(),
+        letter_spacing_bits: letter_spacing.to_bits(),
+        text: text.to_string(),
+    };
+
+    if let Some(run) = SHAPE_CACHE.with(|cache| {
+        if let Ok(mut cache) = cache.try_borrow_mut() {
+            if let Some(pos) = cache.iter().position(|(k, _)| k == &key) {
+                let hit = cache.remove(pos);
+                let run = hit.1.clone();
+                cache.push(hit);
+                return Some(run);
+            }
+        }
+        None
+    }) {
+        return Some(run);
     }
 
     let face = rustybuzz::Face::from_slice(font_data, face_index)?;
@@ -531,11 +572,22 @@ pub fn shape_text_with_font_data(
     }
 
     let height = px_size * 1.2;
-    Some(ShapedRun {
+    let result = ShapedRun {
         glyphs,
         width: total_width,
         height,
-    })
+    };
+
+    SHAPE_CACHE.with(|cache| {
+        if let Ok(mut cache) = cache.try_borrow_mut() {
+            if cache.len() >= MAX_SHAPE_CACHE_ENTRIES {
+                cache.remove(0);
+            }
+            cache.push((key, result.clone()));
+        }
+    });
+
+    Some(result)
 }
 
 #[cfg(test)]
