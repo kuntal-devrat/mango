@@ -173,15 +173,29 @@ pub fn update_styled_subtree(
     let propagate_to_children = this_node_changed_inherited;
     let current_style = node.style.clone();
 
-    for child in &mut node.children {
-        recalculated_count += update_styled_subtree(
-            child,
-            doc,
-            dirty_nodes,
-            author_index,
-            Some(&current_style),
-            propagate_to_children,
-        );
+    // Fast-path subtree skipping: if inherited properties did not change and
+    // this node has no dirty descendants (CHILD_DIRTY flag), skip traversing all children.
+    let has_dirty_children = node
+        .node_id
+        .and_then(|nid| doc.get(nid))
+        .is_none_or(|dom_node| {
+            dom_node
+                .dirty_flags
+                .contains(mango_html::dom::NodeDirtyFlags::CHILD_DIRTY)
+                || is_directly_dirty
+        });
+
+    if propagate_to_children || has_dirty_children {
+        for child in &mut node.children {
+            recalculated_count += update_styled_subtree(
+                child,
+                doc,
+                dirty_nodes,
+                author_index,
+                Some(&current_style),
+                propagate_to_children,
+            );
+        }
     }
 
     recalculated_count

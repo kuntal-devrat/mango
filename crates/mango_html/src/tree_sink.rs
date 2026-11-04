@@ -353,6 +353,6 @@ pub fn parse_html5ever(html: &str) -> Document {
         .from_utf8()
         .read_from(&mut bytes)
         .expect("HTML5ever parsing should not fail on in-memory buffers");
-    doc.dirty_nodes.clear();
+    doc.clear_dirty();
     doc
 }

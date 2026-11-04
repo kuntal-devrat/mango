@@ -23,6 +23,18 @@ impl std::error::Error for DomError {}
 /// Handle to a DOM node inside a [`Document`]'s arena.
 pub type NodeId = Id<Node>;
 
+bitflags::bitflags! {
+    /// Fine-grained dirty flags for incremental DOM invalidation.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    pub struct NodeDirtyFlags: u8 {
+        const CLEAN = 0;
+        const STYLE_DIRTY = 1 << 0;
+        const LAYOUT_DIRTY = 1 << 1;
+        const PAINT_DIRTY = 1 << 2;
+        const CHILD_DIRTY = 1 << 3;
+    }
+}
+
 /// A DOM node in the tree.
 #[derive(Debug, Clone)]
 pub struct Node {
@@ -33,6 +45,7 @@ pub struct Node {
     pub prev_sibling: Option<NodeId>,
     pub next_sibling: Option<NodeId>,
     pub data: NodeData,
+    pub dirty_flags: NodeDirtyFlags,
 }
 
 /// The specific payload of a DOM node.

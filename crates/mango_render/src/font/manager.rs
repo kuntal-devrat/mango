@@ -670,78 +670,14 @@ impl FontManager {
         family: FontFamily,
         letter_spacing: f32,
     ) -> (f32, f32) {
-        if font_size <= 0.0 || text.is_empty() {
-            return (0.0, 0.0);
-        }
-        let primary_font = self.select_font(family, weight);
-        let reg_font = self.select_font(family, FontWeight::Regular);
-        let is_synth_bold = weight == FontWeight::Bold;
-        let px_size = font_size.max(1.0);
-
-        if !is_synth_bold
-            && !text.contains('\n')
-            && !text.chars().any(is_emoji_char)
-            && text.chars().any(super::shaping::is_complex_char)
-        {
-            let data = self.select_font_data(family, weight);
-            if let Some(shaped) =
-                super::shaping::shape_text_with_font_data(&data, 0, text, px_size, letter_spacing)
-            {
-                if !shaped.glyphs.is_empty() && shaped.glyphs.iter().all(|g| g.glyph_id != 0) {
-                    let line_metrics = primary_font.horizontal_line_metrics(px_size);
-                    let height = line_metrics
-                        .map(|lm| lm.new_line_size)
-                        .unwrap_or(px_size * 1.2);
-                    return (shaped.width, height);
-                }
-            }
-        }
-
-        let shaped_text;
-        let text_to_measure = if text.chars().any(super::shaping::is_complex_char) {
-            shaped_text = super::shaping::shape_complex_script(text);
-            &shaped_text
-        } else {
-            text
-        };
-
-        let mut total_width = 0.0f32;
-        for ch in text_to_measure.chars() {
-            if ch == '\n' {
-                continue;
-            }
-            if super::emoji::is_zero_width_or_format(ch) {
-                continue;
-            }
-            if is_emoji_char(ch) {
-                total_width += px_size + letter_spacing;
-                continue;
-            }
-            let font = self.select_font_for_char(family, weight, ch);
-            let metrics = font.metrics(ch, px_size);
-            let synth_extra = if is_synth_bold
-                && std::ptr::eq(font.as_ref(), reg_font.as_ref())
-                && !ch.is_whitespace()
-            {
-                if px_size >= 48.0 {
-                    3.0
-                } else if px_size >= 28.0 {
-                    2.0
-                } else {
-                    1.0
-                }
-            } else {
-                0.0
-            };
-            total_width += metrics.advance_width + synth_extra + letter_spacing;
-        }
-
-        let line_metrics = primary_font.horizontal_line_metrics(px_size);
-        let height = line_metrics
-            .map(|lm| lm.new_line_size)
-            .unwrap_or(px_size * 1.2);
-
-        (total_width, height)
+        super::measure_cache::measure_text_with_spacing_cached(
+            self,
+            text,
+            font_size,
+            weight,
+            family,
+            letter_spacing,
+        )
     }
 
     /// Measures text using default SansSerif family (for UI elements).
@@ -757,10 +693,7 @@ impl FontManager {
         weight: FontWeight,
         family: FontFamily,
     ) -> f32 {
-        if font_size <= 0.0 {
-            return 0.0;
-        }
-        if super::emoji::is_zero_width_or_format(ch) {
+        if font_size <= 0.0 || super::emoji::is_zero_width_or_format(ch) {
             return 0.0;
         }
         if is_emoji_char(ch) {

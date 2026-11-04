@@ -284,7 +284,7 @@ impl JsRuntime {
         static V8_INIT: std::sync::Once = std::sync::Once::new();
         V8_INIT.call_once(|| {
             deno_core::v8::V8::set_flags_from_string(
-                "--max-old-space-size=1024 --optimize-for-size --expose-gc",
+                "--max-old-space-size=256 --optimize-for-size --expose-gc",
             );
         });
 
@@ -295,7 +295,7 @@ impl JsRuntime {
             // grow V8 past the browser process's memory budget before Mango
             // gets a chance to reclaim anything.
             create_params: Some(
-                deno_core::v8::Isolate::create_params().heap_limits(0, 768 * 1024 * 1024),
+                deno_core::v8::Isolate::create_params().heap_limits(0, 256 * 1024 * 1024),
             ),
             module_loader: Some(Rc::new(
                 crate::runtime::module_loader::MangoModuleLoader::with_resource_cache(

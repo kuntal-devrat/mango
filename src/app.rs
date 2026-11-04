@@ -82,6 +82,10 @@ pub struct MangoApp {
     modifiers: Modifiers,
     /// Timestamp of the previous animation tick, for frame-delta computation.
     last_frame: Option<Instant>,
+    /// Timestamp of the most recent user interaction or activity.
+    last_activity: Instant,
+    /// Timestamp of the most recent idle memory compaction.
+    last_purge: Instant,
 }
 
 impl Default for MangoApp {
@@ -92,11 +96,14 @@ impl Default for MangoApp {
 
 impl MangoApp {
     pub fn new(initial_url: Option<String>) -> Self {
+        let now = Instant::now();
         Self {
             windows: HashMap::new(),
             initial_url,
             modifiers: Modifiers::default(),
             last_frame: None,
+            last_activity: now,
+            last_purge: now,
         }
     }
 
@@ -292,6 +299,38 @@ impl ApplicationHandler for MangoApp {
             self.create_new_window(event_loop, Some(&url));
         }
 
+        // Frame-budgeted idle GC: use leftover frame time (<16ms) to incrementally
+        // collect unreferenced DOM wrappers and microtasks without frame drops.
+        let frame_duration = now.elapsed();
+        if frame_duration < Duration::from_millis(16) {
+            let leftover = Duration::from_millis(16) - frame_duration;
+            if leftover >= Duration::from_millis(2) {
+                for state in self.windows.values_mut() {
+                    if let Some(rt) = &mut state.browser.js_runtime {
+                        rt.perform_idle_gc_step();
+                    }
+                }
+            }
+        }
+
+        // Aggressive idle compaction: when no user input, animation, or background
+        // tasks have occurred for >= 2 seconds, trigger low-memory compaction
+        // and return cached allocator pages back to the OS.
+        if any_animating || any_smooth_scroll || any_background_work || any_pending_scripts {
+            self.last_activity = now;
+        } else if now.duration_since(self.last_activity) >= Duration::from_secs(2)
+            && now.duration_since(self.last_purge) >= Duration::from_secs(3)
+        {
+            self.last_purge = now;
+            for state in self.windows.values_mut() {
+                if let Some(rt) = &mut state.browser.js_runtime {
+                    rt.purge_memory();
+                }
+            }
+            mango_render::prune_image_caches();
+            crate::browser::trim_allocator_memory();
+        }
+
         // Keep script work incremental, but let the OS process events between
         // scripts. Network and image workers wake this loop through the event
         // loop proxy; a short bounded poll while they are active also lets us
@@ -336,6 +375,7 @@ impl ApplicationHandler for MangoApp {
         window_id: WindowId,
         event: WindowEvent,
     ) {
+        self.last_activity = Instant::now();
         match event {
             WindowEvent::CloseRequested => {
                 log::info!("Window close requested for {:?}.", window_id);

@@ -264,8 +264,7 @@ impl Document {
             c.next_sibling = None;
         }
 
-        self.dirty_nodes.insert(parent);
-        self.version = self.version.wrapping_add(1);
+        self.mark_dirty(parent);
     }
 
     /// Inserts a child node immediately before an existing reference child.
@@ -373,8 +372,7 @@ impl Document {
             c.next_sibling = Some(before);
         }
 
-        self.dirty_nodes.insert(parent);
-        self.version = self.version.wrapping_add(1);
+        self.mark_dirty(parent);
         Ok(())
     }
 
@@ -528,8 +526,7 @@ impl Document {
         }
 
         if let Some(p) = parent {
-            self.dirty_nodes.insert(p);
-            self.version = self.version.wrapping_add(1);
+            self.mark_dirty(p);
         }
     }
 

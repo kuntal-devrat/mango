@@ -34,6 +34,7 @@ pub mod flex_flow;
 pub mod float;
 pub mod grid_flow;
 pub mod inline_flow;
+pub mod scratchpad;
 pub mod shaping;
 pub mod snapshot;
 pub mod style_tree;
@@ -64,6 +65,7 @@ pub use float::FloatContext;
 pub use grid_flow::{layout_grid, measure_grid_intrinsic_widths};
 pub use inline_flow::{layout_inline_children, measure_text_width};
 pub use mango_render::{DiffOp, DisplayListDiff};
+pub use scratchpad::with_layout_scratchpad;
 pub use shaping::{
     is_arabic_char, is_complex_char, is_devanagari_char, is_thai_char, segment_thai_syllables,
     shape_arabic, shape_complex_script, shape_devanagari, shape_thai,
@@ -216,37 +218,39 @@ pub fn layout_styled_document(
     scroll_x: f32,
     scroll_y: f32,
 ) -> (LayoutBox, DisplayList) {
-    let maps = collect_image_maps(doc);
-    let mut root_box = build_box_tree_with_maps(&styled_root, Some(&maps));
+    with_layout_scratchpad(|_scratch| {
+        let maps = collect_image_maps(doc);
+        let mut root_box = build_box_tree_with_maps(&styled_root, Some(&maps));
 
-    let containing_block =
-        Dimensions::new(Rect::new(0.0, 0.0, env.viewport_width, env.viewport_height));
-    let mut float_ctx = FloatContext::new();
+        let containing_block =
+            Dimensions::new(Rect::new(0.0, 0.0, env.viewport_width, env.viewport_height));
+        let mut float_ctx = FloatContext::new();
 
-    let root_pos = root_box
-        .style
-        .as_ref()
-        .map(|s| s.position)
-        .unwrap_or(mango_css::values::Position::Static);
-    if matches!(
-        root_pos,
-        mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
-    ) {
-        crate::block_flow::positioned::layout_positioned_element(
-            &mut root_box,
-            &containing_block,
-            &mut float_ctx,
-        );
-    } else {
-        layout_block(&mut root_box, &containing_block, &mut float_ctx);
-    }
+        let root_pos = root_box
+            .style
+            .as_ref()
+            .map(|s| s.position)
+            .unwrap_or(mango_css::values::Position::Static);
+        if matches!(
+            root_pos,
+            mango_css::values::Position::Absolute | mango_css::values::Position::Fixed
+        ) {
+            crate::block_flow::positioned::layout_positioned_element(
+                &mut root_box,
+                &containing_block,
+                &mut float_ctx,
+            );
+        } else {
+            layout_block(&mut root_box, &containing_block, &mut float_ctx);
+        }
 
-    clamp_scroll_offsets(&mut root_box);
-    root_box.prune_raw_children();
+        clamp_scroll_offsets(&mut root_box);
+        root_box.prune_raw_children();
 
-    let display_list = build_display_list_with_scroll_xy(&root_box, scroll_x, scroll_y);
+        let display_list = build_display_list_with_scroll_xy(&root_box, scroll_x, scroll_y);
 
-    (root_box, display_list)
+        (root_box, display_list)
+    })
 }
 
 fn clamp_scroll_offsets(box_node: &mut LayoutBox) {

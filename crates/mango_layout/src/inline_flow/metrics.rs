@@ -64,21 +64,25 @@ pub(crate) fn compute_balanced_line_width(
         return None;
     }
 
-    let simulate = |w: f32| -> Vec<f32> {
-        let mut lines = Vec::new();
+    let simulate = |w: f32, out: &mut [f32; 16]| -> usize {
+        let mut count = 0;
         let mut cur = 0.0f32;
         for a in atoms {
             if cur > 0.0 && cur + a.width > w {
-                lines.push(cur);
+                if count < 16 {
+                    out[count] = cur;
+                    count += 1;
+                }
                 cur = a.width;
             } else {
                 cur += a.width;
             }
         }
-        if cur > 0.0 {
-            lines.push(cur);
+        if cur > 0.0 && count < 16 {
+            out[count] = cur;
+            count += 1;
         }
-        lines
+        count
     };
 
     let variance = |lines: &[f32]| -> f32 {
@@ -93,12 +97,14 @@ pub(crate) fn compute_balanced_line_width(
     let mut high = container_width;
     let mut best_w = container_width;
     let mut best_var = f32::MAX;
+    let mut lines_buf = [0.0f32; 16];
 
     for _ in 0..20 {
         let mid = (low + high) * 0.5;
-        let lines = simulate(mid);
+        let len = simulate(mid, &mut lines_buf);
+        let lines = &lines_buf[..len];
         if lines.len() <= target_lines {
-            let var = variance(&lines);
+            let var = variance(lines);
             if var < best_var {
                 best_var = var;
                 best_w = mid;

@@ -14,3 +14,4 @@ rayon.workspace = true
 self_cell = "1.0"
 unicode-bidi.workspace = true
 taffy.workspace = true
+bumpalo.workspace = true

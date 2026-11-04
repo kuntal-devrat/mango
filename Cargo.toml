@@ -72,6 +72,9 @@ webrender_api = "0.70.0"
 swgl = "0.70.0"
 gleam = "0.15"
 euclid = "0.22"
+quick_cache = "0.6.9"
+bumpalo = "3.16"
+bitflags = "2.4"
 
 
 [package]
