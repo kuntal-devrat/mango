@@ -21,3 +21,4 @@ webrender_api.workspace = true
 swgl.workspace = true
 gleam.workspace = true
 euclid.workspace = true
+percent-encoding.workspace = true
