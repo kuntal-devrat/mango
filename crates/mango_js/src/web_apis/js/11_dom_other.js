@@ -4,12 +4,108 @@
     globalThis.Document.prototype.createComment      = function(t) { return (typeof document !== 'undefined' && document.createComment) ? document.createComment(t) : null; };
     globalThis.Document.prototype.createProcessingInstruction = function(target, data) { return (typeof document !== 'undefined' && document.createProcessingInstruction) ? document.createProcessingInstruction(target, data) : null; };
     globalThis.Document.prototype.createDocumentFragment = function() { return (typeof document !== 'undefined' && document.createDocumentFragment) ? document.createDocumentFragment() : null; };
-    globalThis.Document.prototype.querySelector      = function(s) { return (typeof document !== 'undefined') ? document.querySelector(s) : null; };
-    globalThis.Document.prototype.querySelectorAll   = function(s) { return (typeof document !== 'undefined') ? document.querySelectorAll(s) : []; };
-    globalThis.Document.prototype.getElementById     = function(i) { return (typeof document !== 'undefined') ? document.getElementById(i) : null; };
-    globalThis.Document.prototype.getElementsByTagName    = function(t) { return (typeof document !== 'undefined' && Object.prototype.hasOwnProperty.call(document, 'getElementsByTagName')) ? document.getElementsByTagName(t) : ((typeof _defaultGetElementsByTagName === 'function') ? _defaultGetElementsByTagName(this, t) : []); };
-    globalThis.Document.prototype.getElementsByTagNameNS  = function(ns, t) { return (typeof document !== 'undefined' && Object.prototype.hasOwnProperty.call(document, 'getElementsByTagNameNS')) ? document.getElementsByTagNameNS(ns, t) : ((typeof _defaultGetElementsByTagNameNS === 'function') ? _defaultGetElementsByTagNameNS(this, ns, t) : []); };
-    globalThis.Document.prototype.getElementsByClassName  = function(c) { return (typeof document !== 'undefined') ? document.getElementsByClassName(c) : []; };
+    globalThis.Document.prototype.querySelector      = function(s) {
+        if (this === document && typeof document !== 'undefined') return document.querySelector(s);
+        return (typeof _defaultQuerySelector === 'function') ? _defaultQuerySelector(this, s) : null;
+    };
+    globalThis.Document.prototype.querySelectorAll   = function(s) {
+        if (this === document && typeof document !== 'undefined') return document.querySelectorAll(s);
+        return (typeof _defaultQuerySelectorAll === 'function') ? _defaultQuerySelectorAll(this, s) : _createNodeList(function() { return []; });
+    };
+    globalThis.Document.prototype.getElementById     = function(i) {
+        if (arguments.length === 0) return null;
+        var s = String(i);
+        if (this === document) {
+            if (typeof globalThis._origGetById === 'function') {
+                var nid = globalThis._origGetById(s);
+                if (nid !== -1 && nid !== undefined && nid !== 0 && nid !== null) {
+                    var w = (typeof _wrapElement === 'function' ? _wrapElement(nid) : (globalThis._wrapElement ? globalThis._wrapElement(nid) : (globalThis._mangoWrap ? globalThis._mangoWrap(nid) : null)));
+                    if (w) return w;
+                }
+            }
+            if (typeof document !== 'undefined' && typeof document.getElementById === 'function' && document.getElementById !== globalThis.Document.prototype.getElementById) {
+                var el = document.getElementById(s);
+                if (el) return el;
+            }
+        }
+        function findId(n) {
+            if (!n) return null;
+            if (n.nodeType === 1 && ((n.getAttribute && n.getAttribute('id')) || n.id) === s) return n;
+            var kids = n.childNodes || n._childNodes || [];
+            for (var k = 0; k < kids.length; k++) { var found = findId(kids[k]); if (found) return found; }
+            return null;
+        }
+        return findId(this.documentElement || this);
+    };
+    globalThis.Document.prototype.getElementsByTagName = function(t) {
+        if (this === document && typeof document !== 'undefined' && typeof document.getElementsByTagName === 'function' && document.getElementsByTagName !== globalThis.Document.prototype.getElementsByTagName) {
+            return document.getElementsByTagName(t);
+        }
+        var target = String(t).toLowerCase();
+        var all = (target === '*');
+        var res = [];
+        function walk(n) {
+            if (!n) return;
+            var kids = n.childNodes || n._childNodes || [];
+            for (var k = 0; k < kids.length; k++) {
+                var c = kids[k];
+                if (c && c.nodeType === 1) {
+                    var tag = (c.localName || c.tagName || c.nodeName || '').toLowerCase();
+                    if (tag.indexOf(':') !== -1) tag = tag.split(':')[1];
+                    if (all || tag === target) res.push(c);
+                    walk(c);
+                }
+            }
+        }
+        walk(this.documentElement || this);
+        return (typeof _createHTMLCollection === 'function') ? _createHTMLCollection(function() { return res; }) : res;
+    };
+    globalThis.Document.prototype.getElementsByTagNameNS = function(ns, t) {
+        if (this === document && typeof document !== 'undefined' && typeof document.getElementsByTagNameNS === 'function' && document.getElementsByTagNameNS !== globalThis.Document.prototype.getElementsByTagNameNS) {
+            return document.getElementsByTagNameNS(ns, t);
+        }
+        var target = String(t).toLowerCase();
+        var targetNs = ns ? String(ns) : null;
+        var all = (target === '*');
+        var res = [];
+        function walk(n) {
+            if (!n) return;
+            var kids = n.childNodes || n._childNodes || [];
+            for (var k = 0; k < kids.length; k++) {
+                var c = kids[k];
+                if (c && c.nodeType === 1) {
+                    var tag = (c.localName || c.tagName || c.nodeName || '').toLowerCase();
+                    if (tag.indexOf(':') !== -1) tag = tag.split(':')[1];
+                    var cNs = c.namespaceURI || null;
+                    if ((all || tag === target) && (!targetNs || targetNs === '*' || cNs === targetNs)) res.push(c);
+                    walk(c);
+                }
+            }
+        }
+        walk(this.documentElement || this);
+        return (typeof _createHTMLCollection === 'function') ? _createHTMLCollection(function() { return res; }) : res;
+    };
+    globalThis.Document.prototype.getElementsByClassName = function(c) {
+        if (this === document && typeof document !== 'undefined' && typeof document.getElementsByClassName === 'function' && document.getElementsByClassName !== globalThis.Document.prototype.getElementsByClassName) {
+            return document.getElementsByClassName(c);
+        }
+        var targetCls = String(c);
+        var res = [];
+        function walk(n) {
+            if (!n) return;
+            var kids = n.childNodes || n._childNodes || [];
+            for (var k = 0; k < kids.length; k++) {
+                var el = kids[k];
+                if (el && el.nodeType === 1) {
+                    var cls = (el.getAttribute && el.getAttribute('class')) || el.className || '';
+                    if (cls.split(/\s+/).indexOf(targetCls) !== -1) res.push(el);
+                    walk(el);
+                }
+            }
+        }
+        walk(this.documentElement || this);
+        return (typeof _createHTMLCollection === 'function') ? _createHTMLCollection(function() { return res; }) : res;
+    };
     globalThis.Document.prototype.createEvent        = function(t) { return (typeof document !== 'undefined' && document.createEvent) ? document.createEvent(t) : new globalThis.Event(t); };
     globalThis.Document.prototype.importNode         = function(n, d) { return n && n.cloneNode ? n.cloneNode(d) : n; };
     globalThis.Document.prototype.adoptNode          = function(n) { return (typeof _adoptNodeInternal === 'function') ? _adoptNodeInternal(this, n) : n; };
@@ -18,22 +114,30 @@
     globalThis.Document.prototype.caretPositionFromPoint = function() { return null; };
     globalThis.Document.prototype.createRange        = function() { return (typeof document !== 'undefined' && document.createRange) ? document.createRange() : new globalThis.Range(); };
     globalThis.Document.prototype.getSelection      = function() { return (typeof document !== 'undefined' && document.getSelection) ? document.getSelection() : null; };
+    globalThis.Document.prototype.createNodeIterator = function(root, whatToShow, filter) {
+        return (typeof document !== 'undefined' && document.createNodeIterator) ? document.createNodeIterator(root, whatToShow, filter) : null;
+    };
+    globalThis.Document.prototype.createTreeWalker   = function(root, whatToShow, filter) {
+        return (typeof document !== 'undefined' && document.createTreeWalker) ? document.createTreeWalker(root, whatToShow, filter) : null;
+    };
     globalThis.Document.prototype.write             = function() {
-        if (typeof globalThis._documentWrite === 'function') {
-            globalThis._documentWrite(this, arguments, false);
-        } else if (typeof document !== 'undefined' && typeof document.write === 'function' && this === document) {
-            document.write.apply(document, arguments);
-        }
+        if (this._opened) this._writeBuffer = (this._writeBuffer || '') + Array.prototype.join.call(arguments, '');
+        else if (typeof globalThis._documentWrite === 'function') globalThis._documentWrite(this, arguments, false);
     };
     globalThis.Document.prototype.writeln           = function() {
-        if (typeof globalThis._documentWrite === 'function') {
-            globalThis._documentWrite(this, arguments, true);
-        } else if (typeof document !== 'undefined' && typeof document.writeln === 'function' && this === document) {
-            document.writeln.apply(document, arguments);
-        }
+        if (this._opened) this._writeBuffer = (this._writeBuffer || '') + Array.prototype.join.call(arguments, '') + '\n';
+        else if (typeof globalThis._documentWrite === 'function') globalThis._documentWrite(this, arguments, true);
     };
-    globalThis.Document.prototype.open              = function() { return this; };
-    globalThis.Document.prototype.close             = function() { return this; };
+    globalThis.Document.prototype.open              = function() { this._opened = true; this._writeBuffer = ''; return this; };
+    globalThis.Document.prototype.close             = function() {
+        if (this._opened) {
+            this._opened = false;
+            var text = this._writeBuffer || '';
+            this._writeBuffer = '';
+            if (typeof _resetDocumentWithHtml === 'function') _resetDocumentWithHtml(this, text);
+        }
+        return this;
+    };
     Object.defineProperty(globalThis.Document.prototype, 'activeElement', {
         get: function() { return (typeof document !== 'undefined') ? document.activeElement : null; },
         set: function(val) { if (typeof document !== 'undefined') document.activeElement = val; },
@@ -73,7 +177,37 @@
     });
     ['head', 'body', 'forms', 'images', 'links', 'scripts'].forEach(function(p) {
         Object.defineProperty(globalThis.Document.prototype, p, {
-            get: function() { return (typeof document !== 'undefined') ? document[p] : null; },
+            get: function() {
+                if (this === document && typeof document !== 'undefined') return document[p];
+                if (this['_' + p] !== undefined) return this['_' + p];
+                if (p === 'head' || p === 'body') {
+                    var de = this.documentElement;
+                    if (de) {
+                        var kids = de.childNodes || de._childNodes || [];
+                        for (var i = 0; i < kids.length; i++) {
+                            var k = kids[i];
+                            if (k && k.nodeType === 1) {
+                                var tag = (k.tagName || k.nodeName || '').toLowerCase();
+                                if (p === 'head' && tag === 'head') return k;
+                                if (p === 'body' && (tag === 'body' || tag === 'frameset')) return k;
+                            }
+                        }
+                    }
+                    return null;
+                }
+                if (p === 'forms') return this.getElementsByTagName('form');
+                if (p === 'images') return this.getElementsByTagName('img');
+                if (p === 'scripts') return this.getElementsByTagName('script');
+                if (p === 'links') {
+                    var allA = this.getElementsByTagName('a');
+                    var allArea = this.getElementsByTagName('area');
+                    var res = [];
+                    for (var a = 0; a < allA.length; a++) if (allA[a].hasAttribute && allA[a].hasAttribute('href')) res.push(allA[a]);
+                    for (var ar = 0; ar < allArea.length; ar++) if (allArea[ar].hasAttribute && allArea[ar].hasAttribute('href')) res.push(allArea[ar]);
+                    return (typeof _createHTMLCollection === 'function') ? _createHTMLCollection(function() { return res; }) : res;
+                }
+                return null;
+            },
             configurable: true
         });
     });
@@ -401,355 +535,3 @@
             });
         }
     });
-
-    // ── 24. Other DOM types ───────────────────────────────────────────────────
-    globalThis.DocumentFragment = function() {};
-    globalThis.DocumentFragment.prototype = Object.create(globalThis.Node.prototype);
-    globalThis.DocumentFragment.prototype.append = globalThis.Element.prototype.append;
-    globalThis.DocumentFragment.prototype.prepend = globalThis.Element.prototype.prepend;
-    globalThis.DocumentFragment.prototype.replaceChildren = globalThis.Element.prototype.replaceChildren;
-    globalThis.DocumentFragment.prototype.querySelector = globalThis.Element.prototype.querySelector;
-    globalThis.DocumentFragment.prototype.querySelectorAll = globalThis.Element.prototype.querySelectorAll;
-    globalThis.DocumentFragment.prototype.getElementsByTagName = function(t) {
-        return (typeof _defaultGetElementsByTagName === 'function') ? _defaultGetElementsByTagName(this, t) : [];
-    };
-    globalThis.DocumentFragment.prototype.getElementsByClassName = function(c) {
-        return (typeof _defaultGetElementsByClassName === 'function') ? _defaultGetElementsByClassName(this, c) : [];
-    };
-    globalThis.DocumentFragment.prototype.getElementById = function(id) { return this.querySelector('#' + id); };
-
-    globalThis.Document.prototype.append = globalThis.Element.prototype.append;
-    globalThis.Document.prototype.prepend = globalThis.Element.prototype.prepend;
-    globalThis.Document.prototype.replaceChildren = function() {
-        if (typeof _doReplaceChildren === 'function') {
-            return _doReplaceChildren(this, arguments, true);
-        } else if (typeof globalThis !== 'undefined' && globalThis._doReplaceChildren) {
-            return globalThis._doReplaceChildren(this, arguments, true);
-        }
-    };
-
-    var _shadowRootCtor = function ShadowRoot() {};
-    _shadowRootCtor.prototype = Object.create(globalThis.DocumentFragment.prototype);
-
-    Object.defineProperty(globalThis, 'ShadowRoot', {
-        get: function() { return _shadowRootCtor; },
-        set: function(c) {
-            _shadowRootCtor = c;
-        },
-        configurable: true
-    });
-    if (!globalThis.DOMImplementation) globalThis.DOMImplementation = function() {};
-    globalThis.CharacterData = function() { throw new TypeError("Illegal constructor"); };
-    globalThis.CharacterData.prototype = Object.create(globalThis.Node.prototype);
-    globalThis.CharacterData.prototype.constructor = globalThis.CharacterData;
-    Object.defineProperty(globalThis.CharacterData.prototype, 'data', {
-        get: function() {
-            if (this === globalThis.CharacterData.prototype || (globalThis.Comment && this === globalThis.Comment.prototype) || (globalThis.Text && this === globalThis.Text.prototype)) {
-                throw new TypeError("Illegal invocation: 'get data' called on prototype");
-            }
-            if (this._data !== undefined) return this._data;
-            if (this._nodeId !== undefined && typeof _getNodeValue === 'function') {
-                var v = _getNodeValue(this._nodeId);
-                if (v !== null && v !== undefined) return v;
-            }
-            return (this._nodeValue !== undefined && this._nodeValue !== null) ? this._nodeValue : '';
-        },
-        set: function(val) {
-            var oldVal = this.data;
-            var str = val === null ? '' : String(val);
-            this._data = str;
-            this._nodeValue = str;
-            if (this._nodeId !== undefined && typeof _setNodeValue === 'function') _setNodeValue(this._nodeId, str);
-            if (typeof globalThis !== 'undefined' && globalThis._reportDOMMutation) {
-                globalThis._reportDOMMutation({ type: 'characterData', target: this, oldValue: oldVal });
-            }
-        },
-        configurable: true,
-        enumerable: true
-    });
-    Object.defineProperty(globalThis.CharacterData.prototype, 'nodeValue', {
-        get: function() { return this.data; },
-        set: function(val) { this.data = val; },
-        configurable: true,
-        enumerable: true
-    });
-    Object.defineProperty(globalThis.CharacterData.prototype, 'textContent', {
-        get: function() { return (typeof _defaultGetTextContent === 'function') ? _defaultGetTextContent(this) : this.data; },
-        set: function(val) {
-            if (typeof _defaultSetTextContent === 'function') {
-                _defaultSetTextContent(this, val);
-            } else {
-                this.data = (val === null || val === undefined) ? '' : String(val);
-            }
-        },
-        configurable: true,
-        enumerable: true
-    });
-    Object.defineProperty(globalThis.CharacterData.prototype, 'length', {
-        get: function() { return (this.data || '').length; },
-        configurable: true
-    });
-    globalThis.CharacterData.prototype.substringData = function(offset, count) {
-        if (arguments.length < 2) throw new TypeError("Failed to execute 'substringData': 2 arguments required");
-        var str = this.data || '', uOffset = offset >>> 0, uCount = count >>> 0;
-        if (uOffset > str.length) throw new ((globalThis && globalThis.DOMException) ? globalThis.DOMException : (typeof DOMException !== 'undefined' ? DOMException : Error))("The index is not in the allowed range.", "IndexSizeError");
-        return str.substring(uOffset, uOffset + uCount);
-    };
-    globalThis.CharacterData.prototype.appendData = function(data) {
-        if (arguments.length < 1) throw new TypeError("Failed to execute 'appendData': 1 argument required");
-        this.data = (this.data || '') + String(data);
-    };
-    globalThis.CharacterData.prototype.insertData = function(offset, data) {
-        if (arguments.length < 2) throw new TypeError("Failed to execute 'insertData': 2 arguments required");
-        this.replaceData(offset, 0, data);
-    };
-    globalThis.CharacterData.prototype.deleteData = function(offset, count) {
-        if (arguments.length < 2) throw new TypeError("Failed to execute 'deleteData': 2 arguments required");
-        this.replaceData(offset, count, '');
-    };
-    globalThis.CharacterData.prototype.replaceData = function(offset, count, data) {
-        if (arguments.length < 3) throw new TypeError("Failed to execute 'replaceData': 3 arguments required");
-        var str = this.data || '', uOffset = offset >>> 0, uCount = count >>> 0;
-        if (uOffset > str.length) throw new ((globalThis && globalThis.DOMException) ? globalThis.DOMException : (typeof DOMException !== 'undefined' ? DOMException : Error))("The index is not in the allowed range.", "IndexSizeError");
-        if (uOffset + uCount > str.length) uCount = str.length - uOffset;
-        this.data = str.substring(0, uOffset) + String(data) + str.substring(uOffset + uCount);
-    };
-    globalThis.Text = function(data) {
-        var t = Object.create(globalThis.Text.prototype);
-        t.nodeType = 3;
-        t.nodeName = "#text";
-        t.ownerDocument = (typeof document !== 'undefined') ? document : null;
-        t.data = data === undefined ? "" : String(data);
-        return t;
-    };
-    globalThis.Text.prototype = Object.create(globalThis.CharacterData.prototype);
-    globalThis.Text.prototype.constructor = globalThis.Text;
-    globalThis.Text.prototype.splitText = function(offset) {
-        if (arguments.length < 1) throw new TypeError("Failed to execute 'splitText' on 'Text': 1 argument required");
-        var str = this.data || '';
-        var uOffset = offset >>> 0;
-        if (uOffset > str.length) {
-            var DomEx = (globalThis && globalThis.DOMException) ? globalThis.DOMException : (typeof DOMException !== 'undefined' ? DOMException : Error);
-            throw new DomEx("The index is not in the allowed range.", "IndexSizeError");
-        }
-        var head = str.substring(0, uOffset);
-        var tail = str.substring(uOffset);
-        this.data = head;
-        var doc = this.ownerDocument || (typeof document !== 'undefined' ? document : null);
-        var newNode = (doc && typeof doc.createTextNode === 'function')
-            ? doc.createTextNode(tail)
-            : new globalThis.Text(tail);
-        var parent = this.parentNode || this._parentNode;
-        if (parent && typeof parent.insertBefore === 'function') {
-            parent.insertBefore(newNode, this.nextSibling);
-        }
-        if (typeof globalThis !== 'undefined' && typeof globalThis._notifyRangeSplitText === 'function') {
-            globalThis._notifyRangeSplitText(this, newNode, uOffset);
-        }
-        return newNode;
-    };
-    Object.defineProperty(globalThis.Text.prototype, 'wholeText', {
-        get: function() {
-            var start = this;
-            while (start.previousSibling && start.previousSibling.nodeType === 3) {
-                start = start.previousSibling;
-            }
-            var text = "";
-            var cur = start;
-            while (cur && cur.nodeType === 3) {
-                text += cur.data || "";
-                cur = cur.nextSibling;
-            }
-            return text;
-        },
-        configurable: true,
-        enumerable: true
-    });
-
-    globalThis.Comment = function(data) {
-        var c = Object.create(globalThis.Comment.prototype);
-        c.nodeType = 8;
-        c.nodeName = "#comment";
-        c.ownerDocument = (typeof document !== 'undefined') ? document : null;
-        c.data = data === undefined ? "" : String(data);
-        return c;
-    };
-    globalThis.Comment.prototype = Object.create(globalThis.CharacterData.prototype);
-    globalThis.Comment.prototype.constructor = globalThis.Comment;
-
-    globalThis.CDATASection = function() {};
-    globalThis.CDATASection.prototype = Object.create(globalThis.Text.prototype);
-    globalThis.ProcessingInstruction = function() {};
-    globalThis.ProcessingInstruction.prototype = Object.create(globalThis.CharacterData.prototype);
-    Object.defineProperty(globalThis.ProcessingInstruction.prototype, 'target', { get: function() { return this._target || ''; }, configurable: true, enumerable: true });
-    globalThis.DocumentType = function() { throw new TypeError("Illegal constructor"); };
-    globalThis.DocumentType.prototype = Object.create(globalThis.Node.prototype);
-    globalThis.DocumentType.prototype.constructor = globalThis.DocumentType;
-    Object.defineProperty(globalThis.DocumentType.prototype, 'name', { get: function() { return (this._name !== undefined) ? this._name : ((this._nodeId !== undefined && typeof _getNodeName === 'function') ? _getNodeName(this._nodeId) : ''); }, configurable: true, enumerable: true });
-    Object.defineProperty(globalThis.DocumentType.prototype, 'publicId', { get: function() { return (this._publicId !== undefined) ? this._publicId : ((this._nodeId !== undefined && typeof _getDoctypePublicId === 'function') ? _getDoctypePublicId(this._nodeId) : ''); }, configurable: true, enumerable: true });
-    Object.defineProperty(globalThis.DocumentType.prototype, 'systemId', { get: function() { return (this._systemId !== undefined) ? this._systemId : ((this._nodeId !== undefined && typeof _getDoctypeSystemId === 'function') ? _getDoctypeSystemId(this._nodeId) : ''); }, configurable: true, enumerable: true });
-    Object.defineProperty(globalThis.DocumentType.prototype, 'nodeName', { get: function() { return this.name; }, configurable: true, enumerable: true });
-    Object.defineProperty(globalThis.DocumentType.prototype, 'nodeType', { get: function() { if (this === globalThis.DocumentType.prototype) throw new TypeError("Illegal invocation: 'get nodeType' called on prototype"); return 10; }, configurable: true, enumerable: true });
-    globalThis.XMLDocument = function() {};
-    globalThis.XMLDocument.prototype = Object.create(globalThis.Document.prototype);
-    globalThis.XMLDocument.prototype.constructor = globalThis.XMLDocument;
-
-    ['before', 'after', 'replaceWith', 'remove'].forEach(function(m) {
-        var fn = function() {
-            var parent = this.parentElement || this.parentNode;
-            if (!parent) return;
-            if (m === 'remove') {
-                parent.removeChild(this);
-                return;
-            }
-            var marker = document.createTextNode('');
-            if (m === 'before' || m === 'replaceWith') {
-                parent.insertBefore(marker, this);
-            } else if (m === 'after') {
-                parent.insertBefore(marker, this.nextSibling);
-            }
-            var frag = document.createDocumentFragment();
-            for (var i = 0; i < arguments.length; i++) {
-                var arg = arguments[i];
-                var n = (arg && (arg.nodeType !== undefined || arg._nodeId !== undefined))
-                    ? arg
-                    : document.createTextNode(String(arg));
-                frag.appendChild(n);
-            }
-            if (m === 'replaceWith' && this.parentNode === parent) {
-                parent.removeChild(this);
-            }
-            parent.insertBefore(frag, marker);
-            parent.removeChild(marker);
-        };
-        globalThis.CharacterData.prototype[m] = fn;
-        globalThis.DocumentType.prototype[m] = fn;
-    });
-    globalThis.HTMLCollection = function() {};
-    globalThis.HTMLCollection.prototype = Object.create(Object.prototype);
-    globalThis.HTMLCollection.prototype.item = function(index) {
-        var i = Number(index);
-        return (i >= 0 && i < this.length) ? this[i] : null;
-    };
-    globalThis.HTMLCollection.prototype.namedItem = function(name) {
-        var str = String(name);
-        if (str === '') return null;
-        for (var i = 0; i < this.length; i++) {
-            var el = this[i];
-            if (el) {
-                var elId = (el.getAttribute && typeof el.getAttribute === 'function') ? el.getAttribute('id') : el.id;
-                if (elId === str) return el;
-                var elNs = (el.namespaceURI !== undefined) ? el.namespaceURI : 'http://www.w3.org/1999/xhtml';
-                if (elNs === 'http://www.w3.org/1999/xhtml' && el.getAttribute && typeof el.getAttribute === 'function' && el.getAttribute('name') === str) {
-                    return el;
-                }
-            }
-        }
-        return null;
-    };
-    globalThis.HTMLCollection.prototype[Symbol.iterator] = function() {
-        var i = 0;
-        var self = this;
-        return {
-            next: function() {
-                if (i < self.length) {
-                    return { value: self[i++], done: false };
-                }
-                return { value: undefined, done: true };
-            }
-        };
-    };
-    globalThis.HTMLCollection.prototype[Symbol.toStringTag] = 'HTMLCollection';
-
-    globalThis.NodeList = function() {};
-    globalThis.NodeList.prototype = Object.create(Object.prototype);
-    globalThis.NodeList.prototype.item = function(index) {
-        var i = Number(index);
-        return (i >= 0 && i < this.length) ? this[i] : null;
-    };
-    globalThis.NodeList.prototype.forEach = Array.prototype.forEach;
-    globalThis.NodeList.prototype.entries = Array.prototype.entries;
-    globalThis.NodeList.prototype.keys = Array.prototype.keys;
-    globalThis.NodeList.prototype.values = Array.prototype.values;
-    globalThis.NodeList.prototype[Symbol.iterator] = Array.prototype[Symbol.iterator];
-    globalThis.NodeList.prototype[Symbol.toStringTag] = 'NodeList';
-    globalThis.NodeFilter = {
-        FILTER_ACCEPT:1, FILTER_REJECT:2, FILTER_SKIP:3,
-        SHOW_ALL:-1, SHOW_ELEMENT:1, SHOW_ATTRIBUTE:2, SHOW_TEXT:4,
-        SHOW_COMMENT:128, SHOW_DOCUMENT:256, SHOW_DOCUMENT_FRAGMENT:1024
-    };
-    function DOMRectReadOnly(x, y, width, height) {
-        this.x = Number(x) || 0;
-        this.y = Number(y) || 0;
-        this.width = Number(width) || 0;
-        this.height = Number(height) || 0;
-    }
-    Object.defineProperties(DOMRectReadOnly.prototype, {
-        top:    { get: function() { return this.y; }, enumerable: true },
-        left:   { get: function() { return this.x; }, enumerable: true },
-        right:  { get: function() { return this.x + this.width; }, enumerable: true },
-        bottom: { get: function() { return this.y + this.height; }, enumerable: true }
-    });
-    DOMRectReadOnly.prototype.toJSON = function() {
-        return { x: this.x, y: this.y, width: this.width, height: this.height, top: this.top, left: this.left, right: this.right, bottom: this.bottom };
-    };
-    DOMRectReadOnly.fromRect = function(other) {
-        return new DOMRectReadOnly(other ? other.x : 0, other ? other.y : 0, other ? other.width : 0, other ? other.height : 0);
-    };
-    DOMRectReadOnly.prototype[Symbol.toStringTag] = 'DOMRectReadOnly';
-    globalThis.DOMRectReadOnly = DOMRectReadOnly;
-
-    function DOMRect(x, y, width, height) {
-        this.x = Number(x) || 0;
-        this.y = Number(y) || 0;
-        this.width = Number(width) || 0;
-        this.height = Number(height) || 0;
-    }
-    DOMRect.prototype = Object.create(DOMRectReadOnly.prototype);
-    DOMRect.prototype.constructor = DOMRect;
-    DOMRect.fromRect = function(other) {
-        return new DOMRect(other ? other.x : 0, other ? other.y : 0, other ? other.width : 0, other ? other.height : 0);
-    };
-    DOMRect.prototype[Symbol.toStringTag] = 'DOMRect';
-    globalThis.DOMRect = DOMRect;
-
-    function DOMRectList(rects) {
-        var arr = rects || [];
-        this.length = arr.length;
-        for (var i = 0; i < arr.length; i++) {
-            this[i] = arr[i];
-        }
-    }
-    DOMRectList.prototype.item = function(index) {
-        var i = Number(index);
-        return (i >= 0 && i < this.length) ? this[i] : null;
-    };
-    DOMRectList.prototype[Symbol.iterator] = function() {
-        var self = this;
-        var idx = 0;
-        return {
-            next: function() {
-                if (idx < self.length) {
-                    return { value: self[idx++], done: false };
-                } else {
-                    return { value: undefined, done: true };
-                }
-            }
-        };
-    };
-    DOMRectList.prototype[Symbol.toStringTag] = 'DOMRectList';
-    globalThis.DOMRectList = DOMRectList;
-    globalThis.DOMPoint = function(x,y,z,w) { this.x=x||0; this.y=y||0; this.z=z||0; this.w=w!==undefined?w:1; };
-    globalThis.DOMMatrix = function() {
-        this.a=1; this.b=0; this.c=0; this.d=1; this.e=0; this.f=0;
-        this.is2D=true; this.isIdentity=true;
-        this.transformPoint=function(p){ return p; };
-        this.multiply=function(){ return this; };
-        this.inverse=function(){ return this; };
-    };
-
-    if (typeof globalThis._bindElementPrototype === 'function') {
-        if (globalThis.Element && globalThis.Element.prototype) globalThis._bindElementPrototype(globalThis.Element.prototype);
-        if (globalThis.HTMLElement && globalThis.HTMLElement.prototype) globalThis._bindElementPrototype(globalThis.HTMLElement.prototype);
-        if (globalThis.SVGElement && globalThis.SVGElement.prototype) globalThis._bindElementPrototype(globalThis.SVGElement.prototype);
-    }

@@ -1,5 +1,6 @@
 
     var _origGetById = document.getElementById;
+    try { globalThis._origGetById = _origGetById; } catch (e) {}
     document.getElementById = function(id) {
         if (arguments.length === 0) return null;
         var sid = String(id);
@@ -484,195 +485,7 @@
         globalThis.__subresourceMap[url] = String(text);
     };
 
-    function _parseXmlToDoc(str, doc, isXhtml) {
-        var re = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<!DOCTYPE[^>]*>|<\?[\s\S]*?\?>|<(\/)?([a-zA-Z0-9_\-:]+)((?:\s+[^=>\/\s]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?)*)\s*(\/?)>|([^<]+)/g;
-        var stack = [doc];
-        var match;
-        var htmlNs = "http://www.w3.org/1999/xhtml";
-        while ((match = re.exec(str)) !== null) {
-            var token = match[0];
-            if (token.indexOf('<!--') === 0) {
-                var cText = token.substring(4, token.length - 3);
-                var comment = doc.createComment ? doc.createComment(cText) : null;
-                if (comment && stack.length > 0) stack[stack.length - 1].appendChild(comment);
-            } else if (token.indexOf('<![CDATA[') === 0) {
-                var cdText = token.substring(9, token.length - 3);
-                var cdata = doc.createTextNode ? doc.createTextNode(cdText) : null;
-                if (cdata && stack.length > 0) stack[stack.length - 1].appendChild(cdata);
-            } else if (match[2]) {
-                var isClose = !!match[1];
-                var tagName = match[2];
-                var attrsStr = match[3];
-                var isSelfClose = !!match[4];
-                if (isClose) {
-                    for (var s = stack.length - 1; s >= 1; s--) {
-                        if (stack[s].tagName && stack[s].tagName.toLowerCase() === tagName.toLowerCase()) {
-                            stack.splice(s, stack.length - s);
-                            break;
-                        }
-                    }
-                } else {
-                    var el;
-                    if (isXhtml || (doc && doc.contentType === 'application/xhtml+xml')) {
-                        el = (doc && doc.createElementNS) ? doc.createElementNS(htmlNs, tagName) : doc.createElement(tagName);
-                    } else {
-                        el = doc.createElement(tagName);
-                    }
-                    if (attrsStr) {
-                        var attrRe = /([^\s=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g;
-                        var am;
-                        while ((am = attrRe.exec(attrsStr)) !== null) {
-                            var aname = am[1];
-                            var aval = am[2] !== undefined ? am[2] : (am[3] !== undefined ? am[3] : (am[4] || ""));
-                            try { el.setAttribute(aname, aval); } catch (e) {}
-                        }
-                    }
-                    if (stack.length > 0) {
-                        stack[stack.length - 1].appendChild(el);
-                    }
-                    if (!doc.documentElement) {
-                        doc.documentElement = el;
-                    }
-                    var tagLower = tagName.toLowerCase();
-                    if (tagLower === 'head' && !doc.head) doc.head = el;
-                    if (tagLower === 'body' && !doc.body) doc.body = el;
-                    if (!isSelfClose) {
-                        stack.push(el);
-                    }
-                }
-            } else if (match[5]) {
-                var text = match[5];
-                if (stack.length > 1) {
-                    var tn = doc.createTextNode ? doc.createTextNode(text) : null;
-                    if (tn) stack[stack.length - 1].appendChild(tn);
-                }
-            }
-        }
-        return doc;
-    }
-    globalThis._parseXmlToDoc = _parseXmlToDoc;
-
-    function _getIframeContentWindow(iframe) {
-        if (!iframe || (iframe.tagName && iframe.tagName.toLowerCase() !== 'iframe')) return null;
-        if (!iframe.ownerDocument || !iframe.ownerDocument.defaultView) return null;
-        if (!iframe._contentWindow) {
-            var win = Object.create(globalThis);
-            win.frameElement = iframe;
-            win.window = win;
-            win.self = win;
-            win.top = (typeof globalThis !== 'undefined' && globalThis.window) ? globalThis.window : win;
-            win.parent = (typeof globalThis !== 'undefined' && globalThis.window) ? globalThis.window : win;
-            win.customElements = (typeof globalThis.CustomElementRegistry === 'function') ? new globalThis.CustomElementRegistry() : null;
-            win.postMessage = function(msg, targetOrigin) {};
-            win.addEventListener = function(type, listener, opt) {
-                var d = _getIframeContentDocument(iframe);
-                if (d && d.addEventListener) d.addEventListener(type, listener, opt);
-            };
-            win.removeEventListener = function(type, listener, opt) {
-                var d = _getIframeContentDocument(iframe);
-                if (d && d.removeEventListener) d.removeEventListener(type, listener, opt);
-            };
-            win.dispatchEvent = function(evt) {
-                var d = _getIframeContentDocument(iframe);
-                return (d && d.dispatchEvent) ? d.dispatchEvent(evt) : true;
-            };
-            Object.defineProperty(win, 'document', {
-                get: function() { return _getIframeContentDocument(iframe); },
-                configurable: true
-            });
-            if (globalThis.Text && globalThis.CharacterData) {
-                win.Text = function(data) {
-                    var t = Object.create(win.Text.prototype);
-                    t.nodeType = 3;
-                    t.nodeName = "#text";
-                    t.ownerDocument = win.document;
-                    t.data = data === undefined ? "" : String(data);
-                    return t;
-                };
-                win.Text.prototype = Object.create(globalThis.CharacterData.prototype);
-                win.Text.prototype.constructor = win.Text;
-                win.Text.prototype.splitText = globalThis.Text.prototype.splitText;
-                var wtDesc = Object.getOwnPropertyDescriptor(globalThis.Text.prototype, 'wholeText');
-                if (wtDesc) Object.defineProperty(win.Text.prototype, 'wholeText', wtDesc);
-            }
-            if (globalThis.Comment && globalThis.CharacterData) {
-                win.Comment = function(data) {
-                    var c = Object.create(win.Comment.prototype);
-                    c.nodeType = 8;
-                    c.nodeName = "#comment";
-                    c.ownerDocument = win.document;
-                    c.data = data === undefined ? "" : String(data);
-                    return c;
-                };
-                win.Comment.prototype = Object.create(globalThis.CharacterData.prototype);
-                win.Comment.prototype.constructor = win.Comment;
-            }
-            iframe._contentWindow = win;
-        }
-        return iframe._contentWindow;
-    }
-    globalThis._getIframeContentWindow = _getIframeContentWindow;
-
-    function _getIframeContentDocument(iframe) {
-        if (!iframe || (iframe.tagName && iframe.tagName.toLowerCase() !== 'iframe')) return null;
-        if (!iframe.ownerDocument || !iframe.ownerDocument.defaultView) return null;
-        if (!iframe._contentDocument) {
-            var src = iframe.getAttribute ? iframe.getAttribute('src') : null;
-            var doc = null;
-            var mime = 'text/html';
-            var s = String(src || '').toLowerCase();
-            var qMatch = /[?&]type=([^&]+)&subtype=([^&]+)/.exec(s);
-            if (qMatch) {
-                mime = decodeURIComponent(qMatch[1]) + '/' + decodeURIComponent(qMatch[2]);
-            } else if (s.indexOf('.bmp') !== -1) mime = 'image/bmp';
-            else if (s.indexOf('.png') !== -1) mime = 'image/png';
-            else if (s.indexOf('.gif') !== -1) mime = 'image/gif';
-            else if (s.indexOf('.jpg') !== -1 || s.indexOf('.jpeg') !== -1) mime = 'image/jpeg';
-            else if (s.indexOf('.webp') !== -1) mime = 'image/webp';
-            else if (s.indexOf('.svg') !== -1) mime = 'image/svg+xml';
-            else if (s.indexOf('.css') !== -1) mime = 'text/css';
-            else if (s.indexOf('.txt') !== -1) mime = 'text/plain';
-            else if (s.indexOf('.xhtml') !== -1) mime = 'application/xhtml+xml';
-            else if (s.indexOf('.xml') !== -1) mime = 'application/xml';
-
-            var jsRes = undefined;
-            var isJsUri = src && String(src).toLowerCase().indexOf('javascript:') === 0;
-            if (isJsUri) {
-                try { jsRes = (1, eval)(String(src).substring(11)); } catch(e) {}
-            }
-
-            if (src && globalThis.__subresourceMap && globalThis.__subresourceMap[src]) {
-                var text = globalThis.__subresourceMap[src];
-                if (typeof DOMParser !== 'undefined') {
-                    doc = new DOMParser().parseFromString(text, mime);
-                }
-            }
-            if (!doc) {
-                doc = (typeof document !== 'undefined' && document.implementation && typeof document.implementation.createHTMLDocument === 'function')
-                    ? document.implementation.createHTMLDocument('')
-                    : null;
-            }
-            if (doc) {
-                if (typeof jsRes === 'string') {
-                    if (doc.body) doc.body.textContent = jsRes;
-                    else if (doc.documentElement) doc.documentElement.textContent = jsRes;
-                }
-                doc.readyState = 'complete';
-                var win = _getIframeContentWindow(iframe);
-                doc.defaultView = win;
-                doc._creationRealm = win;
-                if (doc.implementation) doc.implementation._ownerDocument = doc;
-                doc.contentType = mime;
-                doc._contentType = mime;
-                if (typeof globalThis.Document !== 'undefined') {
-                    try { Object.setPrototypeOf(doc, globalThis.Document.prototype); } catch(e) {}
-                }
-                iframe._contentDocument = doc;
-            }
-        }
-        return iframe._contentDocument || null;
-    }
-    globalThis._getIframeContentDocument = _getIframeContentDocument;
+    // (XML parsing, Frames, and subresource documents are modularized in 11b_frames.js)
 
     // In-page anchor jumping and element scrollIntoView integration
     if (typeof _scrollIntoView === 'function') {
@@ -778,13 +591,132 @@
     globalThis._documentWrite = _documentWrite;
 
     document.write = function() {
-        _documentWrite(this, arguments, false);
+        if (this._opened) {
+            this._writeBuffer = (this._writeBuffer || '') + Array.prototype.join.call(arguments, '');
+        } else {
+            _documentWrite(this, arguments, false);
+        }
     };
     document.writeln = function() {
-        _documentWrite(this, arguments, true);
+        if (this._opened) {
+            this._writeBuffer = (this._writeBuffer || '') + Array.prototype.join.call(arguments, '') + '\n';
+        } else {
+            _documentWrite(this, arguments, true);
+        }
     };
-    document.open = function() { return this; };
-    document.close = function() { return this; };
+    document.open = function() {
+        this._opened = true;
+        this._writeBuffer = '';
+        return this;
+    };
+    document.close = function() {
+        if (this._opened) {
+            this._opened = false;
+            var text = this._writeBuffer || '';
+            this._writeBuffer = '';
+            if (typeof _resetDocumentWithHtml === 'function') {
+                _resetDocumentWithHtml(this, text);
+            }
+        }
+        return this;
+    };
+
+    if (globalThis.Document && globalThis.Document.prototype) {
+        globalThis.Document.prototype.open = document.open;
+        globalThis.Document.prototype.close = document.close;
+        globalThis.Document.prototype.write = document.write;
+        globalThis.Document.prototype.writeln = document.writeln;
+
+        globalThis.Document.prototype.getElementById = function(id) {
+            if (arguments.length === 0) return null;
+            var targetId = String(id);
+            if (this === document && typeof _origGetById === 'function') {
+                var nid = _origGetById(targetId);
+                if (nid !== -1 && nid !== undefined && nid !== 0 && nid !== null) return _wrapElement(nid);
+            }
+            function findId(node) {
+                if (!node) return null;
+                if (node.nodeType === 1) {
+                    var elId = (node.getAttribute && node.getAttribute('id')) || node.id || null;
+                    if (elId === targetId) return node;
+                }
+                var kids = node.childNodes || node._childNodes || [];
+                for (var i = 0; i < kids.length; i++) {
+                    var found = findId(kids[i]);
+                    if (found) return found;
+                }
+                return null;
+            }
+            return findId(this.documentElement || this);
+        };
+
+        globalThis.Document.prototype.getElementsByTagName = function(tag) {
+            return (typeof _defaultGetElementsByTagName === 'function') ? _defaultGetElementsByTagName(this, tag) : _createHTMLCollection(function() { return []; });
+        };
+        globalThis.Document.prototype.getElementsByTagNameNS = function(ns, tag) {
+            return (typeof _defaultGetElementsByTagNameNS === 'function') ? _defaultGetElementsByTagNameNS(this, ns, tag) : _createHTMLCollection(function() { return []; });
+        };
+        globalThis.Document.prototype.getElementsByClassName = function(cls) {
+            return (typeof _defaultGetElementsByClassName === 'function') ? _defaultGetElementsByClassName(this, cls) : _createHTMLCollection(function() { return []; });
+        };
+
+        Object.defineProperty(globalThis.Document.prototype, 'forms', {
+            get: function() {
+                if (this === document && typeof _getDocumentElements === 'function') {
+                    return _createHTMLCollection(function() {
+                        return (_getDocumentElements('forms') || []).map(_wrapElement);
+                    });
+                }
+                return this.getElementsByTagName('form');
+            },
+            configurable: true,
+            enumerable: true
+        });
+
+        Object.defineProperty(globalThis.Document.prototype, 'images', {
+            get: function() {
+                if (this === document && typeof _getDocumentElements === 'function') {
+                    return _createHTMLCollection(function() {
+                        return (_getDocumentElements('images') || []).map(_wrapElement);
+                    });
+                }
+                return this.getElementsByTagName('img');
+            },
+            configurable: true,
+            enumerable: true
+        });
+
+        Object.defineProperty(globalThis.Document.prototype, 'scripts', {
+            get: function() {
+                if (this === document && typeof _getDocumentElements === 'function') {
+                    return _createHTMLCollection(function() {
+                        return (_getDocumentElements('scripts') || []).map(_wrapElement);
+                    });
+                }
+                return this.getElementsByTagName('script');
+            },
+            configurable: true,
+            enumerable: true
+        });
+
+        Object.defineProperty(globalThis.Document.prototype, 'links', {
+            get: function() {
+                if (this === document && typeof _getDocumentElements === 'function') {
+                    return _createHTMLCollection(function() {
+                        return (_getDocumentElements('links') || []).map(_wrapElement);
+                    });
+                }
+                var allA = this.getElementsByTagName('a');
+                var allArea = this.getElementsByTagName('area');
+                var res = [];
+                for (var i = 0; i < allA.length; i++) if (allA[i].hasAttribute('href')) res.push(allA[i]);
+                for (var j = 0; j < allArea.length; j++) if (allArea[j].hasAttribute('href')) res.push(allArea[j]);
+                return _createHTMLCollection(function() { return res; });
+            },
+            configurable: true,
+            enumerable: true
+        });
+    }
 
 
 

@@ -164,6 +164,7 @@ extension!(
         dom::op_mango_canvas_get_image_data,
         dom::op_mango_canvas_put_image_data,
         dom::op_mango_canvas_to_data_url,
+        dom::op_mango_canvas_draw_canvas,
     ],
 );
 
@@ -367,6 +368,7 @@ pub const PRELUDE_JS: &str = r##"
     globalThis._canvasGetImageData = (id, x, y, w, h) => ops.op_mango_canvas_get_image_data(Number(id), Number(x), Number(y), Number(w), Number(h));
     globalThis._canvasPutImageData = (id, d, dx, dy, dX, dY, dW, dH, srcW) => ops.op_mango_canvas_put_image_data(Number(id), Array.from(d), Number(dx), Number(dy), Number(dX), Number(dY), Number(dW), Number(dH), Number(srcW));
     globalThis._canvasToDataUrl = (id) => ops.op_mango_canvas_to_data_url(Number(id));
+    globalThis._canvasDrawCanvas = (targetId, srcId, sx, sy, sw, sh, dx, dy, dw, dh) => ops.op_mango_canvas_draw_canvas(Number(targetId), Number(srcId), Number(sx), Number(sy), Number(sw), Number(sh), Number(dx), Number(dy), Number(dw), Number(dh));
     globalThis._canvasRemove = (id) => ops.op_mango_canvas_remove(Number(id));
 
     // Web APIs

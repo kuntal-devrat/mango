@@ -21,10 +21,14 @@ use crate::tab::Tab;
 // Subsystems modularized under src/browser/
 pub mod alloc_trim;
 pub mod animation;
+pub mod bookmarks;
+pub mod downloads;
 pub mod forms;
+pub mod history;
 pub mod images;
 pub mod input;
 pub mod navigation;
+pub mod omnibox;
 pub mod profile;
 pub mod render;
 pub mod resource_scheduler;
@@ -36,11 +40,15 @@ pub mod welcome;
 mod tests;
 
 pub use alloc_trim::trim_allocator_memory;
+pub use bookmarks::*;
+pub use downloads::*;
 pub use forms::*;
+pub use history::*;
 pub use navigation::{
     prepare_document_pipeline, prepare_document_pipeline_cancellable,
     prepare_document_pipeline_from_doc,
 };
+pub use omnibox::*;
 pub use profile::*;
 pub use types::*;
 pub use welcome::*;
@@ -204,6 +212,16 @@ pub struct BrowserChrome {
     pub(crate) renderer_actor: Option<crate::renderer_actor::RendererActorHandle>,
     /// Generation counter guarding out-of-process frames.
     pub(crate) renderer_generation: u64,
+    /// Persistent browsing history store.
+    pub history: history::HistoryStore,
+    /// Path to persistent history JSON file.
+    pub(crate) history_path: std::path::PathBuf,
+    /// Persistent bookmarks store.
+    pub bookmarks: bookmarks::BookmarkStore,
+    /// Path to persistent bookmarks JSON file.
+    pub(crate) bookmarks_path: std::path::PathBuf,
+    /// Active and completed downloads manager.
+    pub downloads: downloads::DownloadManager,
 }
 
 impl BrowserChrome {
@@ -228,6 +246,21 @@ impl BrowserChrome {
         let local_storage: mango_js::web_apis::SharedLocalStorage =
             std::sync::Arc::new(std::sync::Mutex::new(HashMap::new()));
         load_local_storage(&local_storage_path, &local_storage);
+
+        let history_path = cookie_store_path
+            .parent()
+            .map(|p| p.join("history.json"))
+            .unwrap_or_else(|| std::path::PathBuf::from("history.json"));
+        let history = history::HistoryStore::load_from_file(&history_path).unwrap_or_default();
+
+        let bookmarks_path = cookie_store_path
+            .parent()
+            .map(|p| p.join("bookmarks.json"))
+            .unwrap_or_else(|| std::path::PathBuf::from("bookmarks.json"));
+        let bookmarks =
+            bookmarks::BookmarkStore::load_from_file(&bookmarks_path).unwrap_or_default();
+
+        let downloads = downloads::DownloadManager::new();
 
         let loader = ResourceLoader::with_cookie_jar(cookie_jar.clone());
         let nav_actor = crate::navigation_actor::NavigationActorHandle::spawn(loader.clone());
@@ -309,11 +342,69 @@ impl BrowserChrome {
             is_fullscreen: false,
             renderer_actor: None,
             renderer_generation: 1,
+            history,
+            history_path,
+            bookmarks,
+            bookmarks_path,
+            downloads,
         };
 
         mark_ui_thread();
         chrome.load_html_internal(initial_html, "about:welcome".to_string(), false);
         chrome
+    }
+
+    /// Records a visited URL into persistent history and saves to disk.
+    pub fn record_history_visit(&mut self, url: &str, title: &str) {
+        self.history.record_visit(url, title);
+        let _ = self.history.save_to_file(&self.history_path);
+    }
+
+    /// Adds a bookmark and saves to disk.
+    pub fn add_bookmark(&mut self, title: &str, url: &str) -> u64 {
+        let id = self.bookmarks.add_bookmark(None, title, url);
+        let _ = self.bookmarks.save_to_file(&self.bookmarks_path);
+        id
+    }
+
+    /// Generates ranked omnibox completions for the current address bar text.
+    pub fn omnibox_suggestions(&self, limit: usize) -> Vec<OmniboxSuggestion> {
+        OmniboxCompleter::complete(
+            &self.address_text,
+            &self.history,
+            &self.bookmarks,
+            None,
+            limit,
+        )
+    }
+
+    /// Initializes a file download in the downloads manager.
+    pub fn start_file_download(
+        &mut self,
+        url: &str,
+        suggested_filename: &str,
+        dest_dir: &std::path::Path,
+        total_bytes: Option<u64>,
+    ) -> u64 {
+        self.downloads
+            .start_download(url, suggested_filename, dest_dir, total_bytes)
+    }
+
+    /// Serializes the active page's DOM tree into an [`InspectorNode`] tree for DevTools.
+    pub fn inspect_dom_tree(&self) -> Option<crate::devtools::elements::InspectorNode> {
+        let doc = self.cached_document.as_ref()?;
+        crate::devtools::elements::build_inspector_tree(doc, doc.root())
+    }
+
+    /// Evaluates a console expression in the active page's JS runtime and appends the result to DevTools.
+    pub fn eval_devtools_console(
+        &mut self,
+        expression: &str,
+    ) -> (crate::devtools::ConsoleEntry, Result<String, String>) {
+        let (entry, res) =
+            crate::devtools::elements::ConsoleEvaluator::eval(&mut self.js_runtime, expression);
+        self.devtools.console_entries.push(entry.clone());
+        (entry, res)
     }
 
     /// Returns the active JavaScript runtime's heap usage in bytes.

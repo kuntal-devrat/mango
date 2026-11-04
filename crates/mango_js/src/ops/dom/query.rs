@@ -71,7 +71,15 @@ pub fn op_mango_query_selector_all(
         collect_matching_elements(&d, root, &selectors, &mut out);
     }
     if out.is_empty() {
-        collect_elements_by_kind(&d, root, &selector, &mut out);
+        let trimmed = selector.trim();
+        if trimmed.starts_with("[*|") && trimmed.ends_with(']') {
+            let attr = trimmed[3..trimmed.len() - 1].trim();
+            crate::dom_bindings::collect_elements_by_universal_attr(&d, root, attr, &mut out);
+        } else if let Some(tag) = trimmed.strip_prefix("*|") {
+            crate::dom_bindings::collect_elements_by_universal_tag(&d, root, tag, &mut out);
+        } else {
+            collect_elements_by_kind(&d, root, &selector, &mut out);
+        }
     }
     mango_css::selectors::set_current_scope_root(None);
     out.into_iter().map(node_id_to_js).collect()
@@ -104,6 +112,24 @@ pub fn op_mango_element_matches(
     let nid = node_id_from_js(node_id);
     if let Some(selectors) = mango_css::parse_selectors(&selector) {
         return selectors.matches(nid, &d);
+    }
+    let trimmed = selector.trim();
+    if trimmed.starts_with("[*|") && trimmed.ends_with(']') {
+        let attr = trimmed[3..trimmed.len() - 1].trim();
+        if let Some(NodeData::Element(el)) = d.get(nid).map(|n| &n.data) {
+            return el.attributes.iter().any(|(k, _)| {
+                k == attr || k.split_once(':').is_some_and(|(_, local)| local == attr)
+            });
+        }
+    }
+    if let Some(tag) = trimmed.strip_prefix("*|") {
+        if let Some(NodeData::Element(el)) = d.get(nid).map(|n| &n.data) {
+            return el.tag_name.eq_ignore_ascii_case(tag)
+                || el
+                    .tag_name
+                    .split_once(':')
+                    .is_some_and(|(_, local)| local.eq_ignore_ascii_case(tag));
+        }
     }
     false
 }

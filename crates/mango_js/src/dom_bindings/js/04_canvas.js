@@ -177,6 +177,20 @@
     };
     globalThis.ImageBitmap = ImageBitmap;
 
+    function CanvasGradient(type, x0, y0, r0OrX1, x1OrY1, y1OrR1, r1) {
+        this._type = type;
+        this._stops = [];
+        this._params = [x0, y0, r0OrX1, x1OrY1, y1OrR1, r1];
+    }
+    CanvasGradient.prototype.addColorStop = function(offset, color) {
+        var num = parseFloat(offset);
+        if (isNaN(num) || num < 0 || num > 1) {
+            throw new Error("IndexSizeError: The offset is out of range [0, 1].");
+        }
+        this._stops.push({ offset: num, color: String(color) });
+    };
+    globalThis.CanvasGradient = CanvasGradient;
+
     function OffscreenCanvas(width, height) {
         this.width = Math.max(0, Math.floor(Number(width) || 300));
         this.height = Math.max(0, Math.floor(Number(height) || 150));
@@ -254,6 +268,9 @@
                     _canvasSetFillStyle(this._canvas._nodeId, val);
                 } else if (val && typeof val === 'object') {
                     this._fillStyle = val;
+                    if (val instanceof CanvasGradient && val._stops && val._stops.length > 0) {
+                        _canvasSetFillStyle(this._canvas._nodeId, val._stops[0].color);
+                    }
                 }
             },
 
@@ -264,6 +281,9 @@
                     _canvasSetStrokeStyle(this._canvas._nodeId, val);
                 } else if (val && typeof val === 'object') {
                     this._strokeStyle = val;
+                    if (val instanceof CanvasGradient && val._stops && val._stops.length > 0) {
+                        _canvasSetStrokeStyle(this._canvas._nodeId, val._stops[0].color);
+                    }
                 }
             },
 
@@ -368,6 +388,49 @@
             },
             quadraticCurveTo: function(cpx, cpy, x, y) {
                 this.lineTo(Number(x) || 0, Number(y) || 0);
+            },
+            ellipse: function(x, y, radiusX, radiusY, rotation, startAngle, endAngle, counterclockwise) {
+                var rx = Math.abs(Number(radiusX) || 0);
+                var ry = Math.abs(Number(radiusY) || 0);
+                var rot = Number(rotation) || 0;
+                var sa = Number(startAngle) || 0;
+                var ea = Number(endAngle) || (Math.PI * 2);
+                var ccw = !!counterclockwise;
+                var steps = 32;
+                var delta = (ea - sa);
+                if (ccw && delta > 0) delta -= Math.PI * 2;
+                if (!ccw && delta < 0) delta += Math.PI * 2;
+                var cosRot = Math.cos(rot);
+                var sinRot = Math.sin(rot);
+                for (var i = 0; i <= steps; i++) {
+                    var theta = sa + (delta * i / steps);
+                    var ex = rx * Math.cos(theta);
+                    var ey = ry * Math.sin(theta);
+                    var px = Number(x) + (ex * cosRot - ey * sinRot);
+                    var py = Number(y) + (ex * sinRot + ey * cosRot);
+                    if (i === 0) this.moveTo(px, py);
+                    else this.lineTo(px, py);
+                }
+            },
+            roundRect: function(x, y, w, h, radii) {
+                var nx = Number(x) || 0;
+                var ny = Number(y) || 0;
+                var nw = Number(w) || 0;
+                var nh = Number(h) || 0;
+                var r = 0;
+                if (typeof radii === 'number') r = Math.max(0, radii);
+                else if (Array.isArray(radii) && radii.length > 0) r = Math.max(0, Number(radii[0]) || 0);
+                r = Math.min(r, Math.abs(nw) / 2, Math.abs(nh) / 2);
+                this.moveTo(nx + r, ny);
+                this.lineTo(nx + nw - r, ny);
+                this.arcTo(nx + nw, ny, nx + nw, ny + r, r);
+                this.lineTo(nx + nw, ny + nh - r);
+                this.arcTo(nx + nw, ny + nh, nx + nw - r, ny + nh, r);
+                this.lineTo(nx + r, ny + nh);
+                this.arcTo(nx, ny + nh, nx, ny + r, r);
+                this.lineTo(nx, ny + r);
+                this.arcTo(nx, ny, nx + r, ny, r);
+                this.closePath();
             },
 
             _applyPath2D: function(path) {
@@ -491,32 +554,48 @@
                 return { data: u8, width: width, height: height };
             },
             createLinearGradient: function(x0, y0, x1, y1) {
-                return {
-                    addColorStop: function(offset, color) {}
-                };
+                return new CanvasGradient('linear', Number(x0)||0, Number(y0)||0, Number(x1)||0, Number(y1)||0);
             },
             createRadialGradient: function(x0, y0, r0, x1, y1, r1) {
-                return {
-                    addColorStop: function(offset, color) {}
-                };
+                return new CanvasGradient('radial', Number(x0)||0, Number(y0)||0, Number(r0)||0, Number(x1)||0, Number(y1)||0, Number(r1)||0);
             },
             createConicGradient: function(startAngle, x, y) {
-                var stops = [];
-                return {
-                    addColorStop: function(offset, color) {
-                        stops.push({ offset: Number(offset) || 0, color: String(color) });
-                    },
-                    _type: 'conic',
-                    _startAngle: Number(startAngle) || 0,
-                    _x: Number(x) || 0,
-                    _y: Number(y) || 0,
-                    _stops: stops
-                };
+                return new CanvasGradient('conic', Number(startAngle)||0, Number(x)||0, Number(y)||0);
             },
             createPattern: function(image, repetition) {
-                return {};
+                return { _image: image, _repetition: String(repetition || 'repeat') };
             },
-            drawImage: function() {}
+            drawImage: function(img, sx, sy, sw, sh, dx, dy, dw, dh) {
+                if (!img) return;
+                var targetNodeId = this._canvas._nodeId;
+                var sourceNodeId = img._nodeId !== undefined ? img._nodeId : null;
+                var args = Array.prototype.slice.call(arguments);
+                var sX = 0, sY = 0, sW = img.width || 0, sH = img.height || 0;
+                var dX = 0, dY = 0, dW = img.width || 0, dH = img.height || 0;
+                if (args.length === 3) {
+                    dX = Number(args[1]) || 0;
+                    dY = Number(args[2]) || 0;
+                } else if (args.length === 5) {
+                    dX = Number(args[1]) || 0;
+                    dY = Number(args[2]) || 0;
+                    dW = Number(args[3]) || 0;
+                    dH = Number(args[4]) || 0;
+                } else if (args.length >= 9) {
+                    sX = Number(args[1]) || 0;
+                    sY = Number(args[2]) || 0;
+                    sW = Number(args[3]) || 0;
+                    sH = Number(args[4]) || 0;
+                    dX = Number(args[5]) || 0;
+                    dY = Number(args[6]) || 0;
+                    dW = Number(args[7]) || 0;
+                    dH = Number(args[8]) || 0;
+                }
+                if (sourceNodeId !== null && typeof _canvasDrawCanvas === 'function') {
+                    _canvasDrawCanvas(targetNodeId, sourceNodeId, sX, sY, sW, sH, dX, dY, dW, dH);
+                } else if (img && img.data && typeof _canvasPutImageData === 'function') {
+                    _canvasPutImageData(targetNodeId, Array.from(img.data), dX, dY, 0, 0, dW, dH, dW);
+                }
+            }
         };
 
         // Initialize backing store with the canvas's width and height

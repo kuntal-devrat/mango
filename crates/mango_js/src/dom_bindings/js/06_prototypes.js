@@ -17,6 +17,11 @@
                 }
                 return false;
             }
+            if (s.indexOf(':is(') === 0 && s.charAt(s.length - 1) === ')') {
+                var inner = s.substring(4, s.length - 1);
+                if (inner.indexOf('|') !== -1 && inner.indexOf('*|') === -1) return false;
+                return _jsElementMatches(el, inner);
+            }
             if (s.indexOf(':not(') === 0 && s.charAt(s.length - 1) === ')') {
                 var inner = s.substring(5, s.length - 1);
                 return !_jsElementMatches(el, inner);
@@ -29,11 +34,12 @@
                 var elId = (el.id !== undefined && el.id !== null) ? String(el.id) : (el.getAttribute ? el.getAttribute('id') : '');
                 if (elId !== expectedId) return false;
             }
-            var tagMatch = s.match(/^([a-zA-Z0-9_\-]+)/);
+            var tagMatch = s.match(/^(?:\*\|)?([a-zA-Z0-9_\-]+)/);
             if (tagMatch) {
                 var expectedTag = tagMatch[1].toUpperCase();
                 var elTag = el.tagName ? String(el.tagName).toUpperCase() : '';
-                if (elTag && elTag !== expectedTag) return false;
+                var elLocal = el.localName ? String(el.localName).toUpperCase() : elTag;
+                if (elTag && elTag !== expectedTag && elLocal !== expectedTag) return false;
             }
             var classRegex = /\.([a-zA-Z0-9_\-]+)/g;
             var cm;
@@ -48,17 +54,39 @@
                     return false;
                 }
             }
-            var attrRegex = /\[([a-zA-Z0-9_\-]+)(?:=([^\],]+))?\]/g;
+            var attrRegex = /\[(\*\|)?([a-zA-Z0-9_\-:]+)(?:=([^\],]+))?\]/g;
             var am;
             while ((am = attrRegex.exec(s)) !== null) {
-                var attrName = am[1];
-                var expectedVal = am[2];
+                var hasStarNs = !!am[1];
+                var attrName = am[2];
+                var expectedVal = am[3];
+                var hasA = false;
+                var actualVal = null;
+                if (typeof el.hasAttribute === 'function' && el.hasAttribute(attrName)) {
+                    hasA = true;
+                    actualVal = el.getAttribute(attrName);
+                } else if (typeof el.hasAttributeNS === 'function' && el.hasAttributeNS(null, attrName)) {
+                    hasA = true;
+                    actualVal = el.getAttributeNS(null, attrName);
+                } else if (hasStarNs && typeof el.getAttributeNames === 'function') {
+                    var names = el.getAttributeNames();
+                    for (var ni = 0; ni < names.length; ni++) {
+                        var an = names[ni];
+                        if (an === attrName || an.indexOf(':' + attrName) !== -1 || (el.getAttributeNode && el.getAttributeNode(an) && el.getAttributeNode(an).localName === attrName)) {
+                            hasA = true;
+                            actualVal = el.getAttribute(an);
+                            break;
+                        }
+                    }
+                }
+                if (!hasA && (typeof el.getAttribute === 'function' && el.getAttribute(attrName) !== null)) {
+                    hasA = true;
+                    actualVal = el.getAttribute(attrName);
+                }
                 if (expectedVal !== undefined) {
                     expectedVal = expectedVal.replace(/^['"]|['"]$/g, '');
-                    var actualVal = (typeof el.getAttribute === 'function') ? el.getAttribute(attrName) : el[attrName];
                     if (String(actualVal) !== String(expectedVal)) return false;
                 } else {
-                    var hasA = (typeof el.hasAttribute === 'function') ? el.hasAttribute(attrName) : (attrName in el);
                     if (!hasA) return false;
                 }
             }
@@ -430,5 +458,56 @@
             globalThis.DocumentFragment.prototype.getElementsByClassName = function(c) { return _defaultGetElementsByClassName(this, c); };
             globalThis.DocumentFragment.prototype.getElementById = function(id) { return this.querySelector('#' + id); };
         }
+
+        function _getImageDimension(img, dim) {
+            if (!img) return 0;
+            if (img.style && img.style[dim]) {
+                var v = parseFloat(img.style[dim]);
+                if (!isNaN(v)) return Math.round(v);
+            }
+            var doc = null;
+            var cur = img;
+            while (cur) {
+                if (cur.nodeType === 9) { doc = cur; break; }
+                if (cur._ownerDocument && cur._ownerDocument !== (typeof document !== 'undefined' ? document : null)) {
+                    doc = cur._ownerDocument;
+                    break;
+                }
+                cur = cur.parentNode || cur._parentNode;
+            }
+            if (!doc) doc = img.ownerDocument || (typeof document !== 'undefined' ? document : null);
+            if (doc) {
+                var sheets = doc.styleSheets || [];
+                var matched = null;
+                for (var s = 0; s < sheets.length; s++) {
+                    var sheet = sheets[s];
+                    var rules = sheet ? (sheet.cssRules || sheet.rules || []) : [];
+                    for (var r = 0; r < rules.length; r++) {
+                        var rule = rules[r];
+                        if (rule && rule.selectorText && rule.selectorText.indexOf('img') !== -1) {
+                            if (rule.style) {
+                                var valStr = (typeof rule.style.getPropertyValue === 'function' ? rule.style.getPropertyValue(dim) : null)
+                                    || (rule.style._props ? rule.style._props[dim] : null)
+                                    || rule.style[dim];
+                                if (valStr) {
+                                    var rv = parseFloat(valStr);
+                                    if (!isNaN(rv)) matched = Math.round(rv);
+                                }
+                            }
+                        }
+                    }
+                }
+                if (matched !== null) return matched;
+            }
+            var attr = img.getAttribute ? img.getAttribute(dim) : null;
+            if (attr !== null && attr !== '') {
+                var av = parseInt(attr, 10);
+                if (!isNaN(av)) return av;
+            }
+            if (dim === 'height' && typeof img.naturalHeight === 'number' && img.naturalHeight > 0) return img.naturalHeight;
+            if (dim === 'width' && typeof img.naturalWidth === 'number' && img.naturalWidth > 0) return img.naturalWidth;
+            return 0;
+        }
+        globalThis._getImageDimension = _getImageDimension;
     }
 

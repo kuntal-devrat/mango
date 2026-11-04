@@ -451,7 +451,14 @@
     };
 
     CSSStyleSheet.prototype.replaceSync = function(text) {
-        this._rules = _parseCssStatements(String(text), null, this);
+        var str = String(text);
+        this._lastParsedText = str;
+        this._rules.length = 0;
+        var parsed = _parseCssStatements(str, null, this);
+        for (var i = 0; i < parsed.length; i++) {
+            parsed[i].parentStyleSheet = this;
+            this._rules.push(parsed[i]);
+        }
         this._onMutate();
         return undefined;
     };
@@ -467,6 +474,14 @@
     CSSStyleSheet.prototype.insertRule = function(rule, index) {
         index = index === undefined ? 0 : Number(index);
         var rStr = String(rule).trim();
+
+        if (this._ownerNode && !this._hasManualRules) {
+            var curText = this._ownerNode.textContent || '';
+            if (curText !== this._lastParsedText && typeof this._syncFromOwnerNode === 'function') {
+                this._syncFromOwnerNode();
+            }
+        }
+        this._hasManualRules = true;
 
         if (rStr.startsWith('@layer')) {
             var afterLayer = rStr.slice(6).trim();
@@ -532,10 +547,17 @@
     if (typeof globalThis.Document !== 'undefined') {
         Object.defineProperty(globalThis.Document.prototype, 'styleSheets', {
             get: function() {
-                var styles = this.querySelectorAll ? this.querySelectorAll('style, link[rel="stylesheet"]') : [];
+                var styles = this.getElementsByTagName ? this.getElementsByTagName('style') : (this.querySelectorAll ? this.querySelectorAll('style, link[rel="stylesheet"]') : []);
                 var sheets = [];
                 for (var i = 0; i < styles.length; i++) {
-                    if (styles[i].sheet) sheets.push(styles[i].sheet);
+                    var sh = styles[i].sheet;
+                    if (!sh && typeof globalThis.CSSStyleSheet === 'function') {
+                        sh = new globalThis.CSSStyleSheet();
+                        sh._ownerNode = styles[i];
+                        if (typeof sh._syncFromOwnerNode === 'function') sh._syncFromOwnerNode();
+                        styles[i]._sheet = sh;
+                    }
+                    if (sh) sheets.push(sh);
                 }
                 sheets.item = function(idx) { return sheets[idx] || null; };
                 return sheets;

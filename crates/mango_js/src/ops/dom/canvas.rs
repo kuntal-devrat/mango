@@ -356,3 +356,25 @@ pub fn op_mango_canvas_to_data_url(state: &mut OpState, node_id: u32) -> String 
     })
     .unwrap_or_default()
 }
+
+#[op2(fast)]
+pub fn op_mango_canvas_draw_canvas(
+    state: &mut OpState,
+    target_id: u32,
+    source_id: u32,
+    sx: f32,
+    sy: f32,
+    sw: f32,
+    sh: f32,
+    dx: f32,
+    dy: f32,
+    dw: f32,
+    dh: f32,
+) {
+    let target_key = canvas_key(state, target_id);
+    let source_key = canvas_key(state, source_id);
+    mango_render::copy_canvas_to_canvas(source_key, target_key, sx, sy, sw, sh, dx, dy, dw, dh);
+    if let Some(dirty) = state.try_borrow::<DomDirtyFlag>() {
+        *dirty.borrow_mut() = true;
+    }
+}

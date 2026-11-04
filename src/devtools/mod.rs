@@ -7,6 +7,7 @@
 //! - `cdp`: Chrome DevTools Protocol JSON-RPC dispatcher.
 
 pub mod cdp;
+pub mod elements;
 pub mod render_panel;
 pub mod render_tabs;
 pub mod types;
@@ -15,4 +16,5 @@ pub mod types;
 mod tests;
 
 pub use cdp::*;
+pub use elements::*;
 pub use types::*;

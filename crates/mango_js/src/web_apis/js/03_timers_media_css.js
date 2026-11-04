@@ -178,7 +178,11 @@
         if (!this._props) this._props = {};
         var p = String(prop || '').trim().toLowerCase();
         p = WEBKIT_ALIASES[p] || p;
-        this._props[p] = String(val);
+        var sVal = String(val);
+        this._props[p] = sVal;
+        var camel = p.replace(/-([a-z])/g, function(g) { return g[1].toUpperCase(); });
+        this[p] = sVal;
+        this[camel] = sVal;
         if (p === 'animation' && String(val).trim() === 'none') {
             this._props['animation-name'] = 'none';
         }

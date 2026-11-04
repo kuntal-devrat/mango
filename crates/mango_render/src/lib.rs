@@ -35,8 +35,8 @@ pub mod webrender;
 
 pub use canvas::{
     Canvas2D, CanvasColorStop, CanvasPaintStyle, CanvasState, RadialGradient,
-    clear_canvas_registry, get_canvas_dimensions, get_canvas_pixels, remove_canvas,
-    remove_canvases_for_document, resize_canvas, with_canvas_mut,
+    clear_canvas_registry, copy_canvas_to_canvas, get_canvas_dimensions, get_canvas_pixels,
+    remove_canvas, remove_canvases_for_document, resize_canvas, with_canvas_mut,
 };
 pub use compositor::SoftwareCompositor;
 pub use damage::{DamageRegion, MAX_DAMAGE_RECTS};

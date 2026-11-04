@@ -19,8 +19,10 @@ pub const WEB_APIS_SHIM_TEMPLATE: &str = concat!(
     include_str!("js/07_xhr_websocket.js"),
     include_str!("js/08_dom_nodes.js"),
     include_str!("js/09_dom_elements.js"),
+    include_str!("js/09b_dom_attr_nodes.js"),
     include_str!("js/10_dom_svg_html.js"),
     include_str!("js/11_dom_other.js"),
+    include_str!("js/11b_dom_types.js"),
     include_str!("js/12_observers_events.js"),
     include_str!("js/13_components_workers.js"),
     include_str!("js/14_workers_channels_locks.js"),
@@ -33,6 +35,7 @@ pub const WEB_APIS_SHIM_TEMPLATE: &str = concat!(
     include_str!("js/21_test_driver.js"),
     include_str!("js/22_cssom_rules.js"),
     include_str!("js/23_cssom_parser.js"),
+    include_str!("js/24_svg_interfaces.js"),
 );
 
 pub fn build_web_apis_shim(page_url: &str) -> String {

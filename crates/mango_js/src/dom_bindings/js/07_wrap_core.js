@@ -55,6 +55,7 @@
                     }
                 }
                 if (this._childNodes) this._childNodes = [];
+                if (this._cachedChildNodes) delete this._cachedChildNodes;
                 _setInnerHTML(this._nodeId, String(val));
                 if (typeof globalThis !== 'undefined' && globalThis._upgradeTree) {
                     globalThis._upgradeTree(this, null, null);
