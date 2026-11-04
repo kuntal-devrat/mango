@@ -14,13 +14,26 @@ impl BrowserChrome {
             let current = self
                 .js_runtime
                 .as_ref()
-                .and_then(|rt| rt.get_node_attribute(old_id, "value"));
+                .and_then(|rt| rt.get_node_attribute(old_id, "value"))
+                .or_else(|| {
+                    self.cached_document.as_ref().and_then(|doc| {
+                        doc.get(old_id)
+                            .and_then(|n| n.as_element())
+                            .and_then(|el| el.get_attribute("value"))
+                            .map(|s| s.to_string())
+                    })
+                });
             if let Some(ref mut rt) = self.js_runtime {
                 rt.remove_node_attribute(old_id, "data-mango-focused");
                 rt.remove_node_attribute(old_id, "data-mango-focus-visible");
                 rt.remove_node_attribute(old_id, "_mango_cursor_pos");
                 let script = "if (typeof document !== 'undefined') document.activeElement = document.body || null;";
                 let _ = rt.execute_script(script);
+            }
+            if let Some(ref mut doc) = self.cached_document {
+                doc.remove_attribute(old_id, "data-mango-focused");
+                doc.remove_attribute(old_id, "data-mango-focus-visible");
+                doc.remove_attribute(old_id, "_mango_cursor_pos");
             }
             self.control_cursor_pos = 0;
             self.fire_dom_event(old_id, "focusout");
@@ -48,6 +61,10 @@ impl BrowserChrome {
                     js_nid
                 );
                 let _ = rt.execute_script(&script);
+            }
+            if let Some(ref mut doc) = self.cached_document {
+                doc.set_attribute(node_id, "data-mango-focused", "true");
+                doc.set_attribute(node_id, "data-mango-focus-visible", "true");
             }
             self.fire_dom_event(node_id, "focusin");
             self.fire_dom_event(node_id, "focus");
@@ -236,10 +253,22 @@ impl BrowserChrome {
             .js_runtime
             .as_ref()
             .and_then(|rt| rt.get_node_attribute(node_id, "value"))
+            .or_else(|| {
+                self.cached_document.as_ref().and_then(|doc| {
+                    doc.get(node_id)
+                        .and_then(|n| n.as_element())
+                        .and_then(|el| el.get_attribute("value"))
+                        .map(|s| s.to_string())
+                })
+            })
             .unwrap_or_default();
         if let Some(ref mut rt) = self.js_runtime {
             rt.set_node_attribute(node_id, "value", new_val);
             rt.set_node_attribute(node_id, "data-mango-value", new_val);
+        }
+        if let Some(ref mut doc) = self.cached_document {
+            doc.set_attribute(node_id, "value", new_val);
+            doc.set_attribute(node_id, "data-mango-value", new_val);
         }
         if old != new_val {
             self.fire_dom_event(node_id, "input");
@@ -295,17 +324,25 @@ impl BrowserChrome {
     /// Parses `(min, max, step)` for a numeric input per HTML defaults
     /// (`step` defaults to 1 and must be positive).
     pub(crate) fn numeric_params(&self, node_id: NodeId) -> (Option<f32>, Option<f32>, f32) {
-        let (min, max, step) = self
-            .js_runtime
-            .as_ref()
-            .map(|rt| {
-                (
-                    rt.get_node_attribute(node_id, "min"),
-                    rt.get_node_attribute(node_id, "max"),
-                    rt.get_node_attribute(node_id, "step"),
-                )
-            })
-            .unwrap_or((None, None, None));
+        let (min, max, step) = if let Some(ref rt) = self.js_runtime {
+            (
+                rt.get_node_attribute(node_id, "min"),
+                rt.get_node_attribute(node_id, "max"),
+                rt.get_node_attribute(node_id, "step"),
+            )
+        } else if let Some(ref doc) = self.cached_document {
+            let el = doc.get(node_id).and_then(|n| n.as_element());
+            (
+                el.and_then(|e| e.get_attribute("min"))
+                    .map(|s| s.to_string()),
+                el.and_then(|e| e.get_attribute("max"))
+                    .map(|s| s.to_string()),
+                el.and_then(|e| e.get_attribute("step"))
+                    .map(|s| s.to_string()),
+            )
+        } else {
+            (None, None, None)
+        };
         let min_v = min.and_then(|v| v.parse::<f32>().ok());
         let max_v = max.and_then(|v| v.parse::<f32>().ok());
         let step_v = step
@@ -371,10 +408,24 @@ impl BrowserChrome {
             self.focused_initial_value = self
                 .js_runtime
                 .as_ref()
-                .and_then(|rt| rt.get_node_attribute(node_id, "value"));
+                .and_then(|rt| rt.get_node_attribute(node_id, "value"))
+                .or_else(|| {
+                    self.cached_document.as_ref().and_then(|doc| {
+                        doc.get(node_id)
+                            .and_then(|n| n.as_element())
+                            .and_then(|el| el.get_attribute("value"))
+                            .map(|s| s.to_string())
+                    })
+                });
         }
         let current_val = if let Some(ref rt) = self.js_runtime {
             rt.get_node_attribute(node_id, "value").unwrap_or_default()
+        } else if let Some(ref doc) = self.cached_document {
+            doc.get(node_id)
+                .and_then(|n| n.as_element())
+                .and_then(|el| el.get_attribute("value"))
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| hit.value.clone())
         } else {
             hit.value.clone()
         };
@@ -420,6 +471,15 @@ impl BrowserChrome {
                 js_nid
             );
             let _ = rt.execute_script(&script);
+        }
+        if let Some(ref mut doc) = self.cached_document {
+            doc.set_attribute(node_id, "data-mango-focused", "true");
+            doc.set_attribute(node_id, "data-mango-focus-visible", "true");
+            doc.set_attribute(
+                node_id,
+                "_mango_cursor_pos",
+                &self.control_cursor_pos.to_string(),
+            );
         }
         self.fire_dom_event(node_id, "focusin");
         self.fire_dom_event(node_id, "focus");

@@ -6,6 +6,18 @@ use mango_html::dom::NodeData;
 use mango_platform::input::{KeyEvent, MangoKey};
 
 impl BrowserChrome {
+    /// Synchronizes the current text control cursor position to both the JS runtime
+    /// and the cached document DOM representation for caret rendering.
+    pub(crate) fn sync_cursor_pos(&mut self, node_id: mango_html::dom::NodeId) {
+        let pos_str = self.control_cursor_pos.to_string();
+        if let Some(ref mut rt) = self.js_runtime {
+            rt.set_node_attribute(node_id, "_mango_cursor_pos", &pos_str);
+        }
+        if let Some(ref mut doc) = self.cached_document {
+            doc.set_attribute(node_id, "_mango_cursor_pos", &pos_str);
+        }
+    }
+
     /// Handles keyboard events.
     pub fn handle_key_event(&mut self, event: &KeyEvent) {
         // F12 or Ctrl+Shift+I toggles DevTools
@@ -210,6 +222,14 @@ impl BrowserChrome {
                     .js_runtime
                     .as_ref()
                     .and_then(|rt| rt.get_node_attribute(node_id, "value"))
+                    .or_else(|| {
+                        self.cached_document.as_ref().and_then(|doc| {
+                            doc.get(node_id)
+                                .and_then(|n| n.as_element())
+                                .and_then(|el| el.get_attribute("value"))
+                                .map(|s| s.to_string())
+                        })
+                    })
                     .unwrap_or_default();
 
                 // ArrowUp/ArrowDown step numeric controls (range slider / number spinner).
@@ -220,6 +240,14 @@ impl BrowserChrome {
                         .js_runtime
                         .as_ref()
                         .and_then(|rt| rt.get_node_attribute(node_id, "type"))
+                        .or_else(|| {
+                            self.cached_document.as_ref().and_then(|doc| {
+                                doc.get(node_id)
+                                    .and_then(|n| n.as_element())
+                                    .and_then(|el| el.get_attribute("type"))
+                                    .map(|s| s.to_string())
+                            })
+                        })
                         .map(|t| t.to_ascii_lowercase())
                         .unwrap_or_default();
                     if input_type == "range" || input_type == "number" {
@@ -237,13 +265,7 @@ impl BrowserChrome {
                     match &event.key {
                         MangoKey::Char('a') | MangoKey::Char('A') => {
                             self.control_cursor_pos = current_val.chars().count();
-                            if let Some(ref mut rt) = self.js_runtime {
-                                rt.set_node_attribute(
-                                    node_id,
-                                    "_mango_cursor_pos",
-                                    &self.control_cursor_pos.to_string(),
-                                );
-                            }
+                            self.sync_cursor_pos(node_id);
                             self.relayout();
                             return;
                         }
@@ -270,13 +292,7 @@ impl BrowserChrome {
                                 self.control_cursor_pos = idx + paste_text.chars().count();
                                 let new_val: String = new_chars.into_iter().collect();
                                 self.set_control_value(node_id, &new_val);
-                                if let Some(ref mut rt) = self.js_runtime {
-                                    rt.set_node_attribute(
-                                        node_id,
-                                        "_mango_cursor_pos",
-                                        &self.control_cursor_pos.to_string(),
-                                    );
-                                }
+                                self.sync_cursor_pos(node_id);
                                 self.relayout();
                             }
                             return;
@@ -288,9 +304,7 @@ impl BrowserChrome {
                                 let _ = clipboard.set_text(current_val);
                                 self.control_cursor_pos = 0;
                                 self.set_control_value(node_id, "");
-                                if let Some(ref mut rt) = self.js_runtime {
-                                    rt.set_node_attribute(node_id, "_mango_cursor_pos", "0");
-                                }
+                                self.sync_cursor_pos(node_id);
                                 self.relayout();
                             }
                             return;
@@ -337,13 +351,7 @@ impl BrowserChrome {
                         self.control_cursor_pos = idx + 1;
                         let new_val: String = new_chars.into_iter().collect();
                         self.set_control_value(node_id, &new_val);
-                        if let Some(ref mut rt) = self.js_runtime {
-                            rt.set_node_attribute(
-                                node_id,
-                                "_mango_cursor_pos",
-                                &self.control_cursor_pos.to_string(),
-                            );
-                        }
+                        self.sync_cursor_pos(node_id);
                         self.relayout();
                         return;
                     }
@@ -368,13 +376,7 @@ impl BrowserChrome {
                         self.control_cursor_pos = idx + 1;
                         let new_val: String = new_chars.into_iter().collect();
                         self.set_control_value(node_id, &new_val);
-                        if let Some(ref mut rt) = self.js_runtime {
-                            rt.set_node_attribute(
-                                node_id,
-                                "_mango_cursor_pos",
-                                &self.control_cursor_pos.to_string(),
-                            );
-                        }
+                        self.sync_cursor_pos(node_id);
                         self.relayout();
                         return;
                     }
@@ -386,13 +388,7 @@ impl BrowserChrome {
                             self.control_cursor_pos = idx;
                             let new_val: String = chars.into_iter().collect();
                             self.set_control_value(node_id, &new_val);
-                            if let Some(ref mut rt) = self.js_runtime {
-                                rt.set_node_attribute(
-                                    node_id,
-                                    "_mango_cursor_pos",
-                                    &self.control_cursor_pos.to_string(),
-                                );
-                            }
+                            self.sync_cursor_pos(node_id);
                             self.relayout();
                         }
                         return;
@@ -403,63 +399,33 @@ impl BrowserChrome {
                             chars.remove(self.control_cursor_pos);
                             let new_val: String = chars.into_iter().collect();
                             self.set_control_value(node_id, &new_val);
-                            if let Some(ref mut rt) = self.js_runtime {
-                                rt.set_node_attribute(
-                                    node_id,
-                                    "_mango_cursor_pos",
-                                    &self.control_cursor_pos.to_string(),
-                                );
-                            }
+                            self.sync_cursor_pos(node_id);
                             self.relayout();
                         }
                         return;
                     }
                     MangoKey::ArrowLeft => {
                         self.control_cursor_pos = self.control_cursor_pos.saturating_sub(1);
-                        if let Some(ref mut rt) = self.js_runtime {
-                            rt.set_node_attribute(
-                                node_id,
-                                "_mango_cursor_pos",
-                                &self.control_cursor_pos.to_string(),
-                            );
-                        }
+                        self.sync_cursor_pos(node_id);
                         self.relayout();
                         return;
                     }
                     MangoKey::ArrowRight => {
                         let count = current_val.chars().count();
                         self.control_cursor_pos = (self.control_cursor_pos + 1).min(count);
-                        if let Some(ref mut rt) = self.js_runtime {
-                            rt.set_node_attribute(
-                                node_id,
-                                "_mango_cursor_pos",
-                                &self.control_cursor_pos.to_string(),
-                            );
-                        }
+                        self.sync_cursor_pos(node_id);
                         self.relayout();
                         return;
                     }
                     MangoKey::Home => {
                         self.control_cursor_pos = 0;
-                        if let Some(ref mut rt) = self.js_runtime {
-                            rt.set_node_attribute(
-                                node_id,
-                                "_mango_cursor_pos",
-                                &self.control_cursor_pos.to_string(),
-                            );
-                        }
+                        self.sync_cursor_pos(node_id);
                         self.relayout();
                         return;
                     }
                     MangoKey::End => {
                         self.control_cursor_pos = current_val.chars().count();
-                        if let Some(ref mut rt) = self.js_runtime {
-                            rt.set_node_attribute(
-                                node_id,
-                                "_mango_cursor_pos",
-                                &self.control_cursor_pos.to_string(),
-                            );
-                        }
+                        self.sync_cursor_pos(node_id);
                         self.relayout();
                         return;
                     }
@@ -489,6 +455,7 @@ impl BrowserChrome {
                             self.control_cursor_pos = pos + 1;
                             let new_val: String = chars.into_iter().collect();
                             self.set_control_value(node_id, &new_val);
+                            self.sync_cursor_pos(node_id);
                             self.relayout();
                             return;
                         }

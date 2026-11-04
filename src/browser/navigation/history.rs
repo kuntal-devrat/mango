@@ -265,6 +265,7 @@ impl BrowserChrome {
             .get(self.active_tab_idx)
             .map(|t| t.session_storage.clone())
             .unwrap_or_else(|| std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())));
+        self.cached_document = Some(doc.clone());
         let mut js_rt = JsRuntime::new_with_full_context(
             doc,
             w,

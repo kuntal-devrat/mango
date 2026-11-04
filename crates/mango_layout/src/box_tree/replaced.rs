@@ -510,11 +510,25 @@ pub fn build_svg_replaced_element(styled_node: &StyledNode) -> LayoutBox {
                 if let Ok(p) = pct.trim().parse::<f32>() {
                     style.width = Length::Percent(p);
                 }
+            } else if let Some(px) = parse_dimension_attr(trimmed) {
+                style.width = Length::Px(px);
             }
-        } else {
-            // Per SVG 1.1 § 5.1.2 & SVG 2 § 7.2:
-            // "If the width attribute is not specified, the effect is as if a value of '100%' were specified."
-            style.width = Length::Percent(100.0);
+        } else if explicit_w.is_none() && intrinsic_w_opt.is_some() {
+            style.width = Length::Px(w);
+        }
+    }
+    if style.height == Length::Auto {
+        if let Some(h_attr) = get_attr("height") {
+            let trimmed = h_attr.trim();
+            if let Some(pct) = trimmed.strip_suffix('%') {
+                if let Ok(p) = pct.trim().parse::<f32>() {
+                    style.height = Length::Percent(p);
+                }
+            } else if let Some(px) = parse_dimension_attr(trimmed) {
+                style.height = Length::Px(px);
+            }
+        } else if explicit_h.is_none() && intrinsic_h_opt.is_some() {
+            style.height = Length::Px(h);
         }
     }
 

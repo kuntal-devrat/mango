@@ -401,3 +401,106 @@ fn test_blur_and_focusout_reverts_active_element() {
         .unwrap();
     assert_eq!(active_is_body_or_null, "true");
 }
+
+#[test]
+fn test_google_svg_sizing_in_flex_container_does_not_crush_input() {
+    let mut browser = BrowserChrome::new(1024, 768);
+    let html = r#"
+        <html>
+        <body style="margin: 0;">
+            <div style="display: flex; width: 600px; height: 44px; align-items: center;">
+                <svg viewBox="0 0 24 24" style="height: 24px;"></svg>
+                <input id="q" type="text" style="flex: 1; height: 34px;">
+            </div>
+        </body>
+        </html>
+    "#;
+    browser.load_html(html.to_string(), "https://www.google.com/".to_string());
+    let hit = hit_control(&browser, 100.0, 22.0);
+    assert_eq!(hit.form_type, "text");
+    let node_id = hit.node_id.unwrap();
+    let (_cx, _cy, cw, _ch) = browser.control_content_rect(node_id).expect("input rect");
+    assert!(
+        cw > 300.0,
+        "Input in flex container must not be crushed by SVG, cw={}",
+        cw
+    );
+}
+
+#[test]
+fn test_indic_fallback_font_loading() {
+    let fm = mango_render::FontManager::new();
+    // Test Hindi ('ह' 0x0939), Bengali ('ব' 0x09AC), Telugu ('త' 0x0C24), Tamil ('த' 0x0BA4),
+    // Gujarati ('ગ' 0x0A97), Kannada ('ಕ' 0x0C95), Malayalam ('മ' 0x0D2E), Gurmukhi ('ਪ' 0x0A2A)
+    for ch in ['ह', 'ব', 'త', 'த', 'ગ', 'ಕ', 'മ', 'ਪ'] {
+        let font = fm.select_font_for_char(
+            mango_render::FontFamily::SansSerif,
+            mango_render::FontWeight::Regular,
+            ch,
+        );
+        let gid = font.lookup_glyph_index(ch);
+        assert!(
+            gid > 0,
+            "Glyph for Indic character '{}' (U+{:04X}) must resolve to non-zero glyph index",
+            ch,
+            ch as u32
+        );
+    }
+}
+
+#[test]
+fn test_form_typing_without_js_runtime_on_static_document() {
+    let mut browser = BrowserChrome::new(1024, 768);
+    let html = r#"
+        <html>
+        <body style="margin: 0; padding: 20px;">
+            <form action="/search" method="GET">
+                <input type="text" id="duck_search" name="q" style="width: 300px; height: 30px;">
+            </form>
+        </body>
+        </html>
+    "#;
+    browser.load_html(
+        html.to_string(),
+        "https://html.duckduckgo.com/html/".to_string(),
+    );
+    browser.js_runtime = None;
+
+    let hit = hit_control(&browser, 30.0, 30.0);
+    assert_eq!(hit.form_type, "text");
+    let node_id = hit.node_id.unwrap();
+    let (cx, cy, _cw, ch) = browser.control_content_rect(node_id).expect("input rect");
+
+    browser.handle_mouse_move(cx + 8.0, HEADER_HEIGHT + cy + ch / 2.0);
+    browser.handle_mouse_click(MouseButton::Left, KeyState::Pressed);
+    assert_eq!(browser.focused_control, Some(node_id));
+
+    for c in "duck".chars() {
+        browser.handle_key_event(&KeyEvent {
+            key: MangoKey::Char(c),
+            state: KeyState::Pressed,
+            modifiers: Modifiers::default(),
+        });
+    }
+
+    assert_eq!(
+        browser
+            .cached_document
+            .as_ref()
+            .unwrap()
+            .get(node_id)
+            .and_then(|n| n.as_element())
+            .and_then(|e| e.get_attribute("value")),
+        Some("duck")
+    );
+
+    let dl = browser.build_display_list((1024, 768));
+    let has_duck = dl.as_slice().iter().any(|cmd| match cmd {
+        DisplayCommand::DrawText { text, .. } => text.contains("duck"),
+        _ => false,
+    });
+    assert!(
+        has_duck,
+        "Display list must render typed text on static document without JS"
+    );
+}
