@@ -26,7 +26,11 @@ pub fn to_taffy_dimension(
     ref_dim: f32,
 ) -> Dimension {
     match len {
-        MangoLength::Auto => auto(),
+        MangoLength::Auto
+        | MangoLength::MinContent
+        | MangoLength::MaxContent
+        | MangoLength::FitContent
+        | MangoLength::Content => auto(),
         MangoLength::Percent(p) => percent(p / 100.0),
         MangoLength::Px(px) => length(*px),
         _ => {
@@ -44,7 +48,11 @@ pub fn to_taffy_length_percentage_auto(
     ref_dim: f32,
 ) -> LengthPercentageAuto {
     match len {
-        MangoLength::Auto => auto(),
+        MangoLength::Auto
+        | MangoLength::MinContent
+        | MangoLength::MaxContent
+        | MangoLength::FitContent
+        | MangoLength::Content => auto(),
         MangoLength::Percent(p) => percent(p / 100.0),
         MangoLength::Px(px) => length(*px),
         _ => {
@@ -119,7 +127,7 @@ pub fn to_taffy_align_items(ai: MangoAlignItems) -> AlignItems {
             AlignItems::FLEX_END
         }
         MangoAlignItems::Center | MangoAlignItems::SafeCenter => AlignItems::CENTER,
-        MangoAlignItems::Baseline | MangoAlignItems::LastBaseline => AlignItems::BASELINE,
+        MangoAlignItems::Baseline | MangoAlignItems::LastBaseline => AlignItems::FLEX_START,
     }
 }
 
@@ -135,7 +143,7 @@ pub fn to_taffy_align_self(aself: MangoAlignSelf) -> Option<AlignSelf> {
             Some(AlignSelf::FLEX_END)
         }
         MangoAlignSelf::Center | MangoAlignSelf::SafeCenter => Some(AlignSelf::CENTER),
-        MangoAlignSelf::Baseline | MangoAlignSelf::LastBaseline => Some(AlignSelf::BASELINE),
+        MangoAlignSelf::Baseline | MangoAlignSelf::LastBaseline => Some(AlignSelf::FLEX_START),
     }
 }
 
@@ -252,17 +260,25 @@ pub fn to_taffy_grid_template(
         match t {
             MangoGridTrackSize::RepeatAutoFit(inner) => {
                 let track_fn = to_taffy_track_sizing_function(inner, fs, root_fs, ref_dim);
-                out.push(repeat(
-                    taffy::style::RepetitionCount::AutoFit,
-                    vec![track_fn],
-                ));
+                if matches!(**inner, MangoGridTrackSize::Fr(_)) {
+                    out.push(GridTemplateComponent::Single(track_fn));
+                } else {
+                    out.push(repeat(
+                        taffy::style::RepetitionCount::AutoFit,
+                        vec![track_fn],
+                    ));
+                }
             }
             MangoGridTrackSize::RepeatAutoFill(inner) => {
                 let track_fn = to_taffy_track_sizing_function(inner, fs, root_fs, ref_dim);
-                out.push(repeat(
-                    taffy::style::RepetitionCount::AutoFill,
-                    vec![track_fn],
-                ));
+                if matches!(**inner, MangoGridTrackSize::Fr(_)) {
+                    out.push(GridTemplateComponent::Single(track_fn));
+                } else {
+                    out.push(repeat(
+                        taffy::style::RepetitionCount::AutoFill,
+                        vec![track_fn],
+                    ));
+                }
             }
             other => {
                 let track_fn = to_taffy_track_sizing_function(other, fs, root_fs, ref_dim);

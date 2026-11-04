@@ -4,13 +4,17 @@
 //! flex-grow / flex-shrink resolution, `justify-content` alignment, `align-items` / `align-self`
 //! cross-axis positioning, and multi-line wrapping with gaps.
 
+pub mod abspos;
 pub mod alignment;
 pub mod container;
+pub mod container_helpers;
 pub mod cross;
 pub mod item;
+pub mod limits;
 pub mod lines;
 pub mod metrics;
 pub mod placement;
+pub mod position_lines;
 pub mod sizing;
 
 pub use container::layout_flex;
