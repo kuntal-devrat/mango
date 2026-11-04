@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use webrender::api::units::*;
 use webrender::api::*;
-use webrender::{create_webrender_instance, RenderApi, Renderer, Transaction, WebRenderOptions};
+use webrender::{RenderApi, Renderer, Transaction, WebRenderOptions, create_webrender_instance};
 
 use super::builder::build_webrender_display_list;
 use crate::display_list::DisplayList;

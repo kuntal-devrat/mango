@@ -22,7 +22,7 @@ use mango_layout::layout_document_with_scroll_xy;
 use reftest_engine::*;
 
 #[test]
-fn test_upstream_w3c_css_reftests() {
+fn test_wpt_upstream_w3c_css_reftests() {
     let results = run_upstream_wpt_reftests(None);
     if results.is_empty() {
         return;
@@ -34,7 +34,7 @@ fn test_upstream_w3c_css_reftests() {
 }
 
 #[test]
-fn test_upstream_w3c_css_box_reftests() {
+fn test_wpt_upstream_w3c_css_box_reftests() {
     let results = run_upstream_wpt_reftests(Some("css-box"));
     if results.is_empty() {
         return;
@@ -43,7 +43,7 @@ fn test_upstream_w3c_css_box_reftests() {
 }
 
 #[test]
-fn test_upstream_w3c_css_cascade_reftests() {
+fn test_wpt_upstream_w3c_css_cascade_reftests() {
     let results = run_upstream_wpt_reftests(Some("css-cascade"));
     if results.is_empty() {
         return;
@@ -53,7 +53,7 @@ fn test_upstream_w3c_css_cascade_reftests() {
 }
 
 #[test]
-fn test_upstream_w3c_css_position_reftests() {
+fn test_wpt_upstream_w3c_css_position_reftests() {
     let results = run_upstream_wpt_reftests(Some("css-position"));
     if results.is_empty() {
         return;
@@ -63,7 +63,7 @@ fn test_upstream_w3c_css_position_reftests() {
 }
 
 #[test]
-fn test_upstream_w3c_css_flexbox_reftests() {
+fn test_wpt_upstream_w3c_css_flexbox_reftests() {
     let results = run_upstream_wpt_reftests(Some("css-flexbox"));
     if results.is_empty() {
         return;
@@ -73,7 +73,7 @@ fn test_upstream_w3c_css_flexbox_reftests() {
 }
 
 #[test]
-fn test_upstream_w3c_css_grid_reftests() {
+fn test_wpt_upstream_w3c_css_grid_reftests() {
     let results = run_upstream_wpt_reftests(Some("css-grid"));
     if results.is_empty() {
         return;
@@ -83,7 +83,7 @@ fn test_upstream_w3c_css_grid_reftests() {
 }
 
 #[test]
-fn test_upstream_w3c_css_tables_reftests() {
+fn test_wpt_upstream_w3c_css_tables_reftests() {
     let results = run_upstream_wpt_reftests(Some("css-tables"));
     if results.is_empty() {
         return;
@@ -93,7 +93,7 @@ fn test_upstream_w3c_css_tables_reftests() {
 }
 
 #[test]
-fn test_upstream_w3c_css_inline_reftests() {
+fn test_wpt_upstream_w3c_css_inline_reftests() {
     let results = run_upstream_wpt_reftests(Some("css-inline"));
     if results.is_empty() {
         return;
@@ -103,7 +103,7 @@ fn test_upstream_w3c_css_inline_reftests() {
 }
 
 #[test]
-fn test_overflow_auto_005_pixel() {
+fn test_wpt_overflow_auto_005_pixel() {
     assert_flexbox_reftest(
         "overflow-auto-005.html",
         "reference/overflow-auto-005-ref.html",
@@ -112,7 +112,7 @@ fn test_overflow_auto_005_pixel() {
 
 #[test]
 #[ignore = "in-progress vertical-lr scrollbars investigation"]
-fn test_cross_axis_scrollbar_pixel() {
+fn test_wpt_cross_axis_scrollbar_pixel() {
     assert_flexbox_reftest(
         "cross-axis-scrollbar.html",
         "reference/cross-axis-scrollbar-ref.html",
@@ -121,7 +121,7 @@ fn test_cross_axis_scrollbar_pixel() {
 
 #[test]
 #[ignore = "in-progress content-height-with-scrollbars investigation"]
-fn test_content_height_with_scrollbars_pixel() {
+fn test_wpt_content_height_with_scrollbars_pixel() {
     assert_flexbox_reftest(
         "content-height-with-scrollbars.html",
         "reference/content-height-with-scrollbars-ref.html",
@@ -129,7 +129,7 @@ fn test_content_height_with_scrollbars_pixel() {
 }
 
 #[test]
-fn test_percentage_heights_004_pixel() {
+fn test_wpt_percentage_heights_004_pixel() {
     assert_flexbox_reftest(
         "percentage-heights-004.html",
         "percentage-heights-004-ref.html",
@@ -138,7 +138,7 @@ fn test_percentage_heights_004_pixel() {
 
 #[test]
 #[ignore = "in-progress percentage-heights-015 investigation"]
-fn test_percentage_heights_015_pixel() {
+fn test_wpt_percentage_heights_015_pixel() {
     assert_flexbox_reftest(
         "percentage-heights-015.html",
         "percentage-heights-015-ref.html",
@@ -146,7 +146,7 @@ fn test_percentage_heights_015_pixel() {
 }
 
 #[test]
-fn test_align_items_baseline_overflow_non_visible_pixel() {
+fn test_wpt_align_items_baseline_overflow_non_visible_pixel() {
     assert_flexbox_reftest(
         "align-items-baseline-overflow-non-visible.html",
         "reference/align-items-baseline-overflow-non-visible-ref.html",
@@ -154,17 +154,17 @@ fn test_align_items_baseline_overflow_non_visible_pixel() {
 }
 
 #[test]
-fn test_flexbox_fbfc_pixel() {
+fn test_wpt_flexbox_fbfc_pixel() {
     assert_flexbox_reftest("flexbox_fbfc.html", "flexbox_fbfc-ref.html");
 }
 
 #[test]
-fn test_flexbox_fbfc2_pixel() {
+fn test_wpt_flexbox_fbfc2_pixel() {
     assert_flexbox_reftest("flexbox_fbfc2.html", "flexbox_fbfc2-ref.html");
 }
 
 #[test]
-fn test_position_fixed_001_pixel() {
+fn test_wpt_position_fixed_001_pixel() {
     assert_flexbox_reftest(
         "position-fixed-001.html",
         "reference/position-fixed-001-ref.html",
@@ -173,7 +173,7 @@ fn test_position_fixed_001_pixel() {
 
 #[test]
 #[ignore = "in-progress vertical-rl scrollbars investigation"]
-fn test_scrollbars_pixel() {
+fn test_wpt_scrollbars_pixel() {
     let base = upstream_root().join("css").join("css-flexbox");
     let test_file = base.join("scrollbars.html");
     let ref_file = base.join("scrollbars-ref.html");

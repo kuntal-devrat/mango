@@ -96,6 +96,10 @@ impl<'a> StyleSharingCache<'a> {
         self.element_cache.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.element_cache.is_empty()
+    }
+
     /// Computes or retrieves a shared `Arc<ComputedStyle>` for a text node inheriting from `parent_style`.
     pub fn get_or_compute_text_style(
         &mut self,
@@ -275,6 +279,10 @@ fn is_style_affecting_attribute(name: &str, rule_index: &RuleIndex) -> bool {
             | "face"
             | "role"
             | "aria-hidden"
+            | "open"
+            | "popover"
+            | "data-mango-popover-open"
+            | ":popover-open"
     ) || rule_index.has_attr_rule(&lower)
 }
 

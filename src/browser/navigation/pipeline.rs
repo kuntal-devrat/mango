@@ -16,12 +16,6 @@ pub fn prepare_document_pipeline(
     prepare_document_pipeline_cancellable(loader, doc_result, &|| false)
 }
 
-/// Cancellable variant of [`prepare_document_pipeline`].
-///
-/// `should_cancel` is polled before every fetch batch and after every batch;
-/// when it returns true the pipeline abandons remaining subresource fetches
-/// and returns a partial document immediately, so superseded navigations free
-/// their worker without wasting network/time on a dead page.
 /// Prepares an incremental DOM document snapshot for progressive rendering (FCP).
 pub fn prepare_document_pipeline_from_doc(
     loader: &ResourceLoader,
@@ -219,22 +213,19 @@ fn prepare_document_pipeline_internal(
     if !should_cancel() {
         let mut transitive_imports = Vec::new();
         for (idx, res) in fetched_scripts.iter() {
-            if let Ok(code) = res {
-                if let Some(s) = raw_scripts.get(*idx) {
-                    if s.is_module() {
-                        let module_base = if let Some(src) = s.src() {
-                            final_url.resolve(src).unwrap_or_else(|_| final_url.clone())
-                        } else {
-                            final_url.clone()
-                        };
-                        for import_path in scan_es_module_imports(code) {
-                            if let Ok(resolved) = module_base.resolve(&import_path) {
-                                let key = resolved.as_str();
-                                if loader.cache().get(&key).is_none() {
-                                    transitive_imports.push((module_base.clone(), import_path));
-                                }
-                            }
-                        }
+            if let Ok(code) = res
+                && let Some(s) = raw_scripts.get(*idx)
+                && s.is_module()
+            {
+                let module_base = s
+                    .src()
+                    .and_then(|src| final_url.resolve(src).ok())
+                    .unwrap_or_else(|| final_url.clone());
+                for import_path in scan_es_module_imports(code) {
+                    if let Ok(resolved) = module_base.resolve(&import_path)
+                        && loader.cache().get(&resolved.as_str()).is_none()
+                    {
+                        transitive_imports.push((module_base.clone(), import_path));
                     }
                 }
             }
@@ -728,7 +719,8 @@ pub fn unwrap_tracking_redirect(url_str: &str) -> Option<String> {
     let parsed = Url::parse(url_str).ok()?;
     let host = parsed.host.as_deref().unwrap_or("");
     let query = parsed.query.as_deref().unwrap_or("");
-    let is_ddg = (host.ends_with("duckduckgo.com") || host == "ddg.gg") && parsed.path.starts_with("/l/");
+    let is_ddg =
+        (host.ends_with("duckduckgo.com") || host == "ddg.gg") && parsed.path.starts_with("/l/");
     let is_google = host.contains("google.") && parsed.path.starts_with("/url");
 
     if is_ddg || is_google {
@@ -736,7 +728,9 @@ pub fn unwrap_tracking_redirect(url_str: &str) -> Option<String> {
             let val = if is_ddg {
                 param.strip_prefix("uddg=")
             } else {
-                param.strip_prefix("q=").or_else(|| param.strip_prefix("url="))
+                param
+                    .strip_prefix("q=")
+                    .or_else(|| param.strip_prefix("url="))
             };
             if let Some(v) = val {
                 let decoded = crate::browser::navigation::anchor::percent_decode(v);
@@ -756,7 +750,9 @@ pub fn check_meta_refresh(doc: &Document, base_url: Option<&Url>) -> Option<(u64
         let node = doc.get(node_id)?;
         if let NodeData::Element(elem) = &node.data
             && elem.tag_name.eq_ignore_ascii_case("meta")
-            && elem.get_attribute("http-equiv").is_some_and(|v| v.trim().eq_ignore_ascii_case("refresh"))
+            && elem
+                .get_attribute("http-equiv")
+                .is_some_and(|v| v.trim().eq_ignore_ascii_case("refresh"))
             && let Some(content) = elem.get_attribute("content")
         {
             let trimmed = content.trim();
@@ -767,11 +763,12 @@ pub fn check_meta_refresh(doc: &Document, base_url: Option<&Url>) -> Option<(u64
             let delay = delay_str.parse::<u64>().unwrap_or(0);
             let mut target_url = String::new();
             if let Some(u) = url_part {
-                let mut raw = u;
-                if let Some(idx) = raw.to_ascii_lowercase().find("url=") {
-                    raw = &raw[idx + 4..];
+                let raw = match u.to_ascii_lowercase().find("url=") {
+                    Some(idx) => &u[idx + 4..],
+                    None => u,
                 }
-                let raw = raw.trim().trim_matches(|c| c == '\'' || c == '"' || c == ' ');
+                .trim()
+                .trim_matches(|c| matches!(c, '\'' | '"' | ' '));
                 if !raw.is_empty() {
                     target_url = raw.to_string();
                 }

@@ -217,10 +217,11 @@ impl BrowserChrome {
         {
             let mut sheets = self.cached_stylesheets.clone();
             sheets.extend(embedded_sheets);
-            self.style_index_cache = Some(Arc::new(mango_layout::PageStyleIndex::from_stylesheets(
-                sheets,
-                mango_css::current_media_environment(),
-            )));
+            self.style_index_cache =
+                Some(Arc::new(mango_layout::PageStyleIndex::from_stylesheets(
+                    sheets,
+                    mango_css::current_media_environment(),
+                )));
             if let Some(index) = &self.style_index_cache {
                 log::debug!(
                     "built page stylesheet index: {} sheets, {} indexed entries",
@@ -236,8 +237,7 @@ impl BrowserChrome {
 
         if self.async_navigation {
             let document = (*self.document_view()).clone();
-            self.async_layout
-                .request(document, style_index, viewport);
+            self.async_layout.request(document, style_index, viewport);
             return;
         }
 
@@ -254,7 +254,8 @@ impl BrowserChrome {
 
         let (root_box, page_dl, canvas_color) = {
             let doc = self.document_view();
-            let (root_box, page_dl) = layout_document_with_style_index(&doc, &style_index, viewport);
+            let (root_box, page_dl) =
+                layout_document_with_style_index(&doc, &style_index, viewport);
             let canvas_color = canvas_background_color(&root_box);
             (root_box, page_dl, canvas_color)
         };

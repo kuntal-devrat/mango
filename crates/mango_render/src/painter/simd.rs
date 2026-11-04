@@ -145,7 +145,7 @@ unsafe fn blend_span_neon(dst: &mut [u32], color: Color) {
 
         while i + 4 <= len {
             let ptr = dst.as_mut_ptr().add(i) as *mut u8;
-            let d = vld1_u8(ptr);
+            let d = vld1q_u8(ptr);
             let d_lo = vget_low_u8(d);
             let d_hi = vget_high_u8(d);
 
@@ -156,7 +156,7 @@ unsafe fn blend_span_neon(dst: &mut [u32], color: Color) {
             let div_hi = vshrn_n_u16(mul_hi, 8);
 
             let res = vcombine_u8(div_lo, div_hi);
-            vst1_u8(ptr, res);
+            vst1q_u8(ptr, res);
 
             i += 4;
         }

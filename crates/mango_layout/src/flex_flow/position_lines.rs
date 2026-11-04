@@ -6,11 +6,11 @@ use crate::box_tree::LayoutBox;
 use crate::dimensions::Dimensions;
 use crate::float::FloatContext;
 
-use super::alignment::{compute_justify_content_spacing, LineCrossMetrics};
+use super::alignment::{LineCrossMetrics, compute_justify_content_spacing};
 use super::metrics::ItemMetric;
 use super::placement::{
-    calculate_abspos_static_positions, finalize_container_height, position_flex_items_on_line,
-    ContainerFinalizeParams, LinePlacementParams,
+    ContainerFinalizeParams, LinePlacementParams, calculate_abspos_static_positions,
+    finalize_container_height, position_flex_items_on_line,
 };
 
 pub struct PositionLinesParams<'a> {

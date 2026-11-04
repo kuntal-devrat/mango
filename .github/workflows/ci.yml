@@ -342,7 +342,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        include:
+          - os: windows-latest
+            cc: clang-cl
+            cxx: clang-cl
+          - os: macos-latest
+            cc: clang
+            cxx: clang++
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -351,6 +357,9 @@ jobs:
         with:
           cache-targets: "false"
       - name: Run Platform Tests
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
         run: cargo test -p mango_platform -p mango_ipc --verbose
 
   wpt-official:
@@ -387,9 +396,14 @@ jobs:
       - name: Install Linux Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libfontconfig1-dev
+          sudo apt-get install -y pkg-config libx11-dev libasound2-dev libfontconfig1-dev
       - name: Build Headless Renderer
-        run: cargo build --bin headless --release
+        run: |
+          cargo build --bin headless --release || {
+            echo "Initial build failed; clearing cached v8 archive and retrying..."
+            rm -rf ~/.cargo/.rusty_v8 target/release/gn_out target/release/build/v8*
+            cargo build --bin headless --release
+          }
       - name: Test HTML Viewport Rendering
         run: |
           ./target/release/headless "data:text/html,<html><body style='background:%23ff9900;'><h1 style='color:%23ffffff;'>Mango</h1></body></html>" output.png 800 600 --page

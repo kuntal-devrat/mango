@@ -25,10 +25,17 @@ pub struct LeafContext {
 }
 
 /// Computes the intrinsic content width and height for a flex/grid child item.
-fn compute_child_intrinsic_size(child: &LayoutBox, cb_w: f32, cb_h: f32, container_fs: f32) -> (f32, f32) {
+fn compute_child_intrinsic_size(
+    child: &LayoutBox,
+    cb_w: f32,
+    cb_h: f32,
+    container_fs: f32,
+) -> (f32, f32) {
     let child_style = child.style.as_deref();
     let fs = child_style.map(|s| s.font_size).unwrap_or(container_fs);
-    let root_fs = child_style.map(|s| s.root_font_size).unwrap_or(container_fs);
+    let root_fs = child_style
+        .map(|s| s.root_font_size)
+        .unwrap_or(container_fs);
 
     // 1. Replaced elements (img, svg, canvas, video, audio, iframe)
     match &child.box_type {
@@ -122,7 +129,8 @@ fn compute_child_intrinsic_size(child: &LayoutBox, cb_w: f32, cb_h: f32, contain
     let pad_v = child_style
         .map(|s| {
             s.padding_top.to_px_with_viewport(fs, root_fs, cb_w, cb_h)
-                + s.padding_bottom.to_px_with_viewport(fs, root_fs, cb_w, cb_h)
+                + s.padding_bottom
+                    .to_px_with_viewport(fs, root_fs, cb_w, cb_h)
                 + s.border_top_width
                 + s.border_bottom_width
         })
@@ -169,12 +177,25 @@ fn compute_child_intrinsic_size(child: &LayoutBox, cb_w: f32, cb_h: f32, contain
             _ => {
                 if let Some(fh) = form_h {
                     (fh - pad_v).max(0.0)
+                } else if !child.children.is_empty() {
+                    let measured = crate::flex_flow::sizing::measure_flex_child_intrinsic_height(
+                        child, content_w, fs, root_fs, cb_h,
+                    );
+                    if measured > 0.0 {
+                        measured
+                    } else {
+                        let (asc, desc, gap) = mango_render::font::font_manager().font_metrics(
+                            mango_render::FontFamily::SansSerif,
+                            mango_render::FontWeight::Regular,
+                            fs,
+                        );
+                        s.line_height.unwrap_or(asc + desc + gap)
+                    }
                 } else if child.dimensions.content.size.height > 0.0 {
                     child.dimensions.content.size.height
                 } else if child.box_type.is_text()
                     || child.is_inline()
                     || matches!(child.box_type, BoxType::AnonymousBlock)
-                    || !child.children.is_empty()
                 {
                     let (asc, desc, gap) = mango_render::font::font_manager().font_metrics(
                         mango_render::FontFamily::SansSerif,
@@ -279,9 +300,10 @@ pub fn execute_taffy_layout(
     let pad_right = style
         .padding_right
         .to_px_with_viewport(font_size, root_font_size, cb_w, cb_h);
-    let pad_bottom = style
-        .padding_bottom
-        .to_px_with_viewport(font_size, root_font_size, cb_w, cb_h);
+    let pad_bottom =
+        style
+            .padding_bottom
+            .to_px_with_viewport(font_size, root_font_size, cb_w, cb_h);
     let pad_left = style
         .padding_left
         .to_px_with_viewport(font_size, root_font_size, cb_w, cb_h);
@@ -299,15 +321,17 @@ pub fn execute_taffy_layout(
     let margin_top = style
         .margin_top
         .to_px_with_viewport(font_size, root_font_size, cb_w, cb_h);
-    let margin_bottom = style
-        .margin_bottom
-        .to_px_with_viewport(font_size, root_font_size, cb_w, cb_h);
+    let margin_bottom =
+        style
+            .margin_bottom
+            .to_px_with_viewport(font_size, root_font_size, cb_w, cb_h);
     let margin_left = style
         .margin_left
         .to_px_with_viewport(font_size, root_font_size, cb_w, cb_h);
-    let margin_right = style
-        .margin_right
-        .to_px_with_viewport(font_size, root_font_size, cb_w, cb_h);
+    let margin_right =
+        style
+            .margin_right
+            .to_px_with_viewport(font_size, root_font_size, cb_w, cb_h);
 
     container.dimensions.margin =
         EdgeSizes::new(margin_top, margin_right, margin_bottom, margin_left);
@@ -381,6 +405,26 @@ pub fn execute_taffy_layout(
             _ => {}
         }
 
+        // Automatic minimum size for flex items (CSS Flexbox spec Section 4.5):
+        // In a row flex container, min-width: auto resolves to min-content width.
+        // In a column flex container, min-height: auto resolves to min-content height.
+        if !is_grid {
+            let is_row = matches!(
+                style.flex_direction,
+                mango_css::values::FlexDirection::Row
+                    | mango_css::values::FlexDirection::RowReverse
+            );
+            let s_opt = child.style.as_deref();
+            if is_row && s_opt.map(|s| s.min_width.is_auto()).unwrap_or(true) && int_w > 0.0 {
+                taffy_style.min_size.width = taffy::style_helpers::length(int_w);
+            } else if !is_row
+                && s_opt.map(|s| s.min_height.is_auto()).unwrap_or(true)
+                && int_h > 0.0
+            {
+                taffy_style.min_size.height = taffy::style_helpers::length(int_h);
+            }
+        }
+
         let child_node = match tree.new_leaf_with_context(
             taffy_style,
             LeafContext {
@@ -447,12 +491,15 @@ pub fn execute_taffy_layout(
                 let (int_w, int_h) = context
                     .map(|c| (c.intrinsic_width, c.intrinsic_height))
                     .unwrap_or((0.0, 0.0));
-                taffy::compute_leaf_layout(inputs, style, |_, _| 0.0, |known_dims, _avail| {
-                    taffy::geometry::Size {
+                taffy::compute_leaf_layout(
+                    inputs,
+                    style,
+                    |_, _| 0.0,
+                    |known_dims, _avail| taffy::geometry::Size {
                         width: known_dims.width.unwrap_or(int_w),
                         height: known_dims.height.unwrap_or(int_h),
-                    }
-                })
+                    },
+                )
             },
         )
         .is_err()
@@ -471,11 +518,8 @@ pub fn execute_taffy_layout(
     let mut content_h = orig_content_h;
 
     // Column-reverse height clamping: if auto height with max-height, wrap to content
-    let is_column_reverse = !is_grid
-        && matches!(
-            style.flex_direction,
-            FlexDirection::ColumnReverse
-        );
+    let is_column_reverse =
+        !is_grid && matches!(style.flex_direction, FlexDirection::ColumnReverse);
     let mut col_reverse_shift_y = 0.0f32;
     if is_column_reverse && style.height == Length::Auto {
         let mut max_col_h = 0.0f32;
@@ -617,7 +661,7 @@ pub fn execute_taffy_layout(
                 }
             }
 
-            for (child, ascent_opt) in container.children.iter_mut().zip(item_ascents.into_iter()) {
+            for (child, ascent_opt) in container.children.iter_mut().zip(item_ascents) {
                 if let Some(ascent) = ascent_opt {
                     let diff = (max_ascent - ascent).max(0.0);
                     child.dimensions.content.origin.y += diff;
@@ -674,6 +718,35 @@ pub fn execute_taffy_layout(
     }
 
     // 8. Lay out out-of-flow positioned children
+    if !is_grid {
+        let is_flex_dir_row = matches!(
+            style.flex_direction,
+            FlexDirection::Row | FlexDirection::RowReverse
+        );
+        let is_vertical_wm = matches!(
+            style.writing_mode,
+            mango_css::values::WritingMode::VerticalRl | mango_css::values::WritingMode::VerticalLr
+        );
+        let is_row = if is_vertical_wm {
+            !is_flex_dir_row
+        } else {
+            is_flex_dir_row
+        };
+        let is_reverse = matches!(
+            style.flex_direction,
+            FlexDirection::RowReverse | FlexDirection::ColumnReverse
+        );
+        crate::flex_flow::abspos::calculate_abspos_static_positions(
+            container,
+            &style,
+            is_row,
+            is_reverse,
+            container_x,
+            container_y,
+            content_w,
+            content_h,
+        );
+    }
     layout_positioned_children_with_cb(container, containing_block, float_ctx);
 
     true

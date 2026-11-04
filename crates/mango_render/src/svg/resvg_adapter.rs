@@ -15,19 +15,21 @@ use crate::image_decode::DecodedImage;
 static RESVG_FONTDB: OnceLock<Arc<usvg::fontdb::Database>> = OnceLock::new();
 
 fn get_resvg_fontdb() -> Arc<usvg::fontdb::Database> {
-    RESVG_FONTDB.get_or_init(|| {
-        let mut db = usvg::fontdb::Database::new();
-        let fm = font_manager();
-        db.load_font_data(fm.sans_regular_data.to_vec());
-        db.load_font_data(fm.sans_bold_data.to_vec());
-        db.load_font_data(fm.serif_regular_data.to_vec());
-        db.load_font_data(fm.serif_bold_data.to_vec());
-        db.load_font_data(fm.mono_data.to_vec());
-        db.set_sans_serif_family("Liberation Sans");
-        db.set_serif_family("Liberation Serif");
-        db.set_monospace_family("Liberation Mono");
-        Arc::new(db)
-    }).clone()
+    RESVG_FONTDB
+        .get_or_init(|| {
+            let mut db = usvg::fontdb::Database::new();
+            let fm = font_manager();
+            db.load_font_data(fm.sans_regular_data.to_vec());
+            db.load_font_data(fm.sans_bold_data.to_vec());
+            db.load_font_data(fm.serif_regular_data.to_vec());
+            db.load_font_data(fm.serif_bold_data.to_vec());
+            db.load_font_data(fm.mono_data.to_vec());
+            db.set_sans_serif_family("Liberation Sans");
+            db.set_serif_family("Liberation Serif");
+            db.set_monospace_family("Liberation Mono");
+            Arc::new(db)
+        })
+        .clone()
 }
 
 /// Extracts intrinsic dimensions (width, height) using `usvg`.
@@ -146,7 +148,8 @@ mod tests {
             </defs>
             <use href="#global-star" x="0" y="0" width="40" height="40"/>
         </svg>"##;
-        let img = render_svg_resvg(svg, 40, 40, Color::BLACK).expect("resvg should render symbol in defs");
+        let img = render_svg_resvg(svg, 40, 40, Color::BLACK)
+            .expect("resvg should render symbol in defs");
         let center = img.pixels[20 * 40 + 20];
         let blue = center & 0xFF;
         assert_eq!(blue, 255);

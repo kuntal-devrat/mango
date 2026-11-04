@@ -204,11 +204,11 @@ impl WindowSurface {
                     drop(old_state);
                     let mut pixel_buffer = PixelBuffer::new(win);
                     pixel_buffer.draw(|buffer, w, h| {
-                        if let Some(wr_pixels) = mango_render::render_with_webrender(dl, w, h) {
-                            if wr_pixels.len() == buffer.len() {
-                                buffer.copy_from_slice(&wr_pixels);
-                                return;
-                            }
+                        if let Some(wr_pixels) = mango_render::render_with_webrender(dl, w, h)
+                            && wr_pixels.len() == buffer.len()
+                        {
+                            buffer.copy_from_slice(&wr_pixels);
+                            return;
                         }
                         buffer.fill(bg_color.to_rgb_u32());
                         mango_render::painter::paint(dl, buffer, w, h);
@@ -223,11 +223,11 @@ impl WindowSurface {
             }
             Self::Software { pixel_buffer, .. } => {
                 pixel_buffer.draw(|buffer, w, h| {
-                    if let Some(wr_pixels) = mango_render::render_with_webrender(dl, w, h) {
-                        if wr_pixels.len() == buffer.len() {
-                            buffer.copy_from_slice(&wr_pixels);
-                            return;
-                        }
+                    if let Some(wr_pixels) = mango_render::render_with_webrender(dl, w, h)
+                        && wr_pixels.len() == buffer.len()
+                    {
+                        buffer.copy_from_slice(&wr_pixels);
+                        return;
                     }
                     buffer.fill(bg_color.to_rgb_u32());
                     mango_render::painter::paint(dl, buffer, w, h);
