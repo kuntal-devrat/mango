@@ -3,11 +3,32 @@
 //! Provides full SVG 1.1 and SVG 2 vector rendering (complex paths, gradients,
 //! clip paths, patterns, masks, markers, text, and SVG icons/graphs).
 
+use std::sync::{Arc, OnceLock};
+
 use mango_core::Color;
 use tiny_skia::{Color as SkiaColor, Pixmap, Transform};
 use usvg::{Options, Tree};
 
+use crate::font::font_manager;
 use crate::image_decode::DecodedImage;
+
+static RESVG_FONTDB: OnceLock<Arc<usvg::fontdb::Database>> = OnceLock::new();
+
+fn get_resvg_fontdb() -> Arc<usvg::fontdb::Database> {
+    RESVG_FONTDB.get_or_init(|| {
+        let mut db = usvg::fontdb::Database::new();
+        let fm = font_manager();
+        db.load_font_data(fm.sans_regular_data.to_vec());
+        db.load_font_data(fm.sans_bold_data.to_vec());
+        db.load_font_data(fm.serif_regular_data.to_vec());
+        db.load_font_data(fm.serif_bold_data.to_vec());
+        db.load_font_data(fm.mono_data.to_vec());
+        db.set_sans_serif_family("Liberation Sans");
+        db.set_serif_family("Liberation Serif");
+        db.set_monospace_family("Liberation Mono");
+        Arc::new(db)
+    }).clone()
+}
 
 /// Extracts intrinsic dimensions (width, height) using `usvg`.
 pub fn get_svg_intrinsic_dimensions_resvg(svg_xml: &str) -> Option<(f32, f32)> {
@@ -37,6 +58,8 @@ pub fn render_svg_resvg(
 
     let mut opt = Options::default();
     opt.dpi = 96.0;
+    opt.fontdb = get_resvg_fontdb();
+    opt.font_family = "Liberation Sans".to_string();
 
     // Replace currentColor keyword if present with resolved RGB hex
     let processed_svg;
@@ -118,5 +141,31 @@ mod tests {
         let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100"></svg>"#;
         let dims = get_svg_intrinsic_dimensions_resvg(svg);
         assert_eq!(dims, Some((200.0, 100.0)));
+    }
+
+    #[test]
+    fn test_resvg_text_rendering() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 50">
+            <text x="10" y="35" font-size="18" fill="#ff0000">Hi <tspan fill="#0000ff">Mango</tspan></text>
+        </svg>"##;
+        let img = render_svg_resvg(svg, 120, 50, Color::BLACK).expect("resvg should render text");
+        assert_eq!(img.width, 120);
+        assert_eq!(img.height, 50);
+
+        let mut has_red = false;
+        let mut has_blue = false;
+        for &p in &img.pixels {
+            let a = (p >> 24) & 0xFF;
+            let r = (p >> 16) & 0xFF;
+            let b = p & 0xFF;
+            if a > 0 && r > 100 {
+                has_red = true;
+            }
+            if a > 0 && b > 100 {
+                has_blue = true;
+            }
+        }
+        assert!(has_red, "Should render red main text glyphs in resvg");
+        assert!(has_blue, "Should render blue tspan glyphs in resvg");
     }
 }

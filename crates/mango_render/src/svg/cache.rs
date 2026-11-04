@@ -214,9 +214,8 @@ pub fn render_svg(
     // 3. Try rendering via resvg first for comprehensive SVG 1.1 / SVG 2 vector conformance
     let has_external_symbol_use =
         svg_xml.contains("<use") && !svg_xml.contains("<symbol") && !svg_xml.contains("<defs");
-    let has_text = svg_xml.contains("<text");
 
-    if !has_external_symbol_use && !has_text {
+    if !has_external_symbol_use {
         if let Some(decoded) =
             super::resvg_adapter::render_svg_resvg(svg_xml, target_w, target_h, current_color)
         {
