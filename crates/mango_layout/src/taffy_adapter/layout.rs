@@ -69,9 +69,23 @@ fn compute_child_intrinsic_size(
             if let Some(s) = child_style {
                 if let Length::Px(px) = s.width {
                     w = px;
+                } else if let Length::Percent(p) = s.width {
+                    if cb_w > 0.0 {
+                        w = (p / 100.0) * cb_w;
+                    }
                 }
                 if let Length::Px(px) = s.height {
                     h = px;
+                } else if let Length::Percent(p) = s.height {
+                    if cb_h > 0.0 {
+                        h = (p / 100.0) * cb_h;
+                    }
+                }
+                if let Length::Px(max_w) = s.max_width {
+                    w = w.min(max_w);
+                }
+                if let Length::Px(max_h) = s.max_height {
+                    h = h.min(max_h);
                 }
                 if let Some(ratio) = s.aspect_ratio
                     && ratio > 0.0

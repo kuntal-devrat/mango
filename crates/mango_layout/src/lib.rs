@@ -201,6 +201,7 @@ pub fn layout_document_with_style_index(
     style_index: &PageStyleIndex,
     viewport: Size,
 ) -> (LayoutBox, DisplayList) {
+    mango_css::set_current_viewport(viewport.width, viewport.height);
     let mut env = mango_css::current_media_environment();
     env.viewport_width = viewport.width;
     env.viewport_height = viewport.height;

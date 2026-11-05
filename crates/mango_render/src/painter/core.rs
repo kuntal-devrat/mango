@@ -13,7 +13,10 @@ use crate::painter::borders::{draw_border_image, paint_border};
 use crate::painter::effects::{apply_filter_to_rect, restore_outside_clip_path, snapshot_rect};
 use crate::painter::image::blit_image;
 use crate::painter::shadows::{paint_box_shadow, paint_text_shadow};
-use crate::painter::shapes::{draw_line_segment, fill_gradient, fill_rounded_rect, intersect_rect};
+use crate::painter::shapes::{
+    draw_line_segment, fill_gradient, fill_rounded_rect, intersect_rect,
+    restore_outside_rounded_rect,
+};
 use crate::painter::text::{paint_text, paint_text_with_gradient};
 
 /// Rasterizes a [`DisplayList`] into a pixel buffer.
@@ -66,6 +69,7 @@ pub fn paint_with_clip(
     }
 
     let mut clip_stack: Vec<Rect> = Vec::new();
+    let mut rounded_clip_stack: Vec<Option<(Rect, [f32; 4], Vec<u32>)>> = Vec::new();
     let mut transform_stack: Vec<[f32; 6]> = Vec::new();
     let mut blend_mode_stack: Vec<mango_css::values::BlendMode> = Vec::new();
     let mut filter_stack: Vec<(Vec<mango_css::values::FilterFunction>, Rect)> = Vec::new();
@@ -112,9 +116,40 @@ pub fn paint_with_clip(
                 };
                 let intersected = intersect_rect(current, eff_rect);
                 clip_stack.push(intersected);
+                rounded_clip_stack.push(None);
+            }
+            DisplayCommand::PushClipRoundedRect { rect, radii } => {
+                let current = clip_stack.last().copied().unwrap_or(default_clip);
+                let eff_rect = if is_identity(transform) {
+                    *rect
+                } else if let Some((tx, ty)) = is_pure_translation(transform) {
+                    Rect::new(rect.x() + tx, rect.y() + ty, rect.width(), rect.height())
+                } else {
+                    transformed_bounds(rect, transform)
+                };
+                let intersected = intersect_rect(current, eff_rect);
+                clip_stack.push(intersected);
+                let rounded = if radii.iter().any(|&r| r > 0.0) {
+                    let snapshot = snapshot_rect(buffer, buf_width, buf_height, &eff_rect);
+                    Some((eff_rect, *radii, snapshot))
+                } else {
+                    None
+                };
+                rounded_clip_stack.push(rounded);
             }
             DisplayCommand::PopClip => {
                 clip_stack.pop();
+                if let Some(Some((r, radii, snapshot))) = rounded_clip_stack.pop() {
+                    restore_outside_rounded_rect(
+                        buffer,
+                        buf_width,
+                        buf_height,
+                        &r,
+                        radii,
+                        active_clip,
+                        &snapshot,
+                    );
+                }
             }
             DisplayCommand::PushTransform { matrix } => {
                 transform_stack.push(concat_matrix(transform, *matrix));

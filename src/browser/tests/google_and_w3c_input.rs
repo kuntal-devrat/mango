@@ -504,3 +504,129 @@ fn test_form_typing_without_js_runtime_on_static_document() {
         "Display list must render typed text on static document without JS"
     );
 }
+
+#[test]
+fn test_google_search_bar_elevation_rounded_clip_and_100dvh_layout() {
+    let mut browser = BrowserChrome::new(1024, 768);
+    let html = r#"
+        <html>
+        <head>
+            <style>
+                body {
+                    margin: 0;
+                    padding: 0;
+                    min-height: 100dvh;
+                    display: flex;
+                    flex-direction: column;
+                }
+                .main {
+                    flex: 1;
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                }
+                .RNNXgb {
+                    width: 584px;
+                    height: 46px;
+                    border-radius: 24px;
+                    box-shadow: 0 1px 6px rgba(32,33,36,.28);
+                    overflow: hidden;
+                    display: flex;
+                    align-items: center;
+                    padding: 0 14px;
+                    box-sizing: border-box;
+                }
+                #APjFqb {
+                    flex: 1;
+                    background: transparent;
+                    border: none;
+                    outline: none;
+                    resize: none;
+                    font-size: 16px;
+                    height: 34px;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="main">
+                <div class="RNNXgb">
+                    <textarea id="APjFqb" name="q" rows="1"></textarea>
+                </div>
+            </div>
+        </body>
+        </html>
+    "#;
+    browser.load_html(html.to_string(), "https://www.google.com/".to_string());
+
+    let dl = browser.build_display_list((1024, 768));
+
+    // 1. Must emit elevation box shadow with 24px corner radii
+    let shadow_cmd = dl.as_slice().iter().find(|cmd| match cmd {
+        DisplayCommand::DrawBoxShadow {
+            blur_radius, radii, ..
+        } => *blur_radius >= 5.0 && radii == &[24.0, 24.0, 24.0, 24.0],
+        _ => false,
+    });
+    assert!(
+        shadow_cmd.is_some(),
+        "Must emit DrawBoxShadow with 24px corner radii for search bar elevation"
+    );
+
+    // 2. Must emit PushClipRoundedRect with 24px corner radii for the overflow: hidden container
+    let rounded_clip = dl.as_slice().iter().find(|cmd| match cmd {
+        DisplayCommand::PushClipRoundedRect { radii, .. } => radii == &[24.0, 24.0, 24.0, 24.0],
+        _ => false,
+    });
+    assert!(
+        rounded_clip.is_some(),
+        "Must emit PushClipRoundedRect with 24px radii for search bar container"
+    );
+
+    // 3. Textarea with border: none must NOT emit any DrawBorder command
+    let has_unwanted_border = dl.as_slice().iter().any(|cmd| match cmd {
+        DisplayCommand::DrawBorder { rect, .. } => rect.width() <= 584.0 && rect.height() <= 46.0,
+        _ => false,
+    });
+    assert!(
+        !has_unwanted_border,
+        "Textarea with border: none must not emit DrawBorder bevels"
+    );
+
+    // 4. Hit-test and type into search textarea
+    let (node_id, cx, cy, ch) = {
+        let root = browser.root_box.as_ref().unwrap();
+        let mut found = None;
+        fn find_ta(
+            b: &mango_layout::box_tree::LayoutBox,
+            out: &mut Option<(mango_html::dom::NodeId, f32, f32, f32)>,
+        ) {
+            if b.tag_name.as_deref() == Some("textarea") {
+                if let Some(nid) = b.node_id {
+                    let c = b.dimensions.content;
+                    *out = Some((nid, c.x(), c.y(), c.height()));
+                    return;
+                }
+            }
+            for child in &b.children {
+                find_ta(child, out);
+            }
+        }
+        find_ta(root, &mut found);
+        found.expect("textarea in box tree")
+    };
+
+    let hit = hit_control(&browser, cx + 10.0, cy + ch / 2.0);
+    assert_eq!(hit.form_type, "textarea");
+    assert_eq!(hit.node_id, Some(node_id));
+
+    browser.handle_mouse_move(cx + 10.0, HEADER_HEIGHT + cy + ch / 2.0);
+    browser.handle_mouse_click(MouseButton::Left, KeyState::Pressed);
+    assert_eq!(browser.focused_control, Some(node_id));
+
+    browser.handle_ime_commit("Google Search Parity");
+    assert_eq!(
+        attr(&browser, node_id, "value").as_deref(),
+        Some("Google Search Parity")
+    );
+}

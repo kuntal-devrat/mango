@@ -11,6 +11,7 @@ pub mod forms;
 pub mod media;
 pub mod paint_layer;
 pub mod progress;
+pub mod scrollbars;
 pub mod stacking;
 pub mod text;
 pub mod types;

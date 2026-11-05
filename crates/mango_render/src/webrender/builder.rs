@@ -457,6 +457,22 @@ pub fn build_webrender_display_list(
                 clip_stack.push(new_clip_chain);
             }
 
+            DisplayCommand::PushClipRoundedRect { rect, radii } => {
+                let region = ComplexClipRegion::new(
+                    to_layout_rect(rect),
+                    to_border_radius(*radii),
+                    ClipMode::Clip,
+                );
+                let clip_id = builder.define_clip_rounded_rect(current_spatial, region);
+                let parent_clip = if current_clip != ClipChainId::INVALID {
+                    Some(current_clip)
+                } else {
+                    None
+                };
+                let new_clip_chain = builder.define_clip_chain(parent_clip, [clip_id]);
+                clip_stack.push(new_clip_chain);
+            }
+
             DisplayCommand::PopClip => {
                 if clip_stack.len() > 1 {
                     clip_stack.pop();

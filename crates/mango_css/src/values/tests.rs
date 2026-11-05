@@ -40,6 +40,32 @@ fn test_length_to_px() {
 }
 
 #[test]
+fn test_extended_viewport_units_parsing_and_resolution() {
+    assert_eq!(Length::parse("100dvh"), Some(Length::Vh(100.0)));
+    assert_eq!(Length::parse("50svh"), Some(Length::Vh(50.0)));
+    assert_eq!(Length::parse("75lvh"), Some(Length::Vh(75.0)));
+    assert_eq!(Length::parse("100dvw"), Some(Length::Vw(100.0)));
+    assert_eq!(Length::parse("25svw"), Some(Length::Vw(25.0)));
+    assert_eq!(Length::parse("80lvw"), Some(Length::Vw(80.0)));
+    assert_eq!(Length::parse("10dvmin"), Some(Length::Vmin(10.0)));
+    assert_eq!(Length::parse("20dvmax"), Some(Length::Vmax(20.0)));
+    assert_eq!(Length::parse("100vi"), Some(Length::Vw(100.0)));
+    assert_eq!(Length::parse("100vb"), Some(Length::Vh(100.0)));
+
+    // Resolution against custom content viewport height (e.g. 700px content area)
+    let len_dvh = Length::parse("100dvh").unwrap();
+    assert_eq!(
+        len_dvh.to_px_with_viewports(16.0, 16.0, 700.0, 1024.0, 700.0),
+        700.0
+    );
+    let len_dvw = Length::parse("50dvw").unwrap();
+    assert_eq!(
+        len_dvw.to_px_with_viewports(16.0, 16.0, 1024.0, 1024.0, 700.0),
+        512.0
+    );
+}
+
+#[test]
 fn test_parse_color_hex() {
     assert_eq!(Value::parse_color("#fff"), Some(Color::WHITE));
     assert_eq!(Value::parse_color("#000000"), Some(Color::BLACK));

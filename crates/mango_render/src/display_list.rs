@@ -114,6 +114,9 @@ pub enum DisplayCommand {
     /// Push a clipping rectangle onto the clip stack.
     PushClip { rect: Rect },
 
+    /// Push a rounded-rectangle clipping boundary onto the clip stack.
+    PushClipRoundedRect { rect: Rect, radii: [f32; 4] },
+
     /// Pop the top clipping rectangle from the clip stack.
     PopClip,
 
@@ -346,6 +349,7 @@ impl DisplayCommand {
                 Some(Rect::new(*x, *y, approx_w, *font_size * 1.2))
             }
             DisplayCommand::PushClip { rect }
+            | DisplayCommand::PushClipRoundedRect { rect, .. }
             | DisplayCommand::PushFilter { rect, .. }
             | DisplayCommand::PushBackdropFilter { rect, .. }
             | DisplayCommand::PushClipPath { rect, .. } => Some(*rect),

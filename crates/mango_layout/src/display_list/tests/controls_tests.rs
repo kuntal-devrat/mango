@@ -721,3 +721,39 @@ fn test_form_button_custom_border_radius() {
         "button must emit DrawBorder with asymmetric radii"
     );
 }
+
+#[test]
+fn test_form_control_border_none_does_not_emit_draw_border() {
+    let html = r#"<!DOCTYPE html><html><body>
+        <textarea id="APjFqb" style="border: none; background: transparent; width: 300px; height: 30px;"></textarea>
+        <input type="text" style="border: 0; background: transparent; width: 300px; height: 30px;">
+    </body></html>"#;
+    let doc = mango_html::parse_html(html);
+    let (_root, dl) = crate::layout_document(&doc, &[], mango_core::Size::new(800.0, 600.0));
+    let has_border = dl
+        .iter()
+        .any(|cmd| matches!(cmd, DisplayCommand::DrawBorder { .. }));
+    assert!(
+        !has_border,
+        "Form controls with border: none / border: 0 must not emit DrawBorder"
+    );
+}
+
+#[test]
+fn test_rounded_container_overflow_hidden_emits_push_clip_rounded_rect() {
+    let html = r#"<!DOCTYPE html><html><body>
+        <div style="border-radius: 24px; overflow: hidden; width: 400px; height: 50px;">
+            <p>Pill content inside rounded card</p>
+        </div>
+    </body></html>"#;
+    let doc = mango_html::parse_html(html);
+    let (_root, dl) = crate::layout_document(&doc, &[], mango_core::Size::new(800.0, 600.0));
+    let has_rounded_clip = dl.iter().any(|cmd| match cmd {
+        DisplayCommand::PushClipRoundedRect { radii, .. } => radii == &[24.0, 24.0, 24.0, 24.0],
+        _ => false,
+    });
+    assert!(
+        has_rounded_clip,
+        "Container with border-radius: 24px and overflow: hidden must emit PushClipRoundedRect"
+    );
+}

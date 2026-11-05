@@ -202,7 +202,10 @@ impl BrowserChrome {
     /// dominate the frame cost on large documents.
     pub fn relayout(&mut self) {
         self.layout_pending = false;
-        let viewport = Size::new(self.width as f32, self.content_height());
+        let cw = self.content_width();
+        let ch = self.content_height();
+        mango_css::set_current_viewport(cw, ch);
+        let viewport = Size::new(cw, ch);
 
         // Build or reuse the page stylesheet index. External rules are retained in
         // the cache across DOM mutations; embedded sheets are merged when doc changes.

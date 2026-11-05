@@ -252,14 +252,41 @@ impl Length {
             num.trim().parse::<f32>().ok().map(Length::Em)
         } else if let Some(num) = trimmed.strip_suffix('%') {
             num.trim().parse::<f32>().ok().map(Length::Percent)
-        } else if let Some(num) = trimmed.strip_suffix("vmin") {
-            // Must check `vmin`/`vmax` before `vw`/`vh` for the same suffix reason.
+        } else if let Some(num) = trimmed
+            .strip_suffix("dvmin")
+            .or_else(|| trimmed.strip_suffix("svmin"))
+            .or_else(|| trimmed.strip_suffix("lvmin"))
+            .or_else(|| trimmed.strip_suffix("vmin"))
+        {
             num.trim().parse::<f32>().ok().map(Length::Vmin)
-        } else if let Some(num) = trimmed.strip_suffix("vmax") {
+        } else if let Some(num) = trimmed
+            .strip_suffix("dvmax")
+            .or_else(|| trimmed.strip_suffix("svmax"))
+            .or_else(|| trimmed.strip_suffix("lvmax"))
+            .or_else(|| trimmed.strip_suffix("vmax"))
+        {
             num.trim().parse::<f32>().ok().map(Length::Vmax)
-        } else if let Some(num) = trimmed.strip_suffix("vw") {
+        } else if let Some(num) = trimmed
+            .strip_suffix("dvw")
+            .or_else(|| trimmed.strip_suffix("svw"))
+            .or_else(|| trimmed.strip_suffix("lvw"))
+            .or_else(|| trimmed.strip_suffix("vw"))
+            .or_else(|| trimmed.strip_suffix("dvi"))
+            .or_else(|| trimmed.strip_suffix("svi"))
+            .or_else(|| trimmed.strip_suffix("lvi"))
+            .or_else(|| trimmed.strip_suffix("vi"))
+        {
             num.trim().parse::<f32>().ok().map(Length::Vw)
-        } else if let Some(num) = trimmed.strip_suffix("vh") {
+        } else if let Some(num) = trimmed
+            .strip_suffix("dvh")
+            .or_else(|| trimmed.strip_suffix("svh"))
+            .or_else(|| trimmed.strip_suffix("lvh"))
+            .or_else(|| trimmed.strip_suffix("vh"))
+            .or_else(|| trimmed.strip_suffix("dvb"))
+            .or_else(|| trimmed.strip_suffix("svb"))
+            .or_else(|| trimmed.strip_suffix("lvb"))
+            .or_else(|| trimmed.strip_suffix("vb"))
+        {
             num.trim().parse::<f32>().ok().map(Length::Vh)
         } else if let Some(num) = trimmed.strip_suffix("cqmin") {
             num.trim().parse::<f32>().ok().map(Length::Cqmin)

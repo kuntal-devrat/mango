@@ -551,12 +551,22 @@ fn resolve_range_operand(
             Some(env.device_pixel_ratio)
         }
         _ => {
-            if let Some(num_str) = s_lower.strip_suffix("vw")
+            let vw_num = s_lower
+                .strip_suffix("dvw")
+                .or_else(|| s_lower.strip_suffix("svw"))
+                .or_else(|| s_lower.strip_suffix("lvw"))
+                .or_else(|| s_lower.strip_suffix("vw"));
+            if let Some(num_str) = vw_num
                 && let Ok(val) = num_str.trim().parse::<f32>()
             {
                 return Some((val / 100.0) * width);
             }
-            if let Some(num_str) = s_lower.strip_suffix("vh")
+            let vh_num = s_lower
+                .strip_suffix("dvh")
+                .or_else(|| s_lower.strip_suffix("svh"))
+                .or_else(|| s_lower.strip_suffix("lvh"))
+                .or_else(|| s_lower.strip_suffix("vh"));
+            if let Some(num_str) = vh_num
                 && let Ok(val) = num_str.trim().parse::<f32>()
             {
                 return Some((val / 100.0) * height);
