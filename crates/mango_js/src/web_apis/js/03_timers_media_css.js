@@ -115,26 +115,32 @@
 
     globalThis.matchMedia = function(q) {
         var qs = String(q || "");
-        // Honour prefers-color-scheme: dark — reported as false (light mode).
-        // Honour hover and pointer features for desktop.
-        var matchMap = {
-            "prefers-color-scheme: light": true,
-            "prefers-color-scheme: dark":  false,
-            "hover: hover":                true,
-            "pointer: fine":               true
+        var curW = (typeof window !== 'undefined' && window.innerWidth) || globalThis.innerWidth || 800;
+        var curH = (typeof window !== 'undefined' && window.innerHeight) || globalThis.innerHeight || 600;
+        var parseLen = function(m) {
+            if (!m) return null;
+            var val = parseFloat(m[1]) || 0;
+            var unit = (m[2] || 'px').toLowerCase();
+            return (unit === 'rem' || unit === 'em') ? val * 16 : val;
         };
-        var matched = false;
+        var minW = parseLen(qs.match(/min-width:\s*(\d+(?:\.\d+)?)\s*(px|rem|em)?/i));
+        var maxW = parseLen(qs.match(/max-width:\s*(\d+(?:\.\d+)?)\s*(px|rem|em)?/i));
+        var minH = parseLen(qs.match(/min-height:\s*(\d+(?:\.\d+)?)\s*(px|rem|em)?/i));
+        var maxH = parseLen(qs.match(/max-height:\s*(\d+(?:\.\d+)?)\s*(px|rem|em)?/i));
+        var matchMap = {
+            "prefers-color-scheme: light": true, "prefers-color-scheme: dark": false,
+            "prefers-reduced-motion: no-preference": true, "prefers-reduced-motion: reduce": false,
+            "hover: hover": true, "pointer: fine": true,
+            "orientation: landscape": curW >= curH, "orientation: portrait": curW < curH,
+            "screen": true, "all": true, "print": false
+        };
+        var matched = true;
+        if (minW !== null && curW < minW) matched = false;
+        if (maxW !== null && curW > maxW) matched = false;
+        if (minH !== null && curH < minH) matched = false;
+        if (maxH !== null && curH > maxH) matched = false;
         for (var k in matchMap) {
-            if (qs.indexOf(k) !== -1) { matched = matchMap[k]; break; }
-        }
-        var minW = qs.match(/min-width:\s*(\d+)px/);
-        var maxW = qs.match(/max-width:\s*(\d+)px/);
-        if (minW || maxW) {
-            var curW = (typeof window !== 'undefined' && window.innerWidth) || globalThis.innerWidth || 800;
-            var ok = true;
-            if (minW && curW < parseInt(minW[1], 10)) { ok = false; }
-            if (maxW && curW > parseInt(maxW[1], 10)) { ok = false; }
-            matched = ok;
+            if (qs.indexOf(k) !== -1 && !matchMap[k]) { matched = false; break; }
         }
         return new MediaQueryList(qs, matched);
     };

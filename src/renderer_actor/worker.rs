@@ -317,7 +317,15 @@ pub fn run_renderer_loop(
 
                     // 5. Frame-rate gated rendering: coalesce DOM mutations to 60 FPS
                     let now = Instant::now();
-                    if pending_frame_needed && now.duration_since(last_frame_time) >= FRAME_BUDGET {
+                    let throttle_budget = if pending_scripts.is_empty() {
+                        FRAME_BUDGET
+                    } else {
+                        // Defer heavy full document relayout during sequential script backlog draining
+                        Duration::from_millis(250)
+                    };
+                    if pending_frame_needed
+                        && now.duration_since(last_frame_time) >= throttle_budget
+                    {
                         last_frame_time = now;
                         pending_frame_needed = false;
                         emit_frame(

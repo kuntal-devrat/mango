@@ -124,14 +124,18 @@ pub fn scan_html_for_preloads(html: &str, base_url: &Url) -> PreloadScanResult {
             let attrs = parse_tag_attributes(&trimmed_tag[name_end..]);
             if let Some(rel) = attrs.get("rel") {
                 let rel_lower = rel.to_ascii_lowercase();
-                if rel_lower.contains("preload") {
+                if rel_lower.contains("preload") || rel_lower.contains("modulepreload") {
                     if let Some(href) = attrs.get("href")
                         && let Ok(resolved) = base_url.resolve(href)
                     {
-                        let kind = attrs
-                            .get("as")
-                            .map(|s| PreloadKind::from_str(s))
-                            .unwrap_or(PreloadKind::Fetch);
+                        let kind = if rel_lower.contains("modulepreload") {
+                            PreloadKind::Script
+                        } else {
+                            attrs
+                                .get("as")
+                                .map(|s| PreloadKind::from_str(s))
+                                .unwrap_or(PreloadKind::Fetch)
+                        };
                         let priority = attrs
                             .get("fetchpriority")
                             .map(|s| FetchPriority::from_str(s))

@@ -310,6 +310,29 @@ impl BrowserChrome {
     }
 }
 
+fn skip_ws_and_comments(bytes: &[u8], mut j: usize) -> usize {
+    let len = bytes.len();
+    while j < len {
+        if bytes[j].is_ascii_whitespace() {
+            j += 1;
+        } else if j + 1 < len && bytes[j] == b'/' && bytes[j + 1] == b'*' {
+            j += 2;
+            while j + 1 < len && !(bytes[j] == b'*' && bytes[j + 1] == b'/') {
+                j += 1;
+            }
+            j = (j + 2).min(len);
+        } else if j + 1 < len && bytes[j] == b'/' && bytes[j + 1] == b'/' {
+            j += 2;
+            while j < len && bytes[j] != b'\n' {
+                j += 1;
+            }
+        } else {
+            break;
+        }
+    }
+    j
+}
+
 pub(crate) fn scan_es_module_imports(source: &str) -> Vec<String> {
     let mut imports = Vec::new();
     let bytes = source.as_bytes();
@@ -317,13 +340,8 @@ pub(crate) fn scan_es_module_imports(source: &str) -> Vec<String> {
     let mut i = 0;
     while i < len {
         if i + 4 <= len && &bytes[i..i + 4] == b"from" {
-            let mut j = i + 4;
-            while j < len
-                && (bytes[j] == b' ' || bytes[j] == b'\t' || bytes[j] == b'\r' || bytes[j] == b'\n')
-            {
-                j += 1;
-            }
-            if j < len && (bytes[j] == b'\'' || bytes[j] == b'"') {
+            let j = skip_ws_and_comments(bytes, i + 4);
+            if j < len && (bytes[j] == b'\'' || bytes[j] == b'"' || bytes[j] == b'`') {
                 let quote = bytes[j];
                 let start = j + 1;
                 let mut end = start;
@@ -333,7 +351,10 @@ pub(crate) fn scan_es_module_imports(source: &str) -> Vec<String> {
                 if end < len && bytes[end] == quote && end > start {
                     if let Ok(path) = std::str::from_utf8(&bytes[start..end]) {
                         let path = path.trim();
-                        if !path.is_empty() && !imports.contains(&path.to_string()) {
+                        if !path.is_empty()
+                            && !path.contains("${")
+                            && !imports.contains(&path.to_string())
+                        {
                             imports.push(path.to_string());
                         }
                     }
@@ -342,24 +363,11 @@ pub(crate) fn scan_es_module_imports(source: &str) -> Vec<String> {
                 continue;
             }
         } else if i + 6 <= len && &bytes[i..i + 6] == b"import" {
-            let mut j = i + 6;
-            while j < len
-                && (bytes[j] == b' ' || bytes[j] == b'\t' || bytes[j] == b'\r' || bytes[j] == b'\n')
-            {
-                j += 1;
-            }
+            let mut j = skip_ws_and_comments(bytes, i + 6);
             if j < len && bytes[j] == b'(' {
-                j += 1;
-                while j < len
-                    && (bytes[j] == b' '
-                        || bytes[j] == b'\t'
-                        || bytes[j] == b'\r'
-                        || bytes[j] == b'\n')
-                {
-                    j += 1;
-                }
+                j = skip_ws_and_comments(bytes, j + 1);
             }
-            if j < len && (bytes[j] == b'\'' || bytes[j] == b'"') {
+            if j < len && (bytes[j] == b'\'' || bytes[j] == b'"' || bytes[j] == b'`') {
                 let quote = bytes[j];
                 let start = j + 1;
                 let mut end = start;
@@ -369,7 +377,10 @@ pub(crate) fn scan_es_module_imports(source: &str) -> Vec<String> {
                 if end < len && bytes[end] == quote && end > start {
                     if let Ok(path) = std::str::from_utf8(&bytes[start..end]) {
                         let path = path.trim();
-                        if !path.is_empty() && !imports.contains(&path.to_string()) {
+                        if !path.is_empty()
+                            && !path.contains("${")
+                            && !imports.contains(&path.to_string())
+                        {
                             imports.push(path.to_string());
                         }
                     }

@@ -73,7 +73,7 @@ impl MangoModuleLoader {
             page_url: page_url.to_string(),
             import_maps,
             client: Arc::new(mango_net::HttpClient::with_timeout(
-                std::time::Duration::from_secs(3),
+                std::time::Duration::from_millis(500),
             )),
             cache: Arc::new(Mutex::new(ModuleCache::new())),
             module_loads: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
@@ -215,9 +215,14 @@ impl ModuleLoader for MangoModuleLoader {
                 }
             }
 
-            ModuleLoadResponse::Sync(Err(ModuleLoaderError::generic(format!(
-                "Failed to fetch module resource: {url_str}"
-            ))))
+            log::warn!("ES Module resource unavailable, providing safe proxy stub: {url_str}");
+            let stub_code = "const _p = new Proxy({}, { get: () => _p, apply: () => _p }); export default _p; export const __esModule = true;";
+            ModuleLoadResponse::Sync(Ok(ModuleSource::new(
+                ModuleType::JavaScript,
+                ModuleSourceCode::String(stub_code.to_string().into()),
+                &spec,
+                None,
+            )))
         } else if spec.scheme() == "mango" {
             // Internal synthetic/empty stub module with Proxy exports
             let stub_code = "const _p = new Proxy({}, { get: () => _p, apply: () => _p }); export default _p; export const __esModule = true;";

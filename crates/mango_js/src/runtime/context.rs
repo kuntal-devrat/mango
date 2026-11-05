@@ -103,6 +103,8 @@ pub struct JsRuntime {
     pub(crate) layout_bounds: dom_bindings::LayoutBounds,
     /// Layout margins published by the browser for getComputedStyle.
     pub(crate) layout_margins: dom_bindings::LayoutMargins,
+    /// Cached parsed stylesheets for getComputedStyle.
+    pub(crate) cached_stylesheets: dom_bindings::CachedStylesheets,
     /// On-demand layout provider callback invoked when measurement APIs query dirty DOM.
     pub(crate) layout_callback: dom_bindings::LayoutCallback,
     /// Shared cookie jar backing `document.cookie` — owned by the browser so
@@ -273,6 +275,7 @@ impl JsRuntime {
         let pending_scroll: web_apis::SharedPendingScroll = Rc::new(RefCell::new(None));
         let layout_bounds = dom_bindings::LayoutBounds::new();
         let layout_margins = dom_bindings::LayoutMargins::new();
+        let cached_stylesheets = dom_bindings::CachedStylesheets::new();
         let layout_callback: dom_bindings::LayoutCallback = Rc::new(RefCell::new(None));
         let worker_manager = crate::worker::WorkerManager::new();
         let ws_manager = mango_net::WebSocketManager::new();
@@ -317,6 +320,7 @@ impl JsRuntime {
             state.put(crate::ops::web::OpSessionStorage(session_storage.clone()));
             state.put(layout_bounds.clone());
             state.put(layout_margins.clone());
+            state.put(cached_stylesheets.clone());
             state.put(layout_callback.clone());
             state.put(cookie_jar.clone());
             state.put(worker_manager.clone());
@@ -368,6 +372,7 @@ impl JsRuntime {
             session_storage,
             layout_bounds,
             layout_margins,
+            cached_stylesheets,
             layout_callback,
             cookie_jar,
             hovered_nodes: std::collections::HashSet::new(),
@@ -396,6 +401,11 @@ impl JsRuntime {
                 }
             }
         }
+    }
+
+    /// Invalidate any cached parsed stylesheets.
+    pub fn invalidate_cached_stylesheets(&self) {
+        self.cached_stylesheets.borrow_mut().take();
     }
 
     /// Returns the Web Worker manager handle.

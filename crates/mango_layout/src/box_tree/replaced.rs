@@ -196,17 +196,19 @@ pub fn build_replaced_element_with_maps(
         decoded = lookup_image(data_src);
     }
 
+    let mut computed_aspect_ratio = styled_node.style.aspect_ratio.filter(|&r| r > 0.0);
+
     let (intrinsic_width, intrinsic_height, pixels) = if let Some(img) = decoded {
         let natural_w = img.width as f32;
         let natural_h = img.height as f32;
-        let aspect_ratio =
-            if let Some(css_ratio) = styled_node.style.aspect_ratio.filter(|&r| r > 0.0) {
-                css_ratio
-            } else if natural_h > 0.0 {
-                natural_w / natural_h
-            } else {
-                1.0
-            };
+        let aspect_ratio = if let Some(css_ratio) = computed_aspect_ratio {
+            css_ratio
+        } else if natural_h > 0.0 {
+            natural_w / natural_h
+        } else {
+            1.0
+        };
+        computed_aspect_ratio = Some(aspect_ratio);
 
         let (w, h) = match (explicit_w, explicit_h) {
             (Some(ew), Some(eh)) => (ew.max(1.0), eh.max(1.0)),
@@ -237,11 +239,7 @@ pub fn build_replaced_element_with_maps(
         (w, h, scaled.pixels)
     } else {
         // Use placeholder for missing/failed images
-        let aspect_ratio = styled_node
-            .style
-            .aspect_ratio
-            .filter(|&r| r > 0.0)
-            .unwrap_or(4.0 / 3.0);
+        let aspect_ratio = computed_aspect_ratio.unwrap_or(4.0 / 3.0);
         let (w, h) = match (explicit_w, explicit_h) {
             (Some(ew), Some(eh)) => (ew.max(1.0), eh.max(1.0)),
             (Some(ew), None) => (ew.max(1.0), (ew / aspect_ratio).max(1.0)),
@@ -258,7 +256,15 @@ pub fn build_replaced_element_with_maps(
         pixels,
     };
 
-    let mut b = LayoutBox::new(box_type, Some(styled_node.style.clone()));
+    let mut b_style = (*styled_node.style).clone();
+    if b_style.aspect_ratio.is_none()
+        && !no_aspect_ratio
+        && let Some(ratio) = computed_aspect_ratio
+    {
+        b_style.aspect_ratio = Some(ratio);
+    }
+
+    let mut b = LayoutBox::new(box_type, Some(b_style.into()));
     b.node_id = styled_node.node_id;
     b.tag_name = styled_node.tag_name.clone();
     b.attributes = styled_node.attributes.clone();

@@ -201,6 +201,18 @@ fn test_wpt_stretch_flex_item_radio_input_pixel() {
 }
 
 #[test]
+fn test_wpt_select_element_zero_height_pixel() {
+    assert_flexbox_reftest(
+        "select-element-zero-height-001.html",
+        "select-element-zero-height-001-ref.html",
+    );
+    assert_flexbox_reftest(
+        "select-element-zero-height-002.html",
+        "select-element-zero-height-002-ref.html",
+    );
+}
+
+#[test]
 #[ignore = "in-progress vertical-rl scrollbars investigation"]
 fn test_wpt_scrollbars_pixel() {
     let base = upstream_root().join("css").join("css-flexbox");

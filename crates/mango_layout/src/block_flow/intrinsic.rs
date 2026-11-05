@@ -2,6 +2,17 @@ use mango_css::values::BoxSizing;
 
 use crate::box_tree::LayoutBox;
 
+fn border_box_h_adj(s: &mango_css::ComputedStyle, fs: f32, rfs: f32, max_w: f32) -> f32 {
+    if s.box_sizing == BoxSizing::BorderBox {
+        s.padding_left.to_px_with_viewport(fs, rfs, max_w, max_w)
+            + s.padding_right.to_px_with_viewport(fs, rfs, max_w, max_w)
+            + s.border_left_width
+            + s.border_right_width
+    } else {
+        0.0
+    }
+}
+
 pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f32 {
     let (max_w_bound, min_w_bound) = if let Some(s) = box_node.style.as_ref() {
         let fs = s.font_size;
@@ -13,18 +24,7 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
             let px = s
                 .max_width
                 .to_px_with_viewport(fs, rfs, max_width, max_width);
-            let non_content = if s.box_sizing == BoxSizing::BorderBox {
-                let pl = s
-                    .padding_left
-                    .to_px_with_viewport(fs, rfs, max_width, max_width);
-                let pr = s
-                    .padding_right
-                    .to_px_with_viewport(fs, rfs, max_width, max_width);
-                pl + pr + s.border_left_width + s.border_right_width
-            } else {
-                0.0
-            };
-            Some((px - non_content).max(0.0))
+            Some((px - border_box_h_adj(s, fs, rfs, max_width)).max(0.0))
         } else {
             None
         };
@@ -35,18 +35,7 @@ pub fn calculate_shrink_to_fit_width(box_node: &LayoutBox, max_width: f32) -> f3
             let px = s
                 .min_width
                 .to_px_with_viewport(fs, rfs, max_width, max_width);
-            let non_content = if s.box_sizing == BoxSizing::BorderBox {
-                let pl = s
-                    .padding_left
-                    .to_px_with_viewport(fs, rfs, max_width, max_width);
-                let pr = s
-                    .padding_right
-                    .to_px_with_viewport(fs, rfs, max_width, max_width);
-                pl + pr + s.border_left_width + s.border_right_width
-            } else {
-                0.0
-            };
-            Some((px - non_content).max(0.0))
+            Some((px - border_box_h_adj(s, fs, rfs, max_width)).max(0.0))
         } else {
             None
         };

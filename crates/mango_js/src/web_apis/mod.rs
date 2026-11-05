@@ -21,6 +21,7 @@ pub const WEB_APIS_SHIM_TEMPLATE: &str = concat!(
     include_str!("js/09_dom_elements.js"),
     include_str!("js/09b_dom_attr_nodes.js"),
     include_str!("js/10_dom_svg_html.js"),
+    include_str!("js/10c_dom_script_xml.js"),
     include_str!("js/11_dom_other.js"),
     include_str!("js/11b_dom_types.js"),
     include_str!("js/12_observers_events.js"),

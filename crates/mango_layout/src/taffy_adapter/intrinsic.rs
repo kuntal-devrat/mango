@@ -221,7 +221,7 @@ pub(crate) fn compute_child_intrinsic_size(
             }
             _ => {
                 if let Some(fh) = form_h {
-                    (fh - pad_v).max(0.0)
+                    fh.max(0.0)
                 } else if child.dimensions.content.size.height > 0.0 {
                     child.dimensions.content.size.height
                 } else if !child.children.is_empty() && child.children.len() <= 10 {

@@ -154,6 +154,27 @@ fn prepare_document_pipeline_internal(
 
     let mut raw_scripts = Vec::new();
     collect_scripts(&doc, doc.root(), &mut raw_scripts);
+
+    // Discover and prefetch <link rel="modulepreload"> dependencies in background
+    let mut modulepreload_links = Vec::new();
+    collect_modulepreload_links(&doc, doc.root(), &final_url, &mut modulepreload_links);
+    for item in &preload_scan.preloads {
+        if item.kind == mango_net::PreloadKind::Script && !modulepreload_links.contains(&item.url) {
+            modulepreload_links.push(item.url.clone());
+        }
+    }
+    if !is_progressive && !should_cancel() {
+        for url in modulepreload_links {
+            if loader.cache().get(&url).is_none() {
+                let loader = loader.clone();
+                let base = final_url.clone();
+                crate::browser::types::spawn_fetch_task(move || {
+                    let _ = loader.fetch_script_with_nonce(&base, &url, None);
+                });
+            }
+        }
+    }
+
     const SCRIPT_FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
     let mut to_fetch: Vec<(usize, String, Option<String>)> = Vec::new();
     if !is_progressive {
@@ -276,7 +297,7 @@ fn prepare_document_pipeline_internal(
             }
         }
 
-        for _depth in 0..2 {
+        for _depth in 0..4 {
             if current_batch.is_empty() || should_cancel() {
                 break;
             }
@@ -296,18 +317,22 @@ fn prepare_document_pipeline_internal(
                 if should_cancel() {
                     break;
                 }
-                if let Ok((base, path, Ok(script_code))) = rx.recv_timeout(SCRIPT_FETCH_TIMEOUT) {
-                    if let Ok(base_resolved) = base.resolve(&path) {
-                        for sub_import in scan_es_module_imports(&script_code) {
-                            if let Ok(sub_resolved) = base_resolved.resolve(&sub_import) {
-                                if visited_urls.insert(sub_resolved.as_str().to_string())
-                                    && loader.cache().get(&sub_resolved.as_str()).is_none()
-                                {
-                                    current_batch.push((base_resolved.clone(), sub_import));
+                match rx.recv_timeout(SCRIPT_FETCH_TIMEOUT) {
+                    Ok((base, path, Ok(script_code))) => {
+                        if let Ok(base_resolved) = base.resolve(&path) {
+                            for sub_import in scan_es_module_imports(&script_code) {
+                                if let Ok(sub_resolved) = base_resolved.resolve(&sub_import) {
+                                    if visited_urls.insert(sub_resolved.as_str().to_string())
+                                        && loader.cache().get(&sub_resolved.as_str()).is_none()
+                                    {
+                                        current_batch.push((base_resolved.clone(), sub_import));
+                                    }
                                 }
                             }
                         }
                     }
+                    Ok(_) => {}
+                    Err(_) => break,
                 }
             }
         }
@@ -321,12 +346,10 @@ fn prepare_document_pipeline_internal(
                 code,
                 is_module,
             } => {
-                let actual_is_module =
-                    is_module || code.contains("export ") || code.contains("import ");
                 preloaded_scripts.push(ScriptToRun::Inline {
                     node_id,
                     code,
-                    is_module: actual_is_module,
+                    is_module,
                 });
             }
             ScriptToRun::External {
@@ -338,15 +361,13 @@ fn prepare_document_pipeline_internal(
                 nonce,
             } => {
                 if let Some(Ok(code)) = fetched_scripts.remove(&idx) {
-                    let actual_is_module =
-                        is_module || code.contains("export ") || code.contains("import ");
                     preloaded_scripts.push(ScriptToRun::Preloaded {
                         node_id,
                         src,
                         code,
                         is_defer,
                         is_async,
-                        is_module: actual_is_module,
+                        is_module,
                         nonce,
                     });
                 } else {
@@ -496,6 +517,44 @@ fn collect_stylesheet_links(
                 })
                 .unwrap_or(false);
             if is_stylesheet && let Some(href) = elem.get_attribute("href") {
+                let trimmed = href.trim();
+                if !trimmed.is_empty() {
+                    let resolved = base_url
+                        .resolve(trimmed)
+                        .map(|u| u.to_string())
+                        .unwrap_or_else(|_| trimmed.to_string());
+                    if !links.contains(&resolved) {
+                        links.push(resolved);
+                    }
+                }
+            }
+        }
+        let mut kids: Vec<NodeId> = doc.children(node_id).map(|c| c.id).collect();
+        kids.reverse();
+        stack.extend(kids);
+    }
+}
+
+fn collect_modulepreload_links(
+    doc: &Document,
+    root_id: NodeId,
+    base_url: &Url,
+    links: &mut Vec<String>,
+) {
+    let mut stack = vec![root_id];
+    while let Some(node_id) = stack.pop() {
+        if let Some(node) = doc.get(node_id)
+            && let NodeData::Element(elem) = &node.data
+            && elem.tag_name.eq_ignore_ascii_case("link")
+        {
+            let is_modulepreload = elem
+                .get_attribute("rel")
+                .map(|r| {
+                    r.split_whitespace()
+                        .any(|t| t.eq_ignore_ascii_case("modulepreload"))
+                })
+                .unwrap_or(false);
+            if is_modulepreload && let Some(href) = elem.get_attribute("href") {
                 let trimmed = href.trim();
                 if !trimmed.is_empty() {
                     let resolved = base_url
