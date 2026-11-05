@@ -475,7 +475,25 @@ pub fn execute_taffy_layout(
     let avail_h = if cb_h > 0.0 {
         AvailableSpace::Definite(cb_h)
     } else {
-        AvailableSpace::MaxContent
+        let (_, vp_h) = mango_css::get_current_viewport();
+        let min_h = style
+            .min_height
+            .to_px_with_viewport(font_size, root_font_size, 0.0, vp_h);
+        let h = style
+            .height
+            .to_px_with_viewport(font_size, root_font_size, 0.0, vp_h);
+        let eff_h = if h > 0.0 {
+            h
+        } else if min_h > 0.0 {
+            min_h
+        } else {
+            0.0
+        };
+        if eff_h > 0.0 {
+            AvailableSpace::Definite(eff_h)
+        } else {
+            AvailableSpace::MaxContent
+        }
     };
 
     let available_space = taffy::geometry::Size {

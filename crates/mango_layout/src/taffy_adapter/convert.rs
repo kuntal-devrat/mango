@@ -35,7 +35,8 @@ pub fn to_taffy_dimension(
         MangoLength::Percent(p) => percent(p / 100.0),
         MangoLength::Px(px) => length(*px),
         _ => {
-            let px = len.to_px_with_viewport(font_size, root_font_size, ref_dim, ref_dim);
+            let (_, vp_h) = mango_css::get_current_viewport();
+            let px = len.to_px_with_viewport(font_size, root_font_size, ref_dim, vp_h);
             length(px)
         }
     }
@@ -57,7 +58,8 @@ pub fn to_taffy_length_percentage_auto(
         MangoLength::Percent(p) => percent(p / 100.0),
         MangoLength::Px(px) => length(*px),
         _ => {
-            let px = len.to_px_with_viewport(font_size, root_font_size, ref_dim, ref_dim);
+            let (_, vp_h) = mango_css::get_current_viewport();
+            let px = len.to_px_with_viewport(font_size, root_font_size, ref_dim, vp_h);
             length(px)
         }
     }
@@ -75,7 +77,8 @@ pub fn to_taffy_length_percentage(
         MangoLength::Percent(p) => percent(p / 100.0),
         MangoLength::Px(px) => length(*px),
         _ => {
-            let px = len.to_px_with_viewport(font_size, root_font_size, ref_dim, ref_dim);
+            let (_, vp_h) = mango_css::get_current_viewport();
+            let px = len.to_px_with_viewport(font_size, root_font_size, ref_dim, vp_h);
             length(px)
         }
     }

@@ -442,6 +442,7 @@ pub(crate) fn calculate_block_height(box_node: &mut LayoutBox, containing_block:
     let root_font_size = style.root_font_size;
     let container_h = containing_block.content.height().max(0.0);
     let container_w = containing_block.content.width();
+    let (_, vp_h) = mango_css::get_current_viewport();
     let non_content_v =
         box_node.dimensions.padding.vertical() + box_node.dimensions.border.vertical();
     let is_percent_indefinite = style.height.has_percent()
@@ -482,12 +483,10 @@ pub(crate) fn calculate_block_height(box_node: &mut LayoutBox, containing_block:
             let is_percent_indefinite =
                 style.height.has_percent() && containing_block.content.height() <= 0.0;
             if !is_percent_indefinite {
-                let h = style.height.to_px_with_viewport(
-                    font_size,
-                    root_font_size,
-                    container_h,
-                    container_h,
-                );
+                let h =
+                    style
+                        .height
+                        .to_px_with_viewport(font_size, root_font_size, container_h, vp_h);
                 box_node.dimensions.content.size.height = h;
             } else if *intrinsic_width > 0.0 && box_node.dimensions.content.size.width > 0.0 {
                 let ratio = if let Some(r) = style.aspect_ratio
@@ -535,7 +534,7 @@ pub(crate) fn calculate_block_height(box_node: &mut LayoutBox, containing_block:
         };
         let h = style
             .height
-            .to_px_with_viewport(font_size, root_font_size, eff_container_h, 600.0);
+            .to_px_with_viewport(font_size, root_font_size, eff_container_h, vp_h);
         if style.box_sizing == BoxSizing::BorderBox {
             box_node.dimensions.content.size.height = (h - non_content_v).max(0.0);
         } else {
@@ -546,7 +545,7 @@ pub(crate) fn calculate_block_height(box_node: &mut LayoutBox, containing_block:
     {
         if let Some(intrinsic_h) = style.contain_intrinsic_height {
             let raw_ih =
-                intrinsic_h.to_px_with_viewport(font_size, root_font_size, container_h, 600.0);
+                intrinsic_h.to_px_with_viewport(font_size, root_font_size, container_h, vp_h);
             if style.box_sizing == BoxSizing::BorderBox {
                 box_node.dimensions.content.size.height = (raw_ih - non_content_v).max(0.0);
             } else {
@@ -651,12 +650,10 @@ pub(crate) fn calculate_block_height(box_node: &mut LayoutBox, containing_block:
     // 2. Apply max-height and min-height clamping (CSS 2.1 § 10.7)
     let is_max_h_pct_indefinite = style.max_height.has_percent() && container_h <= 0.0;
     if style.max_height != Length::Auto && !is_max_h_pct_indefinite {
-        let raw_max = style.max_height.to_px_with_viewport(
-            font_size,
-            root_font_size,
-            container_h,
-            container_h,
-        );
+        let raw_max =
+            style
+                .max_height
+                .to_px_with_viewport(font_size, root_font_size, container_h, vp_h);
         let max_content_h = if style.box_sizing == BoxSizing::BorderBox {
             (raw_max - non_content_v).max(0.0)
         } else {
@@ -667,12 +664,10 @@ pub(crate) fn calculate_block_height(box_node: &mut LayoutBox, containing_block:
     }
 
     if style.min_height != Length::Auto {
-        let raw_min = style.min_height.to_px_with_viewport(
-            font_size,
-            root_font_size,
-            container_h,
-            container_h,
-        );
+        let raw_min =
+            style
+                .min_height
+                .to_px_with_viewport(font_size, root_font_size, container_h, vp_h);
         let min_content_h = if style.box_sizing == BoxSizing::BorderBox {
             (raw_min - non_content_v).max(0.0)
         } else {

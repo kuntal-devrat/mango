@@ -86,18 +86,24 @@ pub fn layout_block(
     let start_y = containing_block.content.y();
     calculate_block_position(box_node, containing_block, start_y, float_ctx);
 
-    // If box_node has a specified height, resolve it tentatively
-    // so children (like percent-height or max-height inlines) have a containing block height.
-    if let Some(style) = &box_node.style
-        && style.height != Length::Auto
-    {
+    // If box_node has a specified height or min-height (e.g. 100vh), resolve it tentatively
+    // so children (like percent-height or max-height inlines, or flex containers) have a containing block height.
+    if let Some(style) = &box_node.style {
         let font_size = style.font_size;
         let root_font_size = style.root_font_size;
         let cb_h = containing_block.content.height();
         let (_, vp_h) = mango_css::get_current_viewport();
-        let tentative_h = style
-            .height
-            .to_px_with_viewport(font_size, root_font_size, cb_h, vp_h);
+        let tentative_h = if style.height != Length::Auto {
+            style
+                .height
+                .to_px_with_viewport(font_size, root_font_size, cb_h, vp_h)
+        } else if style.min_height != Length::Auto {
+            style
+                .min_height
+                .to_px_with_viewport(font_size, root_font_size, cb_h, vp_h)
+        } else {
+            0.0
+        };
         if tentative_h > 0.0 {
             let content_h = if style.box_sizing == BoxSizing::BorderBox {
                 let non_content_v =

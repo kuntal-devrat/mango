@@ -68,12 +68,17 @@ pub fn measure_text_with_spacing_cached(
         && !text.chars().any(is_emoji_char)
         && text.chars().any(super::shaping::is_complex_char)
     {
-        let data = fm.select_font_data(family, weight);
+        let script_ch = text
+            .chars()
+            .find(|c| super::shaping::is_complex_char(*c))
+            .unwrap_or(' ');
+        let data = fm.select_font_data_for_char(family, weight, script_ch);
+        let font = fm.select_font_for_char(family, weight, script_ch);
         if let Some(shaped) =
             super::shaping::shape_text_with_font_data(&data, 0, text, px_size, letter_spacing)
         {
-            if !shaped.glyphs.is_empty() && shaped.glyphs.iter().all(|g| g.glyph_id != 0) {
-                let line_metrics = primary_font.horizontal_line_metrics(px_size);
+            if !shaped.glyphs.is_empty() && shaped.glyphs.iter().any(|g| g.glyph_id != 0) {
+                let line_metrics = font.horizontal_line_metrics(px_size);
                 let height = line_metrics
                     .map(|lm| lm.new_line_size)
                     .unwrap_or(px_size * 1.2);

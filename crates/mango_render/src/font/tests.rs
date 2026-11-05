@@ -160,27 +160,52 @@ fn test_glyph_caching() {
 #[test]
 fn test_indic_font_fallback() {
     let fm = font_manager();
-    let hindi_text = "हिन्दी";
-    let (w, h) = fm.measure_text(hindi_text, 14.0, FontWeight::Regular, FontFamily::SansSerif);
-    assert!(w > 0.0);
-    assert!(h > 0.0);
+    let indic_languages = [
+        ("Hindi", "हिन्दी"),
+        ("Bengali", "বাংলা"),
+        ("Telugu", "తెలుగు"),
+        ("Marathi", "मराठी"),
+        ("Tamil", "தமிழ்"),
+        ("Gujarati", "ગુજરાતી"),
+        ("Kannada", "ಕನ್ನಡ"),
+        ("Malayalam", "മലയാളം"),
+        ("Punjabi", "ਪੰਜਾਬੀ"),
+    ];
 
-    let mut buf = vec![0u32; 200 * 50];
-    fm.rasterize_text(
-        &mut buf,
-        200,
-        50,
-        0,
-        0,
-        hindi_text,
-        Color::WHITE,
-        14.0,
-        FontWeight::Regular,
-        FontFamily::SansSerif,
-        FontStyle::Normal,
-        0.0,
-    );
-    assert!(buf.iter().any(|&p| p != 0));
+    for (lang, text) in indic_languages {
+        assert!(
+            text.chars().any(super::shaping::is_indic_char),
+            "Characters in {lang} must be recognized as Indic"
+        );
+
+        let (w, h) = fm.measure_text(text, 14.0, FontWeight::Regular, FontFamily::SansSerif);
+        assert!(w > 0.0, "{lang} measured width must be > 0: got {w}");
+        assert!(h > 0.0, "{lang} measured height must be > 0: got {h}");
+
+        let run = fm.shape_text(text, 14.0, FontWeight::Regular, FontFamily::SansSerif, 0.0);
+        assert!(!run.glyphs.is_empty(), "{lang} must shape into glyphs");
+        assert!(run.width > 0.0, "{lang} shaped run width must be > 0");
+
+        let mut buf = vec![0u32; 200 * 50];
+        fm.rasterize_text(
+            &mut buf,
+            200,
+            50,
+            0,
+            0,
+            text,
+            Color::WHITE,
+            14.0,
+            FontWeight::Regular,
+            FontFamily::SansSerif,
+            FontStyle::Normal,
+            0.0,
+        );
+        assert!(
+            buf.iter().any(|&p| p != 0),
+            "{lang} must render non-zero pixels"
+        );
+    }
 }
 
 #[test]

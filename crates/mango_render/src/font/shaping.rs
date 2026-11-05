@@ -6,25 +6,25 @@
 //! - Thai combining mark canonical normalization, vertical stacking, and syllable-boundary segmentation for line breaking.
 
 /// Returns true if the character is an Arabic letter or presentation form.
+#[rustfmt::skip]
 pub fn is_arabic_char(ch: char) -> bool {
-    matches!(ch,
-        '\u{0600}'..='\u{06FF}'
-        | '\u{0750}'..='\u{077F}'
-        | '\u{08A0}'..='\u{08FF}'
-        | '\u{FB50}'..='\u{FDFF}'
-        | '\u{FE70}'..='\u{FEFF}'
-    )
+    matches!(ch, '\u{0600}'..='\u{06FF}' | '\u{0750}'..='\u{077F}' | '\u{08A0}'..='\u{08FF}' | '\u{FB50}'..='\u{FDFF}' | '\u{FE70}'..='\u{FEFF}')
 }
 
 /// Returns true if the character is a non-spacing Arabic diacritic mark (Tashkeel / Harakat).
+#[rustfmt::skip]
 pub fn is_arabic_tashkeel(ch: char) -> bool {
-    matches!(ch,
-        '\u{064B}'..='\u{065F}'
-        | '\u{0670}'
-        | '\u{06D6}'..='\u{06DC}'
-        | '\u{06DF}'..='\u{06E4}'
-        | '\u{06E7}'..='\u{06E8}'
-        | '\u{06EA}'..='\u{06ED}'
+    matches!(ch, '\u{064B}'..='\u{065F}' | '\u{0670}' | '\u{06D6}'..='\u{06DC}' | '\u{06DF}'..='\u{06E4}' | '\u{06E7}'..='\u{06E8}' | '\u{06EA}'..='\u{06ED}')
+}
+
+/// Returns true if the character belongs to an Indic script (Devanagari, Bengali, Gurmukhi,
+/// Gujarati, Oriya, Tamil, Telugu, Kannada, Malayalam, Sinhala, Vedic, or Devanagari Extended).
+pub fn is_indic_char(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{0900}'..='\u{0DFF}'
+        | '\u{1CD0}'..='\u{1CFF}'
+        | '\u{A8E0}'..='\u{A8FF}'
     )
 }
 
@@ -40,7 +40,7 @@ pub fn is_thai_char(ch: char) -> bool {
 
 /// Returns true if the character is a complex script requiring shaping or syllable segmentation.
 pub fn is_complex_char(ch: char) -> bool {
-    is_arabic_char(ch) || is_devanagari_char(ch) || is_thai_char(ch)
+    is_arabic_char(ch) || is_indic_char(ch) || is_thai_char(ch)
 }
 
 // ============================================================================
@@ -100,39 +100,15 @@ fn arabic_forms(ch: char) -> Option<(char, char, char, char)> {
 }
 
 /// Returns true if a character joins with the character on its left (in cursive reading direction).
+#[rustfmt::skip]
 fn joins_left(ch: char) -> bool {
     matches!(
         ch,
-        '\u{0626}'
-            | '\u{0628}'
-            | '\u{062A}'
-            | '\u{062B}'
-            | '\u{062C}'
-            | '\u{062D}'
-            | '\u{062E}'
-            | '\u{0633}'
-            | '\u{0634}'
-            | '\u{0635}'
-            | '\u{0636}'
-            | '\u{0637}'
-            | '\u{0638}'
-            | '\u{0639}'
-            | '\u{063A}'
-            | '\u{0640}'
-            | '\u{0641}'
-            | '\u{0642}'
-            | '\u{0643}'
-            | '\u{0644}'
-            | '\u{0645}'
-            | '\u{0646}'
-            | '\u{0647}'
-            | '\u{064A}'
-            | '\u{067E}'
-            | '\u{0686}'
-            | '\u{06AF}'
-            | '\u{06A9}'
-            | '\u{06CC}'
-            | '\u{200D}'
+        '\u{0626}' | '\u{0628}' | '\u{062A}' | '\u{062B}' | '\u{062C}' | '\u{062D}'
+            | '\u{062E}' | '\u{0633}' | '\u{0634}' | '\u{0635}' | '\u{0636}' | '\u{0637}'
+            | '\u{0638}' | '\u{0639}' | '\u{063A}' | '\u{0640}' | '\u{0641}' | '\u{0642}'
+            | '\u{0643}' | '\u{0644}' | '\u{0645}' | '\u{0646}' | '\u{0647}' | '\u{064A}'
+            | '\u{067E}' | '\u{0686}' | '\u{06AF}' | '\u{06A9}' | '\u{06CC}' | '\u{200D}'
     )
 }
 
@@ -436,14 +412,89 @@ pub fn segment_thai_syllables(text: &str) -> Vec<String> {
     syllables
 }
 
-/// Unified script shaping: applies Arabic, Devanagari, or Thai shaping as appropriate.
+/// Returns true if a character is an Indic virama / halant (vowel killer).
+#[rustfmt::skip]
+pub fn is_indic_virama(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{094D}' | '\u{09CD}' | '\u{0A4D}' | '\u{0ACD}' | '\u{0B4D}'
+            | '\u{0BCD}' | '\u{0C4D}' | '\u{0CCD}' | '\u{0D4D}' | '\u{0DCA}'
+    )
+}
+
+/// Returns true if a character is an Indic pre-base vowel matra.
+#[rustfmt::skip]
+pub fn is_indic_prebase_matra(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{093F}' | '\u{09BF}' | '\u{09C7}' | '\u{09C8}' | '\u{0A3F}' | '\u{0ABF}'
+            | '\u{0B3F}' | '\u{0BC6}' | '\u{0BC7}' | '\u{0BC8}' | '\u{0D46}' | '\u{0D47}' | '\u{0D48}'
+    )
+}
+
+/// Returns true if a character is an Indic consonant.
+#[rustfmt::skip]
+pub fn is_indic_consonant(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x0915..=0x0939 | 0x0958..=0x095F
+            | 0x0995..=0x09B9 | 0x09DC..=0x09DF | 0x09CE
+            | 0x0A15..=0x0A39 | 0x0A59..=0x0A5E
+            | 0x0A95..=0x0AB9
+            | 0x0B15..=0x0B39 | 0x0B5C..=0x0B5F
+            | 0x0B95..=0x0BB9
+            | 0x0C15..=0x0C39 | 0x0C58..=0x0C5A
+            | 0x0C95..=0x0CB9 | 0x0CDE
+            | 0x0D15..=0x0D3A
+            | 0x0D9A..=0x0DC6
+    )
+}
+
+/// Shapes Indic text across all South Asian scripts (Devanagari, Bengali, Tamil, etc.).
+pub fn shape_indic(text: &str) -> String {
+    let mut current = if text.chars().any(is_devanagari_char) {
+        shape_devanagari(text)
+    } else {
+        text.to_string()
+    };
+
+    if current.chars().any(is_indic_prebase_matra) {
+        let chars: Vec<char> = current.chars().collect();
+        let mut out: Vec<char> = Vec::with_capacity(chars.len());
+        let mut i = 0;
+        while i < chars.len() {
+            let ch = chars[i];
+            if is_indic_prebase_matra(ch) {
+                let mut cluster_start = out.len();
+                if cluster_start > 0 && is_indic_consonant(out[cluster_start - 1]) {
+                    cluster_start -= 1;
+                    while cluster_start >= 2
+                        && is_indic_virama(out[cluster_start - 1])
+                        && is_indic_consonant(out[cluster_start - 2])
+                    {
+                        cluster_start -= 2;
+                    }
+                }
+                out.insert(cluster_start, ch);
+            } else {
+                out.push(ch);
+            }
+            i += 1;
+        }
+        current = out.into_iter().collect();
+    }
+
+    current
+}
+
+/// Unified script shaping: applies Arabic, Indic, or Thai shaping as appropriate.
 /// Supports mixed-script text by piping through all applicable shapers.
 pub fn shape_complex_script(text: &str) -> String {
     let has_arabic = text.chars().any(is_arabic_char);
-    let has_devanagari = text.chars().any(is_devanagari_char);
+    let has_indic = text.chars().any(is_indic_char);
     let has_thai = text.chars().any(is_thai_char);
 
-    if !has_arabic && !has_devanagari && !has_thai {
+    if !has_arabic && !has_indic && !has_thai {
         return text.to_string();
     }
 
@@ -451,8 +502,8 @@ pub fn shape_complex_script(text: &str) -> String {
     if has_arabic {
         current = shape_arabic(&current);
     }
-    if has_devanagari {
-        current = shape_devanagari(&current);
+    if has_indic {
+        current = shape_indic(&current);
     }
     if has_thai {
         current = shape_thai(&current);
