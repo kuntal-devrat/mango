@@ -141,16 +141,7 @@ pub(crate) fn compute_child_intrinsic_size(
         .map(|s| s.box_sizing == mango_css::values::BoxSizing::BorderBox)
         .unwrap_or(false);
 
-    // Width measurement via table_flow intrinsic measuring
-    let mut memo = std::collections::HashMap::new();
-    let (_, max_w) = crate::table_flow::measure_box_intrinsic_widths(
-        child,
-        fs,
-        mango_render::FontWeight::Regular,
-        mango_render::FontFamily::SansSerif,
-        &mut memo,
-    );
-
+    // Width measurement: fast-path definite width before heavy recursive subtree measuring
     let content_w = if let Some(s) = child_style {
         match s.width {
             Length::Px(px) => {
@@ -168,9 +159,33 @@ pub(crate) fn compute_child_intrinsic_size(
                     px.max(0.0)
                 }
             }
-            _ => (max_w - pad_h).max(0.0),
+            _ => {
+                if child.dimensions.content.size.width > 0.0 {
+                    child.dimensions.content.size.width
+                } else {
+                    let mut memo = std::collections::HashMap::new();
+                    let (_, max_w) = crate::table_flow::measure_box_intrinsic_widths(
+                        child,
+                        fs,
+                        mango_render::FontWeight::Regular,
+                        mango_render::FontFamily::SansSerif,
+                        &mut memo,
+                    );
+                    (max_w - pad_h).max(0.0)
+                }
+            }
         }
+    } else if child.dimensions.content.size.width > 0.0 {
+        child.dimensions.content.size.width
     } else {
+        let mut memo = std::collections::HashMap::new();
+        let (_, max_w) = crate::table_flow::measure_box_intrinsic_widths(
+            child,
+            fs,
+            mango_render::FontWeight::Regular,
+            mango_render::FontFamily::SansSerif,
+            &mut memo,
+        );
         (max_w - pad_h).max(0.0)
     };
 
@@ -194,7 +209,9 @@ pub(crate) fn compute_child_intrinsic_size(
             _ => {
                 if let Some(fh) = form_h {
                     (fh - pad_v).max(0.0)
-                } else if !child.children.is_empty() {
+                } else if child.dimensions.content.size.height > 0.0 {
+                    child.dimensions.content.size.height
+                } else if !child.children.is_empty() && child.children.len() <= 10 {
                     let measured = crate::flex_flow::sizing::measure_flex_child_intrinsic_height(
                         child, content_w, fs, root_fs, cb_h,
                     );
@@ -208,11 +225,10 @@ pub(crate) fn compute_child_intrinsic_size(
                         );
                         s.line_height.unwrap_or(asc + desc + gap)
                     }
-                } else if child.dimensions.content.size.height > 0.0 {
-                    child.dimensions.content.size.height
                 } else if child.box_type.is_text()
                     || child.is_inline()
                     || matches!(child.box_type, BoxType::AnonymousBlock)
+                    || !child.children.is_empty()
                 {
                     let (asc, desc, gap) = mango_render::font::font_manager().font_metrics(
                         mango_render::FontFamily::SansSerif,
@@ -227,6 +243,8 @@ pub(crate) fn compute_child_intrinsic_size(
         }
     } else if let Some(fh) = form_h {
         (fh - pad_v).max(0.0)
+    } else if child.dimensions.content.size.height > 0.0 {
+        child.dimensions.content.size.height
     } else if child.box_type.is_text()
         || child.is_inline()
         || matches!(child.box_type, BoxType::AnonymousBlock)

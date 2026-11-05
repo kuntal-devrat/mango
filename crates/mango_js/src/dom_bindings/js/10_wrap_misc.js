@@ -293,10 +293,16 @@
             },
             toggleAttribute: function(name, force) {
                 var has = this.hasAttribute(name);
-                var shouldAdd = (force === undefined) ? !has : !!force;
-                if (shouldAdd) this.setAttribute(name, '');
-                else this.removeAttribute(name);
-                return shouldAdd;
+                if (force === undefined) {
+                    if (has) { this.removeAttribute(name); return false; }
+                    else { this.setAttribute(name, ''); return true; }
+                } else if (force) {
+                    if (!has) this.setAttribute(name, '');
+                    return true;
+                } else {
+                    if (has) this.removeAttribute(name);
+                    return false;
+                }
             },
             setPointerCapture: function() {},
             releasePointerCapture: function() {},
@@ -746,9 +752,10 @@
 
         var nt = el.nodeType;
         if (nt !== 1) {
+            delete el.data;
             delete el.hasAttributes; delete el.attributes; delete el.getAttributeNames;
             delete el.getAttribute; delete el.setAttribute; delete el.removeAttribute;
-            delete el.hasAttribute; delete el.prefix; delete el.localName; delete el.namespaceURI;
+            delete el.hasAttribute; delete el.toggleAttribute; delete el.prefix; delete el.localName; delete el.namespaceURI;
         }
         _storeWrapper(nodeId, el);
         _ensureWrapperPrototype(el);

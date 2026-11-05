@@ -194,9 +194,186 @@
 
     globalThis.CDATASection = function() {};
     globalThis.CDATASection.prototype = Object.create(globalThis.Text.prototype);
-    globalThis.ProcessingInstruction = function() {};
+
+    globalThis.ProcessingInstruction = function() { throw new TypeError("Illegal constructor"); };
     globalThis.ProcessingInstruction.prototype = Object.create(globalThis.CharacterData.prototype);
-    Object.defineProperty(globalThis.ProcessingInstruction.prototype, 'target', { get: function() { return this._target || ''; }, configurable: true, enumerable: true });
+    globalThis.ProcessingInstruction.prototype.constructor = globalThis.ProcessingInstruction;
+    Object.defineProperty(globalThis.ProcessingInstruction.prototype, 'target', {
+        get: function() {
+            if (this === globalThis.ProcessingInstruction.prototype) throw new TypeError("Illegal invocation: 'get target' called on prototype");
+            return this._target || '';
+        },
+        configurable: true,
+        enumerable: true
+    });
+
+    function _escapePiAttrVal(v) {
+        return String(v)
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    function _unescapePiAttrVal(v) {
+        return String(v)
+            .replace(/&quot;/g, '"')
+            .replace(/&apos;/g, "'")
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&amp;/g, '&');
+    }
+
+    function _parsePiAttrs(dataStr) {
+        if (typeof dataStr !== 'string') return null;
+        var str = dataStr.trim();
+        if (!str) return [];
+        var res = [];
+        var i = 0;
+        var len = str.length;
+        while (i < len) {
+            while (i < len && str.charCodeAt(i) <= 0x20) i++;
+            if (i >= len) break;
+            var startName = i;
+            while (i < len && str[i] !== '=' && str[i] !== '>' && str[i] !== '/' && str.charCodeAt(i) > 0x20) {
+                i++;
+            }
+            var name = str.substring(startName, i);
+            if (!name || i >= len || str[i] !== '=') return null;
+            i++;
+            if (i >= len) return null;
+            var quote = str[i];
+            if (quote !== '"' && quote !== "'") return null;
+            i++;
+            var startVal = i;
+            while (i < len && str[i] !== quote) {
+                i++;
+            }
+            if (i >= len) return null;
+            var rawVal = str.substring(startVal, i);
+            i++;
+            if (i < len && str.charCodeAt(i) > 0x20) {
+                return null;
+            }
+            res.push({ name: name, value: _unescapePiAttrVal(rawVal) });
+        }
+        return res;
+    }
+
+    function _validatePiAttrName(name) {
+        var DomEx = (globalThis && globalThis.DOMException) ? globalThis.DOMException : (typeof DOMException !== 'undefined' ? DOMException : Error);
+        if (!name || typeof name !== 'string') {
+            throw new DomEx("The attribute name provided is invalid.", "InvalidCharacterError");
+        }
+        for (var i = 0; i < name.length; i++) {
+            var cp = name.charCodeAt(i);
+            if (cp === 0 || cp === 0x3D || cp === 0x3E || cp === 0x2F || cp <= 0x20 || cp === 0x7F) {
+                throw new DomEx("The attribute name provided contains invalid characters: " + name, "InvalidCharacterError");
+            }
+        }
+    }
+
+    globalThis.ProcessingInstruction.prototype.hasAttributes = function() {
+        if (this === globalThis.ProcessingInstruction.prototype) throw new TypeError("Illegal invocation");
+        var list = _parsePiAttrs(this.data);
+        return list !== null && list.length > 0;
+    };
+
+    globalThis.ProcessingInstruction.prototype.getAttributeNames = function() {
+        if (this === globalThis.ProcessingInstruction.prototype) throw new TypeError("Illegal invocation");
+        var list = _parsePiAttrs(this.data);
+        if (!list) return [];
+        var seen = {};
+        var names = [];
+        for (var i = 0; i < list.length; i++) {
+            if (!seen[list[i].name]) {
+                seen[list[i].name] = true;
+                names.push(list[i].name);
+            }
+        }
+        return names;
+    };
+
+    globalThis.ProcessingInstruction.prototype.getAttribute = function(name) {
+        if (this === globalThis.ProcessingInstruction.prototype) throw new TypeError("Illegal invocation");
+        var list = _parsePiAttrs(this.data);
+        if (!list) return null;
+        var n = String(name);
+        for (var i = 0; i < list.length; i++) {
+            if (list[i].name === n) return list[i].value;
+        }
+        return null;
+    };
+
+    globalThis.ProcessingInstruction.prototype.hasAttribute = function(name) {
+        if (this === globalThis.ProcessingInstruction.prototype) throw new TypeError("Illegal invocation");
+        return this.getAttribute(name) !== null;
+    };
+
+    globalThis.ProcessingInstruction.prototype.setAttribute = function(name, value) {
+        if (this === globalThis.ProcessingInstruction.prototype) throw new TypeError("Illegal invocation");
+        var n = String(name);
+        _validatePiAttrName(n);
+        var v = String(value);
+        var list = _parsePiAttrs(this.data);
+        if (!list) list = [];
+        var found = false;
+        var newList = [];
+        for (var i = 0; i < list.length; i++) {
+            if (list[i].name === n) {
+                if (!found) {
+                    newList.push({ name: n, value: v });
+                    found = true;
+                }
+            } else {
+                newList.push(list[i]);
+            }
+        }
+        if (!found) {
+            newList.push({ name: n, value: v });
+        }
+        var serialized = newList.map(function(a) {
+            return a.name + '="' + _escapePiAttrVal(a.value) + '"';
+        }).join(' ');
+        this.data = serialized;
+    };
+
+    globalThis.ProcessingInstruction.prototype.removeAttribute = function(name) {
+        if (this === globalThis.ProcessingInstruction.prototype) throw new TypeError("Illegal invocation");
+        var n = String(name);
+        var list = _parsePiAttrs(this.data);
+        if (!list) return;
+        var filtered = list.filter(function(a) { return a.name !== n; });
+        var serialized = filtered.map(function(a) {
+            return a.name + '="' + _escapePiAttrVal(a.value) + '"';
+        }).join(' ');
+        this.data = serialized;
+    };
+
+    globalThis.ProcessingInstruction.prototype.toggleAttribute = function(name, force) {
+        if (this === globalThis.ProcessingInstruction.prototype) throw new TypeError("Illegal invocation");
+        var n = String(name);
+        _validatePiAttrName(n);
+        if (force === undefined) {
+            if (this.hasAttribute(n)) {
+                this.removeAttribute(n);
+                return false;
+            } else {
+                this.setAttribute(n, "");
+                return true;
+            }
+        } else if (force) {
+            if (!this.hasAttribute(n)) {
+                this.setAttribute(n, "");
+            }
+            return true;
+        } else {
+            if (this.hasAttribute(n)) {
+                this.removeAttribute(n);
+            }
+            return false;
+        }
+    };
     globalThis.DocumentType = function() { throw new TypeError("Illegal constructor"); };
     globalThis.DocumentType.prototype = Object.create(globalThis.Node.prototype);
     globalThis.DocumentType.prototype.constructor = globalThis.DocumentType;

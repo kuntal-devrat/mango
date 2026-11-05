@@ -231,13 +231,15 @@
             el._isPI = true;
             el._target = targetStr;
             el.target = targetStr;
-            el._nodeValue = dataStr;
-            el.data = dataStr;
             el._nodeType = 7;
             el.nodeType = 7;
+            var doc = this || document;
+            el.ownerDocument = doc;
+            el._ownerDocument = doc;
             if (globalThis.ProcessingInstruction && globalThis.ProcessingInstruction.prototype) {
                 Object.setPrototypeOf(el, globalThis.ProcessingInstruction.prototype);
             }
+            el.data = dataStr;
         }
         return el;
     };

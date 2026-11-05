@@ -189,46 +189,62 @@ impl<'a> StyleSharingCache<'a> {
         let Some(parent_id) = doc.get(node_id).and_then(|n| n.parent) else {
             return 1; // Root element flag
         };
+        let _ = parent_id;
 
         let mut key: u32 = 0;
         let mut is_first = true;
         let mut is_first_of_type = true;
-        let mut child_idx = 0;
-        let mut found_self = false;
-        let mut has_subsequent = false;
-        let mut has_subsequent_of_type = false;
+        let mut child_idx = 1;
+        let mut prev = doc.get(node_id).and_then(|n| n.prev_sibling);
 
-        for child in doc.children(parent_id) {
-            if let mango_html::dom::NodeData::Element(c_el) = &child.data {
-                if !found_self {
-                    if child.id == node_id {
-                        found_self = true;
-                    } else {
-                        is_first = false;
-                        if c_el.tag_name.eq_ignore_ascii_case(tag) {
-                            is_first_of_type = false;
-                        }
+        while let Some(pid) = prev {
+            if let Some(pnode) = doc.get(pid) {
+                if let mango_html::dom::NodeData::Element(pe) = &pnode.data {
+                    is_first = false;
+                    if pe.tag_name.eq_ignore_ascii_case(tag) {
+                        is_first_of_type = false;
                     }
                     child_idx += 1;
-                } else {
-                    has_subsequent = true;
-                    if c_el.tag_name.eq_ignore_ascii_case(tag) {
-                        has_subsequent_of_type = true;
+                    if !self.has_nth_rules && !is_first_of_type {
+                        break;
                     }
                 }
+                prev = pnode.prev_sibling;
+            } else {
+                break;
+            }
+        }
+
+        let mut next = doc.get(node_id).and_then(|n| n.next_sibling);
+        let mut is_last = true;
+        let mut is_last_of_type = true;
+        while let Some(nid) = next {
+            if let Some(nnode) = doc.get(nid) {
+                if let mango_html::dom::NodeData::Element(ne) = &nnode.data {
+                    is_last = false;
+                    if ne.tag_name.eq_ignore_ascii_case(tag) {
+                        is_last_of_type = false;
+                    }
+                    if !is_last_of_type {
+                        break;
+                    }
+                }
+                next = nnode.next_sibling;
+            } else {
+                break;
             }
         }
 
         if is_first {
             key |= 1 << 0;
         }
-        if !has_subsequent {
+        if is_last {
             key |= 1 << 1;
         }
         if is_first_of_type {
             key |= 1 << 2;
         }
-        if !has_subsequent_of_type {
+        if is_last_of_type {
             key |= 1 << 3;
         }
 

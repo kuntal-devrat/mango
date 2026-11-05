@@ -55,7 +55,10 @@ fn main() {
         }
     }
 
-    let _ = env_logger::builder().is_test(false).try_init();
+    let _ = env_logger::builder()
+        .filter_module("calloop", log::LevelFilter::Error)
+        .is_test(false)
+        .try_init();
 
     let args: Vec<String> = env::args().collect();
     let mut positional: Vec<&str> = Vec::new();

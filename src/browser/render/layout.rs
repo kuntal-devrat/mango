@@ -352,6 +352,12 @@ impl BrowserChrome {
             return false;
         }
 
+        // Defer full relayout while sequential scripts are actively queued.
+        // Once the queue empties, a single consolidated layout flushes all mutations.
+        if !self.pending_scripts.is_empty() {
+            return false;
+        }
+
         if self.layout_pending {
             self.relayout();
             true

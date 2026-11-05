@@ -277,13 +277,11 @@
             var clone = sc.cloneNode(false);
             var str = (sc.data || sc.nodeValue || '').substring(so, eo);
             clone.nodeValue = str;
-            if (clone.data !== undefined) clone.data = str;
             frag.appendChild(clone);
             if (!cloneOnly) {
                 var full = sc.data || sc.nodeValue || '';
                 var remaining = full.substring(0, so) + full.substring(eo);
                 sc.nodeValue = remaining;
-                if (sc.data !== undefined) sc.data = remaining;
             }
             return frag;
         }
@@ -328,11 +326,9 @@
                 var clone = firstPartiallyContained.cloneNode(false);
                 var full = firstPartiallyContained.data || firstPartiallyContained.nodeValue || '';
                 clone.nodeValue = full.substring(so);
-                if (clone.data !== undefined) clone.data = clone.nodeValue;
                 frag.appendChild(clone);
                 if (!cloneOnly) {
                     firstPartiallyContained.nodeValue = full.substring(0, so);
-                    if (firstPartiallyContained.data !== undefined) firstPartiallyContained.data = firstPartiallyContained.nodeValue;
                 }
             } else {
                 var clone = firstPartiallyContained.cloneNode(false);
@@ -359,11 +355,9 @@
                 var clone = lastPartiallyContained.cloneNode(false);
                 var full = lastPartiallyContained.data || lastPartiallyContained.nodeValue || '';
                 clone.nodeValue = full.substring(0, eo);
-                if (clone.data !== undefined) clone.data = clone.nodeValue;
                 frag.appendChild(clone);
                 if (!cloneOnly) {
                     lastPartiallyContained.nodeValue = full.substring(eo);
-                    if (lastPartiallyContained.data !== undefined) lastPartiallyContained.data = lastPartiallyContained.nodeValue;
                 }
             } else {
                 var clone = lastPartiallyContained.cloneNode(false);
