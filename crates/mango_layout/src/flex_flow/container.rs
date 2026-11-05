@@ -93,18 +93,26 @@ pub fn layout_flex(
     let is_margin_left_auto = style.margin_left == Length::Auto;
     let is_margin_right_auto = style.margin_right == Length::Auto;
 
-    let mut margin_left = style.margin_left.to_px_with_viewport(
-        font_size,
-        root_font_size,
-        container_width,
-        container_height,
-    );
-    let mut margin_right = style.margin_right.to_px_with_viewport(
-        font_size,
-        root_font_size,
-        container_width,
-        container_height,
-    );
+    let mut margin_left = if is_margin_left_auto && container.dimensions.margin.left > 0.0 {
+        container.dimensions.margin.left
+    } else {
+        style.margin_left.to_px_with_viewport(
+            font_size,
+            root_font_size,
+            container_width,
+            container_height,
+        )
+    };
+    let mut margin_right = if is_margin_right_auto && container.dimensions.margin.right > 0.0 {
+        container.dimensions.margin.right
+    } else {
+        style.margin_right.to_px_with_viewport(
+            font_size,
+            root_font_size,
+            container_width,
+            container_height,
+        )
+    };
 
     let total_non_content_h = pad_left + pad_right + border_left + border_right;
     let total_non_content_v = pad_top + pad_bottom + border_top + border_bottom;

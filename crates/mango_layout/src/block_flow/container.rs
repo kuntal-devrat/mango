@@ -295,6 +295,9 @@ pub(crate) fn layout_block_children(
         let mut in_flow_count = 0;
 
         let mut container_dims = box_node.dimensions;
+        if containing_block.height_indefinite {
+            container_dims.height_indefinite = true;
+        }
         if let Some(s) = &box_node.style {
             if s.overflow_y == mango_css::values::Overflow::Scroll {
                 container_dims.content.size.width =
@@ -587,8 +590,12 @@ pub(crate) fn layout_block_children(
                 let root_font_size = child_style.root_font_size;
                 let cb_h = container_dims.content.height();
                 let is_pct_indefinite = child_style.height.has_percent()
-                    && cb_h <= 0.0
-                    && !matches!(child_style.position, Position::Absolute | Position::Fixed);
+                    && (container_dims.height_indefinite
+                        || (cb_h <= 0.0
+                            && !matches!(
+                                child_style.position,
+                                Position::Absolute | Position::Fixed
+                            )));
                 if !is_pct_indefinite {
                     let (_, vp_h) = mango_css::get_current_viewport();
                     let eff_cb_h = if cb_h > 0.0 {

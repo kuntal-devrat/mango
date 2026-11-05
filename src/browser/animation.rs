@@ -118,7 +118,8 @@ impl BrowserChrome {
             );
             let started = std::time::Instant::now();
             self.execute_pending_script(scheduled.script);
-            self.resource_scheduler.record_script_cpu(started.elapsed());
+            let s_elapsed = started.elapsed();
+            self.resource_scheduler.record_script_cpu(s_elapsed);
             self.resource_scheduler.transition(
                 scheduled.resource_id,
                 crate::browser::resource_scheduler::ResourceState::Completed,

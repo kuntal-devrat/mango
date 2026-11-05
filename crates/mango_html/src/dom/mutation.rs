@@ -265,6 +265,9 @@ impl Document {
         }
 
         self.mark_dirty(parent);
+        if self.is_style_node(child) {
+            self.style_version = self.style_version.wrapping_add(1);
+        }
     }
 
     /// Inserts a child node immediately before an existing reference child.
@@ -373,6 +376,9 @@ impl Document {
         }
 
         self.mark_dirty(parent);
+        if self.is_style_node(child) {
+            self.style_version = self.style_version.wrapping_add(1);
+        }
         Ok(())
     }
 
@@ -525,8 +531,12 @@ impl Document {
             self.detached_candidates.insert(node);
         }
 
+        let is_style = self.is_style_node(node);
         if let Some(p) = parent {
             self.mark_dirty(p);
+        }
+        if is_style {
+            self.style_version = self.style_version.wrapping_add(1);
         }
     }
 

@@ -518,6 +518,8 @@ pub fn build_svg_replaced_element(styled_node: &StyledNode) -> LayoutBox {
             } else if let Some(px) = parse_dimension_attr(trimmed) {
                 style.width = Length::Px(px);
             }
+        } else if explicit_h.is_some() && aspect_ratio.is_some() {
+            style.width = Length::Px(w);
         } else {
             // SVG 1.1 §5.1.2: If the 'width' attribute is not specified,
             // the effect is as if a value of '100%' were specified.
@@ -534,6 +536,8 @@ pub fn build_svg_replaced_element(styled_node: &StyledNode) -> LayoutBox {
             } else if let Some(px) = parse_dimension_attr(trimmed) {
                 style.height = Length::Px(px);
             }
+        } else if explicit_w.is_some() && aspect_ratio.is_some() {
+            style.height = Length::Px(h);
         } else {
             // SVG 1.1 §5.1.2: If the 'height' attribute is not specified,
             // the effect is as if a value of '100%' were specified.

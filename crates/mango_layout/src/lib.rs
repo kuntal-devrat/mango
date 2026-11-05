@@ -201,15 +201,25 @@ pub fn layout_document_with_style_index(
     style_index: &PageStyleIndex,
     viewport: Size,
 ) -> (LayoutBox, DisplayList) {
+    let t_start = std::time::Instant::now();
     mango_css::set_current_viewport(viewport.width, viewport.height);
     let mut env = mango_css::current_media_environment();
     env.viewport_width = viewport.width;
     env.viewport_height = viewport.height;
+    let t0 = std::time::Instant::now();
     let Some(styled_root) = build_style_tree_with_cached_index(doc, style_index.index(), &env)
     else {
         return (LayoutBox::new(BoxType::BlockNode, None), DisplayList::new());
     };
-    layout_styled_document(doc, styled_root, &env, 0.0, 0.0)
+    let t_style = t0.elapsed();
+    let (root_box, dl) = layout_styled_document(doc, styled_root, &env, 0.0, 0.0);
+    log::info!(
+        "[LAYOUT] Total: {:?}, StyleTree: {:?}, Box/Block/DL: {:?}",
+        t_start.elapsed(),
+        t_style,
+        t_start.elapsed().saturating_sub(t_style)
+    );
+    (root_box, dl)
 }
 
 pub fn layout_styled_document(
@@ -219,14 +229,17 @@ pub fn layout_styled_document(
     scroll_x: f32,
     scroll_y: f32,
 ) -> (LayoutBox, DisplayList) {
+    let t_box_start = std::time::Instant::now();
     with_layout_scratchpad(|_scratch| {
         let maps = collect_image_maps(doc);
         let mut root_box = build_box_tree_with_maps(&styled_root, Some(&maps));
+        let t_box = t_box_start.elapsed();
 
         let containing_block =
             Dimensions::new(Rect::new(0.0, 0.0, env.viewport_width, env.viewport_height));
         let mut float_ctx = FloatContext::new();
 
+        let t_layout_start = std::time::Instant::now();
         let root_pos = root_box
             .style
             .as_ref()
@@ -244,11 +257,21 @@ pub fn layout_styled_document(
         } else {
             layout_block(&mut root_box, &containing_block, &mut float_ctx);
         }
+        let t_layout = t_layout_start.elapsed();
 
         clamp_scroll_offsets(&mut root_box);
         root_box.prune_raw_children();
 
+        let t_dl_start = std::time::Instant::now();
         let display_list = build_display_list_with_scroll_xy(&root_box, scroll_x, scroll_y);
+        let t_dl = t_dl_start.elapsed();
+
+        log::info!(
+            "[LAYOUT STYLED] BoxTree: {:?}, BlockFlow/Taffy: {:?}, DisplayList: {:?}",
+            t_box,
+            t_layout,
+            t_dl
+        );
 
         (root_box, display_list)
     })

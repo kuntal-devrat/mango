@@ -31,7 +31,7 @@ fn test_diagnose_github_live_memory() {
     println!("Post-Nav RSS: {:.2} MB", post_nav_rss as f64 / 1024.0);
 
     let start = Instant::now();
-    let duration = Duration::from_secs(12);
+    let duration = Duration::from_secs(10);
 
     while start.elapsed() < duration {
         let t_nav_start = Instant::now();

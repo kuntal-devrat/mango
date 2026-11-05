@@ -12,14 +12,13 @@
     try { globalThis._mangoWrap = _wrapElement; globalThis._wrapElement = _wrapElement; } catch (e) {}
 
     function _syncWindowNamedProperties() {
-        if (typeof _querySelectorAll === 'function') {
+        if (typeof _querySelectorAll === 'function' && typeof _getAttribute === 'function') {
             try {
                 var ids = _querySelectorAll(0, '[id]') || [];
-                for (var i = 0; i < ids.length; i++) {
-                    var el = _wrapElement(ids[i]);
-                    if (!el) continue;
-                    var elId = (el.getAttribute && el.getAttribute('id')) || el.id;
-                    if (elId && !(elId in globalThis)) {
+                var limit = Math.min(ids.length, 500);
+                for (var i = 0; i < limit; i++) {
+                    var elId = _getAttribute(ids[i], 'id');
+                    if (elId && typeof elId === 'string' && elId.length > 0 && !(elId in globalThis)) {
                         (function(targetId) {
                             try {
                                 Object.defineProperty(globalThis, targetId, {

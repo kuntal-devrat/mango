@@ -277,16 +277,19 @@ fn main() {
     let load_local = |b: &mut BrowserChrome, content: String, target_url: String| {
         b.load_html(content, target_url);
     };
+    let t_nav = std::time::Instant::now();
     if let Ok(content) = std::fs::read_to_string(file_path) {
         load_local(&mut browser, content, page_url);
     } else {
         browser.navigate(url);
         browser.wait_for_navigation();
     }
+    println!("STEP 1: Navigation & sync load took {:?}", t_nav.elapsed());
     println!("Browser status: {}", browser.status_text());
     // Virtual time budget / real-time wait: drive animations and JS timers
     let tick_interval_ms = 16.0;
     let mut loaded_any_images = false;
+    let t_virtual = std::time::Instant::now();
     if wait_sec > 0 {
         let wait_dur = std::time::Duration::from_secs(wait_sec);
         let start = std::time::Instant::now();
@@ -317,8 +320,10 @@ fn main() {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }
+    println!("STEP 2: Virtual time loop took {:?}", t_virtual.elapsed());
 
     // Drain pending deferred/async scripts so dynamic content is fully executed
+    let t_scripts = std::time::Instant::now();
     let mut drained_scripts = 0;
     while browser.has_pending_scripts() && drained_scripts < 64 {
         drained_scripts += 1;
@@ -326,25 +331,34 @@ fn main() {
         browser.flush_pending_layout();
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
+    println!(
+        "STEP 3: Script drain ({} scripts) took {:?}",
+        drained_scripts,
+        t_scripts.elapsed()
+    );
+
     // Allow promises, microtasks, and framework mounts (React/Vue/Svelte) to settle
+    let t_settle = std::time::Instant::now();
     for _ in 0..10 {
         let _ = browser.tick_animations(tick_interval_ms);
         let _ = browser.tick_js();
         let _ = browser.flush_pending_layout();
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
+    println!("STEP 4: Microtask settle took {:?}", t_settle.elapsed());
 
     // Allow pending background web fonts to finish loading and reflow
+    let t_fonts = std::time::Instant::now();
     let font_deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while browser.has_pending_font_fetches() && std::time::Instant::now() < font_deadline {
         std::thread::sleep(std::time::Duration::from_millis(10));
         let _ = browser.flush_pending_layout();
     }
+    println!("STEP 5: Font settle took {:?}", t_fonts.elapsed());
 
-    // Drain pending images until the bounded settling deadline.  This avoids
-    // the old arbitrary batch-count truncation while still guaranteeing that
-    // a broken server cannot hold headless rendering forever.
-    let image_deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    // Drain pending images until the bounded settling deadline.
+    let t_images = std::time::Instant::now();
+    let image_deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
     while browser.has_pending_image_fetches() && std::time::Instant::now() < image_deadline {
         if browser.drain_pending_images() {
             loaded_any_images = true;
@@ -352,6 +366,7 @@ fn main() {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }
+    println!("STEP 6: Image settle took {:?}", t_images.elapsed());
     let pending_image_count = browser.pending_image_fetch_count();
     let pending_images = browser.has_pending_image_fetches();
     if pending_images {
@@ -427,6 +442,7 @@ fn main() {
         return;
     }
 
+    let t_dl_build = std::time::Instant::now();
     let (paint_width, paint_height, dl) = if full_page {
         let doc_height = (browser.scrollable_height().ceil() as u32).max(height);
         println!("Full document height: {}px", doc_height);
@@ -449,7 +465,11 @@ fn main() {
             browser.build_display_list((width, window_height)),
         )
     };
-    println!("Generated {} display list commands", dl.len());
+    println!(
+        "STEP 7: Build display list ({} cmds) took {:?}",
+        dl.len(),
+        t_dl_build.elapsed()
+    );
     let mut bold_count = 0;
     let mut reg_count = 0;
     for cmd in dl.iter() {
@@ -478,6 +498,7 @@ fn main() {
     }
     println!("DrawText stats: bold={}, regular={}", bold_count, reg_count);
 
+    let t_paint = std::time::Instant::now();
     let mut buffer = vec![0u32; (paint_width * paint_height) as usize];
     if let Some(wr_pixels) = mango_render::render_with_webrender(&dl, paint_width, paint_height) {
         if wr_pixels.len() == buffer.len() {
@@ -490,6 +511,7 @@ fn main() {
         buffer.fill(browser.canvas_bg().to_rgb_u32());
         paint(&dl, &mut buffer, paint_width, paint_height);
     }
+    println!("STEP 8: Paint rasterization took {:?}", t_paint.elapsed());
 
     let (crop_top, crop_height) = if full_page {
         (0, paint_height)

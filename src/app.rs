@@ -29,7 +29,8 @@ impl WindowState {
     pub fn new(window: Arc<Window>) -> Self {
         let surface = WindowSurface::new(window.clone());
         let size = window.inner_size();
-        let browser = BrowserChrome::new(size.width, size.height);
+        let mut browser = BrowserChrome::new(size.width, size.height);
+        browser.async_navigation = true;
         Self {
             surface,
             browser,

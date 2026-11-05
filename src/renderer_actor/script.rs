@@ -12,27 +12,19 @@ pub fn run_single_script(
     cache: Option<&ResourceCache>,
 ) {
     let is_mod = script.is_module();
-    let clear_script = "if (typeof globalThis.__setCurrentScript === 'function') globalThis.__setCurrentScript(null);";
 
     if !is_mod {
         if let Some(node_id) = script.node_id() {
-            let js_id = mango_html::node_id_to_js(node_id);
-            let _ = rt.execute_script(&format!(
-                "if (typeof globalThis.__setCurrentScript === 'function') globalThis.__setCurrentScript({js_id});"
-            ));
+            rt.set_current_script(Some(node_id));
         } else if let Some(src) = script.src() {
             let script_name = base_url
                 .and_then(|b| b.resolve(src).ok())
                 .map(|u| u.to_string())
                 .unwrap_or_else(|| src.to_string());
-            if let Ok(json_name) = serde_json::to_string(&script_name) {
-                let _ = rt.execute_script(&format!(
-                    "if (typeof globalThis.__setCurrentScriptUrl === 'function') globalThis.__setCurrentScriptUrl({json_name});"
-                ));
-            }
+            rt.set_current_script_url(&script_name);
         }
     } else {
-        let _ = rt.execute_script(clear_script);
+        rt.set_current_script(None);
     }
 
     match script {
@@ -89,13 +81,13 @@ pub fn run_single_script(
                     log::warn!("Isolated renderer external script error ({src}): {e}");
                 }
             } else if !is_mod {
-                let _ = rt.execute_script(clear_script);
+                rt.set_current_script(None);
                 return;
             }
         }
     }
 
     if !is_mod {
-        let _ = rt.execute_script(clear_script);
+        rt.set_current_script(None);
     }
 }

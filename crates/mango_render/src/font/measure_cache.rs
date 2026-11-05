@@ -7,6 +7,8 @@ use std::sync::OnceLock;
 
 use quick_cache::sync::Cache;
 
+use smol_str::SmolStr;
+
 use super::emoji::is_emoji_char;
 use super::manager::FontManager;
 use super::types::{FontFamily, FontWeight, web_font_epoch};
@@ -18,7 +20,7 @@ pub struct TextMeasureKey {
     pub weight: FontWeight,
     pub font_size_bits: u32,
     pub spacing_bits: u32,
-    pub text: String,
+    pub text: SmolStr,
 }
 
 static TEXT_MEASURE_CACHE: OnceLock<Cache<TextMeasureKey, (f32, f32)>> = OnceLock::new();
@@ -52,7 +54,7 @@ pub fn measure_text_with_spacing_cached(
         weight,
         font_size_bits: font_size.to_bits(),
         spacing_bits: letter_spacing.to_bits(),
-        text: text.to_string(),
+        text: SmolStr::new(text),
     };
     if let Some(cached) = cache().get(&key) {
         return cached;

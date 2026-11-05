@@ -446,7 +446,7 @@ pub(crate) fn calculate_block_height(box_node: &mut LayoutBox, containing_block:
     let non_content_v =
         box_node.dimensions.padding.vertical() + box_node.dimensions.border.vertical();
     let is_percent_indefinite = style.height.has_percent()
-        && containing_block.content.height() <= 0.0
+        && (containing_block.height_indefinite || containing_block.content.height() <= 0.0)
         && !matches!(style.position, Position::Absolute | Position::Fixed);
 
     // 1. Determine tentative content height
@@ -480,8 +480,8 @@ pub(crate) fn calculate_block_height(box_node: &mut LayoutBox, containing_block:
             box_node.dimensions.content.size.width = *intrinsic_width;
         }
         if style.height != Length::Auto {
-            let is_percent_indefinite =
-                style.height.has_percent() && containing_block.content.height() <= 0.0;
+            let is_percent_indefinite = style.height.has_percent()
+                && (containing_block.height_indefinite || containing_block.content.height() <= 0.0);
             if !is_percent_indefinite {
                 let h =
                     style

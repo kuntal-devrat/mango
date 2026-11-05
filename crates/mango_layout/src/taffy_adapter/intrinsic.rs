@@ -137,6 +137,24 @@ pub(crate) fn compute_child_intrinsic_size(
         })
         .unwrap_or(0.0);
 
+    let spacing_h = child_style
+        .map(|s| {
+            let m_l = match s.margin_left {
+                Length::Px(px) => px,
+                Length::Rem(rem) => rem * root_fs,
+                Length::Em(em) => em * fs,
+                _ => 0.0,
+            };
+            let m_r = match s.margin_right {
+                Length::Px(px) => px,
+                Length::Rem(rem) => rem * root_fs,
+                Length::Em(em) => em * fs,
+                _ => 0.0,
+            };
+            pad_h + m_l + m_r
+        })
+        .unwrap_or(pad_h);
+
     let is_border_box = child_style
         .map(|s| s.box_sizing == mango_css::values::BoxSizing::BorderBox)
         .unwrap_or(false);
@@ -151,55 +169,50 @@ pub(crate) fn compute_child_intrinsic_size(
                     px.max(0.0)
                 }
             }
-            Length::Percent(p) if cb_w > 0.0 => {
-                let px = (p / 100.0) * cb_w;
-                if is_border_box {
-                    (px - pad_h).max(0.0)
-                } else {
-                    px.max(0.0)
+            _ => match s.flex_basis {
+                Length::Px(px) => {
+                    if is_border_box {
+                        (px - pad_h).max(0.0)
+                    } else {
+                        px.max(0.0)
+                    }
                 }
-            }
-            _ => {
-                if child.dimensions.content.size.width > 0.0 {
-                    child.dimensions.content.size.width
-                } else {
-                    let mut memo = std::collections::HashMap::new();
-                    let (_, max_w) = crate::table_flow::measure_box_intrinsic_widths(
-                        child,
-                        fs,
-                        mango_render::FontWeight::Regular,
-                        mango_render::FontFamily::SansSerif,
-                        &mut memo,
-                    );
-                    (max_w - pad_h).max(0.0)
+                _ => {
+                    if child.dimensions.content.size.width > 0.0 {
+                        child.dimensions.content.size.width
+                    } else {
+                        let (_, max_w) = crate::scratchpad::with_intrinsic_width_cache(|memo| {
+                            crate::table_flow::measure_box_intrinsic_widths(
+                                child,
+                                fs,
+                                mango_render::FontWeight::Regular,
+                                mango_render::FontFamily::SansSerif,
+                                memo,
+                            )
+                        });
+                        (max_w - spacing_h).max(0.0)
+                    }
                 }
-            }
+            },
         }
     } else if child.dimensions.content.size.width > 0.0 {
         child.dimensions.content.size.width
     } else {
-        let mut memo = std::collections::HashMap::new();
-        let (_, max_w) = crate::table_flow::measure_box_intrinsic_widths(
-            child,
-            fs,
-            mango_render::FontWeight::Regular,
-            mango_render::FontFamily::SansSerif,
-            &mut memo,
-        );
-        (max_w - pad_h).max(0.0)
+        let (_, max_w) = crate::scratchpad::with_intrinsic_width_cache(|memo| {
+            crate::table_flow::measure_box_intrinsic_widths(
+                child,
+                fs,
+                mango_render::FontWeight::Regular,
+                mango_render::FontFamily::SansSerif,
+                memo,
+            )
+        });
+        (max_w - spacing_h).max(0.0)
     };
 
     let content_h = if let Some(s) = child_style {
         match s.height {
             Length::Px(px) => {
-                if is_border_box {
-                    (px - pad_v).max(0.0)
-                } else {
-                    px.max(0.0)
-                }
-            }
-            Length::Percent(p) if cb_h > 0.0 => {
-                let px = (p / 100.0) * cb_h;
                 if is_border_box {
                     (px - pad_v).max(0.0)
                 } else {

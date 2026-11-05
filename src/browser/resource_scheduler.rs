@@ -82,10 +82,10 @@ pub struct DocumentResourceBudget {
 impl Default for DocumentResourceBudget {
     fn default() -> Self {
         Self {
-            cpu_slice: Duration::from_millis(8),
-            cpu_total: Duration::from_millis(50),
-            js_heap_bytes: 512 * 1024 * 1024,
-            decoded_image_bytes: 24 * 1024 * 1024,
+            cpu_slice: Duration::from_millis(50),
+            cpu_total: Duration::from_millis(1000),
+            js_heap_bytes: 1024 * 1024 * 1024,
+            decoded_image_bytes: 64 * 1024 * 1024,
         }
     }
 }

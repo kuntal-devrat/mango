@@ -312,6 +312,15 @@ impl FontManager {
 
         let script_candidates = script_candidates_for_char(ch);
         if let Ok(mut pending) = self.unloaded_fallbacks.write() {
+            // Double-check loaded fallbacks under write lock in case another thread loaded them
+            if let Ok(loaded) = self.fallback_fonts.read() {
+                for fb in loaded.iter() {
+                    if fb.lookup_glyph_index(ch) != 0 {
+                        return Arc::clone(fb);
+                    }
+                }
+            }
+
             let mut found_font = None;
 
             if !script_candidates.is_empty() {
@@ -350,6 +359,15 @@ impl FontManager {
 
             if let Some(fb) = found_font {
                 return fb;
+            }
+        }
+
+        // Final re-check before permanently caching as missing
+        if let Ok(loaded) = self.fallback_fonts.read() {
+            for fb in loaded.iter() {
+                if fb.lookup_glyph_index(ch) != 0 {
+                    return Arc::clone(fb);
+                }
             }
         }
 

@@ -201,6 +201,7 @@ impl BrowserChrome {
     /// on every resize, JS mutation and animation frame, so a deep copy here would
     /// dominate the frame cost on large documents.
     pub fn relayout(&mut self) {
+        let t_relayout_start = std::time::Instant::now();
         self.layout_pending = false;
         let cw = self.content_width();
         let ch = self.content_height();
@@ -208,16 +209,17 @@ impl BrowserChrome {
         let viewport = Size::new(cw, ch);
 
         // Build or reuse the page stylesheet index. External rules are retained in
-        // the cache across DOM mutations; embedded sheets are merged when doc changes.
-        let (doc_version, embedded_sheets) = {
-            let doc = self.document_view();
-            (doc.version, extract_style_elements(&doc))
-        };
+        // the cache across DOM mutations; embedded sheets are merged when styles change.
+        let style_version = self.document_view().style_version;
         let viewport_key = (self.width, self.height);
         if self.style_index_cache.is_none()
-            || self.style_index_version != doc_version
+            || self.style_index_version != style_version
             || self.style_index_viewport != viewport_key
         {
+            let embedded_sheets = {
+                let doc = self.document_view();
+                extract_style_elements(&doc)
+            };
             let mut sheets = self.cached_stylesheets.clone();
             sheets.extend(embedded_sheets);
             self.style_index_cache =
@@ -226,13 +228,14 @@ impl BrowserChrome {
                     mango_css::current_media_environment(),
                 )));
             if let Some(index) = &self.style_index_cache {
-                log::debug!(
-                    "built page stylesheet index: {} sheets, {} indexed entries",
+                log::info!(
+                    "Built page stylesheet index: {} sheets, {} indexed entries in {:?}",
                     index.stylesheet_count(),
-                    index.indexed_entry_count()
+                    index.indexed_entry_count(),
+                    t_relayout_start.elapsed()
                 );
             }
-            self.style_index_version = doc_version;
+            self.style_index_version = style_version;
             self.style_index_viewport = viewport_key;
         }
 
@@ -287,7 +290,13 @@ impl BrowserChrome {
             .invalidate(None);
 
         self.refresh_animation_targets();
+        let t_pub = std::time::Instant::now();
         self.publish_layout_bounds();
+        log::info!(
+            "[RELAYOUT FINISHED] Total: {:?}, publish_bounds: {:?}",
+            t_relayout_start.elapsed(),
+            t_pub.elapsed()
+        );
     }
 
     /// Applies the newest completed worker layout on the UI thread.

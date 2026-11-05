@@ -266,6 +266,12 @@ impl BrowserChrome {
             .map(|t| t.session_storage.clone())
             .unwrap_or_else(|| std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())));
         self.cached_document = Some(doc.clone());
+        log::info!(
+            "[HISTORY LOAD] Creating JsRuntime for URL: {}, doc nodes={}",
+            url,
+            doc.live_node_count()
+        );
+        let t_js_create = std::time::Instant::now();
         let mut js_rt = JsRuntime::new_with_full_context(
             doc,
             w,
@@ -275,6 +281,10 @@ impl BrowserChrome {
             session_storage,
             self.cookie_jar.clone(),
             Some(self.loader.cache_arc()),
+        );
+        log::info!(
+            "[HISTORY LOAD] JsRuntime created in {:?}",
+            t_js_create.elapsed()
         );
 
         // Register import maps if any are defined in <script type="importmap">
@@ -371,7 +381,15 @@ impl BrowserChrome {
 
         // CSS background images are loaded lazily from visible layout boxes;
         // do not decode every theme texture before the first paint.
+        log::info!(
+            "[HISTORY LOAD] About to run initial relayout, V8 heap={}MB",
+            self.js_runtime
+                .as_mut()
+                .map(|rt| rt.heap_size_bytes() / (1024 * 1024))
+                .unwrap_or(0)
+        );
         self.relayout();
+        log::info!("[HISTORY LOAD] Initial relayout completed");
         self.reprioritize_visible_images();
 
         // Extract and execute scripts in document order
