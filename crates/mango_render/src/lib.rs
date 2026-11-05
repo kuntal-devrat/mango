@@ -58,8 +58,8 @@ pub use painter::{
 };
 pub use pdf::{PageSize, PdfOptions, print_to_pdf, render_to_pdf};
 pub use svg::{
-    SvgSymbol, clear_global_svg_symbols, get_global_svg_symbol, get_svg_intrinsic_dimensions,
-    prune_svg_caches, register_global_svg_symbol, render_svg,
+    SvgSymbol, clear_global_svg_symbols, get_global_svg_symbol, get_svg_aspect_ratio,
+    get_svg_intrinsic_dimensions, prune_svg_caches, register_global_svg_symbol, render_svg,
 };
 pub use tile::{DEFAULT_TILE_SIZE, Tile, TileCoord, TileGrid};
 pub use webrender::{WebRenderEngine, render_with_webrender};

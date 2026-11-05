@@ -32,6 +32,7 @@
         if (this.parentRule && typeof this.parentRule._notifyMutate === 'function') {
             this.parentRule._notifyMutate();
         } else if (this.parentStyleSheet && typeof this.parentStyleSheet._onMutate === 'function') {
+            this.parentStyleSheet._hasManualRules = true;
             this.parentStyleSheet._onMutate();
         }
     };
@@ -541,6 +542,22 @@
     CSSKeyframesRule.prototype = Object.create(CSSGroupingRule.prototype);
     CSSKeyframesRule.prototype.constructor = CSSKeyframesRule;
 
+    CSSKeyframesRule.prototype._serialize = function() {
+        var header = '@keyframes ' + this.name;
+        if (!this._rules || this._rules.length === 0) return header + ' {\n}';
+        var inner = this._rules.map(function(r) {
+            var txt = (typeof r._serialize === 'function') ? r._serialize() : (r.cssText || '');
+            return '  ' + txt.replace(/\n/g, '\n  ');
+        }).join('\n');
+        return header + ' {\n' + inner + '\n}';
+    };
+
+    Object.defineProperty(CSSKeyframesRule.prototype, 'cssText', {
+        get: function() { return this._serialize(); },
+        configurable: true,
+        enumerable: true
+    });
+
     // ── CSSImportRule ────────────────────────────────────────────────────────
     function CSSImportRule(href, media, layerName, supportsText, canonicalCss) {
         CSSRule.call(this);
@@ -630,5 +647,10 @@
         if (this._ownerNode) {
             var text = this._serialize();
             this._ownerNode._sheetText = text;
+            if (this._hasManualRules && this._ownerNode._nodeId !== undefined && typeof _setTextContent === 'function') {
+                try {
+                    _setTextContent(this._ownerNode._nodeId, text);
+                } catch(e) {}
+            }
         }
     };

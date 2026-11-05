@@ -443,6 +443,8 @@ pub fn build_svg_replaced_element(styled_node: &StyledNode) -> LayoutBox {
     let aspect_ratio = if let Some(css_ratio) = styled_node.style.aspect_ratio.filter(|&r| r > 0.0)
     {
         Some(css_ratio)
+    } else if let Some(ratio) = mango_render::get_svg_aspect_ratio(&svg_xml) {
+        Some(ratio)
     } else if let (Some(iw), Some(ih)) = (intrinsic_w_opt, intrinsic_h_opt) {
         if ih > 0.0 { Some(iw / ih) } else { None }
     } else {
@@ -503,6 +505,9 @@ pub fn build_svg_replaced_element(styled_node: &StyledNode) -> LayoutBox {
     };
 
     let mut style = (*styled_node.style).clone();
+    if style.aspect_ratio.is_none() {
+        style.aspect_ratio = aspect_ratio;
+    }
     if style.width == Length::Auto {
         if let Some(w_attr) = get_attr("width") {
             let trimmed = w_attr.trim();

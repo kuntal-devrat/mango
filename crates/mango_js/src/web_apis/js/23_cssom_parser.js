@@ -539,6 +539,7 @@
         if (index < 0 || index >= this._rules.length) {
             throw new DOMException("Index out of range", "IndexSizeError");
         }
+        this._hasManualRules = true;
         this._rules.splice(index, 1);
         this._onMutate();
     };

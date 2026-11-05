@@ -12,6 +12,7 @@ pub mod metrics;
 pub mod multicol;
 pub mod ruby;
 pub mod shaping;
+pub mod split;
 pub mod vertical;
 
 #[cfg(test)]

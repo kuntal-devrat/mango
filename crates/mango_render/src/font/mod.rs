@@ -5,6 +5,7 @@ pub mod loader;
 pub mod manager;
 pub mod measure_cache;
 pub mod rasterize;
+pub mod segmentation;
 pub mod shaping;
 pub mod types;
 pub mod variable;

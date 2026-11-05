@@ -494,6 +494,7 @@ fn test_ddg_snippet_spacing() {
     let cb = mango_layout::Dimensions::new(mango_core::Rect::new(0.0, 0.0, 590.0, 600.0));
     let mut float_ctx = mango_layout::FloatContext::new();
     mango_layout::layout_block(&mut box_tree, &cb, &mut float_ctx);
+    println!("BOX TREE: {:#?}", box_tree);
 
     let dl = mango_layout::display_list::build_display_list(&box_tree);
     for cmd in dl {
@@ -501,4 +502,48 @@ fn test_ddg_snippet_spacing() {
             println!("CMD DRAW TEXT at x={:.1}, y={:.1}: {:?}", x, y, text);
         }
     }
+}
+
+#[test]
+fn test_visibility_hidden_preserves_flow_space_without_painting() {
+    let html = r#"<div><span style="visibility: hidden;">hidden prefix</span><span>visible suffix</span></div>"#;
+    let doc = mango_html::parse_html(html);
+    let sheets = mango_layout::extract_style_elements(&doc);
+    let sheet_refs: Vec<&mango_css::parser::Stylesheet> = sheets.iter().collect();
+    let styled = mango_layout::build_style_tree(&doc, &sheet_refs).unwrap();
+    let mut box_tree = mango_layout::build_box_tree(&styled);
+    let cb = mango_layout::Dimensions::new(mango_core::Rect::new(0.0, 0.0, 500.0, 300.0));
+    let mut float_ctx = mango_layout::FloatContext::new();
+    mango_layout::layout_block(&mut box_tree, &cb, &mut float_ctx);
+
+    let dl = mango_layout::display_list::build_display_list(&box_tree);
+    let mut visible_x = 0.0;
+    let mut found_visible = false;
+    let mut found_hidden = false;
+
+    for cmd in dl {
+        if let mango_render::DisplayCommand::DrawText { text, x, .. } = cmd {
+            if text.contains("hidden prefix") {
+                found_hidden = true;
+            }
+            if text.contains("visible suffix") {
+                found_visible = true;
+                visible_x = x;
+            }
+        }
+    }
+
+    assert!(
+        !found_hidden,
+        "visibility: hidden text must NOT be emitted in display list"
+    );
+    assert!(
+        found_visible,
+        "visible text must be emitted in display list"
+    );
+    assert!(
+        visible_x > 50.0,
+        "visible text must be offset by the advance width of hidden text, visible_x={}",
+        visible_x
+    );
 }

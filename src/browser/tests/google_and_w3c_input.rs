@@ -630,3 +630,74 @@ fn test_google_search_bar_elevation_rounded_clip_and_100dvh_layout() {
         Some("Google Search Parity")
     );
 }
+
+#[test]
+fn test_google_offered_in_multilingual_script_measurement_and_rendering() {
+    let text = "Google offered in: हिन्दी বাংলা తెలుగు मराठी தமிழ் ગુજરાતી ಕನ್ನಡ മലയാളം ਪੰਜਾਬੀ";
+    let fm = mango_render::font_manager();
+    let (w, h) = fm.measure_text(
+        text,
+        13.0,
+        mango_render::FontWeight::Regular,
+        mango_render::FontFamily::SansSerif,
+    );
+    assert!(
+        w > 200.0,
+        "Multilingual text width must be measured, w={}",
+        w
+    );
+    assert!(
+        h >= 13.0,
+        "Multilingual text height must be positive, h={}",
+        h
+    );
+
+    // Rasterize text into a test buffer to ensure no panic and non-empty glyphs
+    let mut buf = vec![0u32; 1000 * 50];
+    fm.rasterize_text_clipped(
+        &mut buf,
+        1000,
+        50,
+        0,
+        10,
+        text,
+        Color::RED,
+        13.0,
+        mango_render::FontWeight::Regular,
+        mango_render::FontFamily::SansSerif,
+        mango_render::FontStyle::Normal,
+        0.0,
+        mango_core::Rect::new(0.0, 0.0, 1000.0, 50.0),
+    );
+    let non_zero_pixels = buf.iter().filter(|&&b| b > 0).count();
+    assert!(
+        non_zero_pixels > 100,
+        "Rendered Indic text must produce non-zero glyph pixels, got {}",
+        non_zero_pixels
+    );
+}
+
+#[test]
+fn test_omnibox_url_clipping_bounds() {
+    let mut browser = BrowserChrome::new(1024, 768);
+    browser.address_text = "https://html.duckduckgo.com/html/?q=super+long+search+query+that+extends+way+past+the+address+bar+bounds+and+should+be+clipped".to_string();
+    let dl = browser.build_display_list((1024, 768));
+
+    let mut has_push_clip = false;
+    let mut has_pop_clip = false;
+    for cmd in dl.as_slice() {
+        match cmd {
+            DisplayCommand::PushClip { rect } => {
+                if rect.y() < HEADER_HEIGHT && rect.width() > 100.0 {
+                    has_push_clip = true;
+                }
+            }
+            DisplayCommand::PopClip => {
+                has_pop_clip = true;
+            }
+            _ => {}
+        }
+    }
+    assert!(has_push_clip, "Omnibox text must be bounded by PushClip");
+    assert!(has_pop_clip, "Omnibox text must terminate with PopClip");
+}

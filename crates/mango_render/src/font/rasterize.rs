@@ -271,40 +271,73 @@ impl FontManager {
         let cy2 = ((clip.y() + clip.height()) as i32).min(buf_height as i32);
 
         if text.chars().any(super::shaping::is_complex_char) {
-            let script_ch = text
-                .chars()
-                .find(|c| super::shaping::is_complex_char(*c))
-                .unwrap_or(' ');
-            let font = self.select_font_for_char(family, weight, script_ch);
-            let font_data = self.select_font_data_for_char(family, weight, script_ch);
-            if let Some(shaped) = super::shaping::shape_text_with_font_data(
-                &font_data,
-                0,
-                text,
-                px_size,
-                letter_spacing,
-            ) {
-                if !shaped.glyphs.is_empty() && shaped.glyphs.iter().any(|g| g.glyph_id != 0) {
-                    for glyph in &shaped.glyphs {
-                        if glyph.glyph_id == 0 {
+            let runs = super::segmentation::segment_script_runs(text);
+            let mut all_rendered = true;
+            for run in runs {
+                if run.script.is_complex() {
+                    let font = self.select_font_for_char(family, weight, run.representative_char);
+                    let font_data =
+                        self.select_font_data_for_char(family, weight, run.representative_char);
+                    if let Some(shaped) = super::shaping::shape_text_with_font_data(
+                        &font_data,
+                        0,
+                        run.text,
+                        px_size,
+                        letter_spacing,
+                    ) {
+                        for glyph in &shaped.glyphs {
+                            if glyph.glyph_id != 0 {
+                                let cached = self.get_or_rasterize_glyph_indexed(
+                                    family,
+                                    weight,
+                                    &font,
+                                    glyph.glyph_id,
+                                    px_size,
+                                );
+                                let metrics = &cached.metrics;
+                                let bitmap = &cached.bitmap;
+                                if !bitmap.is_empty() && metrics.width > 0 && metrics.height > 0 {
+                                    let glyph_x = cursor_x + glyph.x_offset + metrics.xmin as f32;
+                                    let glyph_y = y as f32
+                                        + (ascent - metrics.height as f32 - metrics.ymin as f32
+                                            + glyph.y_offset)
+                                            .round();
+                                    blit_glyph_bitmap(
+                                        buffer,
+                                        buf_width,
+                                        metrics,
+                                        bitmap,
+                                        glyph_x,
+                                        glyph_y,
+                                        is_italic,
+                                        color,
+                                        (cx1, cy1, cx2, cy2),
+                                    );
+                                }
+                            }
                             cursor_x += glyph.x_advance;
+                        }
+                    } else {
+                        all_rendered = false;
+                        break;
+                    }
+                } else {
+                    for ch in run.text.chars() {
+                        if ch == '\n' || super::emoji::is_zero_width_or_format(ch) {
                             continue;
                         }
-                        let cached = self.get_or_rasterize_glyph_indexed(
-                            family,
-                            weight,
-                            &font,
-                            glyph.glyph_id,
-                            px_size,
-                        );
-                        let metrics = &cached.metrics;
-                        let bitmap = &cached.bitmap;
+                        if is_emoji_char(ch) {
+                            cursor_x += px_size + letter_spacing;
+                            continue;
+                        }
+                        let font = self.select_font_for_char(family, weight, ch);
+                        let glyph = self.get_or_rasterize_glyph(family, weight, &font, ch, px_size);
+                        let metrics = &glyph.metrics;
+                        let bitmap = &glyph.bitmap;
                         if !bitmap.is_empty() && metrics.width > 0 && metrics.height > 0 {
-                            let glyph_x = cursor_x + glyph.x_offset + metrics.xmin as f32;
+                            let glyph_x = cursor_x + metrics.xmin as f32;
                             let glyph_y = y as f32
-                                + (ascent - metrics.height as f32 - metrics.ymin as f32
-                                    + glyph.y_offset)
-                                    .round();
+                                + (ascent - metrics.height as f32 - metrics.ymin as f32).round();
                             blit_glyph_bitmap(
                                 buffer,
                                 buf_width,
@@ -317,10 +350,12 @@ impl FontManager {
                                 (cx1, cy1, cx2, cy2),
                             );
                         }
-                        cursor_x += glyph.x_advance;
+                        cursor_x += metrics.advance_width + letter_spacing;
                     }
-                    return;
                 }
+            }
+            if all_rendered {
+                return;
             }
         }
 

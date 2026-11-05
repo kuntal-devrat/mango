@@ -398,8 +398,13 @@ impl BrowserChrome {
             &self.address_text
         };
 
-        // Text selection highlight
+        // Text selection highlight and omnibox text with clip boundary
         let text_render_x = addr_x + 22.0;
+        let text_clip_w = (addr_w - 28.0).max(0.0);
+        dl.push(DisplayCommand::PushClip {
+            rect: Rect::new(text_render_x, addr_y, text_clip_w, addr_h),
+        });
+
         if self.address_focused && self.is_all_selected && !self.address_text.is_empty() {
             let (sel_w, _) = mango_render::font_manager().measure_text(
                 &self.address_text,
@@ -452,6 +457,8 @@ impl BrowserChrome {
                 color: Color::MANGO_ORANGE,
             });
         }
+
+        dl.push(DisplayCommand::PopClip);
 
         // Mango menu button (⋮)
         let menu_x = w - 34.0;
