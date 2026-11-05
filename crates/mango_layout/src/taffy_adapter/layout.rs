@@ -146,7 +146,16 @@ pub fn execute_taffy_layout(
     let mut tree: TaffyTree<LeafContext> = TaffyTree::new();
     tree.disable_rounding();
 
-    let container_taffy_style = to_taffy_style(&style, cb_w, cb_h);
+    let mut container_taffy_style = to_taffy_style(&style, cb_w, cb_h);
+    let is_block_level = matches!(style.display, Display::Flex | Display::Grid);
+    if is_block_level
+        && style.width == Length::Auto
+        && !is_pos
+        && style.float == mango_css::values::Float::None
+        && cb_w > 0.0
+    {
+        container_taffy_style.size.width = taffy::style_helpers::percent(1.0);
+    }
     let root_node = match tree.new_leaf_with_context(container_taffy_style, LeafContext::default())
     {
         Ok(node) => node,

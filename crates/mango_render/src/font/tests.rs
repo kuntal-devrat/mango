@@ -613,3 +613,32 @@ fn test_rustybuzz_complex_script_shaping() {
     );
     assert!(run_arabic.width > 0.0);
 }
+
+#[test]
+fn test_rasterize_hindi_and_indic_text() {
+    let fm = font_manager();
+    let text = "हिन्दी";
+    let mut buf = vec![0xFFFFFFu32; 200 * 50];
+    fm.rasterize_text(
+        &mut buf,
+        200,
+        50,
+        10,
+        10,
+        text,
+        Color::BLACK,
+        16.0,
+        FontWeight::Regular,
+        FontFamily::SansSerif,
+        FontStyle::Normal,
+        0.0,
+    );
+    let non_white = buf.iter().filter(|&&p| p != 0xFFFFFF).count();
+    let font = fm.select_font_for_char(FontFamily::SansSerif, FontWeight::Regular, 'ह');
+    assert_ne!(
+        font.lookup_glyph_index('ह'),
+        0,
+        "Hindi glyph must be present in fallback font"
+    );
+    assert!(non_white > 0, "Hindi text rasterization must draw pixels");
+}

@@ -518,8 +518,10 @@ pub fn build_svg_replaced_element(styled_node: &StyledNode) -> LayoutBox {
             } else if let Some(px) = parse_dimension_attr(trimmed) {
                 style.width = Length::Px(px);
             }
-        } else if explicit_w.is_none() && intrinsic_w_opt.is_some() && get_attr("width").is_some() {
-            style.width = Length::Px(w);
+        } else {
+            // SVG 1.1 §5.1.2: If the 'width' attribute is not specified,
+            // the effect is as if a value of '100%' were specified.
+            style.width = Length::Percent(100.0);
         }
     }
     if style.height == Length::Auto {
@@ -532,9 +534,10 @@ pub fn build_svg_replaced_element(styled_node: &StyledNode) -> LayoutBox {
             } else if let Some(px) = parse_dimension_attr(trimmed) {
                 style.height = Length::Px(px);
             }
-        } else if explicit_h.is_none() && intrinsic_h_opt.is_some() && get_attr("height").is_some()
-        {
-            style.height = Length::Px(h);
+        } else {
+            // SVG 1.1 §5.1.2: If the 'height' attribute is not specified,
+            // the effect is as if a value of '100%' were specified.
+            style.height = Length::Percent(100.0);
         }
     }
 

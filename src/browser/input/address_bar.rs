@@ -1,6 +1,7 @@
 //! Address bar and Omnibox keyboard input handling.
 
 use super::super::BrowserChrome;
+use super::text_editing;
 use mango_platform::input::{KeyEvent, MangoKey};
 
 impl BrowserChrome {
@@ -56,6 +57,39 @@ impl BrowserChrome {
                     }
                     return;
                 }
+                MangoKey::ArrowLeft => {
+                    self.is_all_selected = false;
+                    self.cursor_pos =
+                        text_editing::prev_word_boundary(&self.address_text, self.cursor_pos);
+                    return;
+                }
+                MangoKey::ArrowRight => {
+                    self.is_all_selected = false;
+                    self.cursor_pos =
+                        text_editing::next_word_boundary(&self.address_text, self.cursor_pos);
+                    return;
+                }
+                MangoKey::Backspace => {
+                    if self.is_all_selected {
+                        self.address_text.clear();
+                        self.cursor_pos = 0;
+                        self.is_all_selected = false;
+                    } else {
+                        self.cursor_pos =
+                            text_editing::backspace_word(&mut self.address_text, self.cursor_pos);
+                    }
+                    return;
+                }
+                MangoKey::Delete => {
+                    if self.is_all_selected {
+                        self.address_text.clear();
+                        self.cursor_pos = 0;
+                        self.is_all_selected = false;
+                    } else {
+                        text_editing::delete_word(&mut self.address_text, self.cursor_pos);
+                    }
+                    return;
+                }
                 _ => {}
             }
         }
@@ -91,13 +125,8 @@ impl BrowserChrome {
                     self.cursor_pos = 0;
                     self.is_all_selected = false;
                 } else if self.cursor_pos > 0 {
-                    let safe_pos = self.cursor_pos.min(self.address_text.len());
-                    let mut prev = safe_pos - 1;
-                    while prev > 0 && !self.address_text.is_char_boundary(prev) {
-                        prev -= 1;
-                    }
-                    self.address_text.drain(prev..safe_pos);
-                    self.cursor_pos = prev;
+                    self.cursor_pos =
+                        text_editing::backspace_grapheme(&mut self.address_text, self.cursor_pos);
                 }
             }
             MangoKey::Delete => {
@@ -106,37 +135,18 @@ impl BrowserChrome {
                     self.cursor_pos = 0;
                     self.is_all_selected = false;
                 } else if self.cursor_pos < self.address_text.len() {
-                    let safe_pos = self.cursor_pos.min(self.address_text.len());
-                    let mut next = safe_pos + 1;
-                    while next < self.address_text.len()
-                        && !self.address_text.is_char_boundary(next)
-                    {
-                        next += 1;
-                    }
-                    self.address_text.drain(safe_pos..next);
+                    text_editing::delete_grapheme(&mut self.address_text, self.cursor_pos);
                 }
             }
             MangoKey::ArrowLeft => {
                 self.is_all_selected = false;
-                if self.cursor_pos > 0 {
-                    let mut prev = self.cursor_pos.min(self.address_text.len()) - 1;
-                    while prev > 0 && !self.address_text.is_char_boundary(prev) {
-                        prev -= 1;
-                    }
-                    self.cursor_pos = prev;
-                }
+                self.cursor_pos =
+                    text_editing::prev_grapheme_offset(&self.address_text, self.cursor_pos);
             }
             MangoKey::ArrowRight => {
                 self.is_all_selected = false;
-                if self.cursor_pos < self.address_text.len() {
-                    let mut next = self.cursor_pos + 1;
-                    while next < self.address_text.len()
-                        && !self.address_text.is_char_boundary(next)
-                    {
-                        next += 1;
-                    }
-                    self.cursor_pos = next;
-                }
+                self.cursor_pos =
+                    text_editing::next_grapheme_offset(&self.address_text, self.cursor_pos);
             }
             MangoKey::Home => {
                 self.is_all_selected = false;
@@ -178,28 +188,41 @@ impl BrowserChrome {
         }
 
         if let Some(node_id) = self.focused_control {
-            let current_val = self
+            let mut current_val = self
                 .js_runtime
                 .as_ref()
-                .and_then(|rt| rt.get_node_attribute(node_id, "value"))
+                .and_then(|rt| {
+                    rt.get_node_attribute(node_id, "value")
+                        .or_else(|| rt.get_node_attribute(node_id, "data-mango-value"))
+                })
+                .or_else(|| {
+                    self.cached_document.as_ref().and_then(|doc| {
+                        doc.get(node_id)
+                            .and_then(|n| n.as_element())
+                            .and_then(|el| {
+                                el.get_attribute("value")
+                                    .or_else(|| el.get_attribute("data-mango-value"))
+                            })
+                            .map(|s| s.to_string())
+                    })
+                })
                 .unwrap_or_default();
-            let chars: Vec<char> = current_val.chars().collect();
-            let idx = self.control_cursor_pos.min(chars.len());
-            let mut new_chars = Vec::with_capacity(chars.len() + text.chars().count());
-            new_chars.extend_from_slice(&chars[..idx]);
-            new_chars.extend(text.chars());
-            new_chars.extend_from_slice(&chars[idx..]);
-            self.control_cursor_pos = idx + text.chars().count();
-            let new_val: String = new_chars.into_iter().collect();
-            self.set_control_value(node_id, &new_val);
-            if let Some(ref mut rt) = self.js_runtime {
-                rt.set_node_attribute(
-                    node_id,
-                    "_mango_cursor_pos",
-                    &self.control_cursor_pos.to_string(),
-                );
-            }
+            let safe_pos = self.control_cursor_pos.min(current_val.len());
+            current_val.insert_str(safe_pos, text);
+            self.control_cursor_pos = safe_pos + text.len();
+            self.set_control_value(node_id, &current_val);
+            self.sync_cursor_pos(node_id);
             self.relayout();
         }
+    }
+
+    /// Handles IME active preedit composition updates.
+    pub fn handle_ime_preedit(&mut self, text: &str, _cursor: Option<(usize, usize)>) {
+        if text.is_empty() {
+            self.status_text = "Ready".to_string();
+        } else {
+            self.status_text = format!("IME composing: {text}");
+        }
+        self.relayout();
     }
 }

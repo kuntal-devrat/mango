@@ -323,9 +323,33 @@ pub fn to_taffy_style(style: &ComputedStyle, cb_w: f32, cb_h: f32) -> Style<Chea
         height: to_taffy_dimension(&style.height, fs, root_fs, cb_h),
     };
 
+    let has_overflow_x_clipping = matches!(
+        style.overflow_x,
+        mango_css::values::Overflow::Hidden
+            | mango_css::values::Overflow::Scroll
+            | mango_css::values::Overflow::Auto
+    );
+    let min_width = if style.min_width == MangoLength::Auto && has_overflow_x_clipping {
+        zero()
+    } else {
+        to_taffy_length_percentage_auto(&style.min_width, fs, root_fs, cb_w)
+    };
+
+    let has_overflow_y_clipping = matches!(
+        style.overflow_y,
+        mango_css::values::Overflow::Hidden
+            | mango_css::values::Overflow::Scroll
+            | mango_css::values::Overflow::Auto
+    );
+    let min_height = if style.min_height == MangoLength::Auto && has_overflow_y_clipping {
+        zero()
+    } else {
+        to_taffy_length_percentage_auto(&style.min_height, fs, root_fs, cb_h)
+    };
+
     let min_size = Size {
-        width: to_taffy_length_percentage_auto(&style.min_width, fs, root_fs, cb_w),
-        height: to_taffy_length_percentage_auto(&style.min_height, fs, root_fs, cb_h),
+        width: min_width,
+        height: min_height,
     };
 
     let max_size = Size {

@@ -564,6 +564,20 @@ impl ApplicationHandler for MangoApp {
                 }
             }
 
+            WindowEvent::Ime(winit::event::Ime::Preedit(text, cursor)) => {
+                if let Some(win_state) = self.windows.get_mut(&window_id) {
+                    win_state.browser.handle_ime_preedit(&text, cursor);
+                    win_state.window.request_redraw();
+                }
+            }
+
+            WindowEvent::Ime(winit::event::Ime::Disabled) => {
+                if let Some(win_state) = self.windows.get_mut(&window_id) {
+                    win_state.browser.handle_ime_preedit("", None);
+                    win_state.window.request_redraw();
+                }
+            }
+
             WindowEvent::CursorMoved { position, .. } => {
                 if let Some(win_state) = self.windows.get_mut(&window_id)
                     && win_state

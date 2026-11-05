@@ -425,7 +425,11 @@ impl LayoutBox {
                         tag_name: tag_lower,
                         form_type,
                         name: b.get_attribute("name").unwrap_or("").to_string(),
-                        value: b.get_attribute("value").unwrap_or("").to_string(),
+                        value: b
+                            .get_attribute("value")
+                            .or_else(|| b.get_attribute("data-mango-value"))
+                            .unwrap_or("")
+                            .to_string(),
                         checked,
                         click_offset_x,
                     });

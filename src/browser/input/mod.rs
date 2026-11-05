@@ -19,3 +19,4 @@ pub mod mouse_move;
 pub mod pickers;
 pub mod scroll;
 pub mod scroll_keyboard;
+pub mod text_editing;

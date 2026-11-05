@@ -537,8 +537,8 @@ impl BrowserChrome {
                         self.submit_form(btn_id);
                         return;
                     }
-                    // 2. Nested input / textarea (e.g. search box wrapper)
-                    if let Some(nested_input) = find_nested_input_control(&doc, hit_nid) {
+                    // 2. Associated input / textarea (e.g. search box wrapper, icon, or label)
+                    if let Some(nested_input) = find_associated_input_control(&doc, hit_nid) {
                         if let Some(inode) = doc.get(nested_input)
                             && let mango_html::dom::NodeData::Element(el) = &inode.data
                         {
@@ -550,12 +550,23 @@ impl BrowserChrome {
                                     "text"
                                 })
                                 .to_ascii_lowercase();
+                            let current_value = el
+                                .get_attribute("value")
+                                .or_else(|| el.get_attribute("data-mango-value"))
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| {
+                                    if el.tag_name.eq_ignore_ascii_case("textarea") {
+                                        doc.text_content(nested_input).trim().to_string()
+                                    } else {
+                                        String::new()
+                                    }
+                                });
                             self.handle_form_control_click(mango_layout::FormControlHit {
                                 node_id: Some(nested_input),
                                 tag_name: el.tag_name.to_ascii_lowercase(),
                                 form_type: t_type,
                                 name: el.get_attribute("name").unwrap_or("").to_string(),
-                                value: el.get_attribute("value").unwrap_or("").to_string(),
+                                value: current_value,
                                 checked: el.get_attribute("checked").is_some(),
                                 click_offset_x: 0.0,
                             });
@@ -569,6 +580,75 @@ impl BrowserChrome {
             }
         }
     }
+}
+
+fn is_text_input_or_textarea(
+    doc: &mango_html::dom::Document,
+    nid: mango_html::dom::NodeId,
+) -> bool {
+    if let Some(node) = doc.get(nid)
+        && let mango_html::dom::NodeData::Element(el) = &node.data
+    {
+        let tag = el.tag_name.to_ascii_lowercase();
+        if tag == "textarea" {
+            return true;
+        }
+        if tag == "input" {
+            let itype = el
+                .get_attribute("type")
+                .unwrap_or("text")
+                .to_ascii_lowercase();
+            return !matches!(
+                itype.as_str(),
+                "hidden" | "submit" | "button" | "reset" | "checkbox" | "radio" | "range" | "file"
+            );
+        }
+    }
+    false
+}
+
+fn find_associated_input_control(
+    doc: &mango_html::dom::Document,
+    start: mango_html::dom::NodeId,
+) -> Option<mango_html::dom::NodeId> {
+    // 1. Direct hit on input/textarea
+    if is_text_input_or_textarea(doc, start) {
+        return Some(start);
+    }
+    // 2. Descendants of start (e.g. clicked container that directly encloses input)
+    if let Some(nested) = find_nested_input_control(doc, start) {
+        return Some(nested);
+    }
+    // 3. Ancestors of start (e.g. clicked icon/label/span inside search box wrapper)
+    let mut curr = doc.get(start).and_then(|n| n.parent);
+    let mut depth = 0;
+    while let Some(pid) = curr {
+        if depth > 5 {
+            break;
+        }
+        if is_text_input_or_textarea(doc, pid) {
+            return Some(pid);
+        }
+        if let Some(pnode) = doc.get(pid)
+            && let mango_html::dom::NodeData::Element(el) = &pnode.data
+        {
+            if el.tag_name.eq_ignore_ascii_case("label")
+                && let Some(for_id) = el.get_attribute("for")
+            {
+                if let Some(target) = super::super::forms::find_element_by_id(doc, for_id) {
+                    if is_text_input_or_textarea(doc, target) {
+                        return Some(target);
+                    }
+                }
+            }
+            if let Some(nested) = find_nested_input_control(doc, pid) {
+                return Some(nested);
+            }
+        }
+        curr = doc.get(pid).and_then(|n| n.parent);
+        depth += 1;
+    }
+    None
 }
 
 fn find_ancestor_button(

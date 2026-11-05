@@ -51,9 +51,16 @@ impl TimingFunction {
             }
         }
     }
+
+    /// Evaluates the timing function at progress `input` in `[0, 1]`.
+    pub fn evaluate(&self, input: f32) -> f32 {
+        self.sample(input)
+    }
 }
 
-/// Evaluates a cubic-bezier easing curve at progress `t` using Newton-Raphson.
+use kurbo::ParamCurve;
+
+/// Evaluates a cubic-bezier easing curve at progress `t` using `kurbo`.
 fn cubic_bezier(x1: f32, y1: f32, x2: f32, y2: f32, t: f32) -> f32 {
     if t <= 0.0 {
         return 0.0;
@@ -61,29 +68,29 @@ fn cubic_bezier(x1: f32, y1: f32, x2: f32, y2: f32, t: f32) -> f32 {
     if t >= 1.0 {
         return 1.0;
     }
-    // Solve for the bezier parameter `u` such that x(u) == t, then return y(u).
-    let bezier_axis = |a: f32, b: f32, u: f32| -> f32 {
-        let inv = 1.0 - u;
-        3.0 * inv * inv * u * a + 3.0 * inv * u * u * b + u * u * u
-    };
-    let bezier_axis_deriv = |a: f32, b: f32, u: f32| -> f32 {
-        let inv = 1.0 - u;
-        3.0 * inv * inv * a + 6.0 * inv * u * (b - a) + 3.0 * u * u * (1.0 - b)
-    };
+    let p0 = kurbo::Point::new(0.0, 0.0);
+    let p1 = kurbo::Point::new(x1 as f64, y1 as f64);
+    let p2 = kurbo::Point::new(x2 as f64, y2 as f64);
+    let p3 = kurbo::Point::new(1.0, 1.0);
+    let bez = kurbo::CubicBez::new(p0, p1, p2, p3);
 
-    let mut u = t;
-    for _ in 0..8 {
-        let x = bezier_axis(x1, x2, u) - t;
-        if x.abs() < 1e-5 {
-            break;
+    let x1 = x1 as f64;
+    let x2 = x2 as f64;
+    let t = t as f64;
+
+    let c0 = -t;
+    let c1 = 3.0 * x1;
+    let c2 = 3.0 * x2 - 6.0 * x1;
+    let c3 = 1.0 - 3.0 * x2 + 3.0 * x1;
+
+    let roots = kurbo::common::solve_cubic(c0, c1, c2, c3);
+    for u in roots {
+        if (-1e-5..=1.00001).contains(&u) {
+            let u_clamped = u.clamp(0.0, 1.0);
+            return bez.eval(u_clamped).y as f32;
         }
-        let d = bezier_axis_deriv(x1, x2, u);
-        if d.abs() < 1e-6 {
-            break;
-        }
-        u = (u - x / d).clamp(0.0, 1.0);
     }
-    bezier_axis(y1, y2, u)
+    bez.eval(t.clamp(0.0, 1.0)).y as f32
 }
 
 /// A CSS `transition` (one comma-separated entry of the `transition` shorthand).

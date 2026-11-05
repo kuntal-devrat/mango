@@ -403,7 +403,9 @@ pub(crate) fn render_form_control(
                 }
                 _ => {
                     // Text / search / password / email / url / date / time / number / etc.
-                    let val = box_node.get_attribute("value");
+                    let val = box_node
+                        .get_attribute("value")
+                        .or_else(|| box_node.get_attribute("data-mango-value"));
                     let placeholder = box_node.get_attribute("placeholder");
                     let is_focused = box_node.get_attribute("data-mango-focused") == Some("true");
                     let font_size = s.font_size;
@@ -434,12 +436,15 @@ pub(crate) fn render_form_control(
                             let cursor_pos = box_node
                                 .get_attribute("_mango_cursor_pos")
                                 .and_then(|s| s.parse::<usize>().ok())
-                                .unwrap_or(display_text.chars().count());
-                            let chars: Vec<char> = display_text.chars().collect();
-                            let c_idx = cursor_pos.min(chars.len());
-                            let text_before: String = chars[..c_idx].iter().collect();
+                                .unwrap_or(display_text.len());
+                            let c_idx = cursor_pos.min(display_text.len());
+                            let mut safe_idx = c_idx;
+                            while safe_idx > 0 && !display_text.is_char_boundary(safe_idx) {
+                                safe_idx -= 1;
+                            }
+                            let text_before = &display_text[..safe_idx];
                             let text_w = crate::inline_flow::measure_text_width_with_style(
-                                &text_before,
+                                text_before,
                                 font_size,
                                 mango_render::FontWeight::Regular,
                                 family,
@@ -602,7 +607,9 @@ pub(crate) fn render_form_control(
             }
         }
         "textarea" => {
-            let val = box_node.get_attribute("value");
+            let val = box_node
+                .get_attribute("value")
+                .or_else(|| box_node.get_attribute("data-mango-value"));
             let placeholder = box_node.get_attribute("placeholder");
             let is_focused = box_node.get_attribute("data-mango-focused") == Some("true");
             let font_size = s.font_size;
@@ -659,12 +666,15 @@ pub(crate) fn render_form_control(
                 let cursor_pos = box_node
                     .get_attribute("_mango_cursor_pos")
                     .and_then(|s| s.parse::<usize>().ok())
-                    .unwrap_or(display_text.chars().count());
-                let chars: Vec<char> = display_text.chars().collect();
-                let c_idx = cursor_pos.min(chars.len());
-                let text_before: String = chars[..c_idx].iter().collect();
+                    .unwrap_or(display_text.len());
+                let c_idx = cursor_pos.min(display_text.len());
+                let mut safe_idx = c_idx;
+                while safe_idx > 0 && !display_text.is_char_boundary(safe_idx) {
+                    safe_idx -= 1;
+                }
+                let text_before = &display_text[..safe_idx];
                 let text_w = crate::inline_flow::measure_text_width_with_style(
-                    &text_before,
+                    text_before,
                     font_size,
                     mango_render::FontWeight::Regular,
                     family,

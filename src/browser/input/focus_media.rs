@@ -1,6 +1,6 @@
 //! Form control focus, tab navigation, media player controls, and value manipulation.
 
-use mango_html::dom::NodeId;
+use mango_html::dom::{NodeData, NodeId};
 
 use super::super::BrowserChrome;
 use crate::form_handler::*;
@@ -408,53 +408,72 @@ impl BrowserChrome {
             self.focused_initial_value = self
                 .js_runtime
                 .as_ref()
-                .and_then(|rt| rt.get_node_attribute(node_id, "value"))
+                .and_then(|rt| {
+                    rt.get_node_attribute(node_id, "value")
+                        .or_else(|| rt.get_node_attribute(node_id, "data-mango-value"))
+                })
                 .or_else(|| {
                     self.cached_document.as_ref().and_then(|doc| {
                         doc.get(node_id)
                             .and_then(|n| n.as_element())
-                            .and_then(|el| el.get_attribute("value"))
+                            .and_then(|el| {
+                                el.get_attribute("value")
+                                    .or_else(|| el.get_attribute("data-mango-value"))
+                            })
                             .map(|s| s.to_string())
                     })
                 });
         }
         let current_val = if let Some(ref rt) = self.js_runtime {
-            rt.get_node_attribute(node_id, "value").unwrap_or_default()
+            rt.get_node_attribute(node_id, "value")
+                .or_else(|| rt.get_node_attribute(node_id, "data-mango-value"))
+                .unwrap_or_else(|| {
+                    let doc = self.active_document();
+                    if let Some(node) = doc.get(node_id)
+                        && let NodeData::Element(el) = &node.data
+                        && el.tag_name.eq_ignore_ascii_case("textarea")
+                    {
+                        doc.text_content(node_id).trim().to_string()
+                    } else {
+                        hit.value.clone()
+                    }
+                })
         } else if let Some(ref doc) = self.cached_document {
             doc.get(node_id)
                 .and_then(|n| n.as_element())
-                .and_then(|el| el.get_attribute("value"))
+                .and_then(|el| {
+                    el.get_attribute("value")
+                        .or_else(|| el.get_attribute("data-mango-value"))
+                })
                 .map(|s| s.to_string())
-                .unwrap_or_else(|| hit.value.clone())
+                .unwrap_or_else(|| {
+                    if let Some(node) = doc.get(node_id)
+                        && let NodeData::Element(el) = &node.data
+                        && el.tag_name.eq_ignore_ascii_case("textarea")
+                    {
+                        doc.text_content(node_id).trim().to_string()
+                    } else {
+                        hit.value.clone()
+                    }
+                })
         } else {
             hit.value.clone()
         };
 
         // Calculate clicked character position from hit.click_offset_x
-        let chars: Vec<char> = current_val.chars().collect();
-        if chars.is_empty() || hit.click_offset_x <= 0.0 {
+        if current_val.is_empty() || hit.click_offset_x <= 0.0 {
             self.control_cursor_pos = 0;
         } else {
-            let mut best_idx = chars.len();
-            for i in 0..=chars.len() {
-                let sub: String = chars[..i].iter().collect();
-                let w = mango_layout::measure_text_width(&sub, 14.0);
+            let mut best_idx = current_val.len();
+            for (idx, _) in current_val.char_indices() {
+                let sub = &current_val[..idx];
+                let w = mango_layout::measure_text_width(sub, 14.0);
                 if w >= hit.click_offset_x {
-                    if i > 0 {
-                        let prev_sub: String = chars[..i - 1].iter().collect();
-                        let prev_w = mango_layout::measure_text_width(&prev_sub, 14.0);
-                        if (hit.click_offset_x - prev_w).abs() < (w - hit.click_offset_x).abs() {
-                            best_idx = i - 1;
-                        } else {
-                            best_idx = i;
-                        }
-                    } else {
-                        best_idx = 0;
-                    }
+                    best_idx = idx;
                     break;
                 }
             }
-            self.control_cursor_pos = best_idx.min(chars.len());
+            self.control_cursor_pos = best_idx.min(current_val.len());
         }
 
         if let Some(ref mut rt) = self.js_runtime {
