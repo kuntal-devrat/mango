@@ -566,6 +566,17 @@ pub fn execute_taffy_layout(
     // Parent border box origin
     let container_border_x = container_x - pad_left - border_left;
     let container_border_y = container_y - pad_top - border_top;
+    let box_traps_fixed = !style.transform.is_identity()
+        || !style.filter.is_empty()
+        || !style.backdrop_filter.is_empty()
+        || matches!(
+            style.contain,
+            mango_css::values::Contain::Paint
+                | mango_css::values::Contain::Strict
+                | mango_css::values::Contain::Layout
+                | mango_css::values::Contain::Content
+        )
+        || style.will_change;
 
     for (&child_idx, &node) in in_flow_indices.iter().zip(child_nodes.iter()) {
         let child_layout = match tree.layout(node) {
@@ -574,23 +585,10 @@ pub fn execute_taffy_layout(
         };
 
         let child = &mut container.children[child_idx];
-        let p_top = child_layout.padding.top;
-        let p_right = child_layout.padding.right;
-        let p_bottom = child_layout.padding.bottom;
-        let p_left = child_layout.padding.left;
-        child.dimensions.padding = EdgeSizes::new(p_top, p_right, p_bottom, p_left);
-
-        let b_top = child_layout.border.top;
-        let b_right = child_layout.border.right;
-        let b_bottom = child_layout.border.bottom;
-        let b_left = child_layout.border.left;
-        child.dimensions.border = EdgeSizes::new(b_top, b_right, b_bottom, b_left);
-
-        let m_top = child_layout.margin.top;
-        let m_right = child_layout.margin.right;
-        let m_bottom = child_layout.margin.bottom;
-        let m_left = child_layout.margin.left;
-        child.dimensions.margin = EdgeSizes::new(m_top, m_right, m_bottom, m_left);
+        let to_edge = |r: taffy::Rect<f32>| EdgeSizes::new(r.top, r.right, r.bottom, r.left);
+        child.dimensions.padding = to_edge(child_layout.padding);
+        child.dimensions.border = to_edge(child_layout.border);
+        child.dimensions.margin = to_edge(child_layout.margin);
 
         let local_x = child_layout.content_box_x();
         let local_y = child_layout.content_box_y();
@@ -600,6 +598,11 @@ pub fn execute_taffy_layout(
         let w = child_layout.content_box_width().max(0.0);
         let h = child_layout.content_box_height().max(0.0);
         child.dimensions.content.size = Size::new(w, h);
+        if box_traps_fixed {
+            child.fixed_containing_block = Some(container.dimensions);
+        } else if child.fixed_containing_block.is_none() {
+            child.fixed_containing_block = container.fixed_containing_block;
+        }
 
         // Lay out descendant subtree of child
         let mut child_dims = child.dimensions;
@@ -722,20 +725,17 @@ pub fn execute_taffy_layout(
     let is_margin_right_auto = style.margin_right == Length::Auto;
     if !is_pos && !is_ifc && (is_margin_left_auto || is_margin_right_auto) && cb_w > 0.0 {
         let underflow = (cb_w - content_w - total_h_p_b).max(0.0);
-        let new_margin_left = if is_margin_left_auto && is_margin_right_auto {
-            underflow / 2.0
-        } else if is_margin_left_auto {
-            underflow
-        } else {
-            0.0
+        let half_or_full = |is_auto, other_auto| {
+            if is_auto && other_auto {
+                underflow / 2.0
+            } else if is_auto {
+                underflow
+            } else {
+                0.0
+            }
         };
-        let new_margin_right = if is_margin_left_auto && is_margin_right_auto {
-            underflow / 2.0
-        } else if is_margin_right_auto {
-            underflow
-        } else {
-            0.0
-        };
+        let new_margin_left = half_or_full(is_margin_left_auto, is_margin_right_auto);
+        let new_margin_right = half_or_full(is_margin_right_auto, is_margin_left_auto);
 
         let shift_x = new_margin_left - container.dimensions.margin.left;
         if shift_x.abs() > 0.001 {
@@ -787,8 +787,8 @@ pub fn execute_taffy_layout(
             &style,
             is_row,
             is_reverse,
-            container_x,
-            container_y,
+            container.dimensions.content.origin.x,
+            container.dimensions.content.origin.y,
             content_w,
             content_h,
         );

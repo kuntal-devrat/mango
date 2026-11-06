@@ -395,6 +395,16 @@
                     }
                 };
             }
+            if (typeof ctor.prototype.connectedCallback === 'function') {
+                var origConn = ctor.prototype.connectedCallback;
+                ctor.prototype.connectedCallback = function() {
+                    try {
+                        return origConn.apply(this, arguments);
+                    } catch(e) {
+                        try { console.warn('[CustomElement connectedCallback exception guarded on ' + (this.tagName || '') + ']:', e && e.message); } catch(_) {}
+                    }
+                };
+            }
         }
         var ext = (opts && opts.extends) ? String(opts.extends).toLowerCase() : null;
         if (!this._definitions) this._definitions = {};

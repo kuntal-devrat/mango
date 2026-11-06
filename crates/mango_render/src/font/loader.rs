@@ -36,6 +36,7 @@ pub(crate) const DEFAULT_FALLBACK_FONTS: &[&str] = &[
     "mingliu.ttc",
     "deng.ttf",
     "NotoSansCJK-Regular.ttc",
+    "DroidSansFallbackFull.ttf",
     "NotoSansSC-Regular.otf",
     "NotoSansTC-Regular.otf",
     "wqy-zenhei.ttc",
@@ -119,6 +120,8 @@ pub(crate) fn load_system_font_bytes(filename: &str) -> Option<Vec<u8>> {
             format!("/usr/share/fonts/truetype/liberation/{}", liberation_name),
             format!("/usr/share/fonts/truetype/{}", filename),
             format!("/usr/share/fonts/opentype/{}", filename),
+            format!("/usr/share/fonts/opentype/noto/{}", filename),
+            format!("/usr/share/fonts/truetype/droid/{}", filename),
             format!("/usr/share/fonts/TTF/{}", filename),
             format!("/usr/share/fonts/noto/{}", filename),
             format!("/usr/share/fonts/noto-cjk/{}", filename),
@@ -329,6 +332,7 @@ pub(crate) fn script_candidates_for_char(ch: char) -> &'static [&'static str] {
             "NotoSansJP-Regular.otf",
             "msyh.ttc",
             "NotoSansCJK-Regular.ttc",
+            "DroidSansFallbackFull.ttf",
         ],
         // CJK Korean (Hangul Syllables & Jamo)
         0xAC00..=0xD7AF | 0x1100..=0x11FF | 0x3130..=0x318F => &[
@@ -338,6 +342,7 @@ pub(crate) fn script_candidates_for_char(ch: char) -> &'static [&'static str] {
             "NotoSansKR-Regular.otf",
             "msyh.ttc",
             "NotoSansCJK-Regular.ttc",
+            "DroidSansFallbackFull.ttf",
         ],
         // CJK Unified Ideographs (Chinese / Hanzi / Kanji / Hanja)
         0x4E00..=0x9FFF | 0x3400..=0x4DBF | 0x20000..=0x2A6DF => &[
@@ -350,6 +355,7 @@ pub(crate) fn script_candidates_for_char(ch: char) -> &'static [&'static str] {
             "mingliu.ttc",
             "deng.ttf",
             "NotoSansCJK-Regular.ttc",
+            "DroidSansFallbackFull.ttf",
             "NotoSansSC-Regular.otf",
             "NotoSansTC-Regular.otf",
             "wqy-zenhei.ttc",

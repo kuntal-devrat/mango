@@ -311,6 +311,7 @@
     globalThis.Element.prototype.animate               = function() { return { finished: Promise.resolve(), cancel: function() {} }; };
     globalThis.Element.prototype.getAnimations         = function() { return []; };
 
+    globalThis.Element.prototype[Symbol.toStringTag] = 'Element';
     globalThis.HTMLElement = function HTMLElement() {
         var newTarget = new.target;
         if (!newTarget) {
@@ -344,14 +345,16 @@
                 }
             }
         }
-        if (!tagName) {
-            throw new TypeError("Illegal constructor: element not registered in customElements");
+        var el = null;
+        if (tagName) {
+            el = (typeof globalThis._origCE === 'function' && typeof globalThis._wrapElement === 'function')
+                ? globalThis._wrapElement(globalThis._origCE(tagName))
+                : ((typeof document !== 'undefined' && document.createElement)
+                    ? document.createElement(tagName)
+                    : Object.create(newTarget.prototype || globalThis.HTMLElement.prototype));
+        } else {
+            el = Object.create(newTarget.prototype || globalThis.HTMLElement.prototype);
         }
-        var el = (typeof globalThis._origCE === 'function' && typeof globalThis._wrapElement === 'function')
-            ? globalThis._wrapElement(globalThis._origCE(tagName))
-            : ((typeof document !== 'undefined' && document.createElement)
-                ? document.createElement(tagName)
-                : Object.create(newTarget.prototype));
         el._isCustomConstructed = true;
         if (newTarget && newTarget.prototype) {
             Object.setPrototypeOf(el, newTarget.prototype);
@@ -360,15 +363,28 @@
     };
     globalThis.HTMLElement.prototype = Object.create(globalThis.Element.prototype);
     globalThis.HTMLElement.prototype.constructor = globalThis.HTMLElement;
+    globalThis.HTMLElement.prototype[Symbol.toStringTag] = 'HTMLElement';
     Object.defineProperty(globalThis.HTMLElement.prototype, 'style', {
         get: function() {
-            if (!this._style) this._style = (typeof _createStyleObject === 'function') ? _createStyleObject(this._nodeId, this) : {};
+            if (!this._style) {
+                var creator = (typeof _createStyleObject === 'function')
+                    ? _createStyleObject
+                    : (typeof globalThis._createStyleObject === 'function')
+                        ? globalThis._createStyleObject
+                        : null;
+                this._style = creator ? creator(this._nodeId, this) : {};
+            }
             return this._style;
         },
         set: function(val) {
             if (typeof val === 'string') {
                 if (typeof this.setAttribute === 'function') this.setAttribute('style', val);
-                this._style = (typeof _createStyleObject === 'function') ? _createStyleObject(this._nodeId, this) : {};
+                var creator = (typeof _createStyleObject === 'function')
+                    ? _createStyleObject
+                    : (typeof globalThis._createStyleObject === 'function')
+                        ? globalThis._createStyleObject
+                        : null;
+                this._style = creator ? creator(this._nodeId, this) : {};
             }
         },
         configurable: true,
@@ -376,13 +392,25 @@
     });
     Object.defineProperty(globalThis.Element.prototype, 'style', {
         get: function() {
-            if (!this._style) this._style = (typeof _createStyleObject === 'function') ? _createStyleObject(this._nodeId, this) : {};
+            if (!this._style) {
+                var creator = (typeof _createStyleObject === 'function')
+                    ? _createStyleObject
+                    : (typeof globalThis._createStyleObject === 'function')
+                        ? globalThis._createStyleObject
+                        : null;
+                this._style = creator ? creator(this._nodeId, this) : {};
+            }
             return this._style;
         },
         set: function(val) {
             if (typeof val === 'string') {
                 if (typeof this.setAttribute === 'function') this.setAttribute('style', val);
-                this._style = (typeof _createStyleObject === 'function') ? _createStyleObject(this._nodeId, this) : {};
+                var creator = (typeof _createStyleObject === 'function')
+                    ? _createStyleObject
+                    : (typeof globalThis._createStyleObject === 'function')
+                        ? globalThis._createStyleObject
+                        : null;
+                this._style = creator ? creator(this._nodeId, this) : {};
             }
         },
         configurable: true,
@@ -635,17 +663,34 @@
         'HTMLDirectoryElement','HTMLFontElement','HTMLFrameElement','HTMLFrameSetElement','HTMLParamElement'
     ];
     _htmlSubclasses.forEach(function(name) {
-        globalThis[name] = function() {};
-        globalThis[name].prototype = Object.create(globalThis.HTMLElement.prototype);
-        globalThis[name].prototype.constructor = globalThis[name];
+        var fn = function() {
+            var newTarget = new.target;
+            if (!newTarget) {
+                if (globalThis._customElementsUpgradeCandidate) {
+                    return globalThis._customElementsUpgradeCandidate;
+                }
+                throw new TypeError("DOM object constructor cannot be called as a function.");
+            }
+            return Reflect.construct(globalThis.HTMLElement, arguments, newTarget);
+        };
+        try { Object.defineProperty(fn, 'name', { value: name, configurable: true }); } catch(_) {}
+        Object.setPrototypeOf(fn, globalThis.HTMLElement);
+        fn.prototype = Object.create(globalThis.HTMLElement.prototype);
+        fn.prototype.constructor = fn;
+        fn.prototype[Symbol.toStringTag] = name;
+        globalThis[name] = fn;
     });
     if (globalThis.HTMLMediaElement && globalThis.HTMLVideoElement) {
+        Object.setPrototypeOf(globalThis.HTMLVideoElement, globalThis.HTMLMediaElement);
         globalThis.HTMLVideoElement.prototype = Object.create(globalThis.HTMLMediaElement.prototype);
         globalThis.HTMLVideoElement.prototype.constructor = globalThis.HTMLVideoElement;
+        globalThis.HTMLVideoElement.prototype[Symbol.toStringTag] = 'HTMLVideoElement';
     }
     if (globalThis.HTMLMediaElement && globalThis.HTMLAudioElement) {
+        Object.setPrototypeOf(globalThis.HTMLAudioElement, globalThis.HTMLMediaElement);
         globalThis.HTMLAudioElement.prototype = Object.create(globalThis.HTMLMediaElement.prototype);
         globalThis.HTMLAudioElement.prototype.constructor = globalThis.HTMLAudioElement;
+        globalThis.HTMLAudioElement.prototype[Symbol.toStringTag] = 'HTMLAudioElement';
     }
     if (globalThis.HTMLStyleElement) {
         Object.defineProperty(globalThis.HTMLStyleElement.prototype, 'sheet', {
