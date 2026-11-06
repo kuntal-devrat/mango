@@ -13,3 +13,4 @@ selectors.workspace = true
 string_cache.workspace = true
 cssparser = "0.38"
 precomputed-hash = "0.1"
+kurbo.workspace = true

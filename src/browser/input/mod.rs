@@ -9,6 +9,7 @@
 //! - `pickers`: Form picker overlays (color, date, time, file) open, click, and calculations.
 //! - `forms`: Form control interaction (checkbox, radio, button, submit, range drag).
 
+pub mod address_bar;
 pub mod devtools;
 pub mod find_hover;
 pub mod focus_media;
@@ -16,4 +17,6 @@ pub mod forms;
 pub mod mouse_click;
 pub mod mouse_move;
 pub mod pickers;
+pub mod scroll;
 pub mod scroll_keyboard;
+pub mod text_editing;

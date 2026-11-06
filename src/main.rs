@@ -54,6 +54,7 @@ fn main() {
     // Initialize logging
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .filter_module("sctk_adwaita", log::LevelFilter::Off)
+        .filter_module("calloop", log::LevelFilter::Off)
         .format_timestamp(None)
         .init();
 

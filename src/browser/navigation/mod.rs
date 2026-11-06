@@ -10,6 +10,7 @@ pub mod anchor;
 pub mod history;
 pub mod lifecycle;
 pub mod pipeline;
+pub mod redirect;
 pub mod resources;
 pub mod scripts;
 pub mod traversal;

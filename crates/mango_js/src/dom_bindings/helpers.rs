@@ -169,7 +169,88 @@ pub(crate) fn query_selector_simple(
     if let Some(class) = selector.strip_prefix('.') {
         return find_element_by_class_recursive(doc, node_id, class);
     }
+    if selector.starts_with("[*|") && selector.ends_with(']') {
+        let attr = selector[3..selector.len() - 1].trim();
+        return find_element_by_universal_attr(doc, node_id, attr);
+    }
+    if let Some(tag) = selector.strip_prefix("*|") {
+        return find_element_by_universal_tag(doc, node_id, tag);
+    }
     doc.find_element_by_tag(node_id, selector)
+}
+
+fn find_element_by_universal_attr(doc: &Document, node_id: NodeId, attr: &str) -> Option<NodeId> {
+    for child in doc.children(node_id) {
+        if let Some(NodeData::Element(el)) = doc.get(child.id).map(|n| &n.data) {
+            if el.attributes.iter().any(|(k, _)| {
+                k == attr || k.split_once(':').is_some_and(|(_, local)| local == attr)
+            }) {
+                return Some(child.id);
+            }
+        }
+        if let Some(found) = find_element_by_universal_attr(doc, child.id, attr) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn find_element_by_universal_tag(doc: &Document, node_id: NodeId, tag: &str) -> Option<NodeId> {
+    for child in doc.children(node_id) {
+        if let Some(NodeData::Element(el)) = doc.get(child.id).map(|n| &n.data) {
+            if el.tag_name.eq_ignore_ascii_case(tag)
+                || el
+                    .tag_name
+                    .split_once(':')
+                    .is_some_and(|(_, local)| local.eq_ignore_ascii_case(tag))
+            {
+                return Some(child.id);
+            }
+        }
+        if let Some(found) = find_element_by_universal_tag(doc, child.id, tag) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+pub(crate) fn collect_elements_by_universal_attr(
+    doc: &Document,
+    node_id: NodeId,
+    attr: &str,
+    out: &mut Vec<NodeId>,
+) {
+    for child in doc.children(node_id) {
+        if let Some(NodeData::Element(el)) = doc.get(child.id).map(|n| &n.data) {
+            if el.attributes.iter().any(|(k, _)| {
+                k == attr || k.split_once(':').is_some_and(|(_, local)| local == attr)
+            }) {
+                out.push(child.id);
+            }
+        }
+        collect_elements_by_universal_attr(doc, child.id, attr, out);
+    }
+}
+
+pub(crate) fn collect_elements_by_universal_tag(
+    doc: &Document,
+    node_id: NodeId,
+    tag: &str,
+    out: &mut Vec<NodeId>,
+) {
+    for child in doc.children(node_id) {
+        if let Some(NodeData::Element(el)) = doc.get(child.id).map(|n| &n.data) {
+            if el.tag_name.eq_ignore_ascii_case(tag)
+                || el
+                    .tag_name
+                    .split_once(':')
+                    .is_some_and(|(_, local)| local.eq_ignore_ascii_case(tag))
+            {
+                out.push(child.id);
+            }
+        }
+        collect_elements_by_universal_tag(doc, child.id, tag, out);
+    }
 }
 
 pub(crate) fn find_element_by_class_recursive(

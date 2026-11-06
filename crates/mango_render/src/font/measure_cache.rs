@@ -7,6 +7,8 @@ use std::sync::OnceLock;
 
 use quick_cache::sync::Cache;
 
+use smol_str::SmolStr;
+
 use super::emoji::is_emoji_char;
 use super::manager::FontManager;
 use super::types::{FontFamily, FontWeight, web_font_epoch};
@@ -18,7 +20,7 @@ pub struct TextMeasureKey {
     pub weight: FontWeight,
     pub font_size_bits: u32,
     pub spacing_bits: u32,
-    pub text: String,
+    pub text: SmolStr,
 }
 
 static TEXT_MEASURE_CACHE: OnceLock<Cache<TextMeasureKey, (f32, f32)>> = OnceLock::new();
@@ -52,7 +54,7 @@ pub fn measure_text_with_spacing_cached(
         weight,
         font_size_bits: font_size.to_bits(),
         spacing_bits: letter_spacing.to_bits(),
-        text: text.to_string(),
+        text: SmolStr::new(text),
     };
     if let Some(cached) = cache().get(&key) {
         return cached;
@@ -68,19 +70,43 @@ pub fn measure_text_with_spacing_cached(
         && !text.chars().any(is_emoji_char)
         && text.chars().any(super::shaping::is_complex_char)
     {
-        let data = fm.select_font_data(family, weight);
-        if let Some(shaped) =
-            super::shaping::shape_text_with_font_data(&data, 0, text, px_size, letter_spacing)
-        {
-            if !shaped.glyphs.is_empty() && shaped.glyphs.iter().all(|g| g.glyph_id != 0) {
-                let line_metrics = primary_font.horizontal_line_metrics(px_size);
-                let height = line_metrics
-                    .map(|lm| lm.new_line_size)
-                    .unwrap_or(px_size * 1.2);
-                let dims = (shaped.width, height);
-                cache().insert(key, dims);
-                return dims;
+        let runs = super::segmentation::segment_script_runs(text);
+        let mut total_w = 0.0f32;
+        let mut max_h = px_size * 1.2;
+        let mut all_measured = true;
+
+        for run in runs {
+            if run.script.is_complex() {
+                let data = fm.select_font_data_for_char(family, weight, run.representative_char);
+                let font = fm.select_font_for_char(family, weight, run.representative_char);
+                if let Some(shaped) = super::shaping::shape_text_with_font_data(
+                    &data,
+                    0,
+                    run.text,
+                    px_size,
+                    letter_spacing,
+                ) {
+                    total_w += shaped.width;
+                    if let Some(lm) = font.horizontal_line_metrics(px_size) {
+                        max_h = max_h.max(lm.new_line_size);
+                    }
+                } else {
+                    all_measured = false;
+                    break;
+                }
+            } else {
+                for ch in run.text.chars() {
+                    let font = fm.select_font_for_char(family, weight, ch);
+                    let metrics = font.metrics(ch, px_size);
+                    total_w += metrics.advance_width + letter_spacing;
+                }
             }
+        }
+
+        if all_measured && total_w > 0.0 {
+            let dims = (total_w, max_h);
+            cache().insert(key, dims);
+            return dims;
         }
     }
 

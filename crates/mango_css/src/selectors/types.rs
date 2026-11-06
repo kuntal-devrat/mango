@@ -93,7 +93,13 @@ impl SimpleSelector {
                 Some(root_id) => node_id.raw() == root_id.raw(),
                 None => true,
             },
-            SimpleSelector::Type(tag) => el.tag_name.eq_ignore_ascii_case(tag),
+            SimpleSelector::Type(tag) => {
+                el.tag_name.eq_ignore_ascii_case(tag)
+                    || el
+                        .tag_name
+                        .split_once(':')
+                        .is_some_and(|(_, local)| local.eq_ignore_ascii_case(tag))
+            }
             SimpleSelector::Class(class_name) => el.has_class(class_name),
             SimpleSelector::Id(id_name) => el.id() == Some(id_name),
             SimpleSelector::Attribute {

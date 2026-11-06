@@ -1,112 +1,21 @@
 //! Mouse wheel scrolling, trackpad navigation, and keyboard event dispatching.
 
 use super::super::BrowserChrome;
+use super::text_editing;
 use crate::chrome_ui::*;
-use crate::form_handler::*;
+use mango_html::dom::NodeData;
 use mango_platform::input::{KeyEvent, MangoKey};
 
 impl BrowserChrome {
-    /// Handles mouse wheel scrolling with clamping.
-    pub fn handle_scroll(&mut self, delta_y: f32) {
-        if self.devtools_scroll(delta_y) {
-            return;
+    /// Synchronizes the current text control cursor position to both the JS runtime
+    /// and the cached document DOM representation for caret rendering.
+    pub(crate) fn sync_cursor_pos(&mut self, node_id: mango_html::dom::NodeId) {
+        let pos_str = self.control_cursor_pos.to_string();
+        if let Some(ref mut rt) = self.js_runtime {
+            rt.set_node_attribute(node_id, "_mango_cursor_pos", &pos_str);
         }
-        // While the file picker overlay is open under the cursor, scroll its
-        // directory listing instead of the page.
-        let (mx, my) = (self.mouse_x, self.mouse_y);
-        if let Some(picker) = &mut self.picker
-            && mx >= picker.x
-            && mx <= picker.x + picker.width
-            && my >= picker.y
-            && my <= picker.y + picker.height
-            && let PickerKind::File {
-                dir,
-                entries,
-                offset,
-            } = &mut picker.kind
-        {
-            let has_parent = dir.parent().is_some();
-            let total = entries.len() + usize::from(has_parent);
-            let max_off = total.saturating_sub(PICKER_FILE_ROWS);
-            let delta = if delta_y < 0.0 {
-                2
-            } else if delta_y > 0.0 {
-                -2
-            } else {
-                0
-            };
-            *offset = ((*offset as i64) + delta).clamp(0, max_off as i64) as usize;
-            return;
-        }
-
-        self.handle_scroll_2d(0.0, delta_y);
-    }
-
-    /// Handles 2D mouse wheel/trackpad scrolling with nested container dispatch and page clamping.
-    pub fn handle_scroll_2d(&mut self, delta_x: f32, delta_y: f32) {
-        let scroll_step_y = -delta_y * 45.0;
-        let scroll_step_x = -delta_x * 45.0;
-
-        let content_y = HEADER_HEIGHT + 1.0;
-        let mouse_doc_x = self.mouse_x;
-        let mouse_doc_y = (self.mouse_y - content_y).max(0.0) + self.scroll_y;
-
-        // Try nested scrolling on scrollable containers under the cursor
-        let (_unconsumed_x, unconsumed_y) = if let Some(root) = &mut self.root_box {
-            let rem =
-                root.dispatch_nested_scroll(mouse_doc_x, mouse_doc_y, scroll_step_x, scroll_step_y);
-            if (rem.0 - scroll_step_x).abs() > 0.001 || (rem.1 - scroll_step_y).abs() > 0.001 {
-                self.display_list_cache.lock().unwrap().clear();
-            }
-            rem
-        } else {
-            (scroll_step_x, scroll_step_y)
-        };
-
-        if unconsumed_y.abs() > 0.001 {
-            let max = self.max_scroll() as f64;
-            self.scroll_y_f64 = (self.scroll_y_f64 + unconsumed_y as f64).clamp(0.0, max);
-            self.scroll_y = self.scroll_y_f64 as f32;
-            if let Some(tab) = self.tabs.get_mut(self.active_tab_idx) {
-                tab.scroll_y_f64 = self.scroll_y_f64;
-                tab.scroll_y = self.scroll_y;
-            }
-        }
-    }
-
-    /// Handles mouse wheel scrolling with cubic ease-out physics and nested container dispatch.
-    pub fn handle_wheel_scroll_smooth(&mut self, delta_x: f32, delta_y: f32) {
-        let scroll_step_y = -delta_y * 100.0;
-        let scroll_step_x = -delta_x * 100.0;
-
-        let content_y = HEADER_HEIGHT + 1.0;
-        let mouse_doc_x = self.mouse_x;
-        let mouse_doc_y = (self.mouse_y - content_y).max(0.0) + self.scroll_y;
-
-        // Try nested scrolling on scrollable containers under the cursor
-        let (_unconsumed_x, unconsumed_y) = if let Some(root) = &mut self.root_box {
-            let rem =
-                root.dispatch_nested_scroll(mouse_doc_x, mouse_doc_y, scroll_step_x, scroll_step_y);
-            if (rem.0 - scroll_step_x).abs() > 0.001 || (rem.1 - scroll_step_y).abs() > 0.001 {
-                self.display_list_cache.lock().unwrap().clear();
-            }
-            rem
-        } else {
-            (scroll_step_x, scroll_step_y)
-        };
-
-        if unconsumed_y.abs() > 0.001 {
-            let max = self.max_scroll() as f64;
-            if max > 0.0 {
-                let current_target = self
-                    .smooth_scroll
-                    .as_ref()
-                    .filter(|s| s.active)
-                    .map(|s| s.target_y)
-                    .unwrap_or(self.scroll_y_f64);
-                let new_target = (current_target + unconsumed_y as f64).clamp(0.0, max);
-                self.scroll_smooth_to_f64(new_target, Some(std::time::Duration::from_millis(180)));
-            }
+        if let Some(ref mut doc) = self.cached_document {
+            doc.set_attribute(node_id, "_mango_cursor_pos", &pos_str);
         }
     }
 
@@ -313,8 +222,32 @@ impl BrowserChrome {
                 let current_val = self
                     .js_runtime
                     .as_ref()
-                    .and_then(|rt| rt.get_node_attribute(node_id, "value"))
-                    .unwrap_or_default();
+                    .and_then(|rt| {
+                        rt.get_node_attribute(node_id, "value")
+                            .or_else(|| rt.get_node_attribute(node_id, "data-mango-value"))
+                    })
+                    .or_else(|| {
+                        self.cached_document.as_ref().and_then(|doc| {
+                            doc.get(node_id)
+                                .and_then(|n| n.as_element())
+                                .and_then(|el| {
+                                    el.get_attribute("value")
+                                        .or_else(|| el.get_attribute("data-mango-value"))
+                                })
+                                .map(|s| s.to_string())
+                        })
+                    })
+                    .unwrap_or_else(|| {
+                        let doc = self.active_document();
+                        if let Some(node) = doc.get(node_id)
+                            && let NodeData::Element(el) = &node.data
+                            && el.tag_name.eq_ignore_ascii_case("textarea")
+                        {
+                            doc.text_content(node_id).trim().to_string()
+                        } else {
+                            String::new()
+                        }
+                    });
 
                 // ArrowUp/ArrowDown step numeric controls (range slider / number spinner).
                 if matches!(event.key, MangoKey::ArrowUp | MangoKey::ArrowDown)
@@ -324,6 +257,14 @@ impl BrowserChrome {
                         .js_runtime
                         .as_ref()
                         .and_then(|rt| rt.get_node_attribute(node_id, "type"))
+                        .or_else(|| {
+                            self.cached_document.as_ref().and_then(|doc| {
+                                doc.get(node_id)
+                                    .and_then(|n| n.as_element())
+                                    .and_then(|el| el.get_attribute("type"))
+                                    .map(|s| s.to_string())
+                            })
+                        })
                         .map(|t| t.to_ascii_lowercase())
                         .unwrap_or_default();
                     if input_type == "range" || input_type == "number" {
@@ -340,14 +281,8 @@ impl BrowserChrome {
                 if event.modifiers.ctrl {
                     match &event.key {
                         MangoKey::Char('a') | MangoKey::Char('A') => {
-                            self.control_cursor_pos = current_val.chars().count();
-                            if let Some(ref mut rt) = self.js_runtime {
-                                rt.set_node_attribute(
-                                    node_id,
-                                    "_mango_cursor_pos",
-                                    &self.control_cursor_pos.to_string(),
-                                );
-                            }
+                            self.control_cursor_pos = current_val.len();
+                            self.sync_cursor_pos(node_id);
                             self.relayout();
                             return;
                         }
@@ -364,23 +299,12 @@ impl BrowserChrome {
                             if let Ok(mut clipboard) = arboard::Clipboard::new()
                                 && let Ok(paste_text) = clipboard.get_text()
                             {
-                                let chars: Vec<char> = current_val.chars().collect();
-                                let idx = self.control_cursor_pos.min(chars.len());
-                                let mut new_chars =
-                                    Vec::with_capacity(chars.len() + paste_text.len());
-                                new_chars.extend_from_slice(&chars[..idx]);
-                                new_chars.extend(paste_text.chars());
-                                new_chars.extend_from_slice(&chars[idx..]);
-                                self.control_cursor_pos = idx + paste_text.chars().count();
-                                let new_val: String = new_chars.into_iter().collect();
-                                self.set_control_value(node_id, &new_val);
-                                if let Some(ref mut rt) = self.js_runtime {
-                                    rt.set_node_attribute(
-                                        node_id,
-                                        "_mango_cursor_pos",
-                                        &self.control_cursor_pos.to_string(),
-                                    );
-                                }
+                                let mut text = current_val;
+                                let safe_pos = self.control_cursor_pos.min(text.len());
+                                text.insert_str(safe_pos, &paste_text);
+                                self.control_cursor_pos = safe_pos + paste_text.len();
+                                self.set_control_value(node_id, &text);
+                                self.sync_cursor_pos(node_id);
                                 self.relayout();
                             }
                             return;
@@ -392,140 +316,153 @@ impl BrowserChrome {
                                 let _ = clipboard.set_text(current_val);
                                 self.control_cursor_pos = 0;
                                 self.set_control_value(node_id, "");
-                                if let Some(ref mut rt) = self.js_runtime {
-                                    rt.set_node_attribute(node_id, "_mango_cursor_pos", "0");
-                                }
+                                self.sync_cursor_pos(node_id);
                                 self.relayout();
                             }
+                            return;
+                        }
+                        MangoKey::ArrowLeft => {
+                            self.control_cursor_pos = text_editing::prev_word_boundary(
+                                &current_val,
+                                self.control_cursor_pos,
+                            );
+                            self.sync_cursor_pos(node_id);
+                            self.relayout();
+                            return;
+                        }
+                        MangoKey::ArrowRight => {
+                            self.control_cursor_pos = text_editing::next_word_boundary(
+                                &current_val,
+                                self.control_cursor_pos,
+                            );
+                            self.sync_cursor_pos(node_id);
+                            self.relayout();
+                            return;
+                        }
+                        MangoKey::Backspace => {
+                            let mut text = current_val;
+                            self.control_cursor_pos =
+                                text_editing::backspace_word(&mut text, self.control_cursor_pos);
+                            self.set_control_value(node_id, &text);
+                            self.sync_cursor_pos(node_id);
+                            self.relayout();
+                            return;
+                        }
+                        MangoKey::Delete => {
+                            let mut text = current_val;
+                            text_editing::delete_word(&mut text, self.control_cursor_pos);
+                            self.set_control_value(node_id, &text);
+                            self.sync_cursor_pos(node_id);
+                            self.relayout();
                             return;
                         }
                         _ => {}
                     }
                 }
 
+                let (key_str, code_str, key_code) = w3c_key_props(&event.key);
+                let allowed = self.fire_keyboard_event(
+                    node_id,
+                    "keydown",
+                    &key_str,
+                    &code_str,
+                    key_code,
+                    event.modifiers.ctrl,
+                    event.modifiers.alt,
+                    event.modifiers.shift,
+                    false,
+                );
+                if !allowed {
+                    return;
+                }
+
                 match &event.key {
                     MangoKey::Char(c) => {
-                        let chars: Vec<char> = current_val.chars().collect();
-                        let idx = self.control_cursor_pos.min(chars.len());
-                        let mut new_chars = Vec::with_capacity(chars.len() + 1);
-                        new_chars.extend_from_slice(&chars[..idx]);
-                        new_chars.push(*c);
-                        new_chars.extend_from_slice(&chars[idx..]);
-                        self.control_cursor_pos = idx + 1;
-                        let new_val: String = new_chars.into_iter().collect();
-                        self.set_control_value(node_id, &new_val);
-                        if let Some(ref mut rt) = self.js_runtime {
-                            rt.set_node_attribute(
-                                node_id,
-                                "_mango_cursor_pos",
-                                &self.control_cursor_pos.to_string(),
-                            );
-                        }
+                        let _ = self.fire_keyboard_event(
+                            node_id,
+                            "keypress",
+                            &key_str,
+                            &code_str,
+                            key_code,
+                            event.modifiers.ctrl,
+                            event.modifiers.alt,
+                            event.modifiers.shift,
+                            false,
+                        );
+                        let mut text = current_val;
+                        let safe_pos = self.control_cursor_pos.min(text.len());
+                        text.insert(safe_pos, *c);
+                        self.control_cursor_pos = safe_pos + c.len_utf8();
+                        self.set_control_value(node_id, &text);
+                        self.sync_cursor_pos(node_id);
                         self.relayout();
                         return;
                     }
                     MangoKey::Space => {
-                        let chars: Vec<char> = current_val.chars().collect();
-                        let idx = self.control_cursor_pos.min(chars.len());
-                        let mut new_chars = Vec::with_capacity(chars.len() + 1);
-                        new_chars.extend_from_slice(&chars[..idx]);
-                        new_chars.push(' ');
-                        new_chars.extend_from_slice(&chars[idx..]);
-                        self.control_cursor_pos = idx + 1;
-                        let new_val: String = new_chars.into_iter().collect();
-                        self.set_control_value(node_id, &new_val);
-                        if let Some(ref mut rt) = self.js_runtime {
-                            rt.set_node_attribute(
-                                node_id,
-                                "_mango_cursor_pos",
-                                &self.control_cursor_pos.to_string(),
-                            );
-                        }
+                        let _ = self.fire_keyboard_event(
+                            node_id,
+                            "keypress",
+                            " ",
+                            "Space",
+                            32,
+                            event.modifiers.ctrl,
+                            event.modifiers.alt,
+                            event.modifiers.shift,
+                            false,
+                        );
+                        let mut text = current_val;
+                        let safe_pos = self.control_cursor_pos.min(text.len());
+                        text.insert(safe_pos, ' ');
+                        self.control_cursor_pos = safe_pos + 1;
+                        self.set_control_value(node_id, &text);
+                        self.sync_cursor_pos(node_id);
                         self.relayout();
                         return;
                     }
                     MangoKey::Backspace => {
-                        let mut chars: Vec<char> = current_val.chars().collect();
-                        if self.control_cursor_pos > 0 && !chars.is_empty() {
-                            let idx = self.control_cursor_pos.min(chars.len()) - 1;
-                            chars.remove(idx);
-                            self.control_cursor_pos = idx;
-                            let new_val: String = chars.into_iter().collect();
-                            self.set_control_value(node_id, &new_val);
-                            if let Some(ref mut rt) = self.js_runtime {
-                                rt.set_node_attribute(
-                                    node_id,
-                                    "_mango_cursor_pos",
-                                    &self.control_cursor_pos.to_string(),
-                                );
-                            }
-                            self.relayout();
-                        }
+                        let mut text = current_val;
+                        self.control_cursor_pos =
+                            text_editing::backspace_grapheme(&mut text, self.control_cursor_pos);
+                        self.set_control_value(node_id, &text);
+                        self.sync_cursor_pos(node_id);
+                        self.relayout();
                         return;
                     }
                     MangoKey::Delete => {
-                        let mut chars: Vec<char> = current_val.chars().collect();
-                        if self.control_cursor_pos < chars.len() {
-                            chars.remove(self.control_cursor_pos);
-                            let new_val: String = chars.into_iter().collect();
-                            self.set_control_value(node_id, &new_val);
-                            if let Some(ref mut rt) = self.js_runtime {
-                                rt.set_node_attribute(
-                                    node_id,
-                                    "_mango_cursor_pos",
-                                    &self.control_cursor_pos.to_string(),
-                                );
-                            }
-                            self.relayout();
-                        }
+                        let mut text = current_val;
+                        text_editing::delete_grapheme(&mut text, self.control_cursor_pos);
+                        self.set_control_value(node_id, &text);
+                        self.sync_cursor_pos(node_id);
+                        self.relayout();
                         return;
                     }
                     MangoKey::ArrowLeft => {
-                        self.control_cursor_pos = self.control_cursor_pos.saturating_sub(1);
-                        if let Some(ref mut rt) = self.js_runtime {
-                            rt.set_node_attribute(
-                                node_id,
-                                "_mango_cursor_pos",
-                                &self.control_cursor_pos.to_string(),
-                            );
-                        }
+                        self.control_cursor_pos = text_editing::prev_grapheme_offset(
+                            &current_val,
+                            self.control_cursor_pos,
+                        );
+                        self.sync_cursor_pos(node_id);
                         self.relayout();
                         return;
                     }
                     MangoKey::ArrowRight => {
-                        let count = current_val.chars().count();
-                        self.control_cursor_pos = (self.control_cursor_pos + 1).min(count);
-                        if let Some(ref mut rt) = self.js_runtime {
-                            rt.set_node_attribute(
-                                node_id,
-                                "_mango_cursor_pos",
-                                &self.control_cursor_pos.to_string(),
-                            );
-                        }
+                        self.control_cursor_pos = text_editing::next_grapheme_offset(
+                            &current_val,
+                            self.control_cursor_pos,
+                        );
+                        self.sync_cursor_pos(node_id);
                         self.relayout();
                         return;
                     }
                     MangoKey::Home => {
                         self.control_cursor_pos = 0;
-                        if let Some(ref mut rt) = self.js_runtime {
-                            rt.set_node_attribute(
-                                node_id,
-                                "_mango_cursor_pos",
-                                &self.control_cursor_pos.to_string(),
-                            );
-                        }
+                        self.sync_cursor_pos(node_id);
                         self.relayout();
                         return;
                     }
                     MangoKey::End => {
-                        self.control_cursor_pos = current_val.chars().count();
-                        if let Some(ref mut rt) = self.js_runtime {
-                            rt.set_node_attribute(
-                                node_id,
-                                "_mango_cursor_pos",
-                                &self.control_cursor_pos.to_string(),
-                            );
-                        }
+                        self.control_cursor_pos = current_val.len();
+                        self.sync_cursor_pos(node_id);
                         self.relayout();
                         return;
                     }
@@ -534,6 +471,43 @@ impl BrowserChrome {
                         return;
                     }
                     MangoKey::Enter => {
+                        let doc = self.active_document();
+                        let is_multiline_textarea = doc.get(node_id).is_some_and(|n| {
+                            if let NodeData::Element(ref el) = n.data {
+                                el.tag_name.eq_ignore_ascii_case("textarea")
+                                    && el
+                                        .get_attribute("rows")
+                                        .and_then(|r| r.parse::<u32>().ok())
+                                        .unwrap_or(2)
+                                        > 1
+                            } else {
+                                false
+                            }
+                        });
+
+                        if is_multiline_textarea && !event.modifiers.ctrl {
+                            let mut chars: Vec<char> = current_val.chars().collect();
+                            let pos = self.control_cursor_pos.min(chars.len());
+                            chars.insert(pos, '\n');
+                            self.control_cursor_pos = pos + 1;
+                            let new_val: String = chars.into_iter().collect();
+                            self.set_control_value(node_id, &new_val);
+                            self.sync_cursor_pos(node_id);
+                            self.relayout();
+                            return;
+                        }
+
+                        let _ = self.fire_keyboard_event(
+                            node_id,
+                            "keypress",
+                            "Enter",
+                            "Enter",
+                            13,
+                            event.modifiers.ctrl,
+                            event.modifiers.alt,
+                            event.modifiers.shift,
+                            false,
+                        );
                         self.status_text = "Submitting form...".to_string();
                         if let Some(ref mut rt) = self.js_runtime
                             && let Some(handler) = rt.get_node_attribute(node_id, "onchange")
@@ -589,156 +563,75 @@ impl BrowserChrome {
         }
 
         // ── Address Bar Focused ──
-        if event.modifiers.ctrl {
-            match &event.key {
-                MangoKey::Char('a') | MangoKey::Char('A') => {
-                    self.is_all_selected = true;
-                    self.cursor_pos = self.address_text.len();
-                    return;
-                }
-                MangoKey::Char('c') | MangoKey::Char('C') => {
-                    let text_to_copy = &self.address_text;
-                    if !text_to_copy.is_empty()
-                        && let Ok(mut clipboard) = arboard::Clipboard::new()
-                    {
-                        let _ = clipboard.set_text(text_to_copy.to_string());
-                        self.status_text = "Copied address to clipboard".to_string();
-                    }
-                    return;
-                }
-                MangoKey::Char('x') | MangoKey::Char('X') => {
-                    if !self.address_text.is_empty()
-                        && let Ok(mut clipboard) = arboard::Clipboard::new()
-                    {
-                        let _ = clipboard.set_text(self.address_text.clone());
-                        self.address_text.clear();
-                        self.cursor_pos = 0;
-                        self.is_all_selected = false;
-                        self.status_text = "Cut address to clipboard".to_string();
-                    }
-                    return;
-                }
-                MangoKey::Char('v') | MangoKey::Char('V') => {
-                    if let Ok(mut clipboard) = arboard::Clipboard::new()
-                        && let Ok(paste_text) = clipboard.get_text()
-                    {
-                        let clean_paste: String = paste_text
-                            .chars()
-                            .filter(|c| !c.is_control() || *c == ' ')
-                            .collect();
-                        if self.is_all_selected {
-                            self.address_text = clean_paste;
-                            self.cursor_pos = self.address_text.len();
-                            self.is_all_selected = false;
-                        } else {
-                            let safe_pos = self.cursor_pos.min(self.address_text.len());
-                            self.address_text.insert_str(safe_pos, &clean_paste);
-                            self.cursor_pos = safe_pos + clean_paste.len();
-                        }
-                        self.status_text = "Pasted from clipboard".to_string();
-                    }
-                    return;
-                }
-                _ => {}
-            }
-        }
+        self.handle_address_bar_key(event);
+    }
 
-        match &event.key {
-            MangoKey::Char(ch) => {
-                if self.is_all_selected {
-                    self.address_text.clear();
-                    self.address_text.push(*ch);
-                    self.cursor_pos = self.address_text.len();
-                    self.is_all_selected = false;
-                } else {
-                    let safe_pos = self.cursor_pos.min(self.address_text.len());
-                    self.address_text.insert(safe_pos, *ch);
-                    self.cursor_pos = safe_pos + ch.len_utf8();
-                }
-            }
-            MangoKey::Space => {
-                if self.is_all_selected {
-                    self.address_text.clear();
-                    self.address_text.push(' ');
-                    self.cursor_pos = 1;
-                    self.is_all_selected = false;
-                } else {
-                    let safe_pos = self.cursor_pos.min(self.address_text.len());
-                    self.address_text.insert(safe_pos, ' ');
-                    self.cursor_pos = safe_pos + 1;
-                }
-            }
-            MangoKey::Backspace => {
-                if self.is_all_selected {
-                    self.address_text.clear();
-                    self.cursor_pos = 0;
-                    self.is_all_selected = false;
-                } else if self.cursor_pos > 0 {
-                    let safe_pos = self.cursor_pos.min(self.address_text.len());
-                    let mut prev = safe_pos - 1;
-                    while prev > 0 && !self.address_text.is_char_boundary(prev) {
-                        prev -= 1;
-                    }
-                    self.address_text.drain(prev..safe_pos);
-                    self.cursor_pos = prev;
-                }
-            }
-            MangoKey::Delete => {
-                if self.is_all_selected {
-                    self.address_text.clear();
-                    self.cursor_pos = 0;
-                    self.is_all_selected = false;
-                } else if self.cursor_pos < self.address_text.len() {
-                    let safe_pos = self.cursor_pos.min(self.address_text.len());
-                    let mut next = safe_pos + 1;
-                    while next < self.address_text.len()
-                        && !self.address_text.is_char_boundary(next)
-                    {
-                        next += 1;
-                    }
-                    self.address_text.drain(safe_pos..next);
-                }
-            }
-            MangoKey::ArrowLeft => {
-                self.is_all_selected = false;
-                if self.cursor_pos > 0 {
-                    let mut prev = self.cursor_pos.min(self.address_text.len()) - 1;
-                    while prev > 0 && !self.address_text.is_char_boundary(prev) {
-                        prev -= 1;
-                    }
-                    self.cursor_pos = prev;
-                }
-            }
-            MangoKey::ArrowRight => {
-                self.is_all_selected = false;
-                if self.cursor_pos < self.address_text.len() {
-                    let mut next = self.cursor_pos + 1;
-                    while next < self.address_text.len()
-                        && !self.address_text.is_char_boundary(next)
-                    {
-                        next += 1;
-                    }
-                    self.cursor_pos = next;
-                }
-            }
-            MangoKey::Home => {
-                self.is_all_selected = false;
-                self.cursor_pos = 0;
-            }
-            MangoKey::End => {
-                self.is_all_selected = false;
-                self.cursor_pos = self.address_text.len();
-            }
-            MangoKey::Enter => {
-                self.is_all_selected = false;
-                self.navigate_to_address(true);
-            }
-            MangoKey::Escape => {
-                self.address_focused = false;
-                self.is_all_selected = false;
-                self.status_text = "Ready".to_string();
-            }
-            _ => {}
+    /// Handles key release events to fire `keyup` to the focused form control.
+    pub fn handle_key_release(&mut self, event: &KeyEvent) {
+        if !self.address_focused
+            && let Some(node_id) = self.focused_control
+        {
+            let (key_str, code_str, key_code) = w3c_key_props(&event.key);
+            self.fire_keyboard_event(
+                node_id,
+                "keyup",
+                &key_str,
+                &code_str,
+                key_code,
+                event.modifiers.ctrl,
+                event.modifiers.alt,
+                event.modifiers.shift,
+                false,
+            );
         }
+    }
+}
+
+fn w3c_key_props(key: &MangoKey) -> (String, String, u32) {
+    match key {
+        MangoKey::Char(c) => {
+            let code = if c.is_ascii_alphabetic() {
+                format!("Key{}", c.to_ascii_uppercase())
+            } else if c.is_ascii_digit() {
+                format!("Digit{}", c)
+            } else {
+                match c {
+                    ' ' => "Space".to_string(),
+                    '-' | '_' => "Minus".to_string(),
+                    '=' | '+' => "Equal".to_string(),
+                    '[' | '{' => "BracketLeft".to_string(),
+                    ']' | '}' => "BracketRight".to_string(),
+                    ';' | ':' => "Semicolon".to_string(),
+                    '\'' | '"' => "Quote".to_string(),
+                    ',' | '<' => "Comma".to_string(),
+                    '.' | '>' => "Period".to_string(),
+                    '/' | '?' => "Slash".to_string(),
+                    '\\' | '|' => "Backslash".to_string(),
+                    '`' | '~' => "Backquote".to_string(),
+                    _ => "Unidentified".to_string(),
+                }
+            };
+            (c.to_string(), code, c.to_ascii_uppercase() as u32)
+        }
+        MangoKey::Enter => ("Enter".to_string(), "Enter".to_string(), 13),
+        MangoKey::Backspace => ("Backspace".to_string(), "Backspace".to_string(), 8),
+        MangoKey::Delete => ("Delete".to_string(), "Delete".to_string(), 46),
+        MangoKey::Space => (" ".to_string(), "Space".to_string(), 32),
+        MangoKey::Tab => ("Tab".to_string(), "Tab".to_string(), 9),
+        MangoKey::Escape => ("Escape".to_string(), "Escape".to_string(), 27),
+        MangoKey::ArrowLeft => ("ArrowLeft".to_string(), "ArrowLeft".to_string(), 37),
+        MangoKey::ArrowUp => ("ArrowUp".to_string(), "ArrowUp".to_string(), 38),
+        MangoKey::ArrowRight => ("ArrowRight".to_string(), "ArrowRight".to_string(), 39),
+        MangoKey::ArrowDown => ("ArrowDown".to_string(), "ArrowDown".to_string(), 40),
+        MangoKey::Home => ("Home".to_string(), "Home".to_string(), 36),
+        MangoKey::End => ("End".to_string(), "End".to_string(), 35),
+        MangoKey::PageUp => ("PageUp".to_string(), "PageUp".to_string(), 33),
+        MangoKey::PageDown => ("PageDown".to_string(), "PageDown".to_string(), 34),
+        MangoKey::F1 => ("F1".to_string(), "F1".to_string(), 112),
+        MangoKey::F3 => ("F3".to_string(), "F3".to_string(), 114),
+        MangoKey::F5 => ("F5".to_string(), "F5".to_string(), 116),
+        MangoKey::F11 => ("F11".to_string(), "F11".to_string(), 122),
+        MangoKey::F12 => ("F12".to_string(), "F12".to_string(), 123),
+        MangoKey::Unknown => ("Unidentified".to_string(), "Unidentified".to_string(), 0),
     }
 }

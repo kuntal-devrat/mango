@@ -17,6 +17,7 @@ pub mod collapse;
 pub mod columns;
 pub mod container;
 pub mod intrinsic;
+pub mod intrinsic_flex;
 pub mod standalone;
 pub mod types;
 

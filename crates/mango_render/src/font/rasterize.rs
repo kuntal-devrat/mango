@@ -1,157 +1,203 @@
 //! Glyph rasterization, ClearType subpixel filtering, and clipping.
 
-use fontdue::Font;
 use mango_core::Color;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::emoji::{get_or_rasterize_color_emoji, is_emoji_char};
 use super::manager::FontManager;
-use super::types::{
-    ACCESS_COUNTER, CachedGlyph, FontFamily, FontStyle, FontWeight, GLYPH_CACHE_BYTES,
-    GlyphCacheEntry, MAX_GLYPH_CACHE_BYTES, glyph_cache,
-};
+use super::types::{FontFamily, FontStyle, FontWeight};
+
+fn blit_emoji_px(
+    buffer: &mut [u32],
+    buf_width: u32,
+    emoji: &super::emoji::ColorEmojiBitmap,
+    emoji_x: f32,
+    emoji_y: f32,
+    color_a: u8,
+    clip_bounds: (i32, i32, i32, i32),
+) {
+    let (cx1, cy1, cx2, cy2) = clip_bounds;
+    for ey in 0..emoji.height {
+        for ex in 0..emoji.width {
+            let src_px = emoji.pixels[(ey * emoji.width + ex) as usize];
+            let sa = (src_px >> 24) & 0xFF;
+            if sa == 0 {
+                continue;
+            }
+
+            let px = (emoji_x + ex as f32) as i32;
+            let py = (emoji_y + ey as f32) as i32;
+
+            if px < cx1 || py < cy1 || px >= cx2 || py >= cy2 {
+                continue;
+            }
+
+            let idx = (py as u32 * buf_width + px as u32) as usize;
+            if idx >= buffer.len() {
+                continue;
+            }
+
+            let eff_a = ((sa * color_a as u32) + 127) / 255;
+            if eff_a == 255 {
+                buffer[idx] = src_px & 0x00FFFFFF;
+            } else if eff_a > 0 {
+                let sr = (src_px >> 16) & 0xFF;
+                let sg = (src_px >> 8) & 0xFF;
+                let sb = src_px & 0xFF;
+
+                let bg = buffer[idx];
+                let bg_r = (bg >> 16) & 0xFF;
+                let bg_g = (bg >> 8) & 0xFF;
+                let bg_b = bg & 0xFF;
+
+                let inv_a = 255 - eff_a;
+                let r = ((sr * eff_a + bg_r * inv_a + 127) / 255).min(255);
+                let g = ((sg * eff_a + bg_g * inv_a + 127) / 255).min(255);
+                let b = ((sb * eff_a + bg_b * inv_a + 127) / 255).min(255);
+                buffer[idx] = (r << 16) | (g << 8) | b;
+            }
+        }
+    }
+}
+
+fn blit_glyph_bitmap(
+    buffer: &mut [u32],
+    buf_width: u32,
+    metrics: &fontdue::Metrics,
+    bitmap: &[u8],
+    glyph_x: f32,
+    glyph_y: f32,
+    is_italic: bool,
+    color: Color,
+    clip_bounds: (i32, i32, i32, i32),
+) {
+    let (cx1, cy1, cx2, cy2) = clip_bounds;
+    for gy in 0..metrics.height {
+        let slant = if is_italic {
+            (metrics.height as f32 - gy as f32) * 0.22
+        } else {
+            0.0
+        };
+
+        for gx in 0..metrics.width {
+            let coverage = bitmap[gy * metrics.width + gx];
+            if coverage == 0 {
+                continue;
+            }
+
+            let px = (glyph_x + gx as f32 + slant) as i32;
+            let py = (glyph_y + gy as f32) as i32;
+
+            if px < cx1 || py < cy1 || px >= cx2 || py >= cy2 {
+                continue;
+            }
+
+            let idx = (py as u32 * buf_width + px as u32) as usize;
+            if idx >= buffer.len() {
+                continue;
+            }
+
+            let effective_alpha = ((coverage as u32 * color.a as u32) + 127) / 255;
+            if effective_alpha == 0 {
+                continue;
+            }
+
+            if effective_alpha == 255 {
+                buffer[idx] = color.to_rgb_u32();
+            } else {
+                let inv_alpha = 255 - effective_alpha;
+                let bg = buffer[idx];
+                let bg_r = (bg >> 16) & 0xFF;
+                let bg_g = (bg >> 8) & 0xFF;
+                let bg_b = bg & 0xFF;
+                let r =
+                    ((color.r as u32 * effective_alpha + bg_r * inv_alpha + 127) / 255).min(255);
+                let g =
+                    ((color.g as u32 * effective_alpha + bg_g * inv_alpha + 127) / 255).min(255);
+                let b =
+                    ((color.b as u32 * effective_alpha + bg_b * inv_alpha + 127) / 255).min(255);
+                buffer[idx] = (r << 16) | (g << 8) | b;
+            }
+        }
+    }
+}
+
+fn blit_glyph_bitmap_subpixel(
+    buffer: &mut [u32],
+    buf_width: u32,
+    metrics: &fontdue::Metrics,
+    bitmap: &[u8],
+    glyph_x: f32,
+    glyph_y: f32,
+    is_italic: bool,
+    color: Color,
+    clip_bounds: (i32, i32, i32, i32),
+) {
+    let (cx1, cy1, cx2, cy2) = clip_bounds;
+    let w = metrics.width;
+    for gy in 0..metrics.height {
+        let slant = if is_italic {
+            (metrics.height as f32 - gy as f32) * 0.22
+        } else {
+            0.0
+        };
+
+        let row_start = gy * w;
+        for gx in 0..w {
+            let center = bitmap[row_start + gx] as u32;
+            let left = if gx > 0 {
+                bitmap[row_start + gx - 1] as u32
+            } else {
+                0
+            };
+            let right = if gx + 1 < w {
+                bitmap[row_start + gx + 1] as u32
+            } else {
+                0
+            };
+
+            let cov_r = ((left + 2 * center + 1) / 3).min(255);
+            let cov_g = center.min(255);
+            let cov_b = ((2 * center + right + 1) / 3).min(255);
+
+            if cov_r == 0 && cov_g == 0 && cov_b == 0 {
+                continue;
+            }
+
+            let px = (glyph_x + gx as f32 + slant) as i32;
+            let py = (glyph_y + gy as f32) as i32;
+
+            if px < cx1 || py < cy1 || px >= cx2 || py >= cy2 {
+                continue;
+            }
+
+            let idx = (py as u32 * buf_width + px as u32) as usize;
+            if idx >= buffer.len() {
+                continue;
+            }
+
+            let cr = color.r as u32;
+            let cg = color.g as u32;
+            let cb = color.b as u32;
+
+            let eff_ar = ((cov_r * color.a as u32) + 127) / 255;
+            let eff_ag = ((cov_g * color.a as u32) + 127) / 255;
+            let eff_ab = ((cov_b * color.a as u32) + 127) / 255;
+
+            let bg = buffer[idx];
+            let b_r = (bg >> 16) & 0xFF;
+            let b_g = (bg >> 8) & 0xFF;
+            let b_b = bg & 0xFF;
+
+            let out_r = ((cr * eff_ar + b_r * (255 - eff_ar) + 127) / 255).min(255);
+            let out_g = ((cg * eff_ag + b_g * (255 - eff_ag) + 127) / 255).min(255);
+            let out_b = ((cb * eff_ab + b_b * (255 - eff_ab) + 127) / 255).min(255);
+
+            buffer[idx] = (out_r << 16) | (out_g << 8) | out_b;
+        }
+    }
+}
 
 impl FontManager {
-    /// Retrieves a rasterized glyph from the glyph cache, or rasterizes and caches it.
-    pub fn get_or_rasterize_glyph(
-        &self,
-        family: FontFamily,
-        weight: FontWeight,
-        font: &Font,
-        ch: char,
-        px_size: f32,
-    ) -> CachedGlyph {
-        let size_key = (px_size * 10.0).round() as u32;
-        let key = (family, weight, size_key, ch);
-
-        if let Ok(cache) = glyph_cache().read()
-            && let Some(entry) = cache.get(&key)
-        {
-            entry.last_access.store(
-                ACCESS_COUNTER.fetch_add(1, Ordering::Relaxed),
-                Ordering::Relaxed,
-            );
-            return entry.glyph.clone();
-        }
-
-        let is_ahem = match family {
-            FontFamily::Custom(id) => {
-                if let Ok(web_fonts) = self.web_fonts.read() {
-                    web_fonts
-                        .get(&id)
-                        .map(|e| e.family_name.eq_ignore_ascii_case("Ahem"))
-                        .unwrap_or(false)
-                } else {
-                    false
-                }
-            }
-            _ => false,
-        };
-
-        let (mut metrics, bitmap) = font.rasterize(ch, px_size);
-        if is_ahem && metrics.width > 0 && metrics.height > 0 && !bitmap.is_empty() {
-            let target_w = metrics.bounds.width.round().max(1.0) as usize;
-            let target_h = metrics.bounds.height.round().max(1.0) as usize;
-            let solid = vec![255u8; target_w * target_h];
-            metrics.width = target_w;
-            metrics.height = target_h;
-            metrics.xmin = metrics.bounds.xmin.round() as i32;
-            metrics.ymin = metrics.bounds.ymin.round() as i32;
-            let cached = CachedGlyph {
-                metrics,
-                bitmap: solid.into(),
-            };
-            if let Ok(mut cache) = glyph_cache().write() {
-                cache.insert(
-                    key,
-                    GlyphCacheEntry {
-                        glyph: cached.clone(),
-                        last_access: AtomicU64::new(ACCESS_COUNTER.fetch_add(1, Ordering::Relaxed)),
-                    },
-                );
-            }
-            return cached;
-        }
-        let final_bitmap: std::sync::Arc<[u8]> = if weight == FontWeight::Bold
-            && std::ptr::eq(font, self.select_font(family, FontWeight::Regular).as_ref())
-            && metrics.width > 0
-            && metrics.height > 0
-            && !bitmap.is_empty()
-            && !ch.is_whitespace()
-        {
-            let offset = if px_size >= 48.0 {
-                3
-            } else if px_size >= 28.0 {
-                2
-            } else {
-                1
-            };
-            let old_w = metrics.width;
-            let h = metrics.height;
-            let new_w = old_w + offset;
-            let mut smeared = vec![0u8; new_w * h];
-            for y in 0..h {
-                for x in 0..old_w {
-                    let cov = bitmap[y * old_w + x];
-                    if cov > 0 {
-                        for off in 0..=offset {
-                            let dst_idx = y * new_w + x + off;
-                            smeared[dst_idx] = smeared[dst_idx].max(cov);
-                        }
-                    }
-                }
-            }
-            metrics.width = new_w;
-            metrics.advance_width += offset as f32;
-            smeared.into()
-        } else {
-            bitmap.into()
-        };
-
-        let cached = CachedGlyph {
-            metrics,
-            bitmap: final_bitmap,
-        };
-
-        if let Ok(mut cache) = glyph_cache().write() {
-            let new_bytes = cached.bitmap.len();
-            while new_bytes <= MAX_GLYPH_CACHE_BYTES
-                && GLYPH_CACHE_BYTES.load(Ordering::Relaxed) + new_bytes > MAX_GLYPH_CACHE_BYTES
-                && !cache.is_empty()
-            {
-                let oldest_key = cache
-                    .iter()
-                    .min_by_key(|(_, entry)| entry.last_access.load(Ordering::Relaxed))
-                    .map(|(key, _)| *key);
-                if let Some(key) = oldest_key {
-                    if let Some(removed) = cache.remove(&key) {
-                        GLYPH_CACHE_BYTES.fetch_sub(
-                            removed.glyph.bitmap.len(),
-                            std::sync::atomic::Ordering::Relaxed,
-                        );
-                    }
-                }
-            }
-            if let Some(old) = cache.remove(&key) {
-                GLYPH_CACHE_BYTES
-                    .fetch_sub(old.glyph.bitmap.len(), std::sync::atomic::Ordering::Relaxed);
-            }
-            if new_bytes <= MAX_GLYPH_CACHE_BYTES {
-                let tick = ACCESS_COUNTER.fetch_add(1, Ordering::Relaxed);
-                cache.insert(
-                    key,
-                    GlyphCacheEntry {
-                        glyph: cached.clone(),
-                        last_access: AtomicU64::new(tick),
-                    },
-                );
-                GLYPH_CACHE_BYTES.fetch_add(new_bytes, std::sync::atomic::Ordering::Relaxed);
-            }
-        }
-
-        cached
-    }
-
     /// Rasterizes a text string into a pixel buffer with alpha-blended glyphs and letter spacing.
     ///
     /// The buffer is `&mut [u32]` in `0xRRGGBB` format, with the given width and height.
@@ -224,6 +270,95 @@ impl FontManager {
         let cx2 = ((clip.x() + clip.width()) as i32).min(buf_width as i32);
         let cy2 = ((clip.y() + clip.height()) as i32).min(buf_height as i32);
 
+        if text.chars().any(super::shaping::is_complex_char) {
+            let runs = super::segmentation::segment_script_runs(text);
+            let mut all_rendered = true;
+            for run in runs {
+                if run.script.is_complex() {
+                    let font = self.select_font_for_char(family, weight, run.representative_char);
+                    let font_data =
+                        self.select_font_data_for_char(family, weight, run.representative_char);
+                    if let Some(shaped) = super::shaping::shape_text_with_font_data(
+                        &font_data,
+                        0,
+                        run.text,
+                        px_size,
+                        letter_spacing,
+                    ) {
+                        for glyph in &shaped.glyphs {
+                            if glyph.glyph_id != 0 {
+                                let cached = self.get_or_rasterize_glyph_indexed(
+                                    family,
+                                    weight,
+                                    &font,
+                                    glyph.glyph_id,
+                                    px_size,
+                                );
+                                let metrics = &cached.metrics;
+                                let bitmap = &cached.bitmap;
+                                if !bitmap.is_empty() && metrics.width > 0 && metrics.height > 0 {
+                                    let glyph_x = cursor_x + glyph.x_offset + metrics.xmin as f32;
+                                    let glyph_y = y as f32
+                                        + (ascent - metrics.height as f32 - metrics.ymin as f32
+                                            + glyph.y_offset)
+                                            .round();
+                                    blit_glyph_bitmap(
+                                        buffer,
+                                        buf_width,
+                                        metrics,
+                                        bitmap,
+                                        glyph_x,
+                                        glyph_y,
+                                        is_italic,
+                                        color,
+                                        (cx1, cy1, cx2, cy2),
+                                    );
+                                }
+                            }
+                            cursor_x += glyph.x_advance;
+                        }
+                    } else {
+                        all_rendered = false;
+                        break;
+                    }
+                } else {
+                    for ch in run.text.chars() {
+                        if ch == '\n' || super::emoji::is_zero_width_or_format(ch) {
+                            continue;
+                        }
+                        if is_emoji_char(ch) {
+                            cursor_x += px_size + letter_spacing;
+                            continue;
+                        }
+                        let font = self.select_font_for_char(family, weight, ch);
+                        let glyph = self.get_or_rasterize_glyph(family, weight, &font, ch, px_size);
+                        let metrics = &glyph.metrics;
+                        let bitmap = &glyph.bitmap;
+                        if !bitmap.is_empty() && metrics.width > 0 && metrics.height > 0 {
+                            let glyph_x = cursor_x + metrics.xmin as f32;
+                            let glyph_y = y as f32
+                                + (ascent - metrics.height as f32 - metrics.ymin as f32).round();
+                            blit_glyph_bitmap(
+                                buffer,
+                                buf_width,
+                                metrics,
+                                bitmap,
+                                glyph_x,
+                                glyph_y,
+                                is_italic,
+                                color,
+                                (cx1, cy1, cx2, cy2),
+                            );
+                        }
+                        cursor_x += metrics.advance_width + letter_spacing;
+                    }
+                }
+            }
+            if all_rendered {
+                return;
+            }
+        }
+
         let shaped_text;
         let text_to_draw = if text.chars().any(super::shaping::is_complex_char) {
             shaped_text = super::shaping::shape_complex_script(text);
@@ -233,10 +368,7 @@ impl FontManager {
         };
 
         for ch in text_to_draw.chars() {
-            if ch == '\n' {
-                continue;
-            }
-            if super::emoji::is_zero_width_or_format(ch) {
+            if ch == '\n' || super::emoji::is_zero_width_or_format(ch) {
                 continue;
             }
 
@@ -244,49 +376,15 @@ impl FontManager {
                 let emoji = get_or_rasterize_color_emoji(ch, px_size);
                 let emoji_x = cursor_x;
                 let emoji_y = y as f32 + ascent - emoji.height as f32;
-
-                for ey in 0..emoji.height {
-                    for ex in 0..emoji.width {
-                        let src_px = emoji.pixels[(ey * emoji.width + ex) as usize];
-                        let sa = (src_px >> 24) & 0xFF;
-                        if sa == 0 {
-                            continue;
-                        }
-
-                        let px = (emoji_x + ex as f32) as i32;
-                        let py = (emoji_y + ey as f32) as i32;
-
-                        if px < cx1 || py < cy1 || px >= cx2 || py >= cy2 {
-                            continue;
-                        }
-
-                        let idx = (py as u32 * buf_width + px as u32) as usize;
-                        if idx >= buffer.len() {
-                            continue;
-                        }
-
-                        let eff_a = ((sa * color.a as u32) + 127) / 255;
-                        if eff_a == 255 {
-                            buffer[idx] = src_px & 0x00FFFFFF;
-                        } else if eff_a > 0 {
-                            let sr = (src_px >> 16) & 0xFF;
-                            let sg = (src_px >> 8) & 0xFF;
-                            let sb = src_px & 0xFF;
-
-                            let bg = buffer[idx];
-                            let bg_r = (bg >> 16) & 0xFF;
-                            let bg_g = (bg >> 8) & 0xFF;
-                            let bg_b = bg & 0xFF;
-
-                            let inv_a = 255 - eff_a;
-                            let r = ((sr * eff_a + bg_r * inv_a + 127) / 255).min(255);
-                            let g = ((sg * eff_a + bg_g * inv_a + 127) / 255).min(255);
-                            let b = ((sb * eff_a + bg_b * inv_a + 127) / 255).min(255);
-                            buffer[idx] = (r << 16) | (g << 8) | b;
-                        }
-                    }
-                }
-
+                blit_emoji_px(
+                    buffer,
+                    buf_width,
+                    &emoji,
+                    emoji_x,
+                    emoji_y,
+                    color.a,
+                    (cx1, cy1, cx2, cy2),
+                );
                 cursor_x += emoji.width as f32 + letter_spacing;
                 continue;
             }
@@ -300,58 +398,17 @@ impl FontManager {
                 let glyph_x = cursor_x + metrics.xmin as f32;
                 let glyph_y =
                     y as f32 + (ascent - metrics.height as f32 - metrics.ymin as f32).round();
-
-                for gy in 0..metrics.height {
-                    let slant = if is_italic {
-                        (metrics.height as f32 - gy as f32) * 0.22
-                    } else {
-                        0.0
-                    };
-
-                    for gx in 0..metrics.width {
-                        let coverage = bitmap[gy * metrics.width + gx];
-                        if coverage == 0 {
-                            continue;
-                        }
-
-                        let px = (glyph_x + gx as f32 + slant) as i32;
-                        let py = (glyph_y + gy as f32) as i32;
-
-                        if px < cx1 || py < cy1 || px >= cx2 || py >= cy2 {
-                            continue;
-                        }
-
-                        let idx = (py as u32 * buf_width + px as u32) as usize;
-                        if idx >= buffer.len() {
-                            continue;
-                        }
-
-                        let effective_alpha = ((coverage as u32 * color.a as u32) + 127) / 255;
-                        if effective_alpha == 0 {
-                            continue;
-                        }
-
-                        if effective_alpha == 255 {
-                            buffer[idx] = color.to_rgb_u32();
-                        } else {
-                            let inv_alpha = 255 - effective_alpha;
-                            let bg = buffer[idx];
-                            let bg_r = (bg >> 16) & 0xFF;
-                            let bg_g = (bg >> 8) & 0xFF;
-                            let bg_b = bg & 0xFF;
-                            let r = ((color.r as u32 * effective_alpha + bg_r * inv_alpha + 127)
-                                / 255)
-                                .min(255);
-                            let g = ((color.g as u32 * effective_alpha + bg_g * inv_alpha + 127)
-                                / 255)
-                                .min(255);
-                            let b = ((color.b as u32 * effective_alpha + bg_b * inv_alpha + 127)
-                                / 255)
-                                .min(255);
-                            buffer[idx] = (r << 16) | (g << 8) | b;
-                        }
-                    }
-                }
+                blit_glyph_bitmap(
+                    buffer,
+                    buf_width,
+                    metrics,
+                    bitmap,
+                    glyph_x,
+                    glyph_y,
+                    is_italic,
+                    color,
+                    (cx1, cy1, cx2, cy2),
+                );
             }
 
             cursor_x += metrics.advance_width + letter_spacing;
@@ -429,6 +486,60 @@ impl FontManager {
         let cx2 = ((clip.x() + clip.width()) as i32).min(buf_width as i32);
         let cy2 = ((clip.y() + clip.height()) as i32).min(buf_height as i32);
 
+        if text.chars().any(super::shaping::is_complex_char) {
+            let script_ch = text
+                .chars()
+                .find(|c| super::shaping::is_complex_char(*c))
+                .unwrap_or(' ');
+            let font = self.select_font_for_char(family, weight, script_ch);
+            let font_data = self.select_font_data_for_char(family, weight, script_ch);
+            if let Some(shaped) = super::shaping::shape_text_with_font_data(
+                &font_data,
+                0,
+                text,
+                px_size,
+                letter_spacing,
+            ) {
+                if !shaped.glyphs.is_empty() && shaped.glyphs.iter().any(|g| g.glyph_id != 0) {
+                    for glyph in &shaped.glyphs {
+                        if glyph.glyph_id == 0 {
+                            cursor_x += glyph.x_advance;
+                            continue;
+                        }
+                        let cached = self.get_or_rasterize_glyph_indexed(
+                            family,
+                            weight,
+                            &font,
+                            glyph.glyph_id,
+                            px_size,
+                        );
+                        let metrics = &cached.metrics;
+                        let bitmap = &cached.bitmap;
+                        if !bitmap.is_empty() && metrics.width > 0 && metrics.height > 0 {
+                            let glyph_x = cursor_x + glyph.x_offset + metrics.xmin as f32;
+                            let glyph_y = y as f32
+                                + (ascent - metrics.height as f32 - metrics.ymin as f32
+                                    + glyph.y_offset)
+                                    .round();
+                            blit_glyph_bitmap_subpixel(
+                                buffer,
+                                buf_width,
+                                metrics,
+                                bitmap,
+                                glyph_x,
+                                glyph_y,
+                                is_italic,
+                                color,
+                                (cx1, cy1, cx2, cy2),
+                            );
+                        }
+                        cursor_x += glyph.x_advance;
+                    }
+                    return;
+                }
+            }
+        }
+
         let shaped_text;
         let text_to_draw = if text.chars().any(super::shaping::is_complex_char) {
             shaped_text = super::shaping::shape_complex_script(text);
@@ -438,10 +549,7 @@ impl FontManager {
         };
 
         for ch in text_to_draw.chars() {
-            if ch == '\n' {
-                continue;
-            }
-            if super::emoji::is_zero_width_or_format(ch) {
+            if ch == '\n' || super::emoji::is_zero_width_or_format(ch) {
                 continue;
             }
 
@@ -449,49 +557,15 @@ impl FontManager {
                 let emoji = get_or_rasterize_color_emoji(ch, px_size);
                 let emoji_x = cursor_x;
                 let emoji_y = y as f32 + ascent - emoji.height as f32;
-
-                for ey in 0..emoji.height {
-                    for ex in 0..emoji.width {
-                        let src_px = emoji.pixels[(ey * emoji.width + ex) as usize];
-                        let sa = (src_px >> 24) & 0xFF;
-                        if sa == 0 {
-                            continue;
-                        }
-
-                        let px = (emoji_x + ex as f32) as i32;
-                        let py = (emoji_y + ey as f32) as i32;
-
-                        if px < cx1 || py < cy1 || px >= cx2 || py >= cy2 {
-                            continue;
-                        }
-
-                        let idx = (py as u32 * buf_width + px as u32) as usize;
-                        if idx >= buffer.len() {
-                            continue;
-                        }
-
-                        let eff_a = ((sa * color.a as u32) + 127) / 255;
-                        if eff_a == 255 {
-                            buffer[idx] = src_px & 0x00FFFFFF;
-                        } else if eff_a > 0 {
-                            let sr = (src_px >> 16) & 0xFF;
-                            let sg = (src_px >> 8) & 0xFF;
-                            let sb = src_px & 0xFF;
-
-                            let bg = buffer[idx];
-                            let bg_r = (bg >> 16) & 0xFF;
-                            let bg_g = (bg >> 8) & 0xFF;
-                            let bg_b = bg & 0xFF;
-
-                            let inv_a = 255 - eff_a;
-                            let r = ((sr * eff_a + bg_r * inv_a + 127) / 255).min(255);
-                            let g = ((sg * eff_a + bg_g * inv_a + 127) / 255).min(255);
-                            let b = ((sb * eff_a + bg_b * inv_a + 127) / 255).min(255);
-                            buffer[idx] = (r << 16) | (g << 8) | b;
-                        }
-                    }
-                }
-
+                blit_emoji_px(
+                    buffer,
+                    buf_width,
+                    &emoji,
+                    emoji_x,
+                    emoji_y,
+                    color.a,
+                    (cx1, cy1, cx2, cy2),
+                );
                 cursor_x += emoji.width as f32 + letter_spacing;
                 continue;
             }
@@ -505,68 +579,17 @@ impl FontManager {
                 let glyph_x = cursor_x + metrics.xmin as f32;
                 let glyph_y =
                     y as f32 + (ascent - metrics.height as f32 - metrics.ymin as f32).round();
-                let w = metrics.width;
-
-                for gy in 0..metrics.height {
-                    let slant = if is_italic {
-                        (metrics.height as f32 - gy as f32) * 0.22
-                    } else {
-                        0.0
-                    };
-
-                    let row_start = gy * w;
-                    for gx in 0..w {
-                        let center = bitmap[row_start + gx] as u32;
-                        let left = if gx > 0 {
-                            bitmap[row_start + gx - 1] as u32
-                        } else {
-                            0
-                        };
-                        let right = if gx + 1 < w {
-                            bitmap[row_start + gx + 1] as u32
-                        } else {
-                            0
-                        };
-
-                        let cov_r = ((left + 2 * center + 1) / 3).min(255);
-                        let cov_g = center.min(255);
-                        let cov_b = ((2 * center + right + 1) / 3).min(255);
-
-                        if cov_r == 0 && cov_g == 0 && cov_b == 0 {
-                            continue;
-                        }
-
-                        let px = (glyph_x + gx as f32 + slant) as i32;
-                        let py = (glyph_y + gy as f32) as i32;
-
-                        if px < cx1 || py < cy1 || px >= cx2 || py >= cy2 {
-                            continue;
-                        }
-
-                        let idx = (py as u32 * buf_width + px as u32) as usize;
-                        if idx >= buffer.len() {
-                            continue;
-                        }
-
-                        let eff_r = ((cov_r * color.a as u32) + 127) / 255;
-                        let eff_g = ((cov_g * color.a as u32) + 127) / 255;
-                        let eff_b = ((cov_b * color.a as u32) + 127) / 255;
-
-                        let bg = buffer[idx];
-                        let bg_r = (bg >> 16) & 0xFF;
-                        let bg_g = (bg >> 8) & 0xFF;
-                        let bg_b = bg & 0xFF;
-
-                        let out_r =
-                            ((color.r as u32 * eff_r + bg_r * (255 - eff_r) + 127) / 255).min(255);
-                        let out_g =
-                            ((color.g as u32 * eff_g + bg_g * (255 - eff_g) + 127) / 255).min(255);
-                        let out_b =
-                            ((color.b as u32 * eff_b + bg_b * (255 - eff_b) + 127) / 255).min(255);
-
-                        buffer[idx] = (out_r << 16) | (out_g << 8) | out_b;
-                    }
-                }
+                blit_glyph_bitmap_subpixel(
+                    buffer,
+                    buf_width,
+                    metrics,
+                    bitmap,
+                    glyph_x,
+                    glyph_y,
+                    is_italic,
+                    color,
+                    (cx1, cy1, cx2, cy2),
+                );
             }
 
             cursor_x += metrics.advance_width + letter_spacing;

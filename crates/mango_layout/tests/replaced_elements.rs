@@ -212,3 +212,48 @@ fn test_object_fit_and_object_position_display_commands() {
         assert_eq!(*y, 0.0, "Positioned at top-left y=0");
     }
 }
+
+#[test]
+fn test_google_z1asce_svg_dimensions() {
+    let html = r#"
+    <style>
+      .z1asCe { display: inline-block; fill: currentColor; height: 24px; line-height: 24px; position: relative; width: 24px; }
+      .z1asCe svg { display: block; height: 100%; width: 100%; }
+    </style>
+    <div style="width: 600px; height: 100px;">
+      <span class="z1asCe" style="height:20px;line-height:20px;width:20px">
+        <svg focusable="false" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960">
+          <path d="M647-440H160v-80H647L423-744l57-56L800-480L480-160l-57-56L647-440Z"></path>
+        </svg>
+      </span>
+    </div>
+    "#;
+    let doc = parse_html(html);
+    let sheets = mango_layout::extract_style_elements(&doc);
+    let sheet_refs: Vec<&mango_css::parser::Stylesheet> = sheets.iter().collect();
+    let styled = build_style_tree(&doc, &sheet_refs).unwrap();
+    let mut box_tree = build_box_tree(&styled);
+    let cb = Dimensions::new(Rect::new(0.0, 0.0, 1024.0, 768.0));
+    let mut float_ctx = FloatContext::new();
+    layout_block(&mut box_tree, &cb, &mut float_ctx);
+
+    let dl = build_display_list(&box_tree);
+    let mut found_svg = false;
+    for cmd in dl {
+        if let DisplayCommand::DrawImage { width, height, .. } = cmd {
+            println!("CMD DRAW IMAGE dims: width={}, height={}", width, height);
+            assert!(
+                width <= 24.0,
+                "SVG in .z1asCe must not exceed container width! width={}",
+                width
+            );
+            assert!(
+                height <= 24.0,
+                "SVG in .z1asCe must not exceed container height! height={}",
+                height
+            );
+            found_svg = true;
+        }
+    }
+    assert!(found_svg, "SVG DrawImage command should be in display list");
+}

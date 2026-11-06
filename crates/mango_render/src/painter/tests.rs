@@ -294,3 +294,85 @@ fn test_clip_path_with_intersected_subclip() {
     // (10, 10) is outside outer clip: untouched white (0x00FFFFFF)
     assert_eq!(buffer[10 * 100 + 10] & 0x00FFFFFF, 0x00FFFFFF);
 }
+
+#[test]
+fn test_rounded_rectangle_clipping_preserves_corners() {
+    let mut buffer = vec![0x00FFFFFFu32; 100 * 100];
+    let mut dl = DisplayList::new();
+    // Pill rounded clip: rect (10, 10, 80, 80) with 24px radius
+    dl.push(DisplayCommand::PushClipRoundedRect {
+        rect: Rect::new(10.0, 10.0, 80.0, 80.0),
+        radii: [24.0, 24.0, 24.0, 24.0],
+    });
+    // Draw solid red rectangle covering the full bounding box
+    dl.push(DisplayCommand::FillRect {
+        rect: Rect::new(10.0, 10.0, 80.0, 80.0),
+        color: Color::rgba(255, 0, 0, 255),
+    });
+    dl.push(DisplayCommand::PopClip);
+
+    paint(&dl, &mut buffer, 100, 100);
+
+    // Center (50, 50) is deep inside the pill: solid red (0x00FF0000)
+    assert_eq!(buffer[50 * 100 + 50] & 0x00FFFFFF, 0x00FF0000);
+    // Point (12, 12) is inside the bounding box (10..90) but in the top-left rounded corner:
+    // Distance from center of corner circle (34, 34) is sqrt(22^2 + 22^2) = 31.1 > 24px
+    // Must be clipped to the corner curve and remain white (0x00FFFFFF)
+    assert_eq!(
+        buffer[12 * 100 + 12] & 0x00FFFFFF,
+        0x00FFFFFF,
+        "Corner pixel outside 24px rounded edge must remain background white"
+    );
+    // Point (88, 12) in top-right rounded corner: outside 24px curve
+    assert_eq!(
+        buffer[12 * 100 + 88] & 0x00FFFFFF,
+        0x00FFFFFF,
+        "Top-right corner pixel outside 24px rounded edge must remain background white"
+    );
+}
+
+#[test]
+fn test_soft_elevation_box_shadow_smoothing() {
+    let mut buffer = vec![0xFFFFFFFFu32; 100 * 100];
+    let mut dl = DisplayList::new();
+    // Soft elevation shadow like Google search pill: blur=6px, offset_y=2px
+    dl.push(DisplayCommand::DrawBoxShadow {
+        rect: Rect::new(20.0, 20.0, 60.0, 40.0),
+        color: Color::rgba(0, 0, 0, 180),
+        offset_x: 0.0,
+        offset_y: 2.0,
+        blur_radius: 6.0,
+        spread_radius: 0.0,
+        radii: [16.0; 4],
+        inset: false,
+    });
+
+    paint(&dl, &mut buffer, 100, 100);
+
+    // Center of element (50, 40) is inside clip_out (the element itself): unaffected white
+    assert_eq!(
+        buffer[40 * 100 + 50],
+        0xFFFFFFFF,
+        "Element interior must be clipped out for outset shadow"
+    );
+
+    // Pixel just below bottom edge: y = 63 (inside shadow falloff)
+    let p_close = buffer[63 * 100 + 50];
+    let p_far = buffer[68 * 100 + 50];
+
+    // Closer shadow pixel must be darker (lower channel values since blending black on white)
+    let gray_close = p_close & 0xFF;
+    let gray_far = p_far & 0xFF;
+
+    assert!(
+        gray_close < 255,
+        "Shadow must darken pixels near the edge, got {}",
+        gray_close
+    );
+    assert!(
+        gray_close < gray_far,
+        "Shadow must have smooth monotonic falloff with distance: close={}, far={}",
+        gray_close,
+        gray_far
+    );
+}

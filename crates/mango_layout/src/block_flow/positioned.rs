@@ -7,42 +7,14 @@ use crate::box_tree::LayoutBox;
 use crate::dimensions::Dimensions;
 use crate::float::FloatContext;
 
+pub use super::anchor::{
+    clear_anchors, collect_anchors, get_anchor, register_anchor, resolve_anchor_coord,
+};
 use super::container::layout_block_children;
+pub(crate) use super::relative::{
+    apply_relative_offset, center_button_children, shift_descendants,
+};
 use super::sizing::{calculate_block_height, calculate_block_width};
-
-thread_local! {
-    static ANCHOR_REGISTRY: std::cell::RefCell<std::collections::HashMap<String, mango_core::Rect>> =
-        std::cell::RefCell::new(std::collections::HashMap::new());
-}
-
-/// Registers an element's border box under its anchor-name ident.
-pub fn register_anchor(name: &str, rect: mango_core::Rect) {
-    ANCHOR_REGISTRY.with(|reg| {
-        reg.borrow_mut().insert(name.to_string(), rect);
-    });
-}
-
-/// Looks up an anchor box rectangle by name.
-pub fn get_anchor(name: &str) -> Option<mango_core::Rect> {
-    ANCHOR_REGISTRY.with(|reg| reg.borrow().get(name).copied())
-}
-
-/// Clears all registered anchors in the current thread.
-pub fn clear_anchors() {
-    ANCHOR_REGISTRY.with(|reg| reg.borrow_mut().clear());
-}
-
-/// Recursively registers any box with `anchor_name` in the subtree.
-pub fn collect_anchors(box_node: &LayoutBox) {
-    if let Some(style) = &box_node.style {
-        if let Some(ref name) = style.anchor_name {
-            register_anchor(name, box_node.dimensions.border_box());
-        }
-    }
-    for child in &box_node.children {
-        collect_anchors(child);
-    }
-}
 
 /// Positions out-of-flow absolute and fixed children against the containing box's padding box.
 pub fn layout_positioned_children(box_node: &mut LayoutBox, float_ctx: &mut FloatContext) {
@@ -142,49 +114,6 @@ pub fn layout_positioned_children_with_cb(
     }
 }
 
-/// Applies relative positioning offsets (`top`, `bottom`, `left`, `right`)
-/// to a box without altering surrounding in-flow layout geometry.
-pub(crate) fn apply_relative_offset(box_node: &mut LayoutBox, containing_block: &Dimensions) {
-    if let Some(style) = &box_node.style {
-        let font_size = style.font_size;
-        let root_font_size = style.root_font_size;
-        let cw = containing_block.content.width();
-        let ch = if containing_block.content.height() > 0.0 {
-            containing_block.content.height()
-        } else {
-            0.0
-        };
-
-        let dx = if style.left != Length::Auto {
-            style
-                .left
-                .to_px_with_viewport(font_size, root_font_size, cw, ch)
-        } else if style.right != Length::Auto {
-            -style
-                .right
-                .to_px_with_viewport(font_size, root_font_size, cw, ch)
-        } else {
-            0.0
-        };
-
-        let dy = if style.top != Length::Auto {
-            style
-                .top
-                .to_px_with_viewport(font_size, root_font_size, ch, ch)
-        } else if style.bottom != Length::Auto {
-            -style
-                .bottom
-                .to_px_with_viewport(font_size, root_font_size, ch, ch)
-        } else {
-            0.0
-        };
-
-        box_node.dimensions.content.origin.x += dx;
-        box_node.dimensions.content.origin.y += dy;
-        shift_descendants(box_node, dx, dy);
-    }
-}
-
 /// Positions an out-of-flow absolute or fixed element against its containing block.
 pub(crate) fn layout_positioned_element(
     box_node: &mut LayoutBox,
@@ -270,40 +199,6 @@ pub(crate) fn layout_positioned_element(
 
     let pad_w = pad_box.width();
     let pad_h = pad_box.height();
-
-    let resolve_anchor_coord =
-        |len: &Length, is_x: bool, default_anchor: Option<&String>| -> Option<f32> {
-            if let Length::Anchor {
-                name_id,
-                side,
-                offset,
-            } = len
-            {
-                let name = name_id
-                    .and_then(mango_css::values::get_interned_anchor_name)
-                    .or_else(|| default_anchor.cloned())?;
-                let rect = get_anchor(&name)?;
-                let coord =
-                    match side {
-                        mango_css::values::AnchorSide::Left
-                        | mango_css::values::AnchorSide::Start => rect.left(),
-                        mango_css::values::AnchorSide::Right
-                        | mango_css::values::AnchorSide::End => rect.right(),
-                        mango_css::values::AnchorSide::Center => {
-                            if is_x {
-                                rect.origin.x + rect.width() * 0.5
-                            } else {
-                                rect.origin.y + rect.height() * 0.5
-                            }
-                        }
-                        mango_css::values::AnchorSide::Top => rect.top(),
-                        mango_css::values::AnchorSide::Bottom => rect.bottom(),
-                    };
-                Some(coord + offset)
-            } else {
-                None
-            }
-        };
 
     let calc_left_px = |l: &Length| -> f32 {
         if let Some(target_x) = resolve_anchor_coord(l, true, style.position_anchor.as_ref()) {
@@ -748,6 +643,12 @@ pub(crate) fn layout_positioned_element(
         crate::table_flow::layout_table(box_node, cb, float_ctx);
     } else if matches!(style.display, Display::Flex | Display::InlineFlex) {
         crate::flex_flow::layout_flex(box_node, cb, float_ctx);
+        if let Some(sh) = stretched_h {
+            box_node.dimensions.content.size.height = sh;
+        }
+        if let Some(sw) = stretched_w {
+            box_node.dimensions.content.size.width = sw;
+        }
     } else if style.display == Display::Grid || style.display == Display::InlineGrid {
         crate::grid_flow::layout_grid(box_node, cb, float_ctx);
     } else {
@@ -870,75 +771,4 @@ pub(crate) fn layout_positioned_element(
 
     // Release unflattened static backup children now that positioned layout is complete
     box_node.raw_children = None;
-}
-
-pub(crate) fn shift_descendants(box_node: &mut LayoutBox, dx: f32, dy: f32) {
-    for child in &mut box_node.children {
-        let child_pos = child
-            .style
-            .as_ref()
-            .map(|s| s.position)
-            .unwrap_or(Position::Static);
-        if child_pos == Position::Fixed {
-            let (shift_x, shift_y) = if let Some(style) = &child.style {
-                let sx = if style.left == Length::Auto && style.right == Length::Auto {
-                    dx
-                } else {
-                    0.0
-                };
-                let sy = if style.top == Length::Auto && style.bottom == Length::Auto {
-                    dy
-                } else {
-                    0.0
-                };
-                (sx, sy)
-            } else {
-                (dx, dy)
-            };
-            child.dimensions.content.origin.x += shift_x;
-            child.dimensions.content.origin.y += shift_y;
-            if let Some(ref mut pt) = child.static_position {
-                pt.x += shift_x;
-                pt.y += shift_y;
-            }
-            shift_descendants(child, shift_x, shift_y);
-            continue;
-        }
-        child.dimensions.content.origin.x += dx;
-        child.dimensions.content.origin.y += dy;
-        if let Some(ref mut pt) = child.static_position {
-            pt.x += dx;
-            pt.y += dy;
-        }
-        shift_descendants(child, dx, dy);
-    }
-}
-
-pub(crate) fn center_button_children(box_node: &mut LayoutBox) {
-    if box_node.tag_name.as_deref() != Some("button") || box_node.children.is_empty() {
-        return;
-    }
-    let button_h = box_node.dimensions.content.height();
-    if button_h <= 0.0 {
-        return;
-    }
-    let content_top = box_node.dimensions.content.y();
-    let mut min_y = f32::INFINITY;
-    let mut max_y = f32::NEG_INFINITY;
-    for child in &box_node.children {
-        let b = child.dimensions.margin_box();
-        min_y = min_y.min(b.y());
-        max_y = max_y.max(b.bottom());
-    }
-    if min_y < max_y && (max_y - min_y) < button_h {
-        let children_h = max_y - min_y;
-        let target_y = content_top + (button_h - children_h) / 2.0;
-        let delta_y = target_y - min_y;
-        if delta_y.abs() > 0.5 {
-            for child in &mut box_node.children {
-                child.dimensions.content.origin.y += delta_y;
-                shift_descendants(child, 0.0, delta_y);
-            }
-        }
-    }
 }

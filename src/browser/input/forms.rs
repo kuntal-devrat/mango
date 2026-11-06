@@ -54,6 +54,13 @@ impl BrowserChrome {
                         rt.remove_node_attribute(node_id, "checked");
                     }
                 }
+                if let Some(ref mut doc) = self.cached_document {
+                    if new_checked {
+                        doc.set_attribute(node_id, "checked", "true");
+                    } else {
+                        doc.remove_attribute(node_id, "checked");
+                    }
+                }
                 self.fire_dom_event(node_id, "input");
                 self.fire_dom_event(node_id, "change");
                 self.relayout();

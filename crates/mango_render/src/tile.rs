@@ -83,6 +83,7 @@ impl Tile {
         for cmd in display_list.iter() {
             match cmd {
                 DisplayCommand::PushClip { .. }
+                | DisplayCommand::PushClipRoundedRect { .. }
                 | DisplayCommand::PopClip
                 | DisplayCommand::PushTransform { .. }
                 | DisplayCommand::PopTransform

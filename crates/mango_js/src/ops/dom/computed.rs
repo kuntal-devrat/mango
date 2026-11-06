@@ -58,13 +58,39 @@ pub fn op_mango_get_computed_style(
     while let Some(parent) = d.get(root_of_nid).and_then(|n| n.parent) {
         root_of_nid = parent;
     }
-    if root_of_nid != d.root() {
-        collect_styles_recursive(&d, root_of_nid, &mut sheets);
-    } else {
-        collect_styles_recursive(&d, d.root(), &mut sheets);
-    }
 
-    let sheet_refs: Vec<&mango_css::parser::Stylesheet> = sheets.iter().collect();
+    let is_main_doc = root_of_nid == d.root();
+    let is_dom_dirty = state
+        .try_borrow::<crate::dom_bindings::DomDirtyFlag>()
+        .map(|d| *d.borrow())
+        .unwrap_or(true);
+    let cached_holder = state
+        .try_borrow::<crate::dom_bindings::CachedStylesheets>()
+        .cloned();
+
+    let have_cached = is_main_doc
+        && !is_dom_dirty
+        && cached_holder
+            .as_ref()
+            .and_then(|h| h.borrow().as_ref().map(|s| !s.is_empty()))
+            .unwrap_or(false);
+
+    let borrowed_cached: Option<Vec<mango_css::parser::Stylesheet>> = if have_cached {
+        cached_holder.as_ref().and_then(|h| h.borrow().clone())
+    } else {
+        if root_of_nid != d.root() {
+            collect_styles_recursive(&d, root_of_nid, &mut sheets);
+        } else {
+            collect_styles_recursive(&d, d.root(), &mut sheets);
+        }
+        if is_main_doc && let Some(ref h) = cached_holder {
+            *h.borrow_mut() = Some(sheets.clone());
+        }
+        None
+    };
+
+    let sheets_to_use = borrowed_cached.as_ref().unwrap_or(&sheets);
+    let sheet_refs: Vec<&mango_css::parser::Stylesheet> = sheets_to_use.iter().collect();
     let mut author_order = 1000;
     let vp_w = viewport_width.unwrap_or(1280.0) as f32;
     let vp_h = viewport_height.unwrap_or(900.0) as f32;

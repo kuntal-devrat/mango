@@ -115,6 +115,7 @@ impl MangoApp {
     ) -> WindowId {
         log::info!("Creating new Mango window...");
         let window = create_window(event_loop);
+        window.set_ime_allowed(true);
         let id = window.id();
         let mut state = WindowState::new(window.clone());
         if let Some(u) = url {
@@ -549,6 +550,32 @@ impl ApplicationHandler for MangoApp {
                         win_state.browser.handle_key_event(&key_event);
                         win_state.window.request_redraw();
                     }
+                } else if key_event.state == KeyState::Released {
+                    if let Some(win_state) = self.windows.get_mut(&window_id) {
+                        win_state.browser.handle_key_release(&key_event);
+                        win_state.window.request_redraw();
+                    }
+                }
+            }
+
+            WindowEvent::Ime(winit::event::Ime::Commit(text)) => {
+                if let Some(win_state) = self.windows.get_mut(&window_id) {
+                    win_state.browser.handle_ime_commit(&text);
+                    win_state.window.request_redraw();
+                }
+            }
+
+            WindowEvent::Ime(winit::event::Ime::Preedit(text, cursor)) => {
+                if let Some(win_state) = self.windows.get_mut(&window_id) {
+                    win_state.browser.handle_ime_preedit(&text, cursor);
+                    win_state.window.request_redraw();
+                }
+            }
+
+            WindowEvent::Ime(winit::event::Ime::Disabled) => {
+                if let Some(win_state) = self.windows.get_mut(&window_id) {
+                    win_state.browser.handle_ime_preedit("", None);
+                    win_state.window.request_redraw();
                 }
             }
 

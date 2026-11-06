@@ -55,6 +55,7 @@
                     }
                 }
                 if (this._childNodes) this._childNodes = [];
+                if (this._cachedChildNodes) delete this._cachedChildNodes;
                 _setInnerHTML(this._nodeId, String(val));
                 if (typeof globalThis !== 'undefined' && globalThis._upgradeTree) {
                     globalThis._upgradeTree(this, null, null);
@@ -73,26 +74,36 @@
                 return _getNodeName(this._nodeId);
             },
             get nodeValue() {
-                if (this._nodeValue !== undefined) return this._nodeValue;
-                var v = _getNodeValue(this._nodeId);
-                if (v !== null && v !== undefined) return v;
-                if (this.nodeType === 1) return _getTextContent(this._nodeId);
+                var nt = this.nodeType;
+                if (nt === 2) return this.value !== undefined ? this.value : (this._value !== undefined ? this._value : null);
+                if (nt === 3 || nt === 4 || nt === 7 || nt === 8) {
+                    if (this._data !== undefined) return this._data;
+                    if (this._nodeValue !== undefined) return this._nodeValue;
+                    var v = _getNodeValue(this._nodeId);
+                    if (v !== null && v !== undefined) return v;
+                    return '';
+                }
                 return null;
             },
             set nodeValue(val) {
-                var oldVal = this.nodeValue;
-                var newVal = val === null ? '' : String(val);
-                this._nodeValue = newVal;
-                _setNodeValue(this._nodeId, newVal);
-                if (this.nodeType === 1) {
-                    _setTextContent(this._nodeId, newVal);
+                var nt = this.nodeType;
+                if (nt === 2) {
+                    this.value = (val === null || val === undefined) ? '' : String(val);
+                    return;
                 }
-                if (typeof globalThis !== 'undefined' && globalThis._reportDOMMutation) {
-                    globalThis._reportDOMMutation({
-                        type: 'characterData',
-                        target: this,
-                        oldValue: oldVal
-                    });
+                if (nt === 3 || nt === 4 || nt === 7 || nt === 8) {
+                    var oldVal = this.nodeValue;
+                    var newVal = val === null ? '' : String(val);
+                    this._nodeValue = newVal;
+                    this._data = newVal;
+                    _setNodeValue(this._nodeId, newVal);
+                    if (typeof globalThis !== 'undefined' && globalThis._reportDOMMutation) {
+                        globalThis._reportDOMMutation({
+                            type: 'characterData',
+                            target: this,
+                            oldValue: oldVal
+                        });
+                    }
                 }
             },
             ELEMENT_NODE: 1,

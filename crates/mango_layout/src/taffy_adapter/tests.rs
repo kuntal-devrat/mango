@@ -153,3 +153,88 @@ fn test_taffy_grid_fr_units_and_gap() {
     assert_eq!(grid.children[1].dimensions.content.size.width, 320.0);
     assert_eq!(grid.children[1].dimensions.content.origin.x, 180.0);
 }
+
+#[test]
+fn test_taffy_flex_column_auto_margins_vertical_centering() {
+    let html = r#"<div class="container"><div class="center-box">Search</div></div>"#;
+    let css = r#"
+        .container {
+            display: flex;
+            flex-direction: column;
+            width: 800px;
+            height: 600px;
+        }
+        .center-box {
+            width: 400px;
+            height: 100px;
+            margin-top: auto;
+            margin-bottom: auto;
+        }
+    "#;
+
+    let flex = layout_with_taffy(html, css, 800.0, 600.0);
+    let item = &flex.children[0];
+    assert_eq!(item.dimensions.content.size.height, 100.0);
+    // (600 - 100) / 2 = 250.0
+    assert_eq!(item.dimensions.margin.top, 250.0);
+    assert_eq!(item.dimensions.margin.bottom, 250.0);
+    assert_eq!(item.dimensions.content.origin.y, 250.0);
+}
+
+#[test]
+fn test_taffy_flex_min_height_100vh_and_footer_pinning() {
+    let html = r#"<div class="container"><div class="main">Main</div><div class="footer">Footer</div></div>"#;
+    let css = r#"
+        .container {
+            display: flex;
+            flex-direction: column;
+            width: 800px;
+            min-height: 100vh;
+        }
+        .main {
+            width: 800px;
+            height: 100px;
+        }
+        .footer {
+            width: 800px;
+            height: 50px;
+            margin-top: auto;
+        }
+    "#;
+
+    // cb_h is 0.0 (simulating body or html with height auto)
+    let flex = layout_with_taffy(html, css, 800.0, 0.0);
+    assert!(flex.dimensions.content.size.height >= 600.0);
+
+    let footer = &flex.children[1];
+    assert_eq!(footer.dimensions.content.size.height, 50.0);
+    // Footer with margin-top: auto pinned to bottom of 600px container: 600 - 50 = 550
+    assert!(footer.dimensions.content.origin.y >= 550.0);
+}
+
+#[test]
+fn test_taffy_flex_row_auto_margins_horizontal_centering() {
+    let html = r#"<div class="container"><div class="item">Centered</div></div>"#;
+    let css = r#"
+        .container {
+            display: flex;
+            flex-direction: row;
+            width: 500px;
+            height: 100px;
+        }
+        .item {
+            width: 200px;
+            height: 50px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+    "#;
+
+    let flex = layout_with_taffy(html, css, 500.0, 100.0);
+    let item = &flex.children[0];
+    assert_eq!(item.dimensions.content.size.width, 200.0);
+    // (500 - 200) / 2 = 150.0
+    assert_eq!(item.dimensions.margin.left, 150.0);
+    assert_eq!(item.dimensions.margin.right, 150.0);
+    assert_eq!(item.dimensions.content.origin.x, 150.0);
+}

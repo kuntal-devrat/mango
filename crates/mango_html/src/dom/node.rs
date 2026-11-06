@@ -48,6 +48,26 @@ pub struct Node {
     pub dirty_flags: NodeDirtyFlags,
 }
 
+impl Node {
+    /// Returns a reference to the element data if this node is an element.
+    pub fn as_element(&self) -> Option<&ElementData> {
+        if let NodeData::Element(ref el) = self.data {
+            Some(el)
+        } else {
+            None
+        }
+    }
+
+    /// Returns a mutable reference to the element data if this node is an element.
+    pub fn as_element_mut(&mut self) -> Option<&mut ElementData> {
+        if let NodeData::Element(ref mut el) = self.data {
+            Some(el)
+        } else {
+            None
+        }
+    }
+}
+
 /// The specific payload of a DOM node.
 #[derive(Debug, Clone, PartialEq)]
 pub enum NodeData {

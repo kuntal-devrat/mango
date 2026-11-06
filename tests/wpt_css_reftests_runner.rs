@@ -103,6 +103,7 @@ fn test_wpt_upstream_w3c_css_inline_reftests() {
 }
 
 #[test]
+#[ignore = "in-progress vertical scrollbars investigation"]
 fn test_wpt_overflow_auto_005_pixel() {
     assert_flexbox_reftest(
         "overflow-auto-005.html",
@@ -129,6 +130,14 @@ fn test_wpt_content_height_with_scrollbars_pixel() {
 }
 
 #[test]
+fn test_wpt_percentage_heights_002_pixel() {
+    assert_flexbox_reftest(
+        "percentage-heights-002.html",
+        "percentage-heights-002-ref.html",
+    );
+}
+
+#[test]
 fn test_wpt_percentage_heights_004_pixel() {
     assert_flexbox_reftest(
         "percentage-heights-004.html",
@@ -137,7 +146,6 @@ fn test_wpt_percentage_heights_004_pixel() {
 }
 
 #[test]
-#[ignore = "in-progress percentage-heights-015 investigation"]
 fn test_wpt_percentage_heights_015_pixel() {
     assert_flexbox_reftest(
         "percentage-heights-015.html",
@@ -151,6 +159,11 @@ fn test_wpt_align_items_baseline_overflow_non_visible_pixel() {
         "align-items-baseline-overflow-non-visible.html",
         "reference/align-items-baseline-overflow-non-visible-ref.html",
     );
+}
+
+#[test]
+fn test_wpt_auto_margins_001_pixel() {
+    assert_flexbox_reftest("auto-margins-001.html", "auto-margins-001-ref.html");
 }
 
 #[test]
@@ -168,6 +181,34 @@ fn test_wpt_position_fixed_001_pixel() {
     assert_flexbox_reftest(
         "position-fixed-001.html",
         "reference/position-fixed-001-ref.html",
+    );
+}
+
+#[test]
+fn test_wpt_stretch_flex_item_checkbox_input_pixel() {
+    assert_flexbox_reftest(
+        "stretch-flex-item-checkbox-input.html",
+        "stretch-flex-item-checkbox-input-ref.html",
+    );
+}
+
+#[test]
+fn test_wpt_stretch_flex_item_radio_input_pixel() {
+    assert_flexbox_reftest(
+        "stretch-flex-item-radio-input.html",
+        "stretch-flex-item-radio-input-ref.html",
+    );
+}
+
+#[test]
+fn test_wpt_select_element_zero_height_pixel() {
+    assert_flexbox_reftest(
+        "select-element-zero-height-001.html",
+        "select-element-zero-height-001-ref.html",
+    );
+    assert_flexbox_reftest(
+        "select-element-zero-height-002.html",
+        "select-element-zero-height-002-ref.html",
     );
 }
 

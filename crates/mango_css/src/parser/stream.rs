@@ -1,8 +1,27 @@
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+
 use crate::parser::types::Stylesheet;
 use crate::properties::Declaration;
 use crate::selectors::SelectorList;
 use crate::tokenizer::{CssTokenizer, Token};
 use crate::values::{Length, Value};
+
+static SELECTOR_CACHE: OnceLock<Mutex<SelectorCache>> = OnceLock::new();
+
+struct SelectorCache {
+    entries: HashMap<String, Option<SelectorList>>,
+    order: Vec<String>,
+}
+
+impl SelectorCache {
+    fn new() -> Self {
+        Self {
+            entries: HashMap::with_capacity(1024),
+            order: Vec::with_capacity(1024),
+        }
+    }
+}
 
 /// CSS parser that walks a stream of tokens.
 pub struct CssParser {
@@ -144,9 +163,27 @@ pub fn parse_declaration_list(css: &str) -> Vec<Declaration> {
     CssParser::parse_declaration_list(css)
 }
 
-/// Convenience function: parses a CSS selector list string.
+/// Convenience function: parses a CSS selector list string with LRU caching.
 pub fn parse_selectors(css: &str) -> Option<SelectorList> {
-    CssParser::parse_selector_list_str(css)
+    let cache_lock = SELECTOR_CACHE.get_or_init(|| Mutex::new(SelectorCache::new()));
+    if let Ok(guard) = cache_lock.lock() {
+        if let Some(cached) = guard.entries.get(css) {
+            return cached.clone();
+        }
+    }
+    let parsed = CssParser::parse_selector_list_str(css);
+    if let Ok(mut guard) = cache_lock.lock() {
+        if guard.entries.len() >= 2048 {
+            let drain_count = guard.order.len() / 2;
+            let keys: Vec<_> = guard.order.drain(..drain_count).collect();
+            for key in keys {
+                guard.entries.remove(&key);
+            }
+        }
+        guard.order.push(css.to_string());
+        guard.entries.insert(css.to_string(), parsed.clone());
+    }
+    parsed
 }
 
 /// Convenience function: parses a CSS math function string (`calc(...)`, `min(...)`, `max(...)`, `clamp(...)`) into a [`Length`].

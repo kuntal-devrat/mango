@@ -325,19 +325,20 @@ fn test_wpt_acid3_baseline() {
 
     print_scorecard(&result);
 
-    // Bucket 1 (DOM Traversal & Range) must be 100% conforming (16/16)
+    // All 6 Buckets and Special tests must be 100% conforming (100/100 total)
+    for b in 1..=6 {
+        assert_eq!(
+            result.bucket_passed[b], result.bucket_totals[b],
+            "Bucket {b} regressed below 100%"
+        );
+    }
     assert_eq!(
-        result.bucket_passed[1], result.bucket_totals[1],
-        "Bucket 1 (DOM Traversal & Range) regressed below 100%"
+        result.bucket_passed[0], result.bucket_totals[0],
+        "Special Tests regressed below 100%"
     );
-    // Bucket 3 (CSS Selectors & Style) must be 100% conforming (16/16)
     assert_eq!(
-        result.bucket_passed[3], result.bucket_totals[3],
-        "Bucket 3 (CSS Selectors & Style) regressed below 100%"
-    );
-    assert!(
-        result.score >= 92,
-        "Acid3 baseline score regressed below 92/100 (got {}/100)",
+        result.score, 100,
+        "Acid3 baseline score regressed below 100/100 (got {}/100)",
         result.score
     );
     assert!(

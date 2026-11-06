@@ -395,3 +395,70 @@ pub(crate) fn fill_gradient(
         }
     }
 }
+
+#[inline(always)]
+fn lerp_pixel_coverage(orig_px: u32, cur_px: u32, cov: f32) -> u32 {
+    let o_a = (orig_px >> 24) & 0xff;
+    let o_r = (orig_px >> 16) & 0xff;
+    let o_g = (orig_px >> 8) & 0xff;
+    let o_b = orig_px & 0xff;
+
+    let c_a = (cur_px >> 24) & 0xff;
+    let c_r = (cur_px >> 16) & 0xff;
+    let c_g = (cur_px >> 8) & 0xff;
+    let c_b = cur_px & 0xff;
+
+    let a = (c_a as f32 * cov + o_a as f32 * (1.0 - cov)).round() as u32;
+    let r = (c_r as f32 * cov + o_r as f32 * (1.0 - cov)).round() as u32;
+    let g = (c_g as f32 * cov + o_g as f32 * (1.0 - cov)).round() as u32;
+    let b = (c_b as f32 * cov + o_b as f32 * (1.0 - cov)).round() as u32;
+
+    (a << 24) | (r << 16) | (g << 8) | b
+}
+
+pub(crate) fn restore_outside_rounded_rect(
+    buffer: &mut [u32],
+    buf_width: u32,
+    buf_height: u32,
+    rect: &mango_core::Rect,
+    radii: [f32; 4],
+    clip: mango_core::Rect,
+    snapshot: &[u32],
+) {
+    let orig_min_x = (rect.x().max(0.0) as u32).min(buf_width);
+    let orig_max_x = ((rect.x() + rect.width()).max(0.0) as u32).min(buf_width);
+    let orig_min_y = (rect.y().max(0.0) as u32).min(buf_height);
+    let orig_max_y = ((rect.y() + rect.height()).max(0.0) as u32).min(buf_height);
+    let snap_w = orig_max_x.saturating_sub(orig_min_x);
+    if snap_w == 0 || snapshot.is_empty() {
+        return;
+    }
+
+    let r = intersect_rect(clip, *rect);
+    let min_x = (r.x().max(0.0) as u32).min(buf_width);
+    let max_x = ((r.x() + r.width()).max(0.0) as u32).min(buf_width);
+    let min_y = (r.y().max(0.0) as u32).min(buf_height);
+    let max_y = ((r.y() + r.height()).max(0.0) as u32).min(buf_height);
+
+    for y in min_y..max_y {
+        let fy = y as f32 + 0.5;
+        let row_offset = (y * buf_width) as usize;
+        for x in min_x..max_x {
+            if x >= orig_min_x && x < orig_max_x && y >= orig_min_y && y < orig_max_y {
+                let snap_idx = ((y - orig_min_y) * snap_w + (x - orig_min_x)) as usize;
+                if snap_idx < snapshot.len() {
+                    let fx = x as f32 + 0.5;
+                    let d = sdf_rounded_rect(fx, fy, rect, radii);
+                    let buf_idx = row_offset + x as usize;
+                    if d >= 0.5 {
+                        buffer[buf_idx] = snapshot[snap_idx];
+                    } else if d > -0.5 {
+                        let cov = (0.5 - d).clamp(0.0, 1.0);
+                        buffer[buf_idx] =
+                            lerp_pixel_coverage(snapshot[snap_idx], buffer[buf_idx], cov);
+                    }
+                }
+            }
+        }
+    }
+}

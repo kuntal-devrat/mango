@@ -35,8 +35,8 @@ pub mod webrender;
 
 pub use canvas::{
     Canvas2D, CanvasColorStop, CanvasPaintStyle, CanvasState, RadialGradient,
-    clear_canvas_registry, get_canvas_dimensions, get_canvas_pixels, remove_canvas,
-    remove_canvases_for_document, resize_canvas, with_canvas_mut,
+    clear_canvas_registry, copy_canvas_to_canvas, get_canvas_dimensions, get_canvas_pixels,
+    remove_canvas, remove_canvases_for_document, resize_canvas, with_canvas_mut,
 };
 pub use compositor::SoftwareCompositor;
 pub use damage::{DamageRegion, MAX_DAMAGE_RECTS};
@@ -58,8 +58,8 @@ pub use painter::{
 };
 pub use pdf::{PageSize, PdfOptions, print_to_pdf, render_to_pdf};
 pub use svg::{
-    SvgSymbol, clear_global_svg_symbols, get_global_svg_symbol, get_svg_intrinsic_dimensions,
-    prune_svg_caches, register_global_svg_symbol, render_svg,
+    SvgSymbol, clear_global_svg_symbols, get_global_svg_symbol, get_svg_aspect_ratio,
+    get_svg_intrinsic_dimensions, prune_svg_caches, register_global_svg_symbol, render_svg,
 };
 pub use tile::{DEFAULT_TILE_SIZE, Tile, TileCoord, TileGrid};
 pub use webrender::{WebRenderEngine, render_with_webrender};

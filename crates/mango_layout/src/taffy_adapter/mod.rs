@@ -1,5 +1,8 @@
 pub mod convert;
+pub mod intrinsic;
 pub mod layout;
+
+pub use intrinsic::LeafContext;
 
 #[cfg(test)]
 mod tests;

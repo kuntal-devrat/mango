@@ -5,6 +5,10 @@ use super::types::LayoutBox;
 impl LayoutBox {
     /// Returns true if this box acts as a scroll container (PRD 8.1 / CSS Overflow 3 §3).
     pub fn is_scroll_container(&self) -> bool {
+        // Root element and body propagate overflow to the viewport, not nested containers (CSS Overflow 3 §3.3)
+        if matches!(self.tag_name.as_deref(), Some("html") | Some("body")) {
+            return false;
+        }
         if let Some(s) = &self.style {
             matches!(
                 s.overflow_x,

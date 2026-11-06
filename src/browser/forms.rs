@@ -92,7 +92,10 @@ impl BrowserChrome {
                     let tag = el.tag_name.to_ascii_lowercase();
                     let is_disabled = el.get_attribute("disabled").is_some();
                     if !is_disabled
-                        && (tag == "input" || tag == "textarea" || tag == "select")
+                        && (tag == "input"
+                            || tag == "textarea"
+                            || tag == "select"
+                            || tag == "button")
                         && let Some(name) = el.get_attribute("name")
                         && !name.is_empty()
                     {
@@ -158,9 +161,10 @@ impl BrowserChrome {
                                 }
                             }
                         } else {
+                            let default_type = if tag == "button" { "submit" } else { "text" };
                             let input_type = el
                                 .get_attribute("type")
-                                .unwrap_or("text")
+                                .unwrap_or(default_type)
                                 .to_ascii_lowercase();
                             if input_type == "button"
                                 || input_type == "reset"
@@ -169,7 +173,16 @@ impl BrowserChrome {
                                 // Omitted
                             } else if input_type == "submit" {
                                 if nid == control_node_id {
-                                    let val = el.get_attribute("value").unwrap_or("").to_string();
+                                    let val = el
+                                        .get_attribute("value")
+                                        .map(|v| v.to_string())
+                                        .unwrap_or_else(|| {
+                                            if tag == "button" {
+                                                doc.text_content(nid).trim().to_string()
+                                            } else {
+                                                String::new()
+                                            }
+                                        });
                                     form_values.push((name.to_string(), val));
                                 }
                             } else if input_type == "checkbox" || input_type == "radio" {

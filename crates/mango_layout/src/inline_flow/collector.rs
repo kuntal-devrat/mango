@@ -48,19 +48,21 @@ fn collect_inline_atoms_internal(
     positioned_inline_style: Option<&Arc<ComputedStyle>>,
     active_bidi_override: Option<mango_css::values::UnicodeBidi>,
 ) {
-    let (next_owner_id, next_pos_style) = if box_node.box_type == BoxType::InlineNode
+    let next_owner_id = if box_node.box_type == BoxType::InlineNode {
+        box_node.node_id.or(owner_inline_id)
+    } else {
+        owner_inline_id
+    };
+    let next_pos_style = if box_node.box_type == BoxType::InlineNode
         && box_node
             .style
             .as_ref()
             .map(|s| s.position != mango_css::values::Position::Static)
             .unwrap_or(false)
     {
-        (
-            box_node.node_id.or(owner_inline_id),
-            box_node.style.as_ref(),
-        )
+        box_node.style.as_ref()
     } else {
-        (owner_inline_id, positioned_inline_style)
+        positioned_inline_style
     };
 
     let mut style = box_node

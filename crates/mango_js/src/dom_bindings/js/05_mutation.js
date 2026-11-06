@@ -11,6 +11,29 @@
         }
     }
 
+    function _scheduleFrameLoads(target) {
+        if (!target) return;
+        var tag = target.tagName ? target.tagName.toLowerCase() : '';
+        if (tag === 'iframe' || tag === 'object') {
+            setTimeout(function() {
+                if (typeof _getIframeContentDocument === 'function') {
+                    _getIframeContentDocument(target);
+                }
+                var evt = (typeof Event === 'function') ? new Event('load') : { type: 'load' };
+                if (typeof target.onload === 'function') {
+                    try { target.onload.call(target, evt); } catch(e) {}
+                }
+                if (typeof target.dispatchEvent === 'function') {
+                    try { target.dispatchEvent(evt); } catch(e) {}
+                }
+            }, 0);
+        }
+        var kids = target.children || target.childNodes || [];
+        for (var ki = 0; ki < kids.length; ki++) {
+            _scheduleFrameLoads(kids[ki]);
+        }
+    }
+
     function _isHostInclusiveAncestor(node, parent) {
         if (!node || !parent) return false;
         if (node === parent) return true;
@@ -191,6 +214,7 @@
                         globalThis._upgradeTree(fc, null, null);
                     }
                     _invokeConnectedCallback(fc);
+                    _scheduleFrameLoads(fc);
                 }
             }
         } else if (childObj && childObj.isConnected) {
@@ -198,17 +222,10 @@
                 globalThis._upgradeTree(childObj, null, null);
             }
             _invokeConnectedCallback(childObj);
-            if (childObj.tagName && childObj.tagName.toLowerCase() === 'iframe') {
-                setTimeout(function() {
-                    var evt = (typeof Event === 'function') ? new Event('load') : { type: 'load' };
-                    if (typeof childObj.onload === 'function') {
-                        try { childObj.onload.call(childObj, evt); } catch(e) {}
-                    }
-                    if (typeof childObj.dispatchEvent === 'function') {
-                        try { childObj.dispatchEvent(evt); } catch(e) {}
-                    }
-                }, 0);
-            }
+            _scheduleFrameLoads(childObj);
+        }
+        if (node && node._sheet) {
+            node._sheet._hasManualRules = false;
         }
         if (typeof globalThis !== 'undefined' && globalThis._reportDOMMutation) {
             globalThis._reportDOMMutation({
@@ -274,6 +291,9 @@
             globalThis._notifyRangeNodeRemoved(node, child, removeIdx);
         }
         if (childObj) _invokeDisconnectedCallback(childObj);
+        if (node && node._sheet) {
+            node._sheet._hasManualRules = false;
+        }
         if (typeof globalThis !== 'undefined' && globalThis._reportDOMMutation) {
             globalThis._reportDOMMutation({
                 type: 'childList',
@@ -349,6 +369,9 @@
         } else if (newObj && newObj.isConnected) {
             if (typeof globalThis !== 'undefined' && globalThis._upgradeTree) globalThis._upgradeTree(newObj, null, null);
             _invokeConnectedCallback(newObj);
+        }
+        if (node && node._sheet) {
+            node._sheet._hasManualRules = false;
         }
         if (typeof globalThis !== 'undefined' && globalThis._reportDOMMutation) {
             globalThis._reportDOMMutation({
@@ -487,6 +510,9 @@
             if (typeof globalThis !== 'undefined' && globalThis._upgradeTree) globalThis._upgradeTree(newObj, null, null);
             _invokeConnectedCallback(newObj);
         }
+        if (node && node._sheet) {
+            node._sheet._hasManualRules = false;
+        }
         if (typeof globalThis !== 'undefined' && globalThis._reportDOMMutation) {
             globalThis._reportDOMMutation({
                 type: 'childList',
@@ -557,7 +583,10 @@
             node.data = strVal; node._data = strVal; node._nodeValue = strVal;
             var setNodeValFn = (typeof _setNodeValue === 'function') ? _setNodeValue : (typeof globalThis !== 'undefined' ? globalThis._setNodeValue : null);
             if (node._nodeId !== undefined && typeof setNodeValFn === 'function') setNodeValFn(node._nodeId, strVal);
-            if (typeof globalThis !== 'undefined' && globalThis._reportDOMMutation) {
+            if (node && node._sheet) {
+            node._sheet._hasManualRules = false;
+        }
+        if (typeof globalThis !== 'undefined' && globalThis._reportDOMMutation) {
                 globalThis._reportDOMMutation({ type: 'characterData', target: node, oldValue: oldVal });
             }
             return;
@@ -587,7 +616,10 @@
                 if (!node._childNodes) node._childNodes = [];
                 node._childNodes.push(textNode);
             }
-            if (typeof globalThis !== 'undefined' && globalThis._reportDOMMutation) {
+            if (node && node._sheet) {
+            node._sheet._hasManualRules = false;
+        }
+        if (typeof globalThis !== 'undefined' && globalThis._reportDOMMutation) {
                 globalThis._reportDOMMutation({
                     type: 'childList',
                     target: node,

@@ -251,6 +251,19 @@
 
     function _upgradeTree(node, targetName, targetCtor, visited) {
         if (!node) return;
+        if (targetName && typeof document !== 'undefined' && document.querySelectorAll && (node === document || node === document.documentElement || node === document.body)) {
+            var sel = targetName + ', [is="' + targetName + '"]';
+            var candidates = document.querySelectorAll(sel);
+            var ctor = targetCtor || (globalThis.customElements && globalThis.customElements.get(targetName));
+            if (ctor && candidates) {
+                for (var i = 0; i < candidates.length; i++) {
+                    if (globalThis._upgradeCustomElement) {
+                        globalThis._upgradeCustomElement(candidates[i], ctor);
+                    }
+                }
+            }
+            return;
+        }
         if (!visited) visited = new Set();
         if (visited.has(node)) return;
         visited.add(node);
@@ -379,6 +392,16 @@
                         return origAtt.apply(this, arguments);
                     } catch(e) {
                         try { console.warn('[CustomElement attached exception guarded]:', e && e.message); } catch(_) {}
+                    }
+                };
+            }
+            if (typeof ctor.prototype.connectedCallback === 'function') {
+                var origConn = ctor.prototype.connectedCallback;
+                ctor.prototype.connectedCallback = function() {
+                    try {
+                        return origConn.apply(this, arguments);
+                    } catch(e) {
+                        try { console.warn('[CustomElement connectedCallback exception guarded on ' + (this.tagName || '') + ']:', e && e.message); } catch(_) {}
                     }
                 };
             }

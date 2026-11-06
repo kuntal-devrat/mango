@@ -103,6 +103,8 @@ pub struct JsRuntime {
     pub(crate) layout_bounds: dom_bindings::LayoutBounds,
     /// Layout margins published by the browser for getComputedStyle.
     pub(crate) layout_margins: dom_bindings::LayoutMargins,
+    /// Cached parsed stylesheets for getComputedStyle.
+    pub(crate) cached_stylesheets: dom_bindings::CachedStylesheets,
     /// On-demand layout provider callback invoked when measurement APIs query dirty DOM.
     pub(crate) layout_callback: dom_bindings::LayoutCallback,
     /// Shared cookie jar backing `document.cookie` — owned by the browser so
@@ -273,6 +275,7 @@ impl JsRuntime {
         let pending_scroll: web_apis::SharedPendingScroll = Rc::new(RefCell::new(None));
         let layout_bounds = dom_bindings::LayoutBounds::new();
         let layout_margins = dom_bindings::LayoutMargins::new();
+        let cached_stylesheets = dom_bindings::CachedStylesheets::new();
         let layout_callback: dom_bindings::LayoutCallback = Rc::new(RefCell::new(None));
         let worker_manager = crate::worker::WorkerManager::new();
         let ws_manager = mango_net::WebSocketManager::new();
@@ -283,19 +286,14 @@ impl JsRuntime {
 
         static V8_INIT: std::sync::Once = std::sync::Once::new();
         V8_INIT.call_once(|| {
-            deno_core::v8::V8::set_flags_from_string(
-                "--max-old-space-size=256 --optimize-for-size --expose-gc",
-            );
+            deno_core::v8::V8::set_flags_from_string("--max-old-space-size=1024 --expose-gc");
         });
 
         let mut runtime = deno_core::JsRuntime::new(deno_core::RuntimeOptions {
             extensions: vec![crate::ops::init_extension()],
-            // A page isolate is a bounded execution resource. Without an
-            // isolate heap ceiling, a broken/unsupported module graph can
-            // grow V8 past the browser process's memory budget before Mango
-            // gets a chance to reclaim anything.
+            // A page isolate is a bounded execution resource (1 GB ceiling).
             create_params: Some(
-                deno_core::v8::Isolate::create_params().heap_limits(0, 256 * 1024 * 1024),
+                deno_core::v8::Isolate::create_params().heap_limits(0, 1024 * 1024 * 1024),
             ),
             module_loader: Some(Rc::new(
                 crate::runtime::module_loader::MangoModuleLoader::with_resource_cache(
@@ -322,6 +320,7 @@ impl JsRuntime {
             state.put(crate::ops::web::OpSessionStorage(session_storage.clone()));
             state.put(layout_bounds.clone());
             state.put(layout_margins.clone());
+            state.put(cached_stylesheets.clone());
             state.put(layout_callback.clone());
             state.put(cookie_jar.clone());
             state.put(worker_manager.clone());
@@ -373,6 +372,7 @@ impl JsRuntime {
             session_storage,
             layout_bounds,
             layout_margins,
+            cached_stylesheets,
             layout_callback,
             cookie_jar,
             hovered_nodes: std::collections::HashSet::new(),
@@ -401,6 +401,11 @@ impl JsRuntime {
                 }
             }
         }
+    }
+
+    /// Invalidate any cached parsed stylesheets.
+    pub fn invalidate_cached_stylesheets(&self) {
+        self.cached_stylesheets.borrow_mut().take();
     }
 
     /// Returns the Web Worker manager handle.

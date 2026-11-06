@@ -20,7 +20,7 @@ pub use ast::{
     SvgNode, SvgRenderState, SvgStop, SvgSymbol, SvgTextAnchor, SvgTspan,
 };
 pub use cache::{
-    clear_global_svg_symbols, get_global_svg_symbol, get_svg_intrinsic_dimensions,
-    prune_svg_caches, register_global_svg_symbol, render_svg,
+    clear_global_svg_symbols, get_global_svg_symbol, get_svg_aspect_ratio,
+    get_svg_intrinsic_dimensions, prune_svg_caches, register_global_svg_symbol, render_svg,
 };
 pub use path::parse_svg_path;

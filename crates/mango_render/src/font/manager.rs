@@ -194,9 +194,64 @@ impl FontManager {
         family: FontFamily,
         letter_spacing: f32,
     ) -> super::shaping::ShapedRun {
-        let data = self.select_font_data(family, weight);
+        let data = if let Some(ch) = text.chars().find(|&c| super::shaping::is_complex_char(c)) {
+            self.select_font_data_for_char(family, weight, ch)
+        } else {
+            self.select_font_data(family, weight)
+        };
         super::shaping::shape_text_with_font_data(&data, 0, text, font_size, letter_spacing)
             .unwrap_or_default()
+    }
+
+    /// Returns the raw font byte data corresponding to the font face selected for `ch`.
+    pub fn select_font_data_for_char(
+        &self,
+        family: FontFamily,
+        weight: FontWeight,
+        ch: char,
+    ) -> Arc<[u8]> {
+        let primary = self.select_font(family, weight);
+        if ch.is_ascii_whitespace() || primary.lookup_glyph_index(ch) != 0 {
+            return self.select_font_data(family, weight);
+        }
+
+        if let FontFamily::Custom(id) = family {
+            if let Ok(web_fonts) = self.web_fonts.read()
+                && let Some(entry) = web_fonts.get(&id)
+            {
+                let faces = match weight {
+                    FontWeight::Bold => entry
+                        .bold
+                        .iter()
+                        .zip(entry.bold_data.iter())
+                        .chain(entry.regular.iter().zip(entry.regular_data.iter())),
+                    FontWeight::Regular => entry
+                        .regular
+                        .iter()
+                        .zip(entry.regular_data.iter())
+                        .chain(entry.bold.iter().zip(entry.bold_data.iter())),
+                };
+                for (face, data) in faces {
+                    if face.lookup_glyph_index(ch) != 0 {
+                        return Arc::clone(data);
+                    }
+                }
+            }
+        }
+
+        let _ = self.select_font_for_char(family, weight, ch);
+
+        if let Ok(loaded_fonts) = self.fallback_fonts.read()
+            && let Ok(loaded_data) = self.fallback_data.read()
+        {
+            for (fb, data) in loaded_fonts.iter().zip(loaded_data.iter()) {
+                if fb.lookup_glyph_index(ch) != 0 {
+                    return Arc::clone(data);
+                }
+            }
+        }
+
+        self.select_font_data(family, weight)
     }
 
     fn try_load_fallback(&self, name: &str) -> Option<Arc<Font>> {
@@ -257,6 +312,15 @@ impl FontManager {
 
         let script_candidates = script_candidates_for_char(ch);
         if let Ok(mut pending) = self.unloaded_fallbacks.write() {
+            // Double-check loaded fallbacks under write lock in case another thread loaded them
+            if let Ok(loaded) = self.fallback_fonts.read() {
+                for fb in loaded.iter() {
+                    if fb.lookup_glyph_index(ch) != 0 {
+                        return Arc::clone(fb);
+                    }
+                }
+            }
+
             let mut found_font = None;
 
             if !script_candidates.is_empty() {
@@ -295,6 +359,15 @@ impl FontManager {
 
             if let Some(fb) = found_font {
                 return fb;
+            }
+        }
+
+        // Final re-check before permanently caching as missing
+        if let Ok(loaded) = self.fallback_fonts.read() {
+            for fb in loaded.iter() {
+                if fb.lookup_glyph_index(ch) != 0 {
+                    return Arc::clone(fb);
+                }
             }
         }
 

@@ -33,6 +33,8 @@ pub struct Document {
     pub shadow_hosts: HashMap<NodeId, NodeId>,
     /// Monotonically increasing mutation version counter.
     pub version: u64,
+    /// Monotonically increasing counter for style-affecting DOM mutations (<style> and <link> elements).
+    pub style_version: u64,
     /// Number of live JavaScript wrappers per node. A node that has been
     /// detached but still has a wrapper must remain usable (DOM semantics
     /// allow re-appending removed nodes), so it is only reclaimed after the
@@ -71,6 +73,7 @@ impl Document {
             target_id: None,
             shadow_hosts: HashMap::new(),
             version: 0,
+            style_version: 0,
             js_wrapper_counts: HashMap::new(),
             detached_candidates: HashSet::new(),
         }
@@ -101,6 +104,35 @@ impl Document {
         self.target_id = target;
     }
 
+    /// Returns whether the node is a `<style>` or stylesheet `<link>` element or text inside `<style>`.
+    pub fn is_style_node(&self, node_id: NodeId) -> bool {
+        if let Some(node) = self.arena.get(node_id) {
+            match &node.data {
+                NodeData::Element(el) => {
+                    el.tag_name.eq_ignore_ascii_case("style")
+                        || (el.tag_name.eq_ignore_ascii_case("link")
+                            && el
+                                .get_attribute("rel")
+                                .map(|r| r.contains("stylesheet"))
+                                .unwrap_or(false))
+                }
+                NodeData::Text(_) => {
+                    if let Some(pid) = node.parent {
+                        if let Some(pnode) = self.arena.get(pid) {
+                            if let NodeData::Element(pe) = &pnode.data {
+                                return pe.tag_name.eq_ignore_ascii_case("style");
+                            }
+                        }
+                    }
+                    false
+                }
+                _ => false,
+            }
+        } else {
+            false
+        }
+    }
+
     /// Marks a DOM node as dirty for incremental style recalculation.
     pub fn mark_dirty(&mut self, node_id: NodeId) {
         self.mark_node_dirty(
@@ -110,6 +142,9 @@ impl Document {
                 | NodeDirtyFlags::PAINT_DIRTY,
         );
         self.version = self.version.wrapping_add(1);
+        if self.is_style_node(node_id) {
+            self.style_version = self.style_version.wrapping_add(1);
+        }
     }
 
     /// Marks a node with specific fine-grained dirty flags and propagates `CHILD_DIRTY` up the parent chain.

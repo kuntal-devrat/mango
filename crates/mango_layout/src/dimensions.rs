@@ -18,6 +18,8 @@ pub struct Dimensions {
     pub writing_mode: WritingMode,
     /// Direction of this box / containing block.
     pub direction: Direction,
+    /// Whether the containing block's height is indefinite for resolving percentage heights.
+    pub height_indefinite: bool,
 }
 
 impl Default for Dimensions {
@@ -34,6 +36,7 @@ impl Dimensions {
         margin: EdgeSizes::ZERO,
         writing_mode: WritingMode::HorizontalTb,
         direction: Direction::Ltr,
+        height_indefinite: false,
     };
 
     #[inline]
@@ -45,6 +48,7 @@ impl Dimensions {
             margin: EdgeSizes::ZERO,
             writing_mode: WritingMode::HorizontalTb,
             direction: Direction::Ltr,
+            height_indefinite: false,
         }
     }
 
@@ -63,6 +67,7 @@ impl Dimensions {
             margin,
             writing_mode: WritingMode::HorizontalTb,
             direction: Direction::Ltr,
+            height_indefinite: false,
         }
     }
 
@@ -186,6 +191,7 @@ impl Dimensions {
             margin,
             writing_mode: WritingMode::HorizontalTb,
             direction: Direction::Ltr,
+            height_indefinite: false,
         }
     }
 

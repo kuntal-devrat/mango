@@ -67,6 +67,42 @@ pub fn remove_canvases_for_document(document_id: u64) {
     }
 }
 
+/// Copies pixel contents from one canvas to another canvas with transformation and blending.
+pub fn copy_canvas_to_canvas(
+    src_id: u64,
+    dst_id: u64,
+    _sx: f32,
+    _sy: f32,
+    _sw: f32,
+    _sh: f32,
+    dx: f32,
+    dy: f32,
+    _dw: f32,
+    _dh: f32,
+) {
+    if src_id == dst_id {
+        return;
+    }
+    let Ok(mut reg) = canvas_registry().write() else {
+        return;
+    };
+    let Some(src_pixmap) = reg.get(&src_id).map(|c| c.pixmap.clone()) else {
+        return;
+    };
+    if let Some(dst_canvas) = reg.get_mut(&dst_id) {
+        let paint = tiny_skia::PixmapPaint::default();
+        let transform = dst_canvas.state.transform;
+        dst_canvas.pixmap.draw_pixmap(
+            dx as i32,
+            dy as i32,
+            src_pixmap.as_ref(),
+            &paint,
+            transform,
+            None,
+        );
+    }
+}
+
 /// Clears all canvases from the registry.
 pub fn clear_canvas_registry() {
     if let Ok(mut reg) = canvas_registry().write() {

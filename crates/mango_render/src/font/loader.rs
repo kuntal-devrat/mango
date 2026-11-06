@@ -13,6 +13,14 @@ pub(crate) const FONT_AHEM: &[u8] = include_bytes!("../fonts/Ahem.ttf");
 
 /// Default list of platform fallback font filenames to probe.
 pub(crate) const DEFAULT_FALLBACK_FONTS: &[&str] = &[
+    "NotoSansDevanagari-Regular.ttf",
+    "NotoSansBengali-Regular.ttf",
+    "NotoSansTelugu-Regular.ttf",
+    "NotoSansTamil-Regular.ttf",
+    "NotoSansGujarati-Regular.ttf",
+    "NotoSansKannada-Regular.ttf",
+    "NotoSansMalayalam-Regular.ttf",
+    "NotoSansGurmukhi-Regular.ttf",
     "Nirmala.ttc",
     "nirmala.ttf",
     "mangal.ttf",
@@ -28,6 +36,7 @@ pub(crate) const DEFAULT_FALLBACK_FONTS: &[&str] = &[
     "mingliu.ttc",
     "deng.ttf",
     "NotoSansCJK-Regular.ttc",
+    "DroidSansFallbackFull.ttf",
     "NotoSansSC-Regular.otf",
     "NotoSansTC-Regular.otf",
     "wqy-zenhei.ttc",
@@ -111,6 +120,8 @@ pub(crate) fn load_system_font_bytes(filename: &str) -> Option<Vec<u8>> {
             format!("/usr/share/fonts/truetype/liberation/{}", liberation_name),
             format!("/usr/share/fonts/truetype/{}", filename),
             format!("/usr/share/fonts/opentype/{}", filename),
+            format!("/usr/share/fonts/opentype/noto/{}", filename),
+            format!("/usr/share/fonts/truetype/droid/{}", filename),
             format!("/usr/share/fonts/TTF/{}", filename),
             format!("/usr/share/fonts/noto/{}", filename),
             format!("/usr/share/fonts/noto-cjk/{}", filename),
@@ -219,14 +230,75 @@ pub(crate) fn generic_family_fallback(lower: &str) -> super::types::FontFamily {
 pub(crate) fn script_candidates_for_char(ch: char) -> &'static [&'static str] {
     let u = ch as u32;
     match u {
-        // Devanagari & Indic scripts (Hindi, Bengali, Telugu, Tamil, Gujarati, Kannada, Malayalam, Gurmukhi, Oriya, Sinhala)
-        0x0900..=0x0DFF => &[
+        // Devanagari (Hindi, Marathi, Sanskrit, Nepali, Konkani, Bodo, Maithili, Dogri)
+        0x0900..=0x097F => &[
+            "NotoSansDevanagari-Regular.ttf",
             "Nirmala.ttc",
             "nirmala.ttf",
             "mangal.ttf",
+        ],
+        // Bengali & Assamese
+        0x0980..=0x09FF => &[
+            "NotoSansBengali-Regular.ttf",
+            "Nirmala.ttc",
+            "nirmala.ttf",
             "vrinda.ttf",
-            "gautami.ttf",
+        ],
+        // Gurmukhi (Punjabi)
+        0x0A00..=0x0A7F => &[
+            "NotoSansGurmukhi-Regular.ttf",
+            "Nirmala.ttc",
+            "nirmala.ttf",
+            "raavi.ttf",
+        ],
+        // Gujarati
+        0x0A80..=0x0AFF => &[
+            "NotoSansGujarati-Regular.ttf",
+            "Nirmala.ttc",
+            "nirmala.ttf",
+            "shruti.ttf",
+        ],
+        // Oriya
+        0x0B00..=0x0B7F => &[
+            "NotoSansOriya-Regular.ttf",
+            "Nirmala.ttc",
+            "nirmala.ttf",
+            "kalinga.ttf",
+        ],
+        // Tamil
+        0x0B80..=0x0BFF => &[
+            "NotoSansTamil-Regular.ttf",
+            "Nirmala.ttc",
+            "nirmala.ttf",
             "latha.ttf",
+        ],
+        // Telugu
+        0x0C00..=0x0C7F => &[
+            "NotoSansTelugu-Regular.ttf",
+            "Nirmala.ttc",
+            "nirmala.ttf",
+            "gautami.ttf",
+        ],
+        // Kannada
+        0x0C80..=0x0CFF => &[
+            "NotoSansKannada-Regular.ttf",
+            "Nirmala.ttc",
+            "nirmala.ttf",
+            "tunga.ttf",
+        ],
+        // Malayalam
+        0x0D00..=0x0D7F => &[
+            "NotoSansMalayalam-Regular.ttf",
+            "Nirmala.ttc",
+            "nirmala.ttf",
+            "kartika.ttf",
+        ],
+        // Sinhala
+        0x0D80..=0x0DFF => &[
+            "NotoSansSinhala-Regular.ttf",
+            "Nirmala.ttc",
+            "nirmala.ttf",
+            "iskpota.ttf",
         ],
         // Arabic, Persian, Urdu
         0x0600..=0x06FF | 0x0750..=0x077F | 0x08A0..=0x08FF | 0xFB50..=0xFDFF | 0xFE70..=0xFEFF => {
@@ -260,6 +332,7 @@ pub(crate) fn script_candidates_for_char(ch: char) -> &'static [&'static str] {
             "NotoSansJP-Regular.otf",
             "msyh.ttc",
             "NotoSansCJK-Regular.ttc",
+            "DroidSansFallbackFull.ttf",
         ],
         // CJK Korean (Hangul Syllables & Jamo)
         0xAC00..=0xD7AF | 0x1100..=0x11FF | 0x3130..=0x318F => &[
@@ -269,6 +342,7 @@ pub(crate) fn script_candidates_for_char(ch: char) -> &'static [&'static str] {
             "NotoSansKR-Regular.otf",
             "msyh.ttc",
             "NotoSansCJK-Regular.ttc",
+            "DroidSansFallbackFull.ttf",
         ],
         // CJK Unified Ideographs (Chinese / Hanzi / Kanji / Hanja)
         0x4E00..=0x9FFF | 0x3400..=0x4DBF | 0x20000..=0x2A6DF => &[
@@ -281,6 +355,7 @@ pub(crate) fn script_candidates_for_char(ch: char) -> &'static [&'static str] {
             "mingliu.ttc",
             "deng.ttf",
             "NotoSansCJK-Regular.ttc",
+            "DroidSansFallbackFull.ttf",
             "NotoSansSC-Regular.otf",
             "NotoSansTC-Regular.otf",
             "wqy-zenhei.ttc",

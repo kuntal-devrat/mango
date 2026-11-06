@@ -77,7 +77,7 @@ impl Drop for ExecutionWatchdog {
 }
 
 impl JsRuntime {
-    const MAX_HEAP_BYTES: usize = 256 * 1024 * 1024;
+    const MAX_HEAP_BYTES: usize = 1024 * 1024 * 1024;
 
     fn enforce_heap_budget(&mut self) -> Result<(), String> {
         if self.execution_disabled {
@@ -233,6 +233,47 @@ impl JsRuntime {
         )
     }
 
+    /// Executes a lightweight internal JavaScript source string without spawning an OS watchdog thread.
+    /// Reserved strictly for trusted internal runtime setup (e.g., currentScript state updates).
+    pub fn execute_internal_script(&mut self, source: &str) -> Result<(), String> {
+        let _guard = self.enter_isolate();
+        let prev_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.runtime
+                .execute_script("<internal>", source.to_string())
+        }));
+        std::panic::set_hook(prev_hook);
+        match res {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(e)) => Err(e.to_string()),
+            Err(_) => Err("Internal script panic".to_string()),
+        }
+    }
+
+    /// Sets or clears the active currentScript node in JavaScript window scope.
+    pub fn set_current_script(&mut self, node_id: Option<mango_html::NodeId>) {
+        if let Some(nid) = node_id {
+            let js_id = mango_html::node_id_to_js(nid);
+            let _ = self.execute_internal_script(&format!(
+                "if (typeof globalThis.__setCurrentScript === 'function') globalThis.__setCurrentScript({js_id});"
+            ));
+        } else {
+            let _ = self.execute_internal_script(
+                "if (typeof globalThis.__setCurrentScript === 'function') globalThis.__setCurrentScript(null);"
+            );
+        }
+    }
+
+    /// Sets the active currentScript by external URL in JavaScript window scope.
+    pub fn set_current_script_url(&mut self, url: &str) {
+        if let Ok(json_name) = serde_json::to_string(url) {
+            let _ = self.execute_internal_script(&format!(
+                "if (typeof globalThis.__setCurrentScriptUrl === 'function') globalThis.__setCurrentScriptUrl({json_name});"
+            ));
+        }
+    }
+
     /// Computes a scaled execution timeout based on script size.
     /// Small scripts (< 20 KB) retain their caller-provided base timeout.
     /// Large scripts receive an additional 2 ms per KB of source, with an upper
@@ -268,12 +309,6 @@ impl JsRuntime {
         std::panic::set_hook(Box::new(|_| {}));
         let name_owned = name.to_string();
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            if !name_owned.starts_with('<') {
-                let _ = self.runtime.execute_script(
-                    "<named_sync>",
-                    "if (typeof _syncWindowNamedProperties === 'function') _syncWindowNamedProperties();",
-                );
-            }
             let result = self.runtime.execute_script(name_owned, source.to_string());
             if result.is_ok() {
                 deno_core::v8::scope!(scope, self.runtime.v8_isolate());
@@ -436,7 +471,7 @@ impl JsRuntime {
     /// Returns `true` if the DOM was mutated.
     pub fn tick(&mut self) -> bool {
         const MAX_CALLBACKS_PER_TICK: usize = 5;
-        const CALLBACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+        const CALLBACK_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(2500);
         let scripts = self
             .event_loop
             .borrow_mut()

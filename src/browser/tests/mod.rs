@@ -23,7 +23,9 @@ pub(super) fn hit_control(browser: &BrowserChrome, x: f32, y: f32) -> mango_layo
 mod actor_lifecycle;
 mod anchor_and_scroll;
 mod core;
+mod duckduckgo_and_modern_crates;
 mod forms_radio;
+mod google_and_w3c_input;
 mod incremental_actor;
 mod interactions;
 mod pickers_lifecycle;

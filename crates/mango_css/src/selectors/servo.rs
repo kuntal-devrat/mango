@@ -239,6 +239,10 @@ impl<'a> selectors::Element for MangoElement<'a> {
             return false;
         };
         elem.tag_name.eq_ignore_ascii_case(local_name)
+            || elem
+                .tag_name
+                .split_once(':')
+                .is_some_and(|(_, local)| local.eq_ignore_ascii_case(local_name))
     }
 
     fn has_namespace(&self, ns: &<Self::Impl as SelectorImpl>::BorrowedNamespaceUrl) -> bool {
@@ -257,7 +261,7 @@ impl<'a> selectors::Element for MangoElement<'a> {
 
     fn attr_matches(
         &self,
-        _ns: &NamespaceConstraint<&<Self::Impl as SelectorImpl>::NamespaceUrl>,
+        ns: &NamespaceConstraint<&<Self::Impl as SelectorImpl>::NamespaceUrl>,
         local_name: &<Self::Impl as SelectorImpl>::LocalName,
         operation: &AttrSelectorOperation<&<Self::Impl as SelectorImpl>::AttrValue>,
     ) -> bool {
@@ -269,6 +273,15 @@ impl<'a> selectors::Element for MangoElement<'a> {
         };
         if let Some(val) = elem.get_attribute(local_name.as_ref()) {
             operation.eval_str(val)
+        } else if matches!(ns, NamespaceConstraint::Any) {
+            for (k, v) in &elem.attributes {
+                if k.split_once(':')
+                    .is_some_and(|(_, l)| l.eq_ignore_ascii_case(local_name.as_ref()))
+                {
+                    return operation.eval_str(v);
+                }
+            }
+            false
         } else {
             false
         }

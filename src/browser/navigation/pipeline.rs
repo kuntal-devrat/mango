@@ -154,6 +154,27 @@ fn prepare_document_pipeline_internal(
 
     let mut raw_scripts = Vec::new();
     collect_scripts(&doc, doc.root(), &mut raw_scripts);
+
+    // Discover and prefetch <link rel="modulepreload"> dependencies in background
+    let mut modulepreload_links = Vec::new();
+    collect_modulepreload_links(&doc, doc.root(), &final_url, &mut modulepreload_links);
+    for item in &preload_scan.preloads {
+        if item.kind == mango_net::PreloadKind::Script && !modulepreload_links.contains(&item.url) {
+            modulepreload_links.push(item.url.clone());
+        }
+    }
+    if !is_progressive && !should_cancel() {
+        for url in modulepreload_links {
+            if loader.cache().get(&url).is_none() {
+                let loader = loader.clone();
+                let base = final_url.clone();
+                crate::browser::types::spawn_fetch_task(move || {
+                    let _ = loader.fetch_script_with_nonce(&base, &url, None);
+                });
+            }
+        }
+    }
+
     const SCRIPT_FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
     let mut to_fetch: Vec<(usize, String, Option<String>)> = Vec::new();
     if !is_progressive {
@@ -211,43 +232,108 @@ fn prepare_document_pipeline_internal(
 
     // Prefetch transitive ES module imports concurrently across the worker pool
     if !should_cancel() {
-        let mut transitive_imports = Vec::new();
-        for (idx, res) in fetched_scripts.iter() {
-            if let Ok(code) = res
-                && let Some(s) = raw_scripts.get(*idx)
-                && s.is_module()
+        let mut visited_urls = std::collections::HashSet::new();
+        let mut current_batch: Vec<(Url, String)> = Vec::new();
+
+        let mut import_maps = Vec::new();
+        crate::renderer_actor::incremental::collect_import_maps(&doc, doc.root(), &mut import_maps);
+        for map_json in &import_maps {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(map_json)
+                && let Some(imports) = val.get("imports").and_then(|v| v.as_object())
             {
-                let module_base = s
-                    .src()
-                    .and_then(|src| final_url.resolve(src).ok())
-                    .unwrap_or_else(|| final_url.clone());
-                for import_path in scan_es_module_imports(code) {
-                    if let Ok(resolved) = module_base.resolve(&import_path)
-                        && loader.cache().get(&resolved.as_str()).is_none()
+                for (_k, target) in imports {
+                    if let Some(target_url_str) = target.as_str()
+                        && let Ok(resolved) = final_url.resolve(target_url_str)
                     {
-                        transitive_imports.push((module_base.clone(), import_path));
+                        if visited_urls.insert(resolved.as_str().to_string())
+                            && loader.cache().get(&resolved.as_str()).is_none()
+                        {
+                            current_batch.push((final_url.clone(), target_url_str.to_string()));
+                        }
                     }
                 }
             }
         }
 
-        if !transitive_imports.is_empty() && !should_cancel() {
+        for (idx, res) in fetched_scripts.iter() {
+            if let Ok(code) = res
+                && let Some(s) = raw_scripts.get(*idx)
+            {
+                let is_es = s.is_module() || code.contains("import") || code.contains("export");
+                if is_es {
+                    let imports = scan_es_module_imports(code);
+                    let module_base = s
+                        .src()
+                        .and_then(|src| final_url.resolve(src).ok())
+                        .unwrap_or_else(|| final_url.clone());
+                    for import_path in imports {
+                        if let Ok(resolved) = module_base.resolve(&import_path) {
+                            if visited_urls.insert(resolved.as_str().to_string())
+                                && loader.cache().get(&resolved.as_str()).is_none()
+                            {
+                                current_batch.push((module_base.clone(), import_path));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for s in &raw_scripts {
+            if let ScriptToRun::Inline {
+                code, is_module, ..
+            } = s
+            {
+                if *is_module || code.contains("import") || code.contains("export") {
+                    for import_path in scan_es_module_imports(code) {
+                        if let Ok(resolved) = final_url.resolve(&import_path) {
+                            if visited_urls.insert(resolved.as_str().to_string())
+                                && loader.cache().get(&resolved.as_str()).is_none()
+                            {
+                                current_batch.push((final_url.clone(), import_path));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        for _depth in 0..4 {
+            if current_batch.is_empty() || should_cancel() {
+                break;
+            }
             let (tx, rx) = std::sync::mpsc::channel();
-            let total = transitive_imports.len();
-            for (module_base, import_path) in transitive_imports {
+            let total = current_batch.len();
+            for (module_base, import_path) in current_batch.drain(..) {
                 let tx = tx.clone();
                 let loader = loader.clone();
                 crate::browser::types::spawn_fetch_task(move || {
                     let res = loader.fetch_script_with_nonce(&module_base, &import_path, None);
-                    let _ = tx.send(res);
+                    let _ = tx.send((module_base, import_path, res));
                 });
             }
             drop(tx);
+
             for _ in 0..total {
                 if should_cancel() {
                     break;
                 }
-                let _ = rx.recv_timeout(SCRIPT_FETCH_TIMEOUT);
+                match rx.recv_timeout(SCRIPT_FETCH_TIMEOUT) {
+                    Ok((base, path, Ok(script_code))) => {
+                        if let Ok(base_resolved) = base.resolve(&path) {
+                            for sub_import in scan_es_module_imports(&script_code) {
+                                if let Ok(sub_resolved) = base_resolved.resolve(&sub_import) {
+                                    if visited_urls.insert(sub_resolved.as_str().to_string())
+                                        && loader.cache().get(&sub_resolved.as_str()).is_none()
+                                    {
+                                        current_batch.push((base_resolved.clone(), sub_import));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(_) => break,
+                }
             }
         }
     }
@@ -259,11 +345,13 @@ fn prepare_document_pipeline_internal(
                 node_id,
                 code,
                 is_module,
-            } => preloaded_scripts.push(ScriptToRun::Inline {
-                node_id,
-                code,
-                is_module,
-            }),
+            } => {
+                preloaded_scripts.push(ScriptToRun::Inline {
+                    node_id,
+                    code,
+                    is_module,
+                });
+            }
             ScriptToRun::External {
                 node_id,
                 src,
@@ -447,6 +535,44 @@ fn collect_stylesheet_links(
     }
 }
 
+fn collect_modulepreload_links(
+    doc: &Document,
+    root_id: NodeId,
+    base_url: &Url,
+    links: &mut Vec<String>,
+) {
+    let mut stack = vec![root_id];
+    while let Some(node_id) = stack.pop() {
+        if let Some(node) = doc.get(node_id)
+            && let NodeData::Element(elem) = &node.data
+            && elem.tag_name.eq_ignore_ascii_case("link")
+        {
+            let is_modulepreload = elem
+                .get_attribute("rel")
+                .map(|r| {
+                    r.split_whitespace()
+                        .any(|t| t.eq_ignore_ascii_case("modulepreload"))
+                })
+                .unwrap_or(false);
+            if is_modulepreload && let Some(href) = elem.get_attribute("href") {
+                let trimmed = href.trim();
+                if !trimmed.is_empty() {
+                    let resolved = base_url
+                        .resolve(trimmed)
+                        .map(|u| u.to_string())
+                        .unwrap_or_else(|_| trimmed.to_string());
+                    if !links.contains(&resolved) {
+                        links.push(resolved);
+                    }
+                }
+            }
+        }
+        let mut kids: Vec<NodeId> = doc.children(node_id).map(|c| c.id).collect();
+        kids.reverse();
+        stack.extend(kids);
+    }
+}
+
 fn resolve_font_faces_in_rules(rules: &mut [mango_css::parser::Rule], base_url: &Url) {
     for rule in rules {
         match rule {
@@ -489,17 +615,6 @@ fn resolve_val_urls(val: &mut mango_css::values::Value, base_url: &Url) {
         }
         _ => {}
     }
-}
-
-#[allow(dead_code)]
-fn load_stylesheets_parallel(
-    loader: &ResourceLoader,
-    base_url: &Url,
-    links: &[String],
-    visited: &mut std::collections::HashSet<String>,
-    out: &mut Vec<Stylesheet>,
-) {
-    load_stylesheets_parallel_cancellable(loader, base_url, links, visited, out, &|| false);
 }
 
 /// Bounded stylesheet fan-out: at most [`MAX_CONCURRENT_FETCHES`] fetches in
@@ -677,118 +792,5 @@ fn load_imported_stylesheets_parallel_cancellable(
     }
 }
 
-fn scan_es_module_imports(source: &str) -> Vec<String> {
-    let mut imports = Vec::new();
-    for line in source.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("import") || trimmed.starts_with("export") {
-            if let Some(pos) = trimmed.find("from") {
-                let rest = trimmed[pos + 4..].trim();
-                if let Some(q) = rest.chars().next() {
-                    if q == '\'' || q == '"' {
-                        if let Some(end) = rest[1..].find(q) {
-                            let path = &rest[1..1 + end];
-                            if !path.is_empty() {
-                                imports.push(path.to_string());
-                            }
-                        }
-                    }
-                }
-            } else if let Some(rest) = trimmed.strip_prefix("import") {
-                let rest = rest.trim();
-                if let Some(q) = rest.chars().next() {
-                    if q == '\'' || q == '"' {
-                        if let Some(end) = rest[1..].find(q) {
-                            let path = &rest[1..1 + end];
-                            if !path.is_empty() {
-                                imports.push(path.to_string());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    imports
-}
-
-/// Unwraps tracking redirects (e.g. DuckDuckGo `/l/?uddg=...` or Google `/url?q=...`)
-/// into direct destination URLs so navigation does not get stalled by intermediate
-/// empty redirect interstitials.
-pub fn unwrap_tracking_redirect(url_str: &str) -> Option<String> {
-    let parsed = Url::parse(url_str).ok()?;
-    let host = parsed.host.as_deref().unwrap_or("");
-    let query = parsed.query.as_deref().unwrap_or("");
-    let is_ddg =
-        (host.ends_with("duckduckgo.com") || host == "ddg.gg") && parsed.path.starts_with("/l/");
-    let is_google = host.contains("google.") && parsed.path.starts_with("/url");
-
-    if is_ddg || is_google {
-        for param in query.split('&') {
-            let val = if is_ddg {
-                param.strip_prefix("uddg=")
-            } else {
-                param
-                    .strip_prefix("q=")
-                    .or_else(|| param.strip_prefix("url="))
-            };
-            if let Some(v) = val {
-                let decoded = crate::browser::navigation::anchor::percent_decode(v);
-                if decoded.starts_with("http://") || decoded.starts_with("https://") {
-                    return Some(decoded);
-                }
-            }
-        }
-    }
-    None
-}
-
-/// Checks for a `<meta http-equiv="refresh" content="...">` tag in the document.
-/// Returns `Some((delay_seconds, target_url))` if present.
-pub fn check_meta_refresh(doc: &Document, base_url: Option<&Url>) -> Option<(u64, String)> {
-    fn search_meta(doc: &Document, node_id: NodeId) -> Option<(u64, String)> {
-        let node = doc.get(node_id)?;
-        if let NodeData::Element(elem) = &node.data
-            && elem.tag_name.eq_ignore_ascii_case("meta")
-            && elem
-                .get_attribute("http-equiv")
-                .is_some_and(|v| v.trim().eq_ignore_ascii_case("refresh"))
-            && let Some(content) = elem.get_attribute("content")
-        {
-            let trimmed = content.trim();
-            let (delay_str, url_part) = trimmed
-                .split_once(';')
-                .map(|(d, u)| (d.trim(), Some(u.trim())))
-                .unwrap_or((trimmed, None));
-            let delay = delay_str.parse::<u64>().unwrap_or(0);
-            let mut target_url = String::new();
-            if let Some(u) = url_part {
-                let raw = match u.to_ascii_lowercase().find("url=") {
-                    Some(idx) => &u[idx + 4..],
-                    None => u,
-                }
-                .trim()
-                .trim_matches(|c| matches!(c, '\'' | '"' | ' '));
-                if !raw.is_empty() {
-                    target_url = raw.to_string();
-                }
-            }
-            return Some((delay, target_url));
-        }
-        for child in doc.children(node_id) {
-            if let Some(found) = search_meta(doc, child.id) {
-                return Some(found);
-            }
-        }
-        None
-    }
-
-    let (delay, target) = search_meta(doc, doc.root())?;
-    if target.is_empty() {
-        return None;
-    }
-    let resolved = base_url
-        .and_then(|base| base.resolve(&target).ok().map(|u| u.to_string()))
-        .unwrap_or(target);
-    Some((delay, resolved))
-}
+pub use super::redirect::{check_meta_refresh, unwrap_tracking_redirect};
+use super::scripts::scan_es_module_imports;

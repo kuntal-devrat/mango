@@ -523,7 +523,7 @@
     globalThis.Element.prototype.setAttribute       = function(n, v) {};
     globalThis.Element.prototype.removeAttribute    = function(n) {};
     globalThis.Element.prototype.hasAttribute       = function(n) { return false; };
-    globalThis.Element.prototype.toggleAttribute    = function(n, f) { var has = this.hasAttribute(n); if (f === undefined ? !has : f) this.setAttribute(n,''); else this.removeAttribute(n); return this.hasAttribute(n); };
+    globalThis.Element.prototype.toggleAttribute    = function(n, f) { var has = this.hasAttribute(n); if (f === undefined) { if (has) { this.removeAttribute(n); return false; } else { this.setAttribute(n, ''); return true; } } else if (f) { if (!has) this.setAttribute(n, ''); return true; } else { if (has) this.removeAttribute(n); return false; } };
     globalThis.Element.prototype.getAttributeNS     = function(ns, n) { return this.getAttribute(n); };
     globalThis.Element.prototype.setAttributeNS     = function(ns, n, v) { this.setAttribute(n, v); };
     globalThis.Element.prototype.removeAttributeNS  = function(ns, n) { this.removeAttribute(n); };

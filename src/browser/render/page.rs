@@ -268,6 +268,20 @@ impl BrowserChrome {
                         ),
                     });
                 }
+                DisplayCommand::PushClipRoundedRect { rect, radii } => {
+                    let translated_y = rect.y() + content_y - self.scroll_y;
+                    let clamped_top = translated_y.max(content_y);
+                    let clamped_bottom = (translated_y + rect.height()).min(content_y + content_h);
+                    dl.push(DisplayCommand::PushClipRoundedRect {
+                        rect: Rect::new(
+                            rect.x(),
+                            clamped_top,
+                            rect.width(),
+                            (clamped_bottom - clamped_top).max(0.0),
+                        ),
+                        radii,
+                    });
+                }
                 DisplayCommand::PopClip => {
                     dl.push(DisplayCommand::PopClip);
                 }

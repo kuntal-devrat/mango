@@ -2230,6 +2230,7 @@ dependencies = [
  "env_logger",
  "fontdue",
  "image",
+ "kurbo",
  "libc",
  "log",
  "mango_core",
@@ -2248,7 +2249,10 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "smol_str",
+ "tendril",
  "tokio",
+ "unicode-segmentation",
  "winit",
 ]
 
@@ -2265,6 +2269,7 @@ name = "mango_css"
 version = "0.1.36"
 dependencies = [
  "cssparser",
+ "kurbo",
  "log",
  "mango_core",
  "mango_html",
@@ -2346,8 +2351,10 @@ dependencies = [
  "mango_render",
  "rayon",
  "self_cell",
+ "smol_str",
  "taffy",
  "unicode-bidi",
+ "unicode-segmentation",
 ]
 
 [[package]]
@@ -2396,6 +2403,7 @@ dependencies = [
  "rayon",
  "resvg",
  "rustybuzz",
+ "smol_str",
  "swgl",
  "tiny-skia 0.12.0",
  "usvg",

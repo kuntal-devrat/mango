@@ -16,220 +16,28 @@ use crate::grid_flow::layout_grid;
 use crate::inline_flow::layout_inline_children;
 
 use super::convert::to_taffy_style;
-
-/// Intrinsic dimension context stored per leaf node in the Taffy tree.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct LeafContext {
-    pub intrinsic_width: f32,
-    pub intrinsic_height: f32,
-}
-
-/// Computes the intrinsic content width and height for a flex/grid child item.
-fn compute_child_intrinsic_size(
-    child: &LayoutBox,
-    cb_w: f32,
-    cb_h: f32,
-    container_fs: f32,
-) -> (f32, f32) {
-    let child_style = child.style.as_deref();
-    let fs = child_style.map(|s| s.font_size).unwrap_or(container_fs);
-    let root_fs = child_style
-        .map(|s| s.root_font_size)
-        .unwrap_or(container_fs);
-
-    // 1. Replaced elements (img, svg, canvas, video, audio, iframe)
-    match &child.box_type {
-        BoxType::ReplacedElement {
-            intrinsic_width,
-            intrinsic_height,
-            ..
-        }
-        | BoxType::Canvas {
-            intrinsic_width,
-            intrinsic_height,
-            ..
-        }
-        | BoxType::IFrame {
-            intrinsic_width,
-            intrinsic_height,
-            ..
-        }
-        | BoxType::Video {
-            intrinsic_width,
-            intrinsic_height,
-            ..
-        }
-        | BoxType::Audio {
-            intrinsic_width,
-            intrinsic_height,
-            ..
-        } => {
-            let mut w = *intrinsic_width;
-            let mut h = *intrinsic_height;
-            if let Some(s) = child_style {
-                if let Length::Px(px) = s.width {
-                    w = px;
-                }
-                if let Length::Px(px) = s.height {
-                    h = px;
-                }
-                if let Some(ratio) = s.aspect_ratio
-                    && ratio > 0.0
-                {
-                    if w > 0.0 && h <= 0.0 {
-                        h = w / ratio;
-                    } else if h > 0.0 && w <= 0.0 {
-                        w = h * ratio;
-                    }
-                }
-            }
-            return (w.max(0.0), h.max(0.0));
-        }
-        _ => {}
-    }
-
-    // 2. Form controls intrinsic height
-    let tag = child.tag_name.as_deref();
-    let form_h = match tag {
-        Some("select") => {
-            let is_multiple = child.get_attribute("_mango_is_multiple") == Some("true")
-                || child.get_attribute("multiple").is_some();
-            let size_attr = child
-                .get_attribute("size")
-                .and_then(|s| s.parse::<usize>().ok())
-                .unwrap_or(if is_multiple { 4 } else { 1 });
-            if is_multiple || size_attr > 1 {
-                Some(size_attr.max(3) as f32 * 18.0 + 8.0)
-            } else {
-                Some(24.0)
-            }
-        }
-        Some("textarea") => Some(64.0),
-        Some("input") => {
-            let itype = child.get_attribute("type").unwrap_or("text");
-            if itype == "checkbox" || itype == "radio" {
-                Some(16.0)
-            } else {
-                Some(24.0)
-            }
-        }
-        Some("button") => Some(24.0),
-        _ => None,
-    };
-
-    // Padding and border sums for content-box conversion
-    let pad_h = child_style
-        .map(|s| {
-            s.padding_left.to_px_with_viewport(fs, root_fs, cb_w, cb_h)
-                + s.padding_right.to_px_with_viewport(fs, root_fs, cb_w, cb_h)
-                + s.border_left_width
-                + s.border_right_width
-        })
-        .unwrap_or(0.0);
-    let pad_v = child_style
-        .map(|s| {
-            s.padding_top.to_px_with_viewport(fs, root_fs, cb_w, cb_h)
-                + s.padding_bottom
-                    .to_px_with_viewport(fs, root_fs, cb_w, cb_h)
-                + s.border_top_width
-                + s.border_bottom_width
-        })
-        .unwrap_or(0.0);
-
-    let is_border_box = child_style
-        .map(|s| s.box_sizing == mango_css::values::BoxSizing::BorderBox)
-        .unwrap_or(false);
-
-    // Width measurement via table_flow intrinsic measuring
-    let mut memo = std::collections::HashMap::new();
-    let (_, max_w) = crate::table_flow::measure_box_intrinsic_widths(
-        child,
-        fs,
-        mango_render::FontWeight::Regular,
-        mango_render::FontFamily::SansSerif,
-        &mut memo,
-    );
-
-    let content_w = if let Some(s) = child_style {
-        match s.width {
-            Length::Px(px) => {
-                if is_border_box {
-                    (px - pad_h).max(0.0)
-                } else {
-                    px.max(0.0)
-                }
-            }
-            _ => (max_w - pad_h).max(0.0),
-        }
-    } else {
-        (max_w - pad_h).max(0.0)
-    };
-
-    let content_h = if let Some(s) = child_style {
-        match s.height {
-            Length::Px(px) => {
-                if is_border_box {
-                    (px - pad_v).max(0.0)
-                } else {
-                    px.max(0.0)
-                }
-            }
-            _ => {
-                if let Some(fh) = form_h {
-                    (fh - pad_v).max(0.0)
-                } else if !child.children.is_empty() {
-                    let measured = crate::flex_flow::sizing::measure_flex_child_intrinsic_height(
-                        child, content_w, fs, root_fs, cb_h,
-                    );
-                    if measured > 0.0 {
-                        measured
-                    } else {
-                        let (asc, desc, gap) = mango_render::font::font_manager().font_metrics(
-                            mango_render::FontFamily::SansSerif,
-                            mango_render::FontWeight::Regular,
-                            fs,
-                        );
-                        s.line_height.unwrap_or(asc + desc + gap)
-                    }
-                } else if child.dimensions.content.size.height > 0.0 {
-                    child.dimensions.content.size.height
-                } else if child.box_type.is_text()
-                    || child.is_inline()
-                    || matches!(child.box_type, BoxType::AnonymousBlock)
-                {
-                    let (asc, desc, gap) = mango_render::font::font_manager().font_metrics(
-                        mango_render::FontFamily::SansSerif,
-                        mango_render::FontWeight::Regular,
-                        fs,
-                    );
-                    s.line_height.unwrap_or(asc + desc + gap)
-                } else {
-                    0.0
-                }
-            }
-        }
-    } else if let Some(fh) = form_h {
-        (fh - pad_v).max(0.0)
-    } else if child.box_type.is_text()
-        || child.is_inline()
-        || matches!(child.box_type, BoxType::AnonymousBlock)
-        || !child.children.is_empty()
-    {
-        let (asc, desc, gap) = mango_render::font::font_manager().font_metrics(
-            mango_render::FontFamily::SansSerif,
-            mango_render::FontWeight::Regular,
-            fs,
-        );
-        asc + desc + gap
-    } else {
-        child.dimensions.content.size.height
-    };
-
-    (content_w, content_h)
-}
+use super::intrinsic::{LeafContext, compute_child_intrinsic_size};
 
 /// Executes Taffy-powered CSS Flexbox or CSS Grid layout on a container box.
 /// Returns `true` if layout succeeded, or `false` if fallback is required.
+fn child_padding_and_border(
+    s: Option<&mango_css::ComputedStyle>,
+    fs: f32,
+    rfs: f32,
+    w: f32,
+    h: f32,
+) -> (f32, f32) {
+    let Some(s) = s else {
+        return (0.0, 0.0);
+    };
+    let px = |l: &mango_css::values::Length| l.to_px_with_viewport(fs, rfs, w, h);
+    let pad_h =
+        px(&s.padding_left) + px(&s.padding_right) + s.border_left_width + s.border_right_width;
+    let pad_v =
+        px(&s.padding_top) + px(&s.padding_bottom) + s.border_top_width + s.border_bottom_width;
+    (pad_h, pad_v)
+}
+
 pub fn execute_taffy_layout(
     container: &mut LayoutBox,
     containing_block: &Dimensions,
@@ -254,12 +62,12 @@ pub fn execute_taffy_layout(
         {
             return false;
         }
-        let has_subgrid = style
+        if style
             .grid_template_columns
             .iter()
             .chain(style.grid_template_rows.iter())
-            .any(|t| matches!(t, mango_css::values::GridTrackSize::Subgrid));
-        if has_subgrid {
+            .any(|t| matches!(t, mango_css::values::GridTrackSize::Subgrid))
+        {
             return false;
         }
         if container.children.iter().any(|c| {
@@ -294,19 +102,13 @@ pub fn execute_taffy_layout(
     }
 
     // 1. Resolve container box model properties
-    let pad_top = style
-        .padding_top
-        .to_px_with_viewport(font_size, root_font_size, cb_w, cb_h);
-    let pad_right = style
-        .padding_right
-        .to_px_with_viewport(font_size, root_font_size, cb_w, cb_h);
-    let pad_bottom =
-        style
-            .padding_bottom
-            .to_px_with_viewport(font_size, root_font_size, cb_w, cb_h);
-    let pad_left = style
-        .padding_left
-        .to_px_with_viewport(font_size, root_font_size, cb_w, cb_h);
+    let p_px = |p: &mango_css::values::Length| {
+        p.to_px_with_viewport(font_size, root_font_size, cb_w, cb_h)
+    };
+    let pad_top = p_px(&style.padding_top);
+    let pad_right = p_px(&style.padding_right);
+    let pad_bottom = p_px(&style.padding_bottom);
+    let pad_left = p_px(&style.padding_left);
 
     let border_top = style.border_top_width;
     let border_right = style.border_right_width;
@@ -318,49 +120,194 @@ pub fn execute_taffy_layout(
         EdgeSizes::new(border_top, border_right, border_bottom, border_left);
     container.dimensions.writing_mode = style.writing_mode;
 
-    let margin_top = style
-        .margin_top
-        .to_px_with_viewport(font_size, root_font_size, cb_w, cb_h);
-    let margin_bottom =
+    let is_ifc = container.is_independent_formatting_context;
+    let margin_top = if is_ifc && container.dimensions.margin.top > 0.0 {
+        container.dimensions.margin.top
+    } else {
+        p_px(&style.margin_top)
+    };
+    let margin_bottom = if is_ifc && container.dimensions.margin.bottom > 0.0 {
+        container.dimensions.margin.bottom
+    } else {
+        p_px(&style.margin_bottom)
+    };
+    let margin_left = if (style.margin_left == Length::Auto || is_ifc)
+        && container.dimensions.margin.left > 0.0
+    {
+        container.dimensions.margin.left
+    } else {
         style
-            .margin_bottom
-            .to_px_with_viewport(font_size, root_font_size, cb_w, cb_h);
-    let margin_left = style
-        .margin_left
-        .to_px_with_viewport(font_size, root_font_size, cb_w, cb_h);
-    let margin_right =
+            .margin_left
+            .to_px_with_viewport(font_size, root_font_size, cb_w, cb_h)
+    };
+    let margin_right = if (style.margin_right == Length::Auto || is_ifc)
+        && container.dimensions.margin.right > 0.0
+    {
+        container.dimensions.margin.right
+    } else {
         style
             .margin_right
-            .to_px_with_viewport(font_size, root_font_size, cb_w, cb_h);
+            .to_px_with_viewport(font_size, root_font_size, cb_w, cb_h)
+    };
 
     container.dimensions.margin =
         EdgeSizes::new(margin_top, margin_right, margin_bottom, margin_left);
 
     // Compute initial container position in document coordinates
     let is_pos = matches!(style.position, Position::Absolute | Position::Fixed);
-    let (container_x, container_y) = if is_pos || container.dimensions.content.origin != Point::ZERO
-    {
-        (
-            container.dimensions.content.origin.x,
-            container.dimensions.content.origin.y,
-        )
-    } else {
-        (
-            containing_block.content.x() + margin_left + border_left + pad_left,
-            containing_block.content.y() + margin_top + border_top + pad_top,
-        )
-    };
+    let (container_x, container_y) =
+        if is_pos || is_ifc || container.dimensions.content.origin != Point::ZERO {
+            (
+                container.dimensions.content.origin.x,
+                container.dimensions.content.origin.y,
+            )
+        } else {
+            (
+                containing_block.content.x() + margin_left + border_left + pad_left,
+                containing_block.content.y() + margin_top + border_top + pad_top,
+            )
+        };
     container.dimensions.content.origin = Point::new(container_x, container_y);
 
     // 2. Build Taffy Tree with LeafContext
     let mut tree: TaffyTree<LeafContext> = TaffyTree::new();
     tree.disable_rounding();
 
-    let container_taffy_style = to_taffy_style(&style, cb_w, cb_h);
+    let total_h_p_b = pad_left + pad_right + border_left + border_right;
+    let total_v_p_b = pad_top + pad_bottom + border_top + border_bottom;
+
+    let mut container_taffy_style = to_taffy_style(&style, cb_w, cb_h);
+    let is_block_level = matches!(style.display, Display::Flex | Display::Grid);
+    if is_block_level
+        && style.width == Length::Auto
+        && !is_pos
+        && !is_ifc
+        && style.float == mango_css::values::Float::None
+        && cb_w > 0.0
+    {
+        let net_w = if style.box_sizing == mango_css::values::BoxSizing::BorderBox {
+            cb_w
+        } else {
+            (cb_w - total_h_p_b).max(0.0)
+        };
+        container_taffy_style.size.width = taffy::style_helpers::length(net_w);
+    }
+    let is_definite_container = is_pos || (is_ifc && container.dimensions.content.size.width > 0.0);
+    if is_definite_container {
+        if container.dimensions.content.size.width > 0.0 {
+            let target_w = if style.box_sizing == mango_css::values::BoxSizing::BorderBox {
+                container.dimensions.content.size.width + total_h_p_b
+            } else {
+                container.dimensions.content.size.width
+            };
+            container_taffy_style.size.width = taffy::style_helpers::length(target_w);
+        }
+        if container.dimensions.content.size.height > 0.0 {
+            let target_h = if style.box_sizing == mango_css::values::BoxSizing::BorderBox {
+                container.dimensions.content.size.height + total_v_p_b
+            } else {
+                container.dimensions.content.size.height
+            };
+            container_taffy_style.size.height = taffy::style_helpers::length(target_h);
+        }
+    }
     let root_node = match tree.new_leaf_with_context(container_taffy_style, LeafContext::default())
     {
         Ok(node) => node,
         Err(_) => return false,
+    };
+
+    let (_, vp_h) = mango_css::get_current_viewport();
+    let container_content_w =
+        if is_definite_container && container.dimensions.content.size.width > 0.0 {
+            container.dimensions.content.size.width
+        } else {
+            match style.width {
+                Length::Auto => {
+                    if is_block_level
+                        && !is_pos
+                        && style.float == mango_css::values::Float::None
+                        && cb_w > 0.0
+                    {
+                        (cb_w
+                            - margin_left
+                            - margin_right
+                            - pad_left
+                            - pad_right
+                            - border_left
+                            - border_right)
+                            .max(0.0)
+                    } else {
+                        0.0
+                    }
+                }
+                Length::Percent(p) => {
+                    if cb_w > 0.0 {
+                        let px = (p / 100.0) * cb_w;
+                        if style.box_sizing == mango_css::values::BoxSizing::BorderBox {
+                            (px - total_h_p_b).max(0.0)
+                        } else {
+                            px
+                        }
+                    } else {
+                        0.0
+                    }
+                }
+                ref len => {
+                    let px = len.to_px_with_viewport(font_size, root_font_size, cb_w, vp_h);
+                    if px > 0.0 {
+                        if style.box_sizing == mango_css::values::BoxSizing::BorderBox {
+                            (px - total_h_p_b).max(0.0)
+                        } else {
+                            px
+                        }
+                    } else {
+                        0.0
+                    }
+                }
+            }
+        };
+    let container_content_h =
+        if is_definite_container && container.dimensions.content.size.height > 0.0 {
+            container.dimensions.content.size.height
+        } else {
+            match style.height {
+                Length::Auto => 0.0,
+                Length::Percent(p) => {
+                    if cb_h > 0.0 {
+                        let px = (p / 100.0) * cb_h;
+                        if style.box_sizing == mango_css::values::BoxSizing::BorderBox {
+                            (px - pad_top - pad_bottom - border_top - border_bottom).max(0.0)
+                        } else {
+                            px
+                        }
+                    } else {
+                        0.0
+                    }
+                }
+                ref len => {
+                    let px = len.to_px_with_viewport(font_size, root_font_size, cb_h, vp_h);
+                    if px > 0.0 {
+                        if style.box_sizing == mango_css::values::BoxSizing::BorderBox {
+                            (px - pad_top - pad_bottom - border_top - border_bottom).max(0.0)
+                        } else {
+                            px
+                        }
+                    } else {
+                        0.0
+                    }
+                }
+            }
+        };
+    let child_cb_w = if container_content_w > 0.0 {
+        container_content_w
+    } else {
+        cb_w
+    };
+    let child_cb_h = if container_content_h > 0.0 {
+        container_content_h
+    } else {
+        cb_h
     };
 
     let mut in_flow_indices = Vec::new();
@@ -376,60 +323,100 @@ pub fn execute_taffy_layout(
         }
 
         let mut taffy_style = if let Some(cs) = child_style {
-            to_taffy_style(cs, cb_w, cb_h)
+            let mut ts = to_taffy_style(cs, child_cb_w, child_cb_h);
+            if cs.visibility == mango_css::values::Visibility::Collapse {
+                ts.display = taffy::style::Display::None;
+            }
+            ts
         } else {
             taffy::style::Style::default()
         };
 
-        let (int_w, int_h) = compute_child_intrinsic_size(child, cb_w, cb_h, font_size);
+        let is_row = !is_grid
+            && matches!(
+                style.flex_direction,
+                mango_css::values::FlexDirection::Row
+                    | mango_css::values::FlexDirection::RowReverse
+            );
+        let s_opt = child.style.as_deref();
+        let overflow_hidden = !is_grid
+            && s_opt.is_some_and(|s| {
+                if is_row {
+                    s.overflow_x != mango_css::values::Overflow::Visible
+                } else {
+                    s.overflow_y != mango_css::values::Overflow::Visible
+                }
+            });
+        let (int_w, int_h) = compute_child_intrinsic_size(child, child_cb_w, child_cb_h, font_size);
 
-        // If replaced element with intrinsic sizing, ensure initial size is populated
-        match &child.box_type {
-            BoxType::ReplacedElement {
-                intrinsic_width,
-                intrinsic_height,
-                ..
-            }
-            | BoxType::Canvas {
-                intrinsic_width,
-                intrinsic_height,
-                ..
-            } if *intrinsic_width > 0.0 && *intrinsic_height > 0.0 => {
-                if taffy_style.size.width.is_auto() {
-                    taffy_style.size.width = taffy::style_helpers::length(*intrinsic_width);
+        // If replaced element with intrinsic sizing, ensure initial size is populated (unless aspect_ratio is defined)
+        if taffy_style.aspect_ratio.is_none() {
+            match &child.box_type {
+                BoxType::ReplacedElement {
+                    intrinsic_width,
+                    intrinsic_height,
+                    ..
                 }
-                if taffy_style.size.height.is_auto() {
-                    taffy_style.size.height = taffy::style_helpers::length(*intrinsic_height);
+                | BoxType::Canvas {
+                    intrinsic_width,
+                    intrinsic_height,
+                    ..
+                } if *intrinsic_width > 0.0 && *intrinsic_height > 0.0 => {
+                    if taffy_style.size.width.is_auto() {
+                        taffy_style.size.width = taffy::style_helpers::length(*intrinsic_width);
+                    }
+                    if taffy_style.size.height.is_auto() {
+                        taffy_style.size.height = taffy::style_helpers::length(*intrinsic_height);
+                    }
                 }
+                _ => {}
             }
-            _ => {}
         }
 
         // Automatic minimum size for flex items (CSS Flexbox spec Section 4.5):
         // In a row flex container, min-width: auto resolves to min-content width.
         // In a column flex container, min-height: auto resolves to min-content height.
+        // If the item has non-visible overflow along that axis (e.g. overflow: hidden),
+        // the automatic minimum size is 0.
         if !is_grid {
-            let is_row = matches!(
-                style.flex_direction,
-                mango_css::values::FlexDirection::Row
-                    | mango_css::values::FlexDirection::RowReverse
-            );
-            let s_opt = child.style.as_deref();
-            if is_row && s_opt.map(|s| s.min_width.is_auto()).unwrap_or(true) && int_w > 0.0 {
-                taffy_style.min_size.width = taffy::style_helpers::length(int_w);
-            } else if !is_row
-                && s_opt.map(|s| s.min_height.is_auto()).unwrap_or(true)
-                && int_h > 0.0
-            {
-                taffy_style.min_size.height = taffy::style_helpers::length(int_h);
+            let is_bb = taffy_style.box_sizing == taffy::style::BoxSizing::BorderBox;
+            let (pad_h, pad_v) = if is_bb {
+                child_padding_and_border(
+                    child_style,
+                    font_size,
+                    root_font_size,
+                    child_cb_w,
+                    child_cb_h,
+                )
+            } else {
+                (0.0, 0.0)
+            };
+            let eff_min_w = int_w + pad_h;
+            let eff_min_h = int_h + pad_v;
+            if !overflow_hidden {
+                if is_row && s_opt.map(|s| s.min_width.is_auto()).unwrap_or(true) && int_w > 0.0 {
+                    taffy_style.min_size.width = taffy::style_helpers::length(eff_min_w);
+                } else if !is_row
+                    && s_opt.map(|s| s.min_height.is_auto()).unwrap_or(true)
+                    && int_h > 0.0
+                {
+                    taffy_style.min_size.height = taffy::style_helpers::length(eff_min_h);
+                }
+            } else if is_row && s_opt.map(|s| s.min_width.is_auto()).unwrap_or(true) {
+                taffy_style.min_size.width = taffy::style_helpers::zero();
+            } else if !is_row && s_opt.map(|s| s.min_height.is_auto()).unwrap_or(true) {
+                taffy_style.min_size.height = taffy::style_helpers::zero();
             }
         }
+
+        let eff_int_w = int_w;
+        let eff_int_h = int_h;
 
         let child_node = match tree.new_leaf_with_context(
             taffy_style,
             LeafContext {
-                intrinsic_width: int_w,
-                intrinsic_height: int_h,
+                intrinsic_width: eff_int_w,
+                intrinsic_height: eff_int_h,
             },
         ) {
             Ok(n) => n,
@@ -467,15 +454,37 @@ pub fn execute_taffy_layout(
     }
 
     // 3. Compute layout with measure callback
-    let avail_w = if cb_w > 0.0 {
+    let avail_w = if is_definite_container && container.dimensions.content.size.width > 0.0 {
+        AvailableSpace::Definite(container.dimensions.content.size.width)
+    } else if cb_w > 0.0 {
         AvailableSpace::Definite(cb_w)
     } else {
         AvailableSpace::MinContent
     };
-    let avail_h = if cb_h > 0.0 {
+    let avail_h = if is_definite_container && container.dimensions.content.size.height > 0.0 {
+        AvailableSpace::Definite(container.dimensions.content.size.height)
+    } else if cb_h > 0.0 {
         AvailableSpace::Definite(cb_h)
     } else {
-        AvailableSpace::MaxContent
+        let (_, vp_h) = mango_css::get_current_viewport();
+        let min_h = style
+            .min_height
+            .to_px_with_viewport(font_size, root_font_size, 0.0, vp_h);
+        let h = style
+            .height
+            .to_px_with_viewport(font_size, root_font_size, 0.0, vp_h);
+        let eff_h = if h > 0.0 {
+            h
+        } else if min_h > 0.0 {
+            min_h
+        } else {
+            0.0
+        };
+        if eff_h > 0.0 {
+            AvailableSpace::Definite(eff_h)
+        } else {
+            AvailableSpace::MaxContent
+        }
     };
 
     let available_space = taffy::geometry::Size {
@@ -495,9 +504,22 @@ pub fn execute_taffy_layout(
                     inputs,
                     style,
                     |_, _| 0.0,
-                    |known_dims, _avail| taffy::geometry::Size {
-                        width: known_dims.width.unwrap_or(int_w),
-                        height: known_dims.height.unwrap_or(int_h),
+                    |known_dims, _avail| {
+                        let eff_w = known_dims.width.unwrap_or(int_w);
+                        let h = match (known_dims.height, style.aspect_ratio) {
+                            (Some(h), _) => h,
+                            (None, Some(r)) if r > 0.0 && known_dims.width.is_some() => eff_w / r,
+                            (None, _) => int_h,
+                        };
+                        let w = match (known_dims.width, style.aspect_ratio) {
+                            (Some(w), _) => w,
+                            (None, Some(r)) if r > 0.0 && known_dims.height.is_some() => h * r,
+                            _ => eff_w,
+                        };
+                        taffy::geometry::Size {
+                            width: w,
+                            height: h,
+                        }
                     },
                 )
             },
@@ -513,27 +535,28 @@ pub fn execute_taffy_layout(
         Err(_) => return false,
     };
 
-    let content_w = root_layout.content_box_width().max(0.0);
-    let orig_content_h = root_layout.content_box_height().max(0.0);
-    let mut content_h = orig_content_h;
+    let mut content_w = root_layout.content_box_width().max(0.0);
+    let content_h = root_layout.content_box_height().max(0.0);
 
-    // Column-reverse height clamping: if auto height with max-height, wrap to content
-    let is_column_reverse =
-        !is_grid && matches!(style.flex_direction, FlexDirection::ColumnReverse);
-    let mut col_reverse_shift_y = 0.0f32;
-    if is_column_reverse && style.height == Length::Auto {
-        let mut max_col_h = 0.0f32;
+    let is_flex_row = matches!(
+        style.flex_direction,
+        mango_css::values::FlexDirection::Row | mango_css::values::FlexDirection::RowReverse
+    );
+    // If auto-width flex row container without wrap, correct for Taffy clamping negative margins
+    if !is_grid
+        && is_flex_row
+        && style.width == mango_css::values::Length::Auto
+        && style.flex_wrap == mango_css::values::FlexWrap::NoWrap
+        && !child_nodes.is_empty()
+    {
+        let mut max_right = 0.0f32;
         for &node in &child_nodes {
             if let Ok(l) = tree.layout(node) {
-                let item_total_h = l.size.height + l.margin.top + l.margin.bottom;
-                if item_total_h > max_col_h {
-                    max_col_h = item_total_h;
-                }
+                max_right = max_right.max(l.location.x + l.size.width);
             }
         }
-        if max_col_h > 0.0 && max_col_h < content_h {
-            col_reverse_shift_y = content_h - max_col_h;
-            content_h = max_col_h;
+        if max_right > 0.0 && max_right < content_w {
+            content_w = max_right;
         }
     }
 
@@ -543,6 +566,17 @@ pub fn execute_taffy_layout(
     // Parent border box origin
     let container_border_x = container_x - pad_left - border_left;
     let container_border_y = container_y - pad_top - border_top;
+    let box_traps_fixed = !style.transform.is_identity()
+        || !style.filter.is_empty()
+        || !style.backdrop_filter.is_empty()
+        || matches!(
+            style.contain,
+            mango_css::values::Contain::Paint
+                | mango_css::values::Contain::Strict
+                | mango_css::values::Contain::Layout
+                | mango_css::values::Contain::Content
+        )
+        || style.will_change;
 
     for (&child_idx, &node) in in_flow_indices.iter().zip(child_nodes.iter()) {
         let child_layout = match tree.layout(node) {
@@ -551,35 +585,51 @@ pub fn execute_taffy_layout(
         };
 
         let child = &mut container.children[child_idx];
-        let p_top = child_layout.padding.top;
-        let p_right = child_layout.padding.right;
-        let p_bottom = child_layout.padding.bottom;
-        let p_left = child_layout.padding.left;
-        child.dimensions.padding = EdgeSizes::new(p_top, p_right, p_bottom, p_left);
-
-        let b_top = child_layout.border.top;
-        let b_right = child_layout.border.right;
-        let b_bottom = child_layout.border.bottom;
-        let b_left = child_layout.border.left;
-        child.dimensions.border = EdgeSizes::new(b_top, b_right, b_bottom, b_left);
-
-        let m_top = child_layout.margin.top;
-        let m_right = child_layout.margin.right;
-        let m_bottom = child_layout.margin.bottom;
-        let m_left = child_layout.margin.left;
-        child.dimensions.margin = EdgeSizes::new(m_top, m_right, m_bottom, m_left);
+        let to_edge = |r: taffy::Rect<f32>| EdgeSizes::new(r.top, r.right, r.bottom, r.left);
+        child.dimensions.padding = to_edge(child_layout.padding);
+        child.dimensions.border = to_edge(child_layout.border);
+        child.dimensions.margin = to_edge(child_layout.margin);
 
         let local_x = child_layout.content_box_x();
-        let local_y = child_layout.content_box_y() - col_reverse_shift_y;
+        let local_y = child_layout.content_box_y();
         child.dimensions.content.origin =
             Point::new(container_border_x + local_x, container_border_y + local_y);
 
         let w = child_layout.content_box_width().max(0.0);
         let h = child_layout.content_box_height().max(0.0);
         child.dimensions.content.size = Size::new(w, h);
+        if box_traps_fixed {
+            child.fixed_containing_block = Some(container.dimensions);
+        } else if child.fixed_containing_block.is_none() {
+            child.fixed_containing_block = container.fixed_containing_block;
+        }
 
         // Lay out descendant subtree of child
-        let child_dims = child.dimensions;
+        let mut child_dims = child.dimensions;
+        if !is_grid
+            && matches!(
+                style.flex_direction,
+                FlexDirection::Column | FlexDirection::ColumnReverse
+            )
+        {
+            let container_h_definite = match style.height {
+                Length::Auto => false,
+                Length::Percent(_) => cb_h > 0.0,
+                ref len => len.to_px_with_viewport(font_size, root_font_size, cb_h, vp_h) > 0.0,
+            };
+            let child_h_definite = child
+                .style
+                .as_ref()
+                .map(|s| match s.height {
+                    Length::Auto | Length::Percent(_) => false,
+                    ref len => len.to_px_with_viewport(font_size, root_font_size, cb_h, vp_h) > 0.0,
+                })
+                .unwrap_or(false);
+            if !container_h_definite && !child_h_definite {
+                child_dims.height_indefinite = true;
+                child.dimensions.height_indefinite = true;
+            }
+        }
         let c_display = child
             .style
             .as_ref()
@@ -673,25 +723,21 @@ pub fn execute_taffy_layout(
     // 6. Auto-margin centering (e.g. `margin: 0 auto`) on container
     let is_margin_left_auto = style.margin_left == Length::Auto;
     let is_margin_right_auto = style.margin_right == Length::Auto;
-    if !is_pos && (is_margin_left_auto || is_margin_right_auto) && cb_w > 0.0 {
-        let total_non_content_h = pad_left + pad_right + border_left + border_right;
-        let underflow = (cb_w - content_w - total_non_content_h).max(0.0);
-        let new_margin_left = if is_margin_left_auto && is_margin_right_auto {
-            underflow / 2.0
-        } else if is_margin_left_auto {
-            underflow
-        } else {
-            0.0
+    if !is_pos && !is_ifc && (is_margin_left_auto || is_margin_right_auto) && cb_w > 0.0 {
+        let underflow = (cb_w - content_w - total_h_p_b).max(0.0);
+        let half_or_full = |is_auto, other_auto| {
+            if is_auto && other_auto {
+                underflow / 2.0
+            } else if is_auto {
+                underflow
+            } else {
+                0.0
+            }
         };
-        let new_margin_right = if is_margin_left_auto && is_margin_right_auto {
-            underflow / 2.0
-        } else if is_margin_right_auto {
-            underflow
-        } else {
-            0.0
-        };
+        let new_margin_left = half_or_full(is_margin_left_auto, is_margin_right_auto);
+        let new_margin_right = half_or_full(is_margin_right_auto, is_margin_left_auto);
 
-        let shift_x = new_margin_left - margin_left;
+        let shift_x = new_margin_left - container.dimensions.margin.left;
         if shift_x.abs() > 0.001 {
             container.dimensions.content.origin.x += shift_x;
             container.dimensions.margin.left = new_margin_left;
@@ -741,8 +787,8 @@ pub fn execute_taffy_layout(
             &style,
             is_row,
             is_reverse,
-            container_x,
-            container_y,
+            container.dimensions.content.origin.x,
+            container.dimensions.content.origin.y,
             content_w,
             content_h,
         );

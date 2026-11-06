@@ -196,17 +196,19 @@ pub fn build_replaced_element_with_maps(
         decoded = lookup_image(data_src);
     }
 
+    let mut computed_aspect_ratio = styled_node.style.aspect_ratio.filter(|&r| r > 0.0);
+
     let (intrinsic_width, intrinsic_height, pixels) = if let Some(img) = decoded {
         let natural_w = img.width as f32;
         let natural_h = img.height as f32;
-        let aspect_ratio =
-            if let Some(css_ratio) = styled_node.style.aspect_ratio.filter(|&r| r > 0.0) {
-                css_ratio
-            } else if natural_h > 0.0 {
-                natural_w / natural_h
-            } else {
-                1.0
-            };
+        let aspect_ratio = if let Some(css_ratio) = computed_aspect_ratio {
+            css_ratio
+        } else if natural_h > 0.0 {
+            natural_w / natural_h
+        } else {
+            1.0
+        };
+        computed_aspect_ratio = Some(aspect_ratio);
 
         let (w, h) = match (explicit_w, explicit_h) {
             (Some(ew), Some(eh)) => (ew.max(1.0), eh.max(1.0)),
@@ -237,11 +239,7 @@ pub fn build_replaced_element_with_maps(
         (w, h, scaled.pixels)
     } else {
         // Use placeholder for missing/failed images
-        let aspect_ratio = styled_node
-            .style
-            .aspect_ratio
-            .filter(|&r| r > 0.0)
-            .unwrap_or(4.0 / 3.0);
+        let aspect_ratio = computed_aspect_ratio.unwrap_or(4.0 / 3.0);
         let (w, h) = match (explicit_w, explicit_h) {
             (Some(ew), Some(eh)) => (ew.max(1.0), eh.max(1.0)),
             (Some(ew), None) => (ew.max(1.0), (ew / aspect_ratio).max(1.0)),
@@ -258,7 +256,15 @@ pub fn build_replaced_element_with_maps(
         pixels,
     };
 
-    let mut b = LayoutBox::new(box_type, Some(styled_node.style.clone()));
+    let mut b_style = (*styled_node.style).clone();
+    if b_style.aspect_ratio.is_none()
+        && !no_aspect_ratio
+        && let Some(ratio) = computed_aspect_ratio
+    {
+        b_style.aspect_ratio = Some(ratio);
+    }
+
+    let mut b = LayoutBox::new(box_type, Some(b_style.into()));
     b.node_id = styled_node.node_id;
     b.tag_name = styled_node.tag_name.clone();
     b.attributes = styled_node.attributes.clone();
@@ -443,6 +449,8 @@ pub fn build_svg_replaced_element(styled_node: &StyledNode) -> LayoutBox {
     let aspect_ratio = if let Some(css_ratio) = styled_node.style.aspect_ratio.filter(|&r| r > 0.0)
     {
         Some(css_ratio)
+    } else if let Some(ratio) = mango_render::get_svg_aspect_ratio(&svg_xml) {
+        Some(ratio)
     } else if let (Some(iw), Some(ih)) = (intrinsic_w_opt, intrinsic_h_opt) {
         if ih > 0.0 { Some(iw / ih) } else { None }
     } else {
@@ -503,6 +511,9 @@ pub fn build_svg_replaced_element(styled_node: &StyledNode) -> LayoutBox {
     };
 
     let mut style = (*styled_node.style).clone();
+    if style.aspect_ratio.is_none() {
+        style.aspect_ratio = aspect_ratio;
+    }
     if style.width == Length::Auto {
         if let Some(w_attr) = get_attr("width") {
             let trimmed = w_attr.trim();
@@ -510,11 +521,33 @@ pub fn build_svg_replaced_element(styled_node: &StyledNode) -> LayoutBox {
                 if let Ok(p) = pct.trim().parse::<f32>() {
                     style.width = Length::Percent(p);
                 }
+            } else if let Some(px) = parse_dimension_attr(trimmed) {
+                style.width = Length::Px(px);
             }
+        } else if explicit_h.is_some() && aspect_ratio.is_some() {
+            style.width = Length::Px(w);
         } else {
-            // Per SVG 1.1 § 5.1.2 & SVG 2 § 7.2:
-            // "If the width attribute is not specified, the effect is as if a value of '100%' were specified."
+            // SVG 1.1 §5.1.2: If the 'width' attribute is not specified,
+            // the effect is as if a value of '100%' were specified.
             style.width = Length::Percent(100.0);
+        }
+    }
+    if style.height == Length::Auto {
+        if let Some(h_attr) = get_attr("height") {
+            let trimmed = h_attr.trim();
+            if let Some(pct) = trimmed.strip_suffix('%') {
+                if let Ok(p) = pct.trim().parse::<f32>() {
+                    style.height = Length::Percent(p);
+                }
+            } else if let Some(px) = parse_dimension_attr(trimmed) {
+                style.height = Length::Px(px);
+            }
+        } else if explicit_w.is_some() && aspect_ratio.is_some() {
+            style.height = Length::Px(h);
+        } else {
+            // SVG 1.1 §5.1.2: If the 'height' attribute is not specified,
+            // the effect is as if a value of '100%' were specified.
+            style.height = Length::Percent(100.0);
         }
     }
 

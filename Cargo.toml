@@ -75,6 +75,10 @@ euclid = "0.22"
 quick_cache = "0.6.9"
 bumpalo = "3.16"
 bitflags = "2.4"
+unicode-segmentation = "1.13"
+kurbo = "0.13"
+smol_str = "0.2"
+tendril = "0.5"
 
 
 [package]
@@ -124,6 +128,10 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 percent-encoding.workspace = true
+unicode-segmentation.workspace = true
+kurbo.workspace = true
+smol_str.workspace = true
+tendril.workspace = true
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

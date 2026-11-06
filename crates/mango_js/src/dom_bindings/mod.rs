@@ -18,9 +18,13 @@ pub const DOM_SHIM: &str = concat!(
     include_str!("js/08_wrap_forms.js"),
     include_str!("js/09_wrap_media.js"),
     include_str!("js/10_wrap_misc.js"),
+    include_str!("js/10b_wrap_prototypes.js"),
     include_str!("js/11_document.js"),
+    include_str!("js/11b_frames.js"),
     include_str!("js/12_components.js"),
     include_str!("js/13_range_selection.js"),
+    include_str!("js/13b_selection.js"),
     include_str!("js/14_parsers_and_globals.js"),
+    include_str!("js/14b_dom_implementation.js"),
     include_str!("js/15_traversal.js"),
 );

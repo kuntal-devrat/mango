@@ -441,7 +441,15 @@
                 this.dispatchEvent({ type: 'select', target: this });
             },
             get src() { return this.getAttribute("src") || ""; },
-            set src(val) { this.setAttribute("src", val); },
+            set src(val) {
+                this.setAttribute("src", val);
+                var tag = (this.tagName || '').toLowerCase();
+                if (tag === 'iframe' || tag === 'object') {
+                    this._contentDocument = null;
+                    if (typeof _triggerFrameLoad === 'function') _triggerFrameLoad(this);
+                    else if (typeof globalThis._triggerFrameLoad === 'function') globalThis._triggerFrameLoad(this);
+                }
+            },
             get currentSrc() { return this.src; },
             get poster() { return this.getAttribute("poster") || ""; },
             set poster(val) { this.setAttribute("poster", val); },
@@ -538,9 +546,14 @@
             get srcdoc() { return this.getAttribute("srcdoc") || ""; },
             set srcdoc(val) { this.setAttribute("srcdoc", val); },
             get width() {
-                if (this.tagName && this.tagName.toLowerCase() === 'canvas') {
+                var tag = (this.tagName || '').toLowerCase();
+                if (tag === 'canvas') {
                     var w = parseInt(this.getAttribute("width"), 10);
                     return (!isNaN(w) && w >= 0) ? w : 300;
+                }
+                if (tag === 'img') {
+                    if (typeof _getImageDimension === 'function') return _getImageDimension(this, 'width');
+                    if (typeof globalThis._getImageDimension === 'function') return globalThis._getImageDimension(this, 'width');
                 }
                 return this.getAttribute("width") || "";
             },
@@ -557,9 +570,14 @@
                 }
             },
             get height() {
-                if (this.tagName && this.tagName.toLowerCase() === 'canvas') {
+                var tag = (this.tagName || '').toLowerCase();
+                if (tag === 'canvas') {
                     var h = parseInt(this.getAttribute("height"), 10);
                     return (!isNaN(h) && h >= 0) ? h : 150;
+                }
+                if (tag === 'img') {
+                    if (typeof _getImageDimension === 'function') return _getImageDimension(this, 'height');
+                    if (typeof globalThis._getImageDimension === 'function') return globalThis._getImageDimension(this, 'height');
                 }
                 return this.getAttribute("height") || "";
             },

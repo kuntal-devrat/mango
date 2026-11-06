@@ -49,6 +49,23 @@ impl std::ops::Deref for LayoutMargins {
     }
 }
 
+/// Cached parsed stylesheets for the document to accelerate `getComputedStyle`.
+#[derive(Clone, Default)]
+pub struct CachedStylesheets(pub Rc<RefCell<Option<Vec<mango_css::parser::Stylesheet>>>>);
+
+impl CachedStylesheets {
+    pub fn new() -> Self {
+        Self(Rc::new(RefCell::new(None)))
+    }
+}
+
+impl std::ops::Deref for CachedStylesheets {
+    type Target = RefCell<Option<Vec<mango_css::parser::Stylesheet>>>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 /// Optional layout provider callback invoked on demand when layout is dirty and
 /// a measurement API (`getBoundingClientRect`, `offsetWidth`, etc.) is accessed.
 pub type LayoutCallback =

@@ -35,12 +35,18 @@ pub fn op_mango_set_attribute(
     if let Some(node) = d.get_mut(node_id_from_js(node_id))
         && let NodeData::Element(ref mut elem) = node.data
     {
-        if let Some(attr) = elem.attributes.iter_mut().find(|(k, _)| k == &name) {
-            attr.1 = val;
+        let changed = if let Some(attr) = elem.attributes.iter_mut().find(|(k, _)| k == &name) {
+            if attr.1 == val {
+                false
+            } else {
+                attr.1 = val;
+                true
+            }
         } else {
             elem.attributes.push((name.into(), val));
-        }
-        if let Some(dirty) = state.try_borrow::<DomDirtyFlag>() {
+            true
+        };
+        if changed && let Some(dirty) = state.try_borrow::<DomDirtyFlag>() {
             *dirty.borrow_mut() = true;
         }
     }
@@ -56,8 +62,11 @@ pub fn op_mango_remove_attribute(state: &mut OpState, node_id: u32, #[string] na
     if let Some(node) = d.get_mut(node_id_from_js(node_id))
         && let NodeData::Element(ref mut elem) = node.data
     {
+        let prev_len = elem.attributes.len();
         elem.attributes.retain(|(k, _)| k != &name);
-        if let Some(dirty) = state.try_borrow::<DomDirtyFlag>() {
+        if elem.attributes.len() != prev_len
+            && let Some(dirty) = state.try_borrow::<DomDirtyFlag>()
+        {
             *dirty.borrow_mut() = true;
         }
     }

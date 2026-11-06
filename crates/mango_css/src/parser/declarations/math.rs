@@ -579,10 +579,14 @@ impl CssParser {
                         "px" => Length::Px(*value),
                         "em" => Length::Em(*value),
                         "rem" => Length::Rem(*value),
-                        "vw" => Length::Vw(*value),
-                        "vh" => Length::Vh(*value),
-                        "vmin" => Length::Vmin(*value),
-                        "vmax" => Length::Vmax(*value),
+                        "vw" | "dvw" | "svw" | "lvw" | "vi" | "dvi" | "svi" | "lvi" => {
+                            Length::Vw(*value)
+                        }
+                        "vh" | "dvh" | "svh" | "lvh" | "vb" | "dvb" | "svb" | "lvb" => {
+                            Length::Vh(*value)
+                        }
+                        "vmin" | "dvmin" | "svmin" | "lvmin" => Length::Vmin(*value),
+                        "vmax" | "dvmax" | "svmax" | "lvmax" => Length::Vmax(*value),
                         "cqw" => Length::Cqw(*value),
                         "cqh" => Length::Cqh(*value),
                         "cqi" => Length::Cqi(*value),

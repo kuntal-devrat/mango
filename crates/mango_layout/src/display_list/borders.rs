@@ -22,8 +22,11 @@ pub(crate) fn paint_borders(
             left: box_node.dimensions.border.left,
         };
 
-        let has_borders =
-            widths.top > 0.0 || widths.right > 0.0 || widths.bottom > 0.0 || widths.left > 0.0;
+        let has_borders = s.border_image.is_some()
+            || widths.top > 0.0
+            || widths.right > 0.0
+            || widths.bottom > 0.0
+            || widths.left > 0.0;
 
         if has_borders {
             let mut painted_border_image = false;
@@ -89,17 +92,19 @@ pub(crate) fn paint_borders(
                     } else {
                         s_right_color
                     };
-                    let border_radii = if has_radii {
-                        s.border_radius_with_size(border_box.width(), border_box.height())
-                    } else {
-                        [0.0; 4]
-                    };
-                    list.push(DisplayCommand::DrawBorder {
-                        rect: border_box,
-                        color: border_color,
-                        widths,
-                        radii: border_radii,
-                    });
+                    if border_color.a > 0 {
+                        let border_radii = if has_radii {
+                            s.border_radius_with_size(border_box.width(), border_box.height())
+                        } else {
+                            [0.0; 4]
+                        };
+                        list.push(DisplayCommand::DrawBorder {
+                            rect: border_box,
+                            color: border_color,
+                            widths,
+                            radii: border_radii,
+                        });
+                    }
                 } else {
                     // Rectangular borders with distinct side colors: emit per-side DrawBorder.
                     // If the element has zero (or near-zero) content dimensions, borders form CSS triangles

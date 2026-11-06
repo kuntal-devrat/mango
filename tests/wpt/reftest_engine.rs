@@ -333,6 +333,9 @@ pub fn refresh_layout_bounds(
         &root, scroll_x, scroll_y, &mut rects,
     );
     rt.set_layout_bounds(rects);
+    let mut margins = std::collections::HashMap::new();
+    mango_layout::collect_box_margins(&root, &mut margins);
+    rt.set_layout_margins(margins);
 }
 
 /// Renders an HTML document to an 800x600 32-bit pixel buffer.

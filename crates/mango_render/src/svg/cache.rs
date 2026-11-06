@@ -486,15 +486,70 @@ pub fn get_svg_intrinsic_dimensions(svg_xml: &str) -> (Option<f32>, Option<f32>)
                 }
                 (Some(w), None, _) => return (Some(w), None),
                 (None, Some(h), _) => return (None, Some(h)),
-                (None, None, Some((_, _, vb_w, vb_h))) => return (Some(vb_w), Some(vb_h)),
+                (None, None, Some((_, _, vb_w, vb_h))) if vb_w > 0.0 && vb_h > 0.0 => {
+                    return (Some(vb_w), Some(vb_h));
+                }
                 _ => {}
             }
         }
     }
-    if svg_xml.contains("viewBox") || svg_xml.contains("width") || svg_xml.contains("height") {
+    if (svg_xml.contains("width") || svg_xml.contains("height"))
+        && (svg_xml.contains("<svg") || svg_xml.contains("<symbol"))
+    {
         if let Some((w, h)) = super::resvg_adapter::get_svg_intrinsic_dimensions_resvg(svg_xml) {
             return (Some(w), Some(h));
         }
     }
     (None, None)
+}
+
+/// Extracts the intrinsic aspect ratio (width / height) from the SVG viewBox or dimensions.
+pub fn get_svg_aspect_ratio(svg_xml: &str) -> Option<f32> {
+    if svg_xml.trim().is_empty() {
+        return None;
+    }
+    let doc: std::sync::Arc<SvgDocument> = {
+        let cached = if let Ok(cache) = svg_doc_cache().read() {
+            cache.get(svg_xml)
+        } else {
+            None
+        };
+        if let Some(d) = cached {
+            d
+        } else {
+            let parsed = SvgDocument::parse(svg_xml)?;
+            let arc_doc = std::sync::Arc::new(parsed);
+            if let Ok(mut cache) = svg_doc_cache().write() {
+                cache.insert(svg_xml.to_string(), arc_doc.clone());
+            }
+            arc_doc
+        }
+    };
+
+    if let Some((_, _, vb_w, vb_h)) = doc.view_box {
+        if vb_h > 0.0 && vb_w > 0.0 {
+            return Some(vb_w / vb_h);
+        }
+    }
+    if let (Some(w), Some(h)) = (doc.width, doc.height) {
+        if h > 0.0 && w > 0.0 {
+            return Some(w / h);
+        }
+    }
+    for child in &doc.children {
+        if let SvgNode::Use { href, .. } = child {
+            let sym_id = href.split('#').next_back().unwrap_or(href.as_str()).trim();
+            let sym = doc
+                .symbols
+                .get(sym_id)
+                .cloned()
+                .or_else(|| get_global_svg_symbol(sym_id));
+            if let Some((_, _, vb_w, vb_h)) = sym.and_then(|s| s.view_box) {
+                if vb_h > 0.0 && vb_w > 0.0 {
+                    return Some(vb_w / vb_h);
+                }
+            }
+        }
+    }
+    None
 }
